@@ -1,0 +1,46 @@
+services:
+    backend:
+        build:
+            context: ./backend
+            dockerfile: Dockerfile.dev
+        restart: unless-stopped
+        ports:
+          - "3000:3000"
+        volumes:
+            - ./backend/:/usr/src/app
+            - /usr/src/app/target
+        networks:
+            - dev_network
+    db:
+        build:
+           context: ./db
+           dockerfile: Dockerfile.dev
+        ports:
+          - "5432:5432"
+        networks:
+            - dev_network
+        volumes:
+            - db:/var/lib/postgresql/data
+        restart: unless-stopped
+
+
+    frontend:
+        build:
+            context: ./frontend
+            dockerfile: Dockerfile.dev
+        volumes:
+          - ./frontend:/app
+          - /app/node_modules
+        environment:
+          - CHOKIDAR_USEPOLLING=true #enable polling
+        ports:
+          - "5173:5173"
+        restart: unless-stopped
+
+volumes:
+  db:
+
+networks:
+  dev_network:
+    driver: bridge
+    
