@@ -1,0 +1,32 @@
+# Use the Rust official image as the base for building and running
+FROM rust:latest as builder
+
+# Install cargo-watch for hot reloading
+RUN cargo install cargo-watch
+
+# Set the working directory
+WORKDIR /usr/src/app
+
+# Copy the Cargo.toml and src folder to the container
+COPY Cargo.toml .
+COPY src ./src
+
+# Build the project in release mode
+RUN cargo build --release
+
+# Final stage: Use the same Rust image to run the app
+FROM rust:latest
+
+# Set the working directory again
+WORKDIR /usr/src/app
+
+# Copy cargo-watch and the compiled binary from the builder image
+COPY --from=builder /usr/local/cargo/bin/cargo-watch /usr/local/bin/cargo-watch
+COPY --from=builder /usr/src/app/target/release/backend /usr/local/bin/backend  
+
+# Expose the port your application runs on
+EXPOSE 3000
+
+# Run cargo-watch to monitor for file changes and hot reload
+CMD ["cargo-watch", "-x", "run"]
+
