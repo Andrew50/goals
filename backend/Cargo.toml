@@ -11,3 +11,6 @@ bcrypt = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = "0.15"
+tower-http = { version = "0.4", features = ["cors"] }
+hyper = "0.14"
+
