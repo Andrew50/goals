@@ -1,12 +1,11 @@
-
-# Use the official Node.js image as the base
+# Use Node.js as the base
 FROM node:18
 
-# Set the working directory in the container
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json to install dependencies first
-COPY package*.json ./
+# Copy the package.json and package-lock.json to the container
+COPY package.json ./
 
 # Install dependencies
 RUN npm install
@@ -14,9 +13,9 @@ RUN npm install
 # Copy the rest of the application code
 COPY . .
 
-# Expose the port that the React development server will run on
-EXPOSE 5173
+# Expose the port the app will run on
+EXPOSE 3000
 
-# Start the React development server with hot reloading
-CMD ["npm", "run", "dev"]
+# Start the app
+CMD ["sh", "-c", "npm install && npm start"]
 

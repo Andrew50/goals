@@ -1,4 +1,4 @@
-# Use the Rust official image as the base for building
+# Use the Rust official image as the base for building and running
 FROM rust:latest as builder
 
 # Install cargo-watch for hot reloading
@@ -11,18 +11,18 @@ WORKDIR /usr/src/app
 COPY Cargo.toml .
 COPY src ./src
 
-# Build dependencies only (for caching)
+# Build the project in release mode
 RUN cargo build --release
 
-# Final stage: Use a smaller image to run the app
-FROM debian:buster-slim
+# Final stage: Use the same Rust image to run the app
+FROM rust:latest
 
-# Install necessary libraries for running the Rust binary
-RUN apt-get update && apt-get install -y libssl-dev pkg-config && rm -rf /var/lib/apt/lists/*
+# Set the working directory again
+WORKDIR /usr/src/app
 
 # Copy cargo-watch and the compiled binary from the builder image
 COPY --from=builder /usr/local/cargo/bin/cargo-watch /usr/local/bin/cargo-watch
-COPY --from=builder /usr/src/app/target/release/axum_docker /usr/local/bin/axum_docker
+COPY --from=builder /usr/src/app/target/release/backend /usr/local/bin/backend  
 
 # Expose the port your application runs on
 EXPOSE 3000

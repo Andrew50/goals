@@ -7,7 +7,7 @@ async fn main() {
     let app = Router::new().route("/", get(handler));
 
     // Set the server address
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 5057));
     println!("Listening on {}", addr);
 
     // Run the server

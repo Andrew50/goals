@@ -5,7 +5,7 @@ services:
             dockerfile: Dockerfile.dev
         restart: unless-stopped
         ports:
-          - "3000:3000"
+          - "5057:5057"
         volumes:
             - ./backend/:/usr/src/app
             - /usr/src/app/target
@@ -20,7 +20,7 @@ services:
         networks:
             - dev_network
         volumes:
-            - db:/var/lib/postgresql/data
+            - goal_db:/var/lib/postgresql/data
         restart: unless-stopped
 
 
@@ -29,16 +29,16 @@ services:
             context: ./frontend
             dockerfile: Dockerfile.dev
         volumes:
-          - ./frontend:/app
+          #          - ./frontend:/app
           - /app/node_modules
         environment:
           - CHOKIDAR_USEPOLLING=true #enable polling
         ports:
-          - "5173:5173"
+          - "3000:3000"
         restart: unless-stopped
 
 volumes:
-  db:
+  goal_db:
 
 networks:
   dev_network:
