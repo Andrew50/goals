@@ -1,0 +1,3 @@
+backend/target/
+backend/Cargo.lock
+frontend/node_modules/
