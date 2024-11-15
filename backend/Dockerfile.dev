@@ -23,6 +23,7 @@ WORKDIR /usr/src/app
 # Copy cargo-watch and the compiled binary from the builder image
 COPY --from=builder /usr/local/cargo/bin/cargo-watch /usr/local/bin/cargo-watch
 COPY --from=builder /usr/src/app/target/release/backend /usr/local/bin/backend  
+ENV DATABASE_URL=postgres://postgres:pass@db:5432/postgres
 
 # Expose the port your application runs on
 EXPOSE 3000
