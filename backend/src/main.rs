@@ -13,12 +13,15 @@ async fn main() {
     dotenv().ok();
 
     // Create the database connection pool
-    let pool = db::create_pool()
-        .await
-        .expect("Failed to create database pool");
+    let pool = match db::create_pool().await {
+        Ok(pool) => pool,
+        Err(e) => {
+            eprintln!("Error creating database pool: {}", e);
+            return;
+        }
+    };
 
-    // Build the application with routes
-    let app = Router::new()
+    println!("Database connection pool created successfully");    let app = Router::new()
         .route("/", get(root))
         .nest("/auth", auth::create_routes())
         .layer(Extension(pool));

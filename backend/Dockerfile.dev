@@ -10,6 +10,8 @@ WORKDIR /usr/src/app
 # Copy the Cargo.toml and src folder to the container
 COPY Cargo.toml .
 COPY src ./src
+ENV DATABASE_URL=postgres://postgres:pass@db:5432/postgres
+
 
 # Build the project in release mode
 RUN cargo build --release

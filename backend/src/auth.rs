@@ -1,4 +1,3 @@
-// src/auth.rs
 use axum::{
     extract::{Extension, Json},
     http::StatusCode,
@@ -7,7 +6,7 @@ use axum::{
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 pub fn create_routes() -> Router {
     Router::new()
@@ -35,11 +34,11 @@ async fn sign_up(
     let hashed_password = hash(&payload.password, DEFAULT_COST).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Insert the new user into the database
-    let result = sqlx::query!(
-        "INSERT INTO users (username, password_hash) VALUES ($1, $2)",
-        payload.username,
-        hashed_password
+    let result = sqlx::query(
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2)"
     )
+    .bind(&payload.username)
+    .bind(&hashed_password)
     .execute(&pool)
     .await;
 
@@ -69,16 +68,17 @@ async fn sign_in(
     Json(payload): Json<AuthPayload>,
 ) -> Result<Json<AuthResponse>, StatusCode> {
     // Retrieve the user from the database
-    let user = sqlx::query!(
-        "SELECT user_id, username, password_hash FROM users WHERE username = $1",
-        payload.username
+    let user = sqlx::query(
+        "SELECT user_id, username, password_hash FROM users WHERE username = $1"
     )
+    .bind(&payload.username)
     .fetch_one(&pool)
     .await
     .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     // Verify the password
-    let is_valid = verify(&payload.password, &user.password_hash).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let password_hash: String = user.get("password_hash");
+    let is_valid = verify(&payload.password, &password_hash).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if is_valid {
         // Authentication successful
