@@ -1,1 +1,1 @@
-goal app 
+goal app
