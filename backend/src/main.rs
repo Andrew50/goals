@@ -1,11 +1,12 @@
 // src/main.rs
-
 mod auth;
-mod db; // Updated from mod database;
+mod db;
 
 use axum::{routing::get, Extension, Router};
 use dotenvy::dotenv;
+use hyper::header::HeaderValue;
 use std::net::SocketAddr;
+use tower_http::cors::{CorsLayer, Any, AllowOrigin};
 
 #[tokio::main]
 async fn main() {
@@ -21,10 +22,20 @@ async fn main() {
         }
     };
 
-    println!("Database connection pool created successfully");    let app = Router::new()
+    println!("Database connection pool created successfully");
+
+    // Configure CORS
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::exact(HeaderValue::from_static("http://localhost:3000"))) // Allow frontend origin
+        .allow_methods(Any) // Allow all HTTP methods (GET, POST, etc.)
+        .allow_headers(Any); // Allow all headers (e.g., Content-Type)
+
+    // Set up the application router
+    let app = Router::new()
         .route("/", get(root))
         .nest("/auth", auth::create_routes())
-        .layer(Extension(pool));
+        .layer(Extension(pool))
+        .layer(cors); // Apply the CORS middleware
 
     // Set the server address
     let addr = SocketAddr::from(([0, 0, 0, 0], 5057));
