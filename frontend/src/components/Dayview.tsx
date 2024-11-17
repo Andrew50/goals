@@ -23,21 +23,28 @@ const MyCalendar: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [newTask, setNewTask] = useState('');
+  const [taskId, setTaskId] = useState(0);
 
   const handleAddTask = () => {
-    if (newTask.trim()) {
+    if (!newTask.trim()) return;
+    if (tasks.some((task) => task.title === newTask.trim())) {
+      alert('Task already exists!');
+      return;
+    }
       const newTaskObj = {
-        id: (tasks.length + 1).toString(),
-        title: newTask,
+        id: Date.now().toString(),
+        title: newTask.trim(),
       };
+
       setTasks([...tasks, newTaskObj]);
       setNewTask(''); 
     }
-  };
+  
 
   const handleDragEnd = (result: DropResult) => {
-    console.log(result);
-    const { destination, draggableId } = result;
+    console.log('Drag result:', result);
+
+    const {destination, draggableId } = result;
     if (!destination) return;
 
     // Dragged to the calendar
@@ -50,14 +57,14 @@ const MyCalendar: React.FC = () => {
           start: new Date(),
           end: new Date(Date.now() + 3600000),
         };
-        setEvents((prevEvents) => [...prevEvents, newEvent]);
-      setTasks((prevTasks) => prevTasks.filter((t) => t.id !== draggableId));
+        setEvents([...events, newEvent]);
+        setTasks((prevTasks) => prevTasks.filter((t) => t.id !== draggableId));
       }
     }
   };
 
   return (
-    <DragDropContext onDragEnd={handleDragEnd} enableDefaultSensors>
+    <DragDropContext onDragEnd={handleDragEnd}>
       <div style={{ display: 'flex' }}>
         {/* Sidebar */}
         <Droppable droppableId="tasks">
@@ -84,6 +91,7 @@ const MyCalendar: React.FC = () => {
                     padding: '8px',
                     marginBottom: '5px',
                   }}
+                
                 />
                 <button
                   onClick={handleAddTask}
