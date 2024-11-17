@@ -1,16 +1,31 @@
-// src/main.rs
 mod auth;
 mod db;
+mod goal;
 
-use axum::{routing::get, Extension, Router};
+use axum::{
+    http::Request,
+    middleware::{self, Next},
+    response::Response,
+};
+use axum::{Extension, Router};
 use dotenvy::dotenv;
 use hyper::header::HeaderValue;
 use std::net::SocketAddr;
-use tower_http::cors::{CorsLayer, Any, AllowOrigin};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tracing::Level;
+use tracing_subscriber;
+
+async fn log_requests<B>(request: Request<B>, next: Next<B>) -> Response {
+    println!("Incoming request: {} {}", request.method(), request.uri());
+    let response = next.run(request).await;
+    println!("Outgoing response: {}", response.status());
+    response
+}
 
 #[tokio::main]
 async fn main() {
-    // Load environment variables
+    // Initialize tracing
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
     dotenv().ok();
 
     // Create the database connection pool
@@ -26,16 +41,22 @@ async fn main() {
 
     // Configure CORS
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(HeaderValue::from_static("http://localhost:3000"))) // Allow frontend origin
-        .allow_methods(Any) // Allow all HTTP methods (GET, POST, etc.)
-        .allow_headers(Any); // Allow all headers (e.g., Content-Type)
+        .allow_origin(AllowOrigin::exact(HeaderValue::from_static(
+            "http://localhost:3000",
+        )))
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    // Middleware for request logging
+    let log_layer = middleware::from_fn(log_requests);
 
     // Set up the application router
     let app = Router::new()
-        .route("/", get(root))
+        .nest("/goals", goal::create_routes())
         .nest("/auth", auth::create_routes())
-        .layer(Extension(pool))
-        .layer(cors); // Apply the CORS middleware
+        .layer(Extension(pool)) // Add the database connection
+        .layer(cors) // Add CORS handling
+        .route_layer(log_layer); // Add request logging middleware
 
     // Set the server address
     let addr = SocketAddr::from(([0, 0, 0, 0], 5057));
@@ -47,8 +68,3 @@ async fn main() {
         .await
         .unwrap();
 }
-
-async fn root() -> &'static str {
-    "Welcome to the Rust server!"
-}
-
