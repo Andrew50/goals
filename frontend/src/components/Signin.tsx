@@ -1,7 +1,15 @@
-
 import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import {
+  Container,
+  Paper,
+  TextField,
+  Button,
+  Typography,
+  Box,
+  Alert
+} from '@mui/material';
 
 const Signin: React.FC = () => {
   const [username, setUsername] = useState<string>("");
@@ -22,8 +30,8 @@ const Signin: React.FC = () => {
       });
 
       setSuccess(response.data.message);
-      localStorage.setItem("authToken", response.data.token); // Store token if your backend provides one
-      navigate("/calender"); // Redirect to a protected route
+      localStorage.setItem("authToken", response.data.token);
+      navigate("/calender");
     } catch (err: any) {
       if (err.response?.status === 401) {
         setError("Invalid username or password");
@@ -34,28 +42,54 @@ const Signin: React.FC = () => {
   };
 
   return (
-    <div>
-      <h2>Sign In</h2>
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      {success && <p style={{ color: "green" }}>{success}</p>}
-      <form onSubmit={handleSignin}>
-        <input
-          type="text"
-          placeholder="Username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <button type="submit">Sign In</button>
-      </form>
-    </div>
+    <Container component="main" maxWidth="xs">
+      <Box
+        sx={{
+          marginTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+        }}
+      >
+        <Paper elevation={3} sx={{ p: 4, width: '100%' }}>
+          <Typography component="h1" variant="h5" sx={{ mb: 3, textAlign: 'center' }}>
+            Sign In
+          </Typography>
+
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
+
+          <form onSubmit={handleSignin}>
+            <TextField
+              margin="normal"
+              required
+              fullWidth
+              label="Username"
+              autoFocus
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <TextField
+              margin="normal"
+              required
+              fullWidth
+              label="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <Button
+              type="submit"
+              fullWidth
+              variant="contained"
+              sx={{ mt: 3, mb: 2 }}
+            >
+              Sign In
+            </Button>
+          </form>
+        </Paper>
+      </Box>
+    </Container>
   );
 };
 
