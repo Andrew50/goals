@@ -23,7 +23,7 @@ const Signin: React.FC = () => {
 
       setSuccess(response.data.message);
       localStorage.setItem("authToken", response.data.token); // Store token if your backend provides one
-      setTimeout(() => navigate("/calender"), 2000); // Redirect to a protected route
+      navigate("/calender"); // Redirect to a protected route
     } catch (err: any) {
       if (err.response?.status === 401) {
         setError("Invalid username or password");
