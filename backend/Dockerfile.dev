@@ -1,5 +1,5 @@
-# Use the Rust official image as the base for building and running
-FROM rust:latest as builder
+# Use the Rust official image as the base
+FROM rust:latest
 
 # Install cargo-watch for hot reloading
 RUN cargo install cargo-watch
@@ -7,25 +7,14 @@ RUN cargo install cargo-watch
 # Set the working directory
 WORKDIR /usr/src/app
 
-# Copy the Cargo.toml and src folder to the container
-COPY Cargo.toml .
-COPY src ./src
+# Copy the project files
+COPY . .
+
+# Set environment variables for PostgreSQL and Neo4j
 ENV DATABASE_URL=postgres://postgres:pass@db:5432/postgres
-
-
-# Build the project in release mode
-RUN cargo build --release
-
-# Final stage: Use the same Rust image to run the app
-FROM rust:latest
-
-# Set the working directory again
-WORKDIR /usr/src/app
-
-# Copy cargo-watch and the compiled binary from the builder image
-COPY --from=builder /usr/local/cargo/bin/cargo-watch /usr/local/bin/cargo-watch
-COPY --from=builder /usr/src/app/target/release/backend /usr/local/bin/backend  
-ENV DATABASE_URL=postgres://postgres:pass@db:5432/postgres
+ENV NEO4J_URI=bolt://goals_db:7687
+ENV NEO4J_USERNAME=neo4j
+ENV NEO4J_PASSWORD=password123
 
 # Expose the port your application runs on
 EXPOSE 3000

@@ -1,3 +1,6 @@
-FROM postgres:latest
-ENV POSTGRES_PASSWORD=pass
-COPY init.sql /docker-entrypoint-initdb.d/init.sql
+#FROM postgres:latest
+#ENV POSTGRES_PASSWORD=pass
+#COPY init.sql /docker-entrypoint-initdb.d/init.sql
+FROM neo4j:latest
+ENV NEO4J_AUTH=neo4j/password123
+
