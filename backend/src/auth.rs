@@ -1,12 +1,14 @@
 use axum::{
     extract::{Extension, Json},
     http::StatusCode,
+    response::IntoResponse,
     routing::post,
     Router,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
+use neo4rs::{Graph, Query};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use std::sync::Arc;
 
 pub fn create_routes() -> Router {
     Router::new()
@@ -27,67 +29,108 @@ struct AuthResponse {
 
 // Sign-up handler
 async fn sign_up(
-    Extension(pool): Extension<PgPool>,
+    Extension(graph): Extension<Graph>,
     Json(payload): Json<AuthPayload>,
-) -> Result<Json<AuthResponse>, StatusCode> {
-    // Hash the password
-    let hashed_password = hash(&payload.password, DEFAULT_COST).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    // Check if user already exists
+    let check_query = Query::new("MATCH (u:User {username: $username}) RETURN u".to_string())
+        .param("username", payload.username.clone());
 
-    // Insert the new user into the database
-    let result = sqlx::query(
-        "INSERT INTO users (username, password_hash) VALUES ($1, $2)"
-    )
-    .bind(&payload.username)
-    .bind(&hashed_password)
-    .execute(&pool)
-    .await;
-
-    match result {
-        Ok(_) => Ok(Json(AuthResponse {
-            message: "User created successfully".to_string(),
-        })),
-        Err(sqlx::Error::Database(err)) => {
-            if let Some(constraint) = err.constraint() {
-                if constraint == "users_username_key" {
-                    // Username already exists
-                    Err(StatusCode::CONFLICT)
-                } else {
-                    Err(StatusCode::INTERNAL_SERVER_ERROR)
-                }
-            } else {
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
+    let mut result = match graph.execute(check_query).await {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("Database error checking user: {:?}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AuthResponse {
+                    message: "Database error".to_string(),
+                }),
+            ));
         }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+
+    if let Ok(Some(_)) = result.next().await {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(AuthResponse {
+                message: "Username already exists".to_string(),
+            }),
+        ));
+    }
+
+    // Hash the password
+    let hashed_password = match hash(payload.password.as_bytes(), DEFAULT_COST) {
+        Ok(hash) => hash,
+        Err(e) => {
+            eprintln!("Error hashing password: {:?}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AuthResponse {
+                    message: "Error processing password".to_string(),
+                }),
+            ));
+        }
+    };
+
+    // Create user query
+    let create_query = Query::new(
+        "CREATE (u:User {username: $username, password_hash: $password_hash}) RETURN u".to_string(),
+    )
+    .param("username", payload.username)
+    .param("password_hash", hashed_password);
+
+    // Run the query
+    match graph.run(create_query).await {
+        Ok(_) => Ok((
+            StatusCode::CREATED,
+            Json(AuthResponse {
+                message: "User created successfully".to_string(),
+            }),
+        )),
+        Err(e) => {
+            eprintln!("Error creating user: {:?}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AuthResponse {
+                    message: "Error creating user".to_string(),
+                }),
+            ))
+        }
     }
 }
 
 // Sign-in handler
 async fn sign_in(
-    Extension(pool): Extension<PgPool>,
+    Extension(graph): Extension<Graph>,
     Json(payload): Json<AuthPayload>,
 ) -> Result<Json<AuthResponse>, StatusCode> {
-    // Retrieve the user from the database
-    let user = sqlx::query(
-        "SELECT user_id, username, password_hash FROM users WHERE username = $1"
+    // Match the user node by username
+    let query = Query::new(
+        "MATCH (u:User {username: $username}) RETURN u.password_hash AS password_hash".to_string(),
     )
-    .bind(&payload.username)
-    .fetch_one(&pool)
-    .await
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    .param("username", payload.username);
 
-    // Verify the password
-    let password_hash: String = user.get("password_hash");
-    let is_valid = verify(&payload.password, &password_hash).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Execute the query and retrieve the password hash
+    let mut result = graph.execute(query).await.map_err(|e| {
+        eprintln!("Database error: {:?}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    if let Ok(Some(record)) = result.next().await {
+        let password_hash: String = record.get("password_hash").unwrap();
+        let is_valid = verify(&payload.password, &password_hash)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if is_valid {
-        // Authentication successful
-        Ok(Json(AuthResponse {
-            message: "Sign-in successful".to_string(),
-        }))
+        if is_valid {
+            // Authentication successful
+            Ok(Json(AuthResponse {
+                message: "Sign-in successful".to_string(),
+            }))
+        } else {
+            // Invalid password
+            Err(StatusCode::UNAUTHORIZED)
+        }
     } else {
-        // Invalid password
+        // User not found
         Err(StatusCode::UNAUTHORIZED)
     }
 }
-
