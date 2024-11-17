@@ -1,4 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+import { Network } from 'vis-network/standalone';
+import { DataSet } from 'vis-network/standalone/esm/vis-network';
+import { Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
 
 interface Goal {
   id?: number;
@@ -10,6 +15,20 @@ interface Relationship {
   from_id: number;
   to_id: number;
   relationship_type: string;
+}
+
+interface NetworkNode {
+  id: number;
+  label: string;
+  title?: string;
+  color?: string;
+}
+
+interface NetworkEdge {
+  from: number;
+  to: number;
+  label?: string;
+  arrows?: string;
 }
 
 const Goals: React.FC = () => {
@@ -31,163 +50,385 @@ const Goals: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
 
-  const goalTypes = ['task', 'routine', 'directive', 'achievement', 'habit'];
+  const goalTypes = ['task', 'routine', 'directive', 'achievement'];
   const relationshipTypes = ['parent', 'child', 'next'];
 
-  const handleCreateGoal = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const networkContainer = useRef<HTMLDivElement>(null);
+  const [network, setNetwork] = useState<Network | null>(null);
+
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isLinkingMode, setIsLinkingMode] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<number | null>(null);
+
+  // Add new state for relationship dialog
+  const [isRelationshipDialogOpen, setIsRelationshipDialogOpen] = useState(false);
+  const [pendingRelationship, setPendingRelationship] = useState<{ from: number, to: number } | null>(null);
+
+  // Function to get color based on goal type
+  const getNodeColor = (goalType: string) => {
+    const colors = {
+      task: '#FF9999',
+      routine: '#99FF99',
+      directive: '#9999FF',
+      achievement: '#FFFF99',
+      habit: '#FF99FF'
+    };
+    return colors[goalType as keyof typeof colors] || '#CCCCCC';
+  };
+
+  // Function to handle right-click edit
+  const handleEditGoal = async (goalId: number, goalData: Goal) => {
     try {
-      const response = await fetch('http://localhost:3000/goals/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(newGoal),
-      });
-
-      if (!response.ok) throw new Error('Failed to create goal');
-
-      const createdGoal = await response.json();
-      setGoals([...goals, createdGoal]);
-      setSuccess('Goal created successfully!');
-      setNewGoal({ name: '', goal_type: 'task' });
+      const response = await axios.put(`http://localhost:5057/goals/${goalId}`, goalData);
+      if (response.status === 200) {
+        await fetchGoals();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'Failed to update goal');
     }
   };
 
-  const handleCreateRelationship = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Modified updateNetwork function
+  const updateNetwork = async () => {
     try {
-      const response = await fetch('http://localhost:3000/goals/create_relationship', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Fetch all goals and relationships
+      const goalsResponse = await axios.get('http://localhost:5057/goals');
+      const relationshipsResponse = await axios.get('http://localhost:5057/goals/relationships');
+
+      const goals = goalsResponse.data;
+      const relationships = relationshipsResponse.data;
+
+      // Create nodes and edges for the network
+      const nodes = goals.map((goal: Goal) => ({
+        id: goal.id,
+        label: goal.name,
+        title: `${goal.name} (${goal.goal_type})`,
+        color: getNodeColor(goal.goal_type)
+      }));
+
+      const edges = relationships.map((rel: Relationship) => ({
+        from: rel.from_id,
+        to: rel.to_id,
+        label: rel.relationship_type,
+        arrows: 'to'
+      }));
+
+      // Modified options
+      const options = {
+        nodes: {
+          shape: 'box',
+          margin: {
+            top: 10,
+            right: 10,
+            bottom: 10,
+            left: 10
+          },
+          font: {
+            size: 14
+          }
         },
-        body: JSON.stringify(newRelationship),
-      });
+        edges: {
+          font: {
+            size: 12,
+            align: 'middle'
+          },
+          color: '#666666',
+          smooth: {
+            enabled: true,
+            type: 'continuous',
+            roundness: 0.5
+          }
+        },
+        manipulation: {
+          enabled: true,
+          addNode: false,
+          addEdge: (data: any, callback: Function) => {
+            setPendingRelationship({ from: data.from, to: data.to });
+            setNewRelationship({
+              from_id: data.from,
+              to_id: data.to,
+              relationship_type: 'parent'  // default value
+            });
+            setIsRelationshipDialogOpen(true);
+            // Don't call callback here - we'll handle the edge creation after dialog
+          },
+          editEdge: false,
+          deleteNode: false,
+          deleteEdge: false,
+          controlNodeStyle: {
+            shape: 'dot',
+            size: 6,
+            color: {
+              background: '#ff0000',
+              border: '#cc0000',
+              highlight: {
+                background: '#ff0000',
+                border: '#cc0000'
+              }
+            },
+            borderWidth: 2,
+            borderWidthSelected: 2
+          }
+        },
+        interaction: {
+          navigationButtons: true,
+          hover: true,
+          dragNodes: true,
+          dragView: true,
+          zoomView: true,
+          selectable: true,
+          selectConnectedEdges: true,
+          hoverConnectedEdges: true,
+        },
+        configure: {
+          enabled: true,
+          filter: 'nodes,edges',
+          container: undefined,
+          showButton: true
+        }
+      };
 
-      if (!response.ok) throw new Error('Failed to create relationship');
+      // Create the network
+      if (networkContainer.current) {
+        const network = new Network(
+          networkContainer.current,
+          { nodes, edges },
+          options
+        );
 
-      setSuccess('Relationship created successfully!');
-      setNewRelationship({
-        from_id: 0,
-        to_id: 0,
-        relationship_type: 'parent'
-      });
+        // Handle right-click context menu
+        network.on('oncontext', (params) => {
+          params.event.preventDefault();
+          const nodeId = network.getNodeAt(params.pointer.DOM);
+          if (nodeId) {
+            const goal = goals.find((g: Goal) => g.id === nodeId);
+            if (goal) {
+              setSelectedGoal(goal);
+              setIsEditDialogOpen(true);
+            }
+          }
+        });
+
+        setNetwork(network);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'Failed to load network');
     }
   };
+
+  // Update network when goals or relationships change
+  useEffect(() => {
+    updateNetwork();
+  }, [goals]);
+
+  const fetchGoals = async () => {
+    try {
+      const response = await axios.get('http://localhost:5057/goals');
+      setGoals(response.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch goals');
+    }
+  };
+
+  const fetchRelationships = async () => {
+    try {
+      await axios.get('http://localhost:5057/goals/relationships');
+      updateNetwork(); // This will refresh the network visualization
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch relationships');
+    }
+  };
+
+  const handleCreateGoal = async () => {
+    try {
+      const response = await axios.post('http://localhost:5057/goals/create', newGoal);
+      if (response.status === 200 || response.status === 201) {
+        await fetchGoals(); // Refresh the goals list
+        setIsCreateDialogOpen(false);
+        setNewGoal({ name: '', goal_type: 'task' });
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to create goal');
+    }
+  };
+
+  const handleCreateLink = async (fromId: number, toId: number, relationshipType: string) => {
+    try {
+      const response = await axios.post('http://localhost:5057/goals/create_relationship', {
+        from_id: fromId,
+        to_id: toId,
+        relationship_type: relationshipType
+      });
+      if (response.status === 200 || response.status === 201) {
+        await fetchRelationships();
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to create relationship');
+    }
+  };
+
+  useEffect(() => {
+    fetchGoals();
+  }, []);
+
+  // Add new state for edit dialog
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-4">Goals Management</h2>
+    <div style={{ position: 'relative', height: '100vh' }}>
+      <div ref={networkContainer} style={{ height: '100%' }} />
 
-      {/* Error and Success Messages */}
-      {error && <p className="text-red-500 mb-4">{error}</p>}
-      {success && <p className="text-green-500 mb-4">{success}</p>}
+      {/* Floating Action Button - fixed styling */}
+      <Button
+        variant="contained"
+        color="primary"
+        style={{
+          position: 'absolute',
+          top: '4rem',
+          left: '1rem',
+          minWidth: '32px',
+          width: '32px',
+          height: '32px',
+          padding: '0',
+          borderRadius: '4px',
+          backgroundColor: '#f3f3f3',
+          border: '1px solid #c1c1c1',
+          boxShadow: 'none'
+        }}
+        sx={{
+          '&:hover': {
+            backgroundColor: '#e6e6e6',
+            boxShadow: 'none'
+          }
+        }}
+        onClick={() => setIsCreateDialogOpen(true)}
+      >
+        <AddIcon style={{ fontSize: '20px', color: '#666666' }} />
+      </Button>
 
-      {/* Create Goal Form */}
-      <div className="mb-8">
-        <h3 className="text-xl font-semibold mb-2">Create New Goal</h3>
-        <form onSubmit={handleCreateGoal} className="space-y-4">
-          <div>
-            <input
-              type="text"
-              placeholder="Goal Name"
-              value={newGoal.name}
-              onChange={(e) => setNewGoal({ ...newGoal, name: e.target.value })}
-              className="border p-2 rounded w-full"
-              required
-            />
-          </div>
-          <div>
-            <select
-              value={newGoal.goal_type}
-              onChange={(e) => setNewGoal({ ...newGoal, goal_type: e.target.value })}
-              className="border p-2 rounded w-full"
+      {/* Edit Goal Dialog */}
+      <Dialog open={isEditDialogOpen} onClose={() => setIsEditDialogOpen(false)}>
+        <DialogTitle>Edit Goal</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Goal Name"
+            fullWidth
+            value={selectedGoal?.name || ''}
+            onChange={(e) => setSelectedGoal(selectedGoal ? { ...selectedGoal, name: e.target.value } : null)}
+          />
+          <FormControl fullWidth margin="dense">
+            <InputLabel>Goal Type</InputLabel>
+            <Select
+              value={selectedGoal?.goal_type || ''}
+              onChange={(e) => setSelectedGoal(selectedGoal ? { ...selectedGoal, goal_type: e.target.value } : null)}
             >
               {goalTypes.map(type => (
-                <option key={type} value={type}>{type}</option>
+                <MenuItem key={type} value={type}>{type}</MenuItem>
               ))}
-            </select>
-          </div>
-          <button
-            type="submit"
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={() => {
+              if (selectedGoal && selectedGoal.id) {
+                handleEditGoal(selectedGoal.id, selectedGoal);
+                setIsEditDialogOpen(false);
+              }
+            }}
+            color="primary"
           >
-            Create Goal
-          </button>
-        </form>
-      </div>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-      {/* Create Relationship Form */}
-      <div className="mb-8">
-        <h3 className="text-xl font-semibold mb-2">Create Relationship</h3>
-        <form onSubmit={handleCreateRelationship} className="space-y-4">
-          <div>
-            <input
-              type="number"
-              placeholder="From Goal ID"
-              value={newRelationship.from_id || ''}
-              onChange={(e) => setNewRelationship({
-                ...newRelationship,
-                from_id: parseInt(e.target.value)
-              })}
-              className="border p-2 rounded w-full"
-              required
-            />
-          </div>
-          <div>
-            <input
-              type="number"
-              placeholder="To Goal ID"
-              value={newRelationship.to_id || ''}
-              onChange={(e) => setNewRelationship({
-                ...newRelationship,
-                to_id: parseInt(e.target.value)
-              })}
-              className="border p-2 rounded w-full"
-              required
-            />
-          </div>
-          <div>
-            <select
+      {/* Create Goal Dialog */}
+      <Dialog open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)}>
+        <DialogTitle>Create New Goal</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Goal Name"
+            fullWidth
+            value={newGoal.name}
+            onChange={(e) => setNewGoal({ ...newGoal, name: e.target.value })}
+          />
+          <FormControl fullWidth margin="dense">
+            <InputLabel>Goal Type</InputLabel>
+            <Select
+              value={newGoal.goal_type}
+              onChange={(e) => setNewGoal({ ...newGoal, goal_type: e.target.value })}
+            >
+              {goalTypes.map(type => (
+                <MenuItem key={type} value={type}>{type}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleCreateGoal} color="primary">Create</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Relationship Type Dialog */}
+      <Dialog
+        open={isRelationshipDialogOpen}
+        onClose={() => {
+          setIsRelationshipDialogOpen(false);
+          setPendingRelationship(null);
+          updateNetwork(); // Refresh to remove temporary edge
+        }}
+      >
+        <DialogTitle>Select Relationship Type</DialogTitle>
+        <DialogContent>
+          <FormControl fullWidth margin="dense">
+            <InputLabel>Relationship Type</InputLabel>
+            <Select
               value={newRelationship.relationship_type}
               onChange={(e) => setNewRelationship({
                 ...newRelationship,
                 relationship_type: e.target.value
               })}
-              className="border p-2 rounded w-full"
             >
-              {relationshipTypes.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-          </div>
-          <button
-            type="submit"
-            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+              <MenuItem value="parent">Parent</MenuItem>
+              <MenuItem value="child">Child</MenuItem>
+              <MenuItem value="queue">Queue</MenuItem>
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setIsRelationshipDialogOpen(false);
+            setPendingRelationship(null);
+            updateNetwork();
+          }}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              if (pendingRelationship) {
+                handleCreateLink(
+                  pendingRelationship.from,
+                  pendingRelationship.to,
+                  newRelationship.relationship_type
+                );
+                setIsRelationshipDialogOpen(false);
+                setPendingRelationship(null);
+              }
+            }}
+            color="primary"
           >
-            Create Relationship
-          </button>
-        </form>
-      </div>
-
-      {/* Display Goals */}
-      <div>
-        <h3 className="text-xl font-semibold mb-2">Existing Goals</h3>
-        <div className="grid grid-cols-1 gap-4">
-          {goals.map((goal) => (
-            <div key={goal.id} className="border p-4 rounded">
-              <p><strong>ID:</strong> {goal.id}</p>
-              <p><strong>Name:</strong> {goal.name}</p>
-              <p><strong>Type:</strong> {goal.goal_type}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+            Create
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
   );
 };

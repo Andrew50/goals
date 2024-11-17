@@ -1,10 +1,10 @@
 use axum::{
+    debug_handler,
     extract::{Extension, Path},
     http::StatusCode,
     response::IntoResponse,
-    routing::post,
+    routing::{get, post, put},
     Json, Router,
-    debug_handler,
 };
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,9 @@ pub fn create_routes() -> Router {
         .route("/create", post(create_goal_handler))
         .route("/create_relationship", post(create_relationship_handler))
         .route("/hierarchy/:goal_id", post(query_hierarchy_handler))
+        .route("/", get(get_all_goals))
+        .route("/relationships", get(get_all_relationships))
+        .route("/:id", put(update_goal_handler))
 }
 
 //#[debug_handler]
@@ -63,8 +66,6 @@ pub async fn create_relationship_handler(
     }
 }
 
-
-
 pub async fn query_hierarchy_handler(
     Path(goal_id): Path<i64>,
     Extension(graph): Extension<Graph>,
@@ -78,6 +79,151 @@ pub async fn query_hierarchy_handler(
                 format!("Error querying hierarchy: {}", e),
             ))
         }
+    }
+}
+
+pub async fn get_all_goals(
+    Extension(graph): Extension<Graph>,
+) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
+    let query =
+        query("MATCH (g:Goal) RETURN g.name AS name, g.goal_type AS goal_type, id(g) AS id");
+
+    let mut result = graph.execute(query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })?;
+    let mut goals = Vec::new();
+
+    while let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })? {
+        goals.push(Goal {
+            id: Some(row.get::<i64>("id").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?),
+            name: row.get::<String>("name").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+            goal_type: row.get::<String>("goal_type").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+        });
+    }
+
+    Ok(Json(goals))
+}
+
+pub async fn get_all_relationships(
+    Extension(graph): Extension<Graph>,
+) -> Result<Json<Vec<Relationship>>, (StatusCode, String)> {
+    let query = query(
+        "MATCH (g1:Goal)-[r]->(g2:Goal) 
+         RETURN id(g1) as from_id, id(g2) as to_id, type(r) as relationship_type",
+    );
+
+    let mut result = graph.execute(query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })?;
+    let mut relationships = Vec::new();
+
+    while let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })? {
+        relationships.push(Relationship {
+            from_id: row.get::<i64>("from_id").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+            to_id: row.get::<i64>("to_id").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+            relationship_type: row.get::<String>("relationship_type").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+        });
+    }
+
+    Ok(Json(relationships))
+}
+
+pub async fn update_goal_handler(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+    Json(goal): Json<Goal>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let query = query(
+        "MATCH (g:Goal) WHERE id(g) = $id 
+         SET g.name = $name, g.goal_type = $goal_type 
+         RETURN g.name AS name, g.goal_type AS goal_type, id(g) AS id",
+    )
+    .param("id", id)
+    .param("name", goal.name.as_str())
+    .param("goal_type", goal.goal_type.as_str());
+
+    let mut result = graph.execute(query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })?;
+
+    if let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })? {
+        let updated_goal = Goal {
+            id: Some(row.get::<i64>("id").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?),
+            name: row.get::<String>("name").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+            goal_type: row.get::<String>("goal_type").map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Data conversion error: {}", e),
+                )
+            })?,
+        };
+        Ok((StatusCode::OK, Json(updated_goal)))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
     }
 }
 
