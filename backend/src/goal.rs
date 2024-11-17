@@ -3,7 +3,7 @@ use axum::{
     extract::{Extension, Path},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use neo4rs::{query, Graph};
@@ -31,6 +31,7 @@ pub fn create_routes() -> Router {
         .route("/", get(get_all_goals))
         .route("/relationships", get(get_all_relationships))
         .route("/:id", put(update_goal_handler))
+        .route("/:id", delete(delete_goal_handler))
 }
 
 //#[debug_handler]
@@ -224,6 +225,28 @@ pub async fn update_goal_handler(
         Ok((StatusCode::OK, Json(updated_goal)))
     } else {
         Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
+    }
+}
+
+pub async fn delete_goal_handler(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let query = query(
+        "MATCH (g:Goal) WHERE id(g) = $id 
+         DETACH DELETE g",
+    )
+    .param("id", id);
+
+    match graph.run(query).await {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(e) => {
+            eprintln!("Error deleting goal: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error deleting goal: {}", e),
+            ))
+        }
     }
 }
 

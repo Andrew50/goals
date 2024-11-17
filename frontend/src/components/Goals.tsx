@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Network } from 'vis-network/standalone';
 import { DataSet } from 'vis-network/standalone/esm/vis-network';
-import { Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
+import { Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem, FormControl, InputLabel, Box } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import { createResizeObserver } from '../utils/resizeObserver';
 
 interface Goal {
   id?: number;
@@ -275,9 +276,40 @@ const Goals: React.FC = () => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
 
+  useEffect(() => {
+    if (networkContainer.current && network) {
+      const observer = createResizeObserver(() => {
+        network.fit();
+      });
+
+      observer.observe(networkContainer.current);
+      return () => observer.disconnect();
+    }
+  }, [network]);
+
+  // Add a new handler function for deleting goals
+  const handleDeleteGoal = async (goalId: number) => {
+    try {
+      const response = await axios.delete(`http://localhost:5057/goals/${goalId}`);
+      if (response.status === 200) {
+        await fetchGoals();
+        setIsEditDialogOpen(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete goal');
+    }
+  };
+
   return (
-    <div style={{ position: 'relative', height: '100vh' }}>
-      <div ref={networkContainer} style={{ height: '100%' }} />
+    <div style={{
+      position: 'relative',
+      height: 'calc(100vh - 64px)', // Subtract AppBar height
+      overflow: 'hidden'  // Prevent scrolling
+    }}>
+      <div ref={networkContainer} style={{
+        height: '100%',
+        width: '100%'
+      }} />
 
       {/* Floating Action Button - fixed styling */}
       <Button
@@ -316,6 +348,7 @@ const Goals: React.FC = () => {
             margin="dense"
             label="Goal Name"
             fullWidth
+            autoComplete="off"
             value={selectedGoal?.name || ''}
             onChange={(e) => setSelectedGoal(selectedGoal ? { ...selectedGoal, name: e.target.value } : null)}
           />
@@ -331,19 +364,31 @@ const Goals: React.FC = () => {
             </Select>
           </FormControl>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+        <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
           <Button
             onClick={() => {
-              if (selectedGoal && selectedGoal.id) {
-                handleEditGoal(selectedGoal.id, selectedGoal);
-                setIsEditDialogOpen(false);
+              if (selectedGoal?.id) {
+                handleDeleteGoal(selectedGoal.id);
               }
             }}
-            color="primary"
+            color="error"
           >
-            Save
+            Delete
           </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (selectedGoal && selectedGoal.id) {
+                  handleEditGoal(selectedGoal.id, selectedGoal);
+                  setIsEditDialogOpen(false);
+                }
+              }}
+              color="primary"
+            >
+              Save
+            </Button>
+          </Box>
         </DialogActions>
       </Dialog>
 
@@ -356,6 +401,7 @@ const Goals: React.FC = () => {
             margin="dense"
             label="Goal Name"
             fullWidth
+            autoComplete="off"
             value={newGoal.name}
             onChange={(e) => setNewGoal({ ...newGoal, name: e.target.value })}
           />
