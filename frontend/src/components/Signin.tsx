@@ -1,15 +1,12 @@
 import React, { useState } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import {
-  Container,
-  Paper,
-  TextField,
-  Button,
-  Typography,
-  Box,
-  Alert
-} from '@mui/material';
+import { Container, Box, Paper, Typography, TextField, Button, Alert } from "@mui/material";
+import { publicRequest } from "../utils/api";
+
+interface SigninResponse {
+  message: string;
+  token: string;
+}
 
 const Signin: React.FC = () => {
   const [username, setUsername] = useState<string>("");
@@ -24,13 +21,14 @@ const Signin: React.FC = () => {
     setSuccess(null);
 
     try {
-      const response = await axios.post("http://localhost:5057/auth/signin", {
-        username,
-        password,
-      });
+      const response = await publicRequest<SigninResponse>(
+        'auth/signin',
+        'POST',
+        { username, password }
+      );
 
-      setSuccess(response.data.message);
-      localStorage.setItem("authToken", response.data.token);
+      setSuccess(response.message);
+      localStorage.setItem("authToken", response.token);
       navigate("/calender");
     } catch (err: any) {
       if (err.response?.status === 401) {

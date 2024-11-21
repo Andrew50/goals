@@ -1,15 +1,18 @@
-import React, { useState } from 'react';
-import { 
-  DndContext, 
+import React, { useState, useEffect } from 'react';
+import {
+  DndContext,
   useDraggable,
   useDroppable,
   DragEndEvent,
   closestCenter,
-  DragOverlay 
+  DragOverlay
 } from '@dnd-kit/core';
 import { Calendar, momentLocalizer } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
+import { privateRequest } from './frontend/src/utils/api';
+import { Goal, CalendarEvent } from './frontend/src/types';
+import { fetchCalendarData } from './frontend/src/utils/calendarData';
 
 interface Task {
   id: string;
@@ -17,13 +20,7 @@ interface Task {
   type: 'meeting' | 'task' | 'appointment';
 }
 
-interface Event {
-  id: string;
-  title: string;
-  start: Date;
-  end: Date;
-  type?: 'meeting' | 'task' | 'appointment';
-}
+
 
 interface SlotInfo {
   start: Date;
@@ -52,10 +49,12 @@ interface RepeatOptions {
   startDate: Date;
 }
 
+
+
 const localizer = momentLocalizer(moment);
 
 const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
-  const {attributes, listeners, setNodeRef, transform, isDragging} = useDraggable({
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
     data: task
   });
@@ -68,7 +67,7 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
 
   if (isDragging) {
     return (
-      <div 
+      <div
         ref={setNodeRef}
         style={{
           opacity: 0.5,
@@ -80,7 +79,7 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   }
 
   const getTaskColor = (type: string) => {
-    switch(type) {
+    switch (type) {
       case 'meeting': return { bg: '#e3f2fd', border: '#2196f3' };
       case 'task': return { bg: '#f1f8e9', border: '#8bc34a' };
       case 'appointment': return { bg: '#fce4ec', border: '#e91e63' };
@@ -91,8 +90,8 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   const colors = getTaskColor(task.type);
 
   return (
-    <div 
-      ref={setNodeRef} 
+    <div
+      ref={setNodeRef}
       style={{
         ...transform,
         marginBottom: '8px',
@@ -108,7 +107,7 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
         alignItems: 'center',
         gap: '8px'
       }}
-      {...listeners} 
+      {...listeners}
       {...attributes}
       onClick={handleClick}
     >
@@ -123,12 +122,12 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   );
 };
 
-const TaskList = ({ 
-  tasks, 
-  onAddTask, 
-  newTask, 
+const TaskList = ({
+  tasks,
+  onAddTask,
+  newTask,
   setNewTask,
-  onTaskClick 
+  onTaskClick
 }: {
   tasks: Task[];
   onAddTask: () => void;
@@ -149,13 +148,13 @@ const TaskList = ({
         overflow: 'auto'
       }}
     >
-      <h3 style={{ 
+      <h3 style={{
         margin: '0 0 20px 0',
         color: '#333',
         fontSize: '20px',
         fontWeight: 600
       }}>Tasks</h3>
-      
+
       <div style={{ marginBottom: '20px' }}>
         <input
           type="text"
@@ -175,7 +174,7 @@ const TaskList = ({
           onFocus={(e) => e.target.style.borderColor = '#2196f3'}
           onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
         />
-        <button 
+        <button
           onClick={onAddTask}
           style={{
             width: '100%',
@@ -197,9 +196,9 @@ const TaskList = ({
       </div>
 
       {tasks.map((task) => (
-        <DraggableTask 
-          key={task.id} 
-          task={task} 
+        <DraggableTask
+          key={task.id}
+          task={task}
           onTaskClick={onTaskClick}
         />
       ))}
@@ -207,9 +206,9 @@ const TaskList = ({
   );
 };
 
-const CalendarEvent = ({ event }: { event: Event }) => {
+const CalendarEventDisplay = ({ event }: { event: CalendarEvent }) => {
   return (
-    <div style={{ 
+    <div style={{
       padding: '2px 4px',
       fontSize: '14px',
       whiteSpace: 'nowrap',
@@ -227,16 +226,26 @@ interface SelectedTaskState {
   date?: Date;
 }
 
-const CalendarDropArea = ({ 
-  events, 
-  onDeleteEvent, 
+// Add type definition for valid event types
+type EventType = 'meeting' | 'task' | 'appointment';
+
+// Add type definition for the colors object
+const eventColors: Record<EventType, { backgroundColor: string; color: string }> = {
+  meeting: { backgroundColor: '#e3f2fd', color: '#2196f3' },
+  task: { backgroundColor: '#f1f8e9', color: '#8bc34a' },
+  appointment: { backgroundColor: '#fce4ec', color: '#e91e63' }
+};
+
+const CalendarDropArea = ({
+  events,
+  onDeleteEvent,
   onDropTask,
-  onEventClick 
-}: { 
-  events: Event[];
+  onEventClick
+}: {
+  events: CalendarEvent[];
   onDeleteEvent: (id: string) => void;
   onDropTask: (date: Date) => void;
-  onEventClick: (event: Event) => void;
+  onEventClick: (event: CalendarEvent) => void;
 }) => {
   const { setNodeRef, isOver } = useDroppable({
     id: 'calendar'
@@ -247,10 +256,10 @@ const CalendarDropArea = ({
   };
 
   return (
-    <div 
+    <div
       ref={setNodeRef}
-      style={{ 
-        flex: 1, 
+      style={{
+        flex: 1,
         padding: '10px',
         backgroundColor: isOver ? 'rgba(33, 150, 243, 0.1)' : undefined,
         transition: 'background-color 0.2s',
@@ -264,22 +273,18 @@ const CalendarDropArea = ({
         endAccessor="end"
         style={{ height: '80vh' }}
         components={{
-          event: CalendarEvent
+          event: CalendarEventDisplay
         }}
         views={['month', 'week', 'day']}
         defaultView="month"
         selectable={true}
         onSelectSlot={handleSelectSlot}
-        onSelectEvent={(event: Event) => onEventClick(event)}
+        onSelectEvent={(event: CalendarEvent) => onEventClick(event)}
         step={60}
-        eventPropGetter={(event: Event) => {
-          const colors = {
-            meeting: { backgroundColor: '#e3f2fd', color: '#2196f3' },
-            task: { backgroundColor: '#f1f8e9', color: '#8bc34a' },
-            appointment: { backgroundColor: '#fce4ec', color: '#e91e63' }
-          };
+        eventPropGetter={(event: CalendarEvent) => {
+          const eventType = (event.type || 'task') as EventType;
           return {
-            style: colors[event.type || 'task']
+            style: eventColors[eventType]
           };
         }}
       />
@@ -321,16 +326,16 @@ const TimeSelectionModal = ({ isOpen, onClose, onSave, defaultDate, taskTitle }:
         width: '400px',
         boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
       }}>
-        <h3 style={{ 
+        <h3 style={{
           margin: '0 0 20px 0',
           color: '#333',
           fontSize: '20px',
           fontWeight: 600
         }}>Schedule: {taskTitle}</h3>
-        
+
         <div style={{ marginBottom: '20px' }}>
-          <label style={{ 
-            display: 'block', 
+          <label style={{
+            display: 'block',
             marginBottom: '8px',
             color: '#666',
             fontSize: '14px'
@@ -353,8 +358,8 @@ const TimeSelectionModal = ({ isOpen, onClose, onSave, defaultDate, taskTitle }:
         </div>
 
         <div style={{ marginBottom: '24px' }}>
-          <label style={{ 
-            display: 'block', 
+          <label style={{
+            display: 'block',
             marginBottom: '8px',
             color: '#666',
             fontSize: '14px'
@@ -381,12 +386,12 @@ const TimeSelectionModal = ({ isOpen, onClose, onSave, defaultDate, taskTitle }:
           </select>
         </div>
 
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'flex-end', 
+        <div style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
           gap: '12px'
         }}>
-          <button 
+          <button
             onClick={onClose}
             style={{
               padding: '10px 20px',
@@ -400,7 +405,7 @@ const TimeSelectionModal = ({ isOpen, onClose, onSave, defaultDate, taskTitle }:
           >
             Cancel
           </button>
-          <button 
+          <button
             onClick={() => {
               const endTime = new Date(startTime);
               endTime.setMinutes(startTime.getMinutes() + duration);
@@ -436,7 +441,7 @@ const TaskDragOverlay = ({ task }: { task: Task | null }) => {
   if (!task) return null;
 
   const getTaskColor = (type: string) => {
-    switch(type) {
+    switch (type) {
       case 'meeting': return { bg: '#e3f2fd', border: '#2196f3' };
       case 'task': return { bg: '#f1f8e9', border: '#8bc34a' };
       case 'appointment': return { bg: '#fce4ec', border: '#e91e63' };
@@ -447,7 +452,7 @@ const TaskDragOverlay = ({ task }: { task: Task | null }) => {
   const colors = getTaskColor(task.type);
 
   return (
-    <div 
+    <div
       style={{
         padding: '12px 16px',
         backgroundColor: colors.bg,
@@ -474,13 +479,13 @@ const TaskDragOverlay = ({ task }: { task: Task | null }) => {
   );
 };
 
-const TaskActionsMenu = ({ 
-  isOpen, 
-  onClose, 
-  onTimeSelect, 
-  onDelete, 
-  onRepeat, 
-  task 
+const TaskActionsMenu = ({
+  isOpen,
+  onClose,
+  onTimeSelect,
+  onDelete,
+  onRepeat,
+  task
 }: TaskActionsMenuProps) => {
   const [startTime, setStartTime] = useState(() => {
     const now = new Date();
@@ -498,8 +503,8 @@ const TaskActionsMenu = ({
   ];
 
   const handleDayToggle = (day: string) => {
-    setSelectedDays(prev => 
-      prev.includes(day) 
+    setSelectedDays(prev =>
+      prev.includes(day)
         ? prev.filter(d => d !== day)
         : [...prev, day]
     );
@@ -529,7 +534,7 @@ const TaskActionsMenu = ({
   };
 
   return (
-    <div 
+    <div
       style={{
         position: 'fixed',
         top: 0,
@@ -546,7 +551,7 @@ const TaskActionsMenu = ({
     >
       {!showRepeatOptions ? (
         // Main Menu
-        <div 
+        <div
           style={{
             backgroundColor: 'white',
             borderRadius: '12px',
@@ -561,7 +566,7 @@ const TaskActionsMenu = ({
               {task.title}
             </h3>
           </div>
-          
+
           <div style={{ padding: '24px' }}>
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
@@ -581,7 +586,7 @@ const TaskActionsMenu = ({
                   marginBottom: '16px'
                 }}
               />
-              
+
               <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
                 Start Time:
               </label>
@@ -662,7 +667,7 @@ const TaskActionsMenu = ({
                 >
                   🗑️ Delete
                 </button>
-                
+
                 <button
                   onClick={handleTimeSelect}
                   style={{
@@ -683,7 +688,7 @@ const TaskActionsMenu = ({
         </div>
       ) : (
         // Repeat Options Menu
-        <div 
+        <div
           style={{
             backgroundColor: 'white',
             borderRadius: '12px',
@@ -698,7 +703,7 @@ const TaskActionsMenu = ({
               Set Repeat Options
             </h3>
           </div>
-          
+
           <div style={{ padding: '24px' }}>
             <div style={{ marginBottom: '24px' }}>
               <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
@@ -730,9 +735,9 @@ const TaskActionsMenu = ({
                   <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
                     Repeat on Days:
                   </label>
-                  <div style={{ 
-                    display: 'flex', 
-                    flexWrap: 'wrap', 
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
                     gap: '8px',
                     marginBottom: '16px'
                   }}>
@@ -797,15 +802,25 @@ const TaskActionsMenu = ({
 
 const MyCalendar: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [events, setEvents] = useState<Event[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [newTask, setNewTask] = useState('');
   const [selectedTask, setSelectedTask] = useState<SelectedTaskState | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
 
+  useEffect(() => {
+    const loadCalendarData = async () => {
+      const data = await fetchCalendarData();
+      setEvents([...data.events, ...data.achievements]);
+      setTasks(data.unscheduledTasks);
+    };
+
+    loadCalendarData();
+  }, []);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    
+
     if (!over || over.id !== 'calendar') {
       setDraggedTask(null);
       return;
@@ -821,17 +836,15 @@ const MyCalendar: React.FC = () => {
 
   const isDuplicateEvent = (newStart: Date, newEnd: Date, taskId: string): boolean => {
     return events.some(event => {
-      // Skip comparing with the same event (for rescheduling)
       if (event.id === taskId) return false;
-      
-      // Check if dates overlap
+
       const sameDay = event.start.toDateString() === newStart.toDateString();
       const timeOverlap = (
         (newStart >= event.start && newStart < event.end) ||
         (newEnd > event.start && newEnd <= event.end) ||
         (newStart <= event.start && newEnd >= event.end)
       );
-      
+
       return sameDay && timeOverlap;
     });
   };
@@ -839,14 +852,12 @@ const MyCalendar: React.FC = () => {
   const handleTimeSelect = (startTime: Date, endTime: Date) => {
     if (!selectedTask) return;
 
-    // Check for duplicates
     if (isDuplicateEvent(startTime, endTime, selectedTask.task.id)) {
       alert('There is already an event scheduled at this time. Please choose a different time.');
       return;
     }
 
-    // Create a new event from the task
-    const newEvent: Event = {
+    const newEvent: CalendarEvent = {
       id: selectedTask.task.id,
       title: selectedTask.task.title,
       start: startTime,
@@ -854,13 +865,10 @@ const MyCalendar: React.FC = () => {
       type: selectedTask.task.type
     };
 
-    // Add the event to the calendar
     setEvents(prevEvents => [...prevEvents, newEvent]);
-    
-    // Remove the task from the task list if it's not already on the calendar
+
     setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-    
-    // Close the modal and clear selection
+
     setSelectedTask(null);
     setModalOpen(false);
   };
@@ -872,21 +880,19 @@ const MyCalendar: React.FC = () => {
     const dropDate = new Date(date);
     dropDate.setHours(defaults.defaultHour, 0, 0, 0);
 
-    // Create tentative end time to check for duplicates
     const endDate = new Date(dropDate);
     endDate.setMinutes(dropDate.getMinutes() + defaults.duration);
 
-    // Check for duplicates
     if (isDuplicateEvent(dropDate, endDate, draggedTask.id)) {
       alert('There is already an event scheduled at this time. Please choose a different time.');
       setDraggedTask(null);
       return;
     }
 
-    setSelectedTask({ 
-      task: draggedTask, 
+    setSelectedTask({
+      task: draggedTask,
       position: { x: 0, y: 0 },
-      date: dropDate 
+      date: dropDate
     });
     setModalOpen(true);
     setDraggedTask(null);
@@ -894,11 +900,11 @@ const MyCalendar: React.FC = () => {
 
   const handleAddTask = () => {
     if (!newTask.trim()) return;
-    
+
     const newTaskObj: Task = {
       id: Date.now().toString(),
       title: newTask.trim(),
-      type: 'task', // Default type, you can add UI to select different types
+      type: 'task',
     };
 
     setTasks([...tasks, newTaskObj]);
@@ -916,14 +922,12 @@ const MyCalendar: React.FC = () => {
 
   const handleRepeat = (options: RepeatOptions) => {
     if (!selectedTask) return;
-    
+
     const { frequency, days, startDate } = options;
-    const events: Event[] = [];
-    
-    // Generate events based on frequency
+    const events: CalendarEvent[] = [];
+
     switch (frequency) {
       case 'daily':
-        // Create daily events for the next 30 days
         for (let i = 0; i < 30; i++) {
           const eventDate = new Date(startDate);
           eventDate.setDate(eventDate.getDate() + i);
@@ -931,7 +935,7 @@ const MyCalendar: React.FC = () => {
             id: `${selectedTask.task.id}-${i}`,
             title: selectedTask.task.title,
             start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)), // Default 1 hour duration
+            end: new Date(eventDate.setHours(startDate.getHours() + 1)),
             type: selectedTask.task.type
           });
         }
@@ -939,7 +943,6 @@ const MyCalendar: React.FC = () => {
 
       case 'weekly':
       case 'biweekly':
-        // Create events for selected days for the next 12 weeks
         const weekIncrement = frequency === 'weekly' ? 1 : 2;
         for (let week = 0; week < 12; week++) {
           days.forEach(day => {
@@ -957,7 +960,6 @@ const MyCalendar: React.FC = () => {
         break;
 
       case 'monthly':
-        // Create monthly events for the next 12 months
         for (let i = 0; i < 12; i++) {
           const eventDate = new Date(startDate);
           eventDate.setMonth(eventDate.getMonth() + i);
@@ -972,7 +974,6 @@ const MyCalendar: React.FC = () => {
         break;
 
       case 'yearly':
-        // Create yearly events for the next 5 years
         for (let i = 0; i < 5; i++) {
           const eventDate = new Date(startDate);
           eventDate.setFullYear(eventDate.getFullYear() + i);
@@ -987,17 +988,13 @@ const MyCalendar: React.FC = () => {
         break;
     }
 
-    // Add all generated events to the calendar
     setEvents(prevEvents => [...prevEvents, ...events]);
-    
-    // Remove the task from the task list
+
     setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-    
-    // Close the modal and clear selection
+
     setSelectedTask(null);
   };
 
-  // Helper function to convert day name to number
   const getDayNumber = (day: string): number => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     return days.indexOf(day);
@@ -1007,7 +1004,7 @@ const MyCalendar: React.FC = () => {
     setSelectedTask({ task, position });
   };
 
-  const handleEventClick = (event: Event) => {
+  const handleEventClick = (event: CalendarEvent) => {
     const task: Task = {
       id: event.id,
       title: event.title,
@@ -1022,7 +1019,7 @@ const MyCalendar: React.FC = () => {
   };
 
   return (
-    <DndContext 
+    <DndContext
       onDragEnd={handleDragEnd}
       onDragStart={(event) => {
         const task = tasks.find(t => t.id === event.active.id);
@@ -1031,15 +1028,15 @@ const MyCalendar: React.FC = () => {
       onDragCancel={() => setDraggedTask(null)}
     >
       <div style={{ display: 'flex', height: '100vh' }}>
-        <TaskList 
+        <TaskList
           tasks={tasks}
           onAddTask={handleAddTask}
           newTask={newTask}
           setNewTask={setNewTask}
           onTaskClick={handleTaskClick}
         />
-        <CalendarDropArea 
-          events={events} 
+        <CalendarDropArea
+          events={events}
           onDeleteEvent={handleDeleteEvent}
           onDropTask={handleDropTask}
           onEventClick={handleEventClick}
@@ -1048,7 +1045,7 @@ const MyCalendar: React.FC = () => {
       <DragOverlay>
         {draggedTask ? <TaskDragOverlay task={draggedTask} /> : null}
       </DragOverlay>
-      
+
       {modalOpen && selectedTask && (
         <TimeSelectionModal
           isOpen={modalOpen}
@@ -1058,7 +1055,7 @@ const MyCalendar: React.FC = () => {
           taskTitle={selectedTask.task.title}
         />
       )}
-      
+
       {selectedTask && (
         <TaskActionsMenu
           isOpen={!!selectedTask}
