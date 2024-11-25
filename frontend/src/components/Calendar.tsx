@@ -1096,15 +1096,16 @@ const MyCalendar: React.FC = () => {
         }
       </DndContext>
 
-      {/* <GoalDialog
+      {/*<GoalDialog
         open={isGoalDialogOpen}
-        onClose={() => setIsGoalDialogOpen(false)}
-        goal={newGoalData}
-        onChange={setNewGoalData}
-        mode="create"
-        error=""
-        onSuccess={handleGoalSuccess}
-      />*/}
+      onClose={() => setIsGoalDialogOpen(false)}
+      goal={newGoalData}
+      onChange={setNewGoalData}
+      mode="create"
+      error=""
+      onSuccess={handleGoalSuccess}
+      />
+      */}
     </div>
   );
 };
