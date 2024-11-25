@@ -13,7 +13,7 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { privateRequest } from '../utils/api';
 import { Goal, CalendarEvent, CalendarTask } from '../types';
 import { fetchCalendarData } from '../utils/calendarData';
-import GoalDialog from './GoalDialog';
+import GoalDialog from './GoalMenu';
 
 /*interface Task {
   id: string;

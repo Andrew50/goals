@@ -7,7 +7,7 @@ import Signup from './components/Signup';
 import Signin from './components/Signin';
 import Root from './components/Root';
 import Network from './components/Network';
-import GoalDialog from './components/GoalDialog';
+import GoalMenu from './components/GoalMenu';
 
 const App: React.FC = () => {
   return (
@@ -33,7 +33,7 @@ const App: React.FC = () => {
           <Route path="/" element={<Root />} />
           <Route path="/network" element={<Network />} />
         </Routes>
-        <GoalDialog />
+        <GoalMenu />
       </Router>
     </ThemeProvider>
   );
