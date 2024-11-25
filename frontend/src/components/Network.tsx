@@ -96,11 +96,8 @@ const NetworkView: React.FC
           const handleClick = (params: any, goalDialogMode: DialogMode) => {
             params.event.preventDefault();
             const nodeId = network.getNodeAt(params.pointer.DOM);
-            console.log('Right click - Node ID:', nodeId);
-            console.log('Available node IDs:', networkData?.nodes.map(n => n.id));
             if (nodeId && networkData) {
               const node = networkData.nodes.find(n => n.id === nodeId);
-              console.log('Found node:', node);
               if (node) {
                 GoalDialog.open(node, goalDialogMode, () => {
                   fetchNetwork();
