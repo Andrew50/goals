@@ -6,9 +6,10 @@ use axum::{
     Router,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use neo4rs::{Graph, Query};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::env;
 
 pub fn create_routes() -> Router {
     Router::new()
@@ -25,6 +26,14 @@ struct AuthPayload {
 #[derive(Debug, Serialize)]
 struct AuthResponse {
     message: String,
+    token: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    user_id: i64,
+    username: String,
+    exp: usize,
 }
 
 // Sign-up handler
@@ -44,6 +53,7 @@ async fn sign_up(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(AuthResponse {
                     message: "Database error".to_string(),
+                    token: "".to_string(),
                 }),
             ));
         }
@@ -54,6 +64,7 @@ async fn sign_up(
             StatusCode::CONFLICT,
             Json(AuthResponse {
                 message: "Username already exists".to_string(),
+                token: "".to_string(),
             }),
         ));
     }
@@ -67,6 +78,7 @@ async fn sign_up(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(AuthResponse {
                     message: "Error processing password".to_string(),
+                    token: "".to_string(),
                 }),
             ));
         }
@@ -85,6 +97,7 @@ async fn sign_up(
             StatusCode::CREATED,
             Json(AuthResponse {
                 message: "User created successfully".to_string(),
+                token: "".to_string(),
             }),
         )),
         Err(e) => {
@@ -93,6 +106,7 @@ async fn sign_up(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(AuthResponse {
                     message: "Error creating user".to_string(),
+                    token: "".to_string(),
                 }),
             ))
         }
@@ -104,33 +118,51 @@ async fn sign_in(
     Extension(graph): Extension<Graph>,
     Json(payload): Json<AuthPayload>,
 ) -> Result<Json<AuthResponse>, StatusCode> {
-    // Match the user node by username
     let query = Query::new(
-        "MATCH (u:User {username: $username}) RETURN u.password_hash AS password_hash".to_string(),
+        "MATCH (u:User {username: $username}) 
+         RETURN id(u) as user_id, u.password_hash AS password_hash"
+            .to_string(),
     )
-    .param("username", payload.username);
+    .param("username", payload.username.clone());
 
-    // Execute the query and retrieve the password hash
     let mut result = graph.execute(query).await.map_err(|e| {
         eprintln!("Database error: {:?}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
     if let Ok(Some(record)) = result.next().await {
         let password_hash: String = record.get("password_hash").unwrap();
+        let user_id: i64 = record.get("user_id").unwrap();
+
         let is_valid = verify(&payload.password, &password_hash)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         if is_valid {
-            // Authentication successful
+            // Create the JWT token
+            let claims = Claims {
+                user_id,
+                username: payload.username,
+                exp: (chrono::Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
+            };
+
+            let jwt_secret =
+                env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
+
+            let token = encode(
+                &Header::default(),
+                &claims,
+                &EncodingKey::from_secret(jwt_secret.as_bytes()),
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
             Ok(Json(AuthResponse {
                 message: "Sign-in successful".to_string(),
+                token,
             }))
         } else {
-            // Invalid password
             Err(StatusCode::UNAUTHORIZED)
         }
     } else {
-        // User not found
         Err(StatusCode::UNAUTHORIZED)
     }
 }
