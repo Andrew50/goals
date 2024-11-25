@@ -29,7 +29,7 @@ const Signin: React.FC = () => {
 
       setSuccess(response.message);
       localStorage.setItem("authToken", response.token);
-      navigate("/calender");
+      navigate("/calendar");
     } catch (err: any) {
       if (err.response?.status === 401) {
         setError("Invalid username or password");
