@@ -12,9 +12,9 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import CloseIcon from '@mui/icons-material/Close';
-import { Goal, GoalType } from '../types';
-import GoalDialog from './GoalDialog';
-import { privateRequest } from '../utils/api';
+import { Goal, GoalType } from './frontend/src/types';
+import GoalDialog from './frontend/src/components/GoalDialog';
+import { privateRequest } from './frontend/src/utils/api';
 
 interface GoalViewProps {
     goal: Goal;

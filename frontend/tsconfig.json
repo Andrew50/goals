@@ -23,5 +23,5 @@
   "include": [
     "src",
     "../Calendar copy.tsx"
-  ]
+, "../GoalView.tsx"  ]
 }
