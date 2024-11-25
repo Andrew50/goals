@@ -63,11 +63,10 @@ const NetworkView: React.FC
             size: 12,
             align: 'middle'
           },
-          color: '#666666',
           smooth: {
             enabled: true,
             type: 'continuous',
-            roundness: 0.5
+            roundness: 0.1
           }
         },
         layout: {
@@ -75,7 +74,8 @@ const NetworkView: React.FC
             enabled: true,
             direction: 'UD',
             sortMethod: 'directed',
-            nodeSpacing: 14
+            nodeSpacing: 14,
+            levelSeparation: 150
           }
         },
         manipulation: {
@@ -88,8 +88,7 @@ const NetworkView: React.FC
                 to: data.to
               });
               setDialogMode('relationship');
-              // Don't create the edge yet - wait for dialog
-              callback(null);
+              callback(data);
             } catch (err) {
               console.error('Edge creation error:', err);
               callback(null);
@@ -112,9 +111,37 @@ const NetworkView: React.FC
       }
 
       if (networkContainer.current && networkData) {
+        const formattedData = {
+          nodes: networkData.nodes,
+          edges: networkData.edges.map(edge => ({
+            ...edge,
+            // Set different colors and styles based on relationship type
+            color: {
+              color: edge.relationship_type === 'queue' ? '#ff9800' : '#666666'
+            },
+            // Use dashed lines for queue relationships
+            dashes: edge.relationship_type === 'queue',
+            // Add labels to edges
+            label: edge.relationship_type,
+            // For queue relationships, force them to be on the same level
+            length: edge.relationship_type === 'queue' ? 200 : undefined,
+            // For queue relationships, use horizontal layout
+            smooth: edge.relationship_type === 'queue'
+              ? {
+                enabled: true,
+                type: 'curvedCW',
+                roundness: 0.2
+              }
+              : {
+                enabled: true,
+                type: 'continuous',
+                roundness: 0.5
+              }
+          }))
+        };
         const network = new VisNetwork(
           networkContainer.current,
-          networkData,
+          formattedData,
           options
         );
 
