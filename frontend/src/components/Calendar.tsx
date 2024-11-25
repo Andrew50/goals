@@ -21,6 +21,7 @@ import GoalDialog from './GoalDialog';
   type: 'meeting' | 'task' | 'appointment';
 }*/
 
+type EventType = 'meeting' | 'task' | 'appointment';
 
 
 interface SlotInfo {
@@ -163,7 +164,7 @@ const TaskList = ({
           onChange={(e) => setNewTask(e.target.value)}
           placeholder="Enter a task"
           style={{
-            width: '100%',
+            width: '92%',
             padding: '12px',
             borderRadius: '6px',
             border: '1px solid #e0e0e0',
@@ -195,19 +196,26 @@ const TaskList = ({
           Add Task
         </button>
       </div>
-
-      {tasks.map((task) => (
+      <div style={{marginTop: '20px'}}>
+        {tasks.length ===0 ? (
+          <div style={{textAlign: 'center', color: '#666', fontSize: '14px'}}>
+            No tasks yet
+          </div>
+        ) : (
+          tasks.map((task, index) => (
         <DraggableTask
           key={task.id}
           task={task}
           onTaskClick={onTaskClick}
         />
-      ))}
+      ))
+    )}
     </div>
+  </div>
   );
 };
 
-const CalendarEventDisplay = ({ event }: { event: CalendarEvent }) => {
+const CalendarEventDisplay: React.FC<{ event: CalendarEvent }> = ({ event }) => {
   return (
     <div style={{
       padding: '2px 4px',
@@ -227,10 +235,8 @@ interface SelectedTaskState {
   date?: Date;
 }
 
-// Add type definition for valid event types
-type EventType = 'meeting' | 'task' | 'appointment';
 
-// Add type definition for the colors object
+
 const eventColors: Record<EventType, { backgroundColor: string; color: string }> = {
   meeting: { backgroundColor: '#e3f2fd', color: '#2196f3' },
   task: { backgroundColor: '#f1f8e9', color: '#8bc34a' },
