@@ -6,7 +6,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { createResizeObserver } from '../utils/resizeObserver';
 import { Goal, Relationship, NetworkNode, NetworkEdge } from '../types';
 import GoalDialog, { createRelationship } from './GoalDialog';
-import GoalView from './GoalView';
+//import GoalView from '../../../GoalView';
 import { privateRequest } from '../utils/api';
 
 interface NetworkData {
@@ -29,10 +29,8 @@ const NetworkView: React.FC
     const networkContainer = useRef<HTMLDivElement>(null);
     const [network, setNetwork] = useState<VisNetwork | null>(null);
     const [pendingRelationship, setPendingRelationship] = useState<{ from: number, to: number } | null>(null);
-    const [error, setError] = useState<string>('');
     const [networkData, setNetworkData] = useState<NetworkData | null>(null);
     const [dialogMode, setDialogMode] = useState<DialogMode>(null);
-    const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
 
     const updateNetwork = async () => {
       try {
@@ -95,7 +93,7 @@ const NetworkView: React.FC
           );
 
 
-          const handleClick = (params: any, dialogMode: DialogMode) => {
+          const handleClick = (params: any, goalDialogMode: DialogMode) => {
             params.event.preventDefault();
             const nodeId = network.getNodeAt(params.pointer.DOM);
             console.log('Right click - Node ID:', nodeId);
@@ -104,8 +102,9 @@ const NetworkView: React.FC
               const node = networkData.nodes.find(n => n.id === nodeId);
               console.log('Found node:', node);
               if (node) {
-                setSelectedGoal(node);
-                setDialogMode(dialogMode);
+                GoalDialog.open(node, goalDialogMode, () => {
+                  fetchNetwork();
+                });
               }
             }
           }
@@ -230,7 +229,7 @@ const NetworkView: React.FC
         </Button>
 
 
-        <GoalDialog
+        {/*<GoalDialog
           open={dialogMode === 'create' || dialogMode === 'edit'}
           onClose={() => {
             setDialogMode(null);
@@ -251,7 +250,7 @@ const NetworkView: React.FC
             }}
             goal={selectedGoal}
           />
-        )}
+        )}*/}
 
         <Dialog
           open={dialogMode === 'relationship'}
