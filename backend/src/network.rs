@@ -14,9 +14,9 @@ pub struct NetworkData {
 #[derive(Debug, Serialize)]
 pub struct NetworkNode {
     //id: i64,
-    label: String,
-    title: String,
-    color: String,
+    //label: String,
+    //title: String,
+    //color: String,
     #[serde(flatten)]
     goal_data: Goal,
 }
@@ -113,9 +113,9 @@ pub async fn get_network_data(
 
         nodes.push(NetworkNode {
             //id: goal_id,
-            label: goal.name.clone(),
-            title: format!("{} ({})", goal.name, goal.goal_type.as_str()),
-            color: get_node_color(&goal.goal_type),
+            //label: goal.name.clone(),
+            //           title: format_node_title(&goal.name, &goal.goal_type),
+            //          color: get_node_color(&goal.goal_type),
             goal_data: goal.clone(),
         });
 
@@ -140,12 +140,11 @@ pub async fn get_network_data(
     Ok(Json(NetworkData { nodes, edges }))
 }
 
-fn get_node_color(goal_type: &GoalType) -> String {
-    match goal_type {
-        GoalType::Task => "#FF9999".to_string(),
-        GoalType::Routine => "#99FF99".to_string(),
-        GoalType::Directive => "#9999FF".to_string(),
-        GoalType::Achievement => "#FFFF99".to_string(),
-        GoalType::Project => "#FF99FF".to_string(),
-    }
+/*fn get_node_color(goal_type: &GoalType) -> String {
+    GOAL_COLORS.get(goal_type).unwrap_or(&"#CCCCCC").to_string()
 }
+
+fn format_node_title(name: &str, goal_type: &GoalType) -> String {
+    format!("{} ({})", name, goal_type.as_str())
+}
+*/
