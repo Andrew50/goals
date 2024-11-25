@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+
 import axios from 'axios';
 import { Network as VisNetwork } from 'vis-network/standalone';
 import { Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem, FormControl, InputLabel, Box, FormControlLabel, Checkbox } from '@mui/material';
@@ -33,91 +34,87 @@ const NetworkView: React.FC
     const [dialogMode, setDialogMode] = useState<DialogMode>(null);
 
     const updateNetwork = async () => {
-      try {
-        const options = {
-          nodes: {
-            shape: 'box',
-            margin: {
-              top: 10,
-              right: 10,
-              bottom: 10,
-              left: 10
-            },
-            font: { size: 14 }
+      const options = {
+        nodes: {
+          shape: 'box',
+          margin: {
+            top: 10,
+            right: 10,
+            bottom: 10,
+            left: 10
           },
-          edges: {
-            font: {
-              size: 12,
-              align: 'middle'
-            },
-            color: '#666666',
-            smooth: {
-              enabled: true,
-              type: 'continuous',
-              roundness: 0.5
-            }
+          font: { size: 14 }
+        },
+        edges: {
+          font: {
+            size: 12,
+            align: 'middle'
           },
-          layout: {
-            hierarchical: {
-              enabled: true,
-              direction: 'UD',
-              sortMethod: 'directed',
-              nodeSpacing: 14
-            }
-          },
-          manipulation: {
+          color: '#666666',
+          smooth: {
             enabled: true,
-            addNode: true,
-            addEdge: handleAddEdge,
-            editEdge: false,
-            deleteNode: false,
-            deleteEdge: false
-          },
-          interaction: {
-            navigationButtons: false,
-            hover: true,
-            dragNodes: true,
-            dragView: true,
-            zoomView: true,
-            selectable: true,
-            selectConnectedEdges: true,
-            hoverConnectedEdges: true,
+            type: 'continuous',
+            roundness: 0.5
           }
-        };
+        },
+        layout: {
+          hierarchical: {
+            enabled: true,
+            direction: 'UD',
+            sortMethod: 'directed',
+            nodeSpacing: 14
+          }
+        },
+        manipulation: {
+          enabled: true,
+          addNode: true,
+          addEdge: handleAddEdge,
+          editEdge: false,
+          deleteNode: false,
+          deleteEdge: false
+        },
+        interaction: {
+          navigationButtons: false,
+          hover: true,
+          dragNodes: true,
+          dragView: true,
+          zoomView: true,
+          selectable: true,
+          selectConnectedEdges: true,
+          hoverConnectedEdges: true,
+        }
+      };
 
-        if (networkContainer.current && networkData) {
-          const network = new VisNetwork(
-            networkContainer.current,
-            networkData,
-            options
-          );
+      if (networkContainer.current && networkData) {
+        const network = new VisNetwork(
+          networkContainer.current,
+          networkData,
+          options
+        );
 
 
-          const handleClick = (params: any, goalDialogMode: DialogMode) => {
-            params.event.preventDefault();
-            const nodeId = network.getNodeAt(params.pointer.DOM);
-            if (nodeId && networkData) {
-              const node = networkData.nodes.find(n => n.id === nodeId);
-              if (node) {
-                GoalDialog.open(node, goalDialogMode, () => {
-                  fetchNetwork();
-                });
-              }
+        const handleClick = (params: any, goalDialogMode: DialogMode) => {
+          params.event.preventDefault();
+          const nodeId = network.getNodeAt(params.pointer.DOM);
+          if (nodeId && networkData) {
+            const node = networkData.nodes.find(n => n.id === nodeId);
+            if (node) {
+              GoalDialog.open(node, goalDialogMode, () => {
+                fetchNetwork();
+              });
             }
           }
-          // Handle right-click for editing
-          network.on('oncontext', (params: any) => {
-            handleClick(params, 'edit');
-          });
-          network.on('click', (params: any) => {
-            handleClick(params, 'view');
-          });
-          setNetwork(network);
         }
-
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load network');
+        // Handle right-click for editing
+        network.on('oncontext', (params: any) => {
+          handleClick(params, 'edit');
+        });
+        network.on('click', (params: any) => {
+          handleClick(params, 'view');
+        });
+        setNetwork(network);
       }
+
     };
 
     // Initial data load and network setup

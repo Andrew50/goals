@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -13,7 +13,14 @@ import {
 } from '@mui/material';
 import { privateRequest } from '../utils/api';
 import { Goal, GoalType } from '../types';
-let singletonInstance: { open: Function; close: Function } | null = null;
+//let singletonInstance: { open: Function; close: Function } | null = null;
+type Mode = 'create' | 'edit' | 'view';
+let menuState = {
+    goal: {} as Goal,
+    mode: 'view' as Mode,
+    onSuccess: undefined as (() => void) | undefined,
+    isOpen: false
+};
 
 export const createRelationship = async (fromId: number, toId: number, relationshipType: string) => {
     return await privateRequest('goals/relationships', 'POST', {
@@ -23,41 +30,44 @@ export const createRelationship = async (fromId: number, toId: number, relations
     });
 };
 
-type Mode = 'create' | 'edit' | 'view';
 
-const GoalDialog: React.FC = () => {
-
+const GoalMenu: React.FC = () => {
+    //const singletonInstanceRef = useRef<{ open: Function; close: Function } | null>(null);
     const [isOpen, setIsOpen] = useState(false);
     const [goal, setGoal] = useState<Goal>({});
     const [mode, setMode] = useState<Mode>('view');
     const [error, setError] = useState<string>('');
     const [onSuccess, setOnSuccess] = useState<(() => void) | undefined>();
     const [title, setTitle] = useState<string>('');
-    const open = (goal: Goal, mode: Mode, onSuccess?: () => void) => {
+    const open = (goal: Goal, initialMode: Mode, onSuccess?: () => void) => {
+        console.log('GoalDialog open called');
         setGoal(goal);
-        setMode(mode);
+        setMode(initialMode);
         setOnSuccess(() => onSuccess);
-        setIsOpen(true);
         setTitle({
             'create': 'Create New Goal',
             'edit': 'Edit Goal',
             'view': 'View Goal'
-        }[mode]);
+        }[initialMode]);
+        setIsOpen(true);
+        menuState = { goal, mode: initialMode, onSuccess, isOpen: true };
     }
-    useEffect(() => {
-        console.log(goal);
-    }, [goal]);
-
-
     const close = () => {
         setIsOpen(false);
-        setGoal({});
-        setError('');
+        setTimeout(() => {
+            setGoal({});
+            setError('');
+            setOnSuccess(undefined);
+            setTitle('');
+            setMode('view');
+            menuState = { goal: {}, mode: 'view', onSuccess: undefined, isOpen: false };
+        }, 100);
     }
 
-    if (!singletonInstance) {
-        singletonInstance = { open, close };
-    }
+    useEffect(() => {
+        GoalMenu.open = open;
+        GoalMenu.close = close;
+    }, []);
 
     const handleChange = (newGoal: Goal) => {
         setGoal(newGoal);
@@ -524,16 +534,12 @@ const GoalDialog: React.FC = () => {
         </Dialog>
     );
 };
-
-GoalDialog.open = (goal: Goal, mode: Mode, onSuccess?: () => void) => {
-    if (!singletonInstance) {
-        throw new Error('GoalDialog instance not initialized');
-    }
-    singletonInstance.open(goal, mode, onSuccess);
+GoalMenu.open = (goal: Goal, initialMode: Mode, onSuccess?: () => void) => {
+    console.warn('GoalDialog not yet initialized');
 }
 
-GoalDialog.close = () => {
-    singletonInstance?.close();
+GoalMenu.close = () => {
+    console.warn('GoalDialog not yet initialized');
 }
 
-export default GoalDialog; 
+export default GoalMenu; 
