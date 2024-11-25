@@ -23,17 +23,22 @@ export const createRelationship = async (fromId: number, toId: number, relations
     });
 };
 
+interface GoalMenuComponent extends React.FC {
+    open: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
+    close: () => void;
+}
 
-const GoalMenu: React.FC = () => {
+
+const GoalMenu: GoalMenuComponent = () => {
     //const singletonInstanceRef = useRef<{ open: Function; close: Function } | null>(null);
     const [isOpen, setIsOpen] = useState(false);
     const [goal, setGoal] = useState<Goal>({} as Goal);
     const [mode, setMode] = useState<Mode>('view');
     const [error, setError] = useState<string>('');
-    const [onSuccess, setOnSuccess] = useState<(() => void) | undefined>();
+    const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
-    const open = (goal: Goal, initialMode: Mode, onSuccess?: () => void) => {
-        console.log('GoalDialog open called');
+    const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+        console.log('GoalMenu open called');
         setGoal(goal);
         setMode(initialMode);
         setOnSuccess(() => onSuccess);
@@ -45,15 +50,17 @@ const GoalMenu: React.FC = () => {
         setIsOpen(true);
     }
     const close = () => {
+        console.log('GoalMenu close called');
         setIsOpen(false);
         setTimeout(() => {
-            setGoal({});
+            setGoal({} as Goal);
             setError('');
             setOnSuccess(undefined);
             setTitle('');
             setMode('view');
         }, 100);
     }
+    const isViewOnly = mode === 'view';
 
     useEffect(() => {
         GoalMenu.open = open;
@@ -65,26 +72,19 @@ const GoalMenu: React.FC = () => {
     }
 
     const handleSubmit = async () => {
-        try {
-            if (mode === 'create') {
-                console.log('Attempting to create goal with data:', goal);
-                const response = await privateRequest<Goal>('goals/create', 'POST', goal);
-                Object.assign(goal, response);
-                return response;
-            } else if (mode === 'edit' && goal.id) {
-                try {
-                    const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', goal);
-                    return response;
-                } catch (err) {
-                    setError(err instanceof Error ? err.message : 'Failed to update goal');
-                    throw err;
-                }
-            }
-            onSuccess?.();
-            close();
-        } catch (err) {
-            // Error is handled in the respective functions
+        if (mode === 'create') {
+            console.log('Attempting to create goal with data:', goal);
+            const response = await privateRequest<Goal>('goals/create', 'POST', goal);
+            Object.assign(goal, response);
+            //return response;
+        } else if (mode === 'edit' && goal.id) {
+            const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', goal);
+            //return response;
         }
+        if (onSuccess) {
+            onSuccess(goal);
+        }
+        close();
     };
 
     const handleDelete = async () => {
@@ -95,7 +95,9 @@ const GoalMenu: React.FC = () => {
                 setError(err instanceof Error ? err.message : 'Failed to delete goal');
                 throw err;
             }
-            onSuccess?.();
+            if (onSuccess) {
+                onSuccess(goal);
+            }
             close();
         }
     };
@@ -111,7 +113,6 @@ const GoalMenu: React.FC = () => {
         }
     };
 
-    const isViewOnly = mode === 'view';
 
     const PriorityField = () => {
         return isViewOnly ? (
@@ -525,12 +526,12 @@ const GoalMenu: React.FC = () => {
         </Dialog>
     );
 };
-GoalMenu.open = (goal: Goal, initialMode: Mode, onSuccess?: () => void) => {
-    console.warn('GoalDialog not yet initialized');
+GoalMenu.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+    console.warn('GoalMenu not yet initialized');
 }
 
 GoalMenu.close = () => {
-    console.warn('GoalDialog not yet initialized');
+    console.warn('GoalMenu not yet initialized');
 }
 
 export default GoalMenu; 

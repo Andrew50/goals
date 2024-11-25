@@ -4,15 +4,32 @@ import axios from 'axios';
 import { Network as VisNetwork } from 'vis-network/standalone';
 import { Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem, FormControl, InputLabel, Box, FormControlLabel, Checkbox } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import AddLinkIcon from '@mui/icons-material/AddLink';
 import { createResizeObserver } from '../utils/resizeObserver';
-import { Goal, Relationship, NetworkNode, NetworkEdge } from '../types';
-import GoalDialog, { createRelationship } from './GoalDialog';
+import { Relationship, NetworkNode, NetworkEdge, Goal } from '../types';
+import GoalMenu, { createRelationship } from './GoalMenu';
 //import GoalView from '../../../GoalView';
 import { privateRequest } from '../utils/api';
 
 interface NetworkData {
   nodes: NetworkNode[];
   edges: NetworkEdge[];
+}
+
+const formatNetworkNode = (goal: Goal): NetworkNode => {
+  const colorMap = {
+    achievement: '#00ff00',
+    task: '#0000ff',
+    routine: '#ff0000',
+    directive: '#0000ff',
+    project: '#ff0000'
+  }
+  return {
+    ...goal,
+    label: goal.goal_type,
+    title: goal.name + ' (' + goal.goal_type + ')',
+    color: colorMap[goal.goal_type]
+  }
 }
 
 type DialogMode = 'create' | 'edit' | 'view' | 'relationship' | null;
@@ -62,12 +79,25 @@ const NetworkView: React.FC
           }
         },
         manipulation: {
-          enabled: true,
+          enabled: false,
           addNode: true,
-          addEdge: handleAddEdge,
+          addEdge: async function (data: any, callback: Function) {
+            try {
+              setPendingRelationship({
+                from: data.from,
+                to: data.to
+              });
+              setDialogMode('relationship');
+              // Don't create the edge yet - wait for dialog
+              callback(null);
+            } catch (err) {
+              console.error('Edge creation error:', err);
+              callback(null);
+            }
+          },
           editEdge: false,
           deleteNode: false,
-          deleteEdge: false
+          deleteEdge: false,
         },
         interaction: {
           navigationButtons: false,
@@ -79,7 +109,7 @@ const NetworkView: React.FC
           selectConnectedEdges: true,
           hoverConnectedEdges: true,
         }
-      };
+      }
 
       if (networkContainer.current && networkData) {
         const network = new VisNetwork(
@@ -89,13 +119,15 @@ const NetworkView: React.FC
         );
 
 
-        const handleClick = (params: any, goalDialogMode: DialogMode) => {
+
+
+        const handleClick = (params: any, goalDialogMode: "edit" | "view") => {
           params.event.preventDefault();
           const nodeId = network.getNodeAt(params.pointer.DOM);
           if (nodeId && networkData) {
             const node = networkData.nodes.find(n => n.id === nodeId);
             if (node) {
-              GoalDialog.open(node, goalDialogMode, () => {
+              GoalMenu.open(node, goalDialogMode, (goal: Goal) => {
                 fetchNetwork();
               });
             }
@@ -116,12 +148,8 @@ const NetworkView: React.FC
     // Initial data load and network setup
     useEffect(() => {
       const loadInitialData = async () => {
-        try {
-          await fetchNetwork();
-          await updateNetwork();
-        } catch (err) {
-          console.error('Failed to load initial data:', err);
-        }
+        await fetchNetwork();
+        await updateNetwork();
       };
 
       loadInitialData();
@@ -135,9 +163,9 @@ const NetworkView: React.FC
     }, [networkData]); // Only update when networkData changes
 
     const fetchNetwork = async () => {
-      const networkData = await privateRequest<NetworkData>('network');
-      console.log('Network data received:', networkData);
-      setNetworkData(networkData);
+      const response = await privateRequest<NetworkData>('network');
+      response.nodes = response.nodes.map(node => formatNetworkNode(node))
+      setNetworkData(response);
     };
 
 
@@ -153,23 +181,26 @@ const NetworkView: React.FC
       }
     }, [network]);
 
+
+    const handleAddNode = () => {
+      if (network && networkData) {
+        GoalMenu.open({} as Goal, 'create', (goal: Goal) => {
+          const newNode = formatNetworkNode(goal);
+          networkData.nodes.push(newNode);
+          setNetworkData({ ...networkData });
+        });
+      }
+    }
     // Add this function to handle edge creation
-    const handleAddEdge = (data: any, callback: Function) => {
-      setPendingRelationship({
-        from: data.from,
-        to: data.to
-      });
-      setDialogMode('relationship');
-      callback(null); // Cancel the default edge creation
-    };
+    const handleAddEdge = () => {
+      if (network) {
+        network.addEdgeMode();
+      }
+    }
 
     const handleCreateRelationship = async (fromId: number, toId: number, relationshipType: string) => {
-      try {
-        await createRelationship(fromId, toId, relationshipType);
-        await fetchNetwork(); // Refresh the network after creating relationship
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create relationship');
-      }
+      await createRelationship(fromId, toId, relationshipType);
+      //await fetchNetwork(); // Refresh the network after creating relationship
     };
 
     return (
@@ -183,6 +214,32 @@ const NetworkView: React.FC
           width: '100%'
         }} />
 
+        <Button
+          variant="contained"
+          color="primary"
+          style={{
+            position: 'absolute',
+            top: '1rem',
+            left: '1rem',
+            minWidth: '32px',
+            width: '32px',
+            height: '32px',
+            padding: '0',
+            borderRadius: '4px',
+            backgroundColor: '#f3f3f3',
+            border: '1px solid #c1c1c1',
+            boxShadow: 'none'
+          }}
+          sx={{
+            '&:hover': {
+              backgroundColor: '#e6e6e6',
+              boxShadow: 'none'
+            }
+          }}
+          onClick={handleAddNode}
+        >
+          <AddIcon style={{ fontSize: '20px', color: '#666666' }} />
+        </Button>
         <Button
           variant="contained"
           color="primary"
@@ -205,34 +262,11 @@ const NetworkView: React.FC
               boxShadow: 'none'
             }
           }}
-          onClick={() => setDialogMode('create')}
+          onClick={handleAddEdge}
         >
-          <AddIcon style={{ fontSize: '20px', color: '#666666' }} />
+          <AddLinkIcon style={{ fontSize: '20px', color: '#666666' }} />
         </Button>
 
-
-        {/*<GoalDialog
-          open={dialogMode === 'create' || dialogMode === 'edit'}
-          onClose={() => {
-            setDialogMode(null);
-            setFormGoal({ name: '' });
-            setSelectedGoal(null);
-          }}
-          goal={dialogMode === 'create' ? formGoal : (selectedGoal || {})}
-          onChange={handleGoalChange}
-          onSuccess={fetchNetwork}
-          mode={(dialogMode === 'create' || dialogMode === 'edit') ? dialogMode : 'create'}
-          error={error}
-        />
-        {dialogMode === 'view' && selectedGoal && (
-          <GoalView
-            onClose={() => {
-              setDialogMode(null);
-              setSelectedGoal(null);
-            }}
-            goal={selectedGoal}
-          />
-        )}*/}
 
         <Dialog
           open={dialogMode === 'relationship'}
