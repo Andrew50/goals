@@ -1,26 +1,18 @@
 mod auth;
+mod calender;
 mod db;
 mod goal;
+mod middleware;
+mod network;
+mod traversal;
 
-use axum::{
-    http::Request,
-    middleware::{self, Next},
-    response::Response,
-};
-use axum::{Extension, Router};
+use axum::{middleware::from_fn, Extension, Router};
 use dotenvy::dotenv;
 use hyper::header::HeaderValue;
-use std::net::SocketAddr;
+use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::Level;
 use tracing_subscriber;
-
-async fn log_requests<B>(request: Request<B>, next: Next<B>) -> Response {
-    println!("Incoming request: {} {}", request.method(), request.uri());
-    let response = next.run(request).await;
-    println!("Outgoing response: {}", response.status());
-    response
-}
 
 #[tokio::main]
 async fn main() {
@@ -47,24 +39,39 @@ async fn main() {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // Middleware for request logging
-    let log_layer = middleware::from_fn(log_requests);
-
     // Set up the application router
     let app = Router::new()
-        .nest("/goals", goal::create_routes())
         .nest("/auth", auth::create_routes())
-        .layer(Extension(pool)) // Add the database connection
-        .layer(cors) // Add CORS handling
-        .route_layer(log_layer); // Add request logging middleware
+        .nest(
+            "/goals",
+            goal::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
+            "/network",
+            network::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
+            "/traversal",
+            traversal::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
+            "/calender",
+            calender::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .layer(Extension(pool))
+        .layer(cors);
 
     // Set the server address
-    let addr = SocketAddr::from(([0, 0, 0, 0], 5057));
-    println!("Listening on {}", addr);
-
-    // Run the server
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+    //let addr = SocketAddr::from(([0, 0, 0, 0], 5057));
+    let listener = TcpListener::bind("0.0.0.0:5057").await.unwrap();
+    println!("Listening on {}", "0.0.0.0:5057");
+    axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
+
+    // Start the server
+    /*Server::bind(&addr)
+    .serve(app.into_make_service())
+        .await
+        .unwrap();*/
 }
