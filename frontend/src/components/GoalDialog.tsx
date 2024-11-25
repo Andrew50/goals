@@ -46,10 +46,6 @@ const GoalMenu: React.FC = () => {
     }
     const close = () => {
         setIsOpen(false);
-<<<<<<< HEAD
-        setGoal({} as Goal);
-        setError('');
-=======
         setTimeout(() => {
             setGoal({});
             setError('');
@@ -57,7 +53,6 @@ const GoalMenu: React.FC = () => {
             setTitle('');
             setMode('view');
         }, 100);
->>>>>>> 1447ba41ccd335d3e92a2b4c832ee4c0c19195ff
     }
 
     useEffect(() => {
