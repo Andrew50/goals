@@ -1096,7 +1096,7 @@ const MyCalendar: React.FC = () => {
         }
       </DndContext>
 
-      <GoalDialog
+      {/* <GoalDialog
         open={isGoalDialogOpen}
         onClose={() => setIsGoalDialogOpen(false)}
         goal={newGoalData}
@@ -1104,9 +1104,8 @@ const MyCalendar: React.FC = () => {
         mode="create"
         error=""
         onSuccess={handleGoalSuccess}
-      />
+      />*/}
     </div>
   );
 };
-
 export default MyCalendar;
