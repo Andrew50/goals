@@ -11,20 +11,10 @@ import {
     Checkbox,
     Box
 } from '@mui/material';
-
 import { privateRequest } from '../utils/api';
 import { Goal, GoalType } from '../types';
-interface GoalDialogProps {
-    open: boolean;
-    onClose: () => void;
-    goal: Partial<Goal>;
-    onChange: (goal: Partial<Goal>) => void;
-    mode: 'create' | 'edit' | 'view';
-    error: string;
-    onSuccess?: () => void;
-}
+let singletonInstance: { open: Function; close: Function } | null = null;
 
-// Export the relationship creation function
 export const createRelationship = async (fromId: number, toId: number, relationshipType: string) => {
     return await privateRequest('goals/relationships', 'POST', {
         from_id: fromId,
@@ -33,171 +23,74 @@ export const createRelationship = async (fromId: number, toId: number, relations
     });
 };
 
-const RoutineSpecificFields = ({ goal, onChange, isViewOnly }: {
-    goal: Partial<Goal>;
-    onChange: (goal: Partial<Goal>) => void;
-    isViewOnly: boolean;
-}) => {
-    return (
-        <>
-            <TextField
-                label="Routine Type"
-                value={goal.routine_type || ''}
-                onChange={(e) => {
-                    onChange({
-                        ...goal,
-                        routine_type: e.target.value as 'task' | 'achievement'
-                    } as Goal);
-                }}
-                select
-                fullWidth
-                margin="dense"
-                disabled={isViewOnly}
-            >
-                <MenuItem value="task">Task</MenuItem>
-                <MenuItem value="achievement">Achievement</MenuItem>
-            </TextField>
-            <TextField
-                label="Routine Name"
-                value={goal.routine_name || ''}
-                onChange={(e) => onChange({
-                    ...goal,
-                    routine_name: e.target.value
-                } as Goal)}
-                fullWidth
-                margin="dense"
-                disabled={isViewOnly}
-                inputProps={{
-                    autoComplete: 'off'
-                }}
-            />
-            <TextField
-                label="Routine Description"
-                value={goal.routine_description || ''}
-                onChange={(e) => onChange({
-                    ...goal,
-                    routine_description: e.target.value
-                } as Goal)}
-                fullWidth
-                margin="dense"
-                multiline
-                rows={4}
-                disabled={isViewOnly}
-                inputProps={{
-                    autoComplete: 'off'
-                }}
-            />
-            <TextField
-                label="Routine Duration (minutes)"
-                type="number"
-                value={goal.routine_duration || ''}
-                onChange={(e) => onChange({
-                    ...goal,
-                    routine_duration: parseInt(e.target.value) || undefined
-                })}
-                fullWidth
-                margin="dense"
-                disabled={isViewOnly}
-            />
-            <TextField
-                label="Routine Time (24-hour format)"
-                type="time"
-                value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
-                onChange={(e) => {
-                    const [hours, minutes] = e.target.value.split(':').map(Number);
-                    const timeInMs = (hours * 60 + minutes) * 60 * 1000;
-                    onChange({
-                        ...goal,
-                        routine_time: timeInMs
-                    });
-                }}
-                fullWidth
-                margin="dense"
-                InputLabelProps={{ shrink: true }}
-                inputProps={{ step: 300 }}
-                disabled={isViewOnly}
-            />
-        </>
-    );
-};
+type Mode = 'create' | 'edit' | 'view';
 
-const GoalDialog: React.FC<GoalDialogProps> = ({
-    open,
-    onClose,
-    goal,
-    onChange,
-    mode,
-    error,
-    onSuccess
-}) => {
-    const isViewOnly = mode === 'view';
-    const title = {
-        'create': 'Create New Goal',
-        'edit': 'Edit Goal',
-        'view': 'View Goal'
-    }[mode];
+const GoalDialog: React.FC = () => {
 
-    const [errorState, setErrorState] = useState<string>('');
-    const token = localStorage.getItem('authToken');
+    const [isOpen, setIsOpen] = useState(false);
+    const [goal, setGoal] = useState<Goal>({});
+    const [mode, setMode] = useState<Mode>('view');
+    const [error, setError] = useState<string>('');
+    const [onSuccess, setOnSuccess] = useState<(() => void) | undefined>();
+    const [title, setTitle] = useState<string>('');
+    const open = (goal: Goal, mode: Mode, onSuccess?: () => void) => {
+        setGoal(goal);
+        setMode(mode);
+        setOnSuccess(() => onSuccess);
+        setIsOpen(true);
+        setTitle({
+            'create': 'Create New Goal',
+            'edit': 'Edit Goal',
+            'view': 'View Goal'
+        }[mode]);
+    }
 
-    const config = {
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        }
-    };
+    const close = () => {
+        setIsOpen(false);
+        setGoal({});
+        setError('');
+    }
+
+    if (!singletonInstance) {
+        singletonInstance = { open, close };
+    }
 
     const handleSubmit = async () => {
         try {
             if (mode === 'create') {
-                await createGoal(goal);
+                console.log('Attempting to create goal with data:', goal);
+                const response = await privateRequest<Goal>('goals/create', 'POST', goal);
+                Object.assign(goal, response);
+                return response;
             } else if (mode === 'edit' && goal.id) {
-                await updateGoal(goal.id, goal as Goal);
+                try {
+                    const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', goal);
+                    return response;
+                } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Failed to update goal');
+                    throw err;
+                }
             }
             onSuccess?.();
-            onClose();
+            close();
         } catch (err) {
             // Error is handled in the respective functions
         }
     };
 
-    const createGoal = async (goal: Partial<Goal>) => {
-        console.log('Attempting to create goal with data:', goal);
-        const response = await privateRequest<Goal>('goals/create', 'POST', goal);
-        Object.assign(goal, response);
-        return response;
-    };
-
-    const updateGoal = async (goalId: number, goal: Goal) => {
-        try {
-            const response = await privateRequest<Goal>(`goals/${goalId}`, 'PUT', goal);
-            return response;
-        } catch (err) {
-            setErrorState(err instanceof Error ? err.message : 'Failed to update goal');
-            throw err;
-        }
-    };
-
     const handleDelete = async () => {
-        try {
-            if (goal.id) {
-                await deleteGoal(goal.id);
-                onSuccess?.();
-                onClose();
+        if (goal.id) {
+            try {
+                await privateRequest(`goals/${goal.id}`, 'DELETE');
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Failed to delete goal');
+                throw err;
             }
-        } catch (err) {
-            // Error is handled in deleteGoal
+            onSuccess?.();
+            close();
         }
     };
-
-    const deleteGoal = async (goalId: number) => {
-        try {
-            await privateRequest(`goals/${goalId}`, 'DELETE');
-        } catch (err) {
-            setErrorState(err instanceof Error ? err.message : 'Failed to delete goal');
-            throw err;
-        }
-    };
+    ;
     const formatDateForInput = (timestamp: number | string | undefined): string => {
         if (!timestamp) return '';
         try {
@@ -209,8 +102,14 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
         }
     };
 
+    const isViewOnly = mode === 'view';
+
     const PriorityField = () => {
-        return (
+        return isViewOnly ? (
+            <Box sx={{ mb: 2 }}>
+                <strong>Priority:</strong> {goal.priority ? goal.priority.charAt(0).toUpperCase() + goal.priority.slice(1) : 'Not set'}
+            </Box>
+        ) : (
             <TextField
                 label="Priority"
                 select
@@ -231,8 +130,16 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
     };
 
     const ScheduleField = () => {
-        if (goal.goal_type !== 'task') return null;
-        return (
+        return isViewOnly ? (
+            <>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toLocaleTimeString() : 'Not set'}
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Duration:</strong> {goal.duration ? `${goal.duration} hours` : 'Not set'}
+                </Box>
+            </>
+        ) : (
             <>
                 <TextField
                     label="Schedule Date"
@@ -280,9 +187,16 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
     };
 
     const DateFields = () => {
-
-
-        return (
+        return isViewOnly ? (
+            <>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Start Date:</strong> {goal.start_timestamp ? new Date(goal.start_timestamp).toLocaleString() : 'Not set'}
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                    <strong>End Date:</strong> {goal.end_timestamp ? new Date(goal.end_timestamp).toLocaleString() : 'Not set'}
+                </Box>
+            </>
+        ) : (
             <>
                 <TextField
                     label="Start Date"
@@ -325,9 +239,6 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
     };
 
     const CompletedField = () => {
-        // Only show completed field for achievement goals
-        if (goal.goal_type !== 'achievement') return null;
-
         return (
             <FormControlLabel
                 control={
@@ -346,9 +257,20 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
     };
 
     const FrequencyField = () => {
-        if (goal.goal_type !== 'routine') return null;
+        const frequencyMap: { [key: string]: string } = {
+            'P1D': 'Daily',
+            'P7D': 'Weekly',
+            'P14D': 'Bi-weekly',
+            'P1M': 'Monthly',
+            'P3M': 'Quarterly',
+            'P1Y': 'Yearly'
+        };
 
-        return (
+        return isViewOnly ? (
+            <Box sx={{ mb: 2 }}>
+                <strong>Frequency:</strong> {goal.frequency ? frequencyMap[goal.frequency] : 'Not set'}
+            </Box>
+        ) : (
             <TextField
                 label="Frequency"
                 value={goal.frequency || ''}
@@ -371,6 +293,161 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
         );
     };
 
+    const commonFields = isViewOnly ? (
+        <>
+            <Box sx={{ mb: 2 }}>
+                <strong>Goal Type:</strong> {goal.goal_type ? goal.goal_type.charAt(0).toUpperCase() + goal.goal_type.slice(1) : 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>Name:</strong> {goal.name || 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>Description:</strong> {goal.description || 'Not set'}
+            </Box>
+        </>
+    ) : (
+        <>
+            <TextField
+                label="Goal Type"
+                value={goal.goal_type || ''}
+                onChange={(e) => onChange({
+                    ...goal,
+                    goal_type: e.target.value as GoalType
+                })}
+                select
+                fullWidth
+                margin="dense"
+                required
+                disabled={isViewOnly}
+            >
+                <MenuItem value="directive">Directive</MenuItem>
+                <MenuItem value="project">Project</MenuItem>
+                <MenuItem value="achievement">Achievement</MenuItem>
+                <MenuItem value="routine">Routine</MenuItem>
+                <MenuItem value="task">Task</MenuItem>
+            </TextField>
+            <TextField
+                label="Name"
+                value={goal.name || ''}
+                onChange={(e) => onChange({ ...goal, name: e.target.value })}
+                fullWidth
+                margin="dense"
+                required
+                disabled={isViewOnly}
+            />
+            <TextField
+                label="Description"
+                value={goal.description || ''}
+                onChange={(e) => onChange({ ...goal, description: e.target.value })}
+                fullWidth
+                margin="dense"
+                multiline
+                disabled={isViewOnly}
+            />
+        </>
+    );
+
+    const RoutineFields = () => (
+        isViewOnly ? (
+            <>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Routine Type:</strong> {goal.routine_type ? goal.routine_type.charAt(0).toUpperCase() + goal.routine_type.slice(1) : 'Not set'}
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Routine Name:</strong> {goal.routine_name || 'Not set'}
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Routine Description:</strong> {goal.routine_description || 'Not set'}
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Routine Duration:</strong> {goal.routine_duration ? `${goal.routine_duration} minutes` : 'Not set'}
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                    <strong>Routine Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
+                </Box>
+            </>
+        ) : (
+            <>
+                <TextField
+                    label="Routine Type"
+                    value={goal.routine_type || ''}
+                    onChange={(e) => {
+                        onChange({
+                            ...goal,
+                            routine_type: e.target.value as 'task' | 'achievement'
+                        } as Goal);
+                    }}
+                    select
+                    fullWidth
+                    margin="dense"
+                    disabled={isViewOnly}
+                >
+                    <MenuItem value="task">Task</MenuItem>
+                    <MenuItem value="achievement">Achievement</MenuItem>
+                </TextField>
+                <TextField
+                    label="Routine Name"
+                    value={goal.routine_name || ''}
+                    onChange={(e) => onChange({
+                        ...goal,
+                        routine_name: e.target.value
+                    } as Goal)}
+                    fullWidth
+                    margin="dense"
+                    disabled={isViewOnly}
+                    inputProps={{
+                        autoComplete: 'off'
+                    }}
+                />
+                <TextField
+                    label="Routine Description"
+                    value={goal.routine_description || ''}
+                    onChange={(e) => onChange({
+                        ...goal,
+                        routine_description: e.target.value
+                    } as Goal)}
+                    fullWidth
+                    margin="dense"
+                    multiline
+                    rows={4}
+                    disabled={isViewOnly}
+                    inputProps={{
+                        autoComplete: 'off'
+                    }}
+                />
+                <TextField
+                    label="Routine Duration (minutes)"
+                    type="number"
+                    value={goal.routine_duration || ''}
+                    onChange={(e) => onChange({
+                        ...goal,
+                        routine_duration: parseInt(e.target.value) || undefined
+                    })}
+                    fullWidth
+                    margin="dense"
+                    disabled={isViewOnly}
+                />
+                <TextField
+                    label="Routine Time (24-hour format)"
+                    type="time"
+                    value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
+                    onChange={(e) => {
+                        const [hours, minutes] = e.target.value.split(':').map(Number);
+                        const timeInMs = (hours * 60 + minutes) * 60 * 1000;
+                        onChange({
+                            ...goal,
+                            routine_time: timeInMs
+                        });
+                    }}
+                    fullWidth
+                    margin="dense"
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ step: 300 }}
+                    disabled={isViewOnly}
+                />
+            </>
+        )
+    );
     const renderTypeSpecificFields = () => {
         if (!goal.goal_type) return null;
 
@@ -394,7 +471,7 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
                         <PriorityField />
                         <FrequencyField />
                         <DateFields />
-                        <RoutineSpecificFields goal={goal} onChange={onChange} isViewOnly={isViewOnly} />
+                        <RoutineFields />
                     </>
                 );
             case 'task':
@@ -407,61 +484,13 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
         }
     };
 
-    // Goal type selection field
-    const goalTypeField = (
-        <TextField
-            label="Goal Type"
-            value={goal.goal_type || ''}
-            onChange={(e) => onChange({
-                ...goal,
-                goal_type: e.target.value as GoalType
-            })}
-            select
-            fullWidth
-            margin="dense"
-            required
-            disabled={isViewOnly}
-        >
-            <MenuItem value="directive">Directive</MenuItem>
-            <MenuItem value="project">Project</MenuItem>
-            <MenuItem value="achievement">Achievement</MenuItem>
-            <MenuItem value="routine">Routine</MenuItem>
-            <MenuItem value="task">Task</MenuItem>
-        </TextField>
-    );
-
-    // Common fields
-    const commonFields = (
-        <>
-            {goalTypeField}
-            <TextField
-                label="Name"
-                value={goal.name || ''}
-                onChange={(e) => onChange({ ...goal, name: e.target.value })}
-                fullWidth
-                margin="dense"
-                required
-                disabled={isViewOnly}
-            />
-            <TextField
-                label="Description"
-                value={goal.description || ''}
-                onChange={(e) => onChange({ ...goal, description: e.target.value })}
-                fullWidth
-                margin="dense"
-                multiline
-                disabled={isViewOnly}
-            />
-        </>
-    );
-
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+        <Dialog open={isOpen} onClose={close} maxWidth="sm" fullWidth>
             <DialogTitle>{title}</DialogTitle>
             <DialogContent>
-                {errorState && (
+                {error && (
                     <Box sx={{ color: 'error.main', mb: 2 }}>
-                        {errorState}
+                        {error}
                     </Box>
                 )}
                 {commonFields}
@@ -474,7 +503,7 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
                     </Button>
                 )}
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button onClick={onClose}>
+                    <Button onClick={close}>
                         {isViewOnly ? 'Close' : 'Cancel'}
                     </Button>
                     {!isViewOnly && (
@@ -487,5 +516,16 @@ const GoalDialog: React.FC<GoalDialogProps> = ({
         </Dialog>
     );
 };
+
+GoalDialog.open = (goal: Goal, mode: Mode, onSuccess?: () => void) => {
+    if (!singletonInstance) {
+        throw new Error('GoalDialog instance not initialized');
+    }
+    singletonInstance.open(goal, mode, onSuccess);
+}
+
+GoalDialog.close = () => {
+    singletonInstance?.close();
+}
 
 export default GoalDialog; 
