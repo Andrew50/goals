@@ -28,7 +28,7 @@ type Mode = 'create' | 'edit' | 'view';
 const GoalDialog: React.FC = () => {
 
     const [isOpen, setIsOpen] = useState(false);
-    const [goal, setGoal] = useState<Goal>({});
+    const [goal, setGoal] = useState<Goal>({} as Goal);
     const [mode, setMode] = useState<Mode>('view');
     const [error, setError] = useState<string>('');
     const [onSuccess, setOnSuccess] = useState<(() => void) | undefined>();
@@ -51,7 +51,7 @@ const GoalDialog: React.FC = () => {
 
     const close = () => {
         setIsOpen(false);
-        setGoal({});
+        setGoal({} as Goal);
         setError('');
     }
 
@@ -122,7 +122,7 @@ const GoalDialog: React.FC = () => {
                 label="Priority"
                 select
                 value={goal.priority || ''}
-                handleChange={(e) => handleChange({
+                onChange={(e) => handleChange({
                     ...goal,
                     priority: e.target.value as 'high' | 'medium' | 'low'
                 })}
@@ -153,7 +153,7 @@ const GoalDialog: React.FC = () => {
                     label="Schedule Date"
                     type="time"
                     value={formatDateForInput(goal.scheduled_timestamp)}
-                    handleChange={(e) => {
+                    onChange={(e) => {
                         const [hours, minutes] = e.target.value.split(':').map(Number);
                         const timeInMs = (hours * 60 + minutes) * 60 * 1000;
                         handleChange({
@@ -173,7 +173,7 @@ const GoalDialog: React.FC = () => {
                     label="Duration (hours)"
                     type="number"
                     value={goal.duration || ''}
-                    handleChange={(e) => {
+                    onChange={(e) => {
                         const duration = e.target.value ? parseFloat(e.target.value) : undefined;
                         handleChange({
                             ...goal,
@@ -210,7 +210,7 @@ const GoalDialog: React.FC = () => {
                     label="Start Date"
                     type="datetime-local"
                     value={formatDateForInput(goal.start_timestamp)}
-                    handleChange={(e) => {
+                    onChange={(e) => {
                         const timestamp = e.target.value
                             ? parseInt(String(new Date(e.target.value).getTime()))
                             : undefined;
@@ -228,7 +228,7 @@ const GoalDialog: React.FC = () => {
                     label="End Date"
                     type="datetime-local"
                     value={formatDateForInput(goal.end_timestamp)}
-                    handleChange={(e) => {
+                    onChange={(e) => {
                         const timestamp = e.target.value
                             ? parseInt(String(new Date(e.target.value).getTime()))
                             : undefined;
@@ -252,7 +252,7 @@ const GoalDialog: React.FC = () => {
                 control={
                     <Checkbox
                         checked={goal.completed || false}
-                        handleChange={(e) => handleChange({
+                        onChange={(e) => handleChange({
                             ...goal,
                             completed: e.target.checked
                         })}
@@ -282,7 +282,7 @@ const GoalDialog: React.FC = () => {
             <TextField
                 label="Frequency"
                 value={goal.frequency || ''}
-                handleChange={(e) => handleChange({
+                onChange={(e) => handleChange({
                     ...goal,
                     frequency: e.target.value
                 })}
@@ -318,7 +318,7 @@ const GoalDialog: React.FC = () => {
             <TextField
                 label="Goal Type"
                 value={goal.goal_type || ''}
-                handleChange={(e) => handleChange({
+                onChange={(e) => handleChange({
                     ...goal,
                     goal_type: e.target.value as GoalType
                 })}
@@ -337,7 +337,7 @@ const GoalDialog: React.FC = () => {
             <TextField
                 label="Name"
                 value={goal.name || ''}
-                handleChange={(e) => handleChange({ ...goal, name: e.target.value })}
+                onChange={(e) => handleChange({ ...goal, name: e.target.value })}
                 fullWidth
                 margin="dense"
                 required
@@ -346,7 +346,7 @@ const GoalDialog: React.FC = () => {
             <TextField
                 label="Description"
                 value={goal.description || ''}
-                handleChange={(e) => handleChange({ ...goal, description: e.target.value })}
+                onChange={(e) => handleChange({ ...goal, description: e.target.value })}
                 fullWidth
                 margin="dense"
                 multiline
@@ -379,7 +379,7 @@ const GoalDialog: React.FC = () => {
                 <TextField
                     label="Routine Type"
                     value={goal.routine_type || ''}
-                    handleChange={(e) => {
+                    onChange={(e) => {
                         handleChange({
                             ...goal,
                             routine_type: e.target.value as 'task' | 'achievement'
@@ -396,7 +396,7 @@ const GoalDialog: React.FC = () => {
                 <TextField
                     label="Routine Name"
                     value={goal.routine_name || ''}
-                    handleChange={(e) => handleChange({
+                    onChange={(e) => handleChange({
                         ...goal,
                         routine_name: e.target.value
                     } as Goal)}
@@ -410,7 +410,7 @@ const GoalDialog: React.FC = () => {
                 <TextField
                     label="Routine Description"
                     value={goal.routine_description || ''}
-                    handleChange={(e) => handleChange({
+                    onChange={(e) => handleChange({
                         ...goal,
                         routine_description: e.target.value
                     } as Goal)}
@@ -427,7 +427,7 @@ const GoalDialog: React.FC = () => {
                     label="Routine Duration (minutes)"
                     type="number"
                     value={goal.routine_duration || ''}
-                    handleChange={(e) => handleChange({
+                    onChange={(e) => handleChange({
                         ...goal,
                         routine_duration: parseInt(e.target.value) || undefined
                     })}
@@ -439,7 +439,7 @@ const GoalDialog: React.FC = () => {
                     label="Routine Time (24-hour format)"
                     type="time"
                     value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
-                    handleChange={(e) => {
+                    onChange={(e) => {
                         const [hours, minutes] = e.target.value.split(':').map(Number);
                         const timeInMs = (hours * 60 + minutes) * 60 * 1000;
                         handleChange({
