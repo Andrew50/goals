@@ -56,4 +56,5 @@ export interface NetworkEdge {
     to: number;
     label?: string;
     arrows?: string;
+    relationship_type?: 'parent' | 'queue';
 }
