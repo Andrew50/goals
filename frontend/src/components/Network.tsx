@@ -18,10 +18,6 @@ interface NetworkData {
 type DialogMode = 'create' | 'edit' | 'view' | 'relationship' | null;
 const NetworkView: React.FC
   = () => {
-    // State for new goal
-    const [formGoal, setFormGoal] = useState<Partial<Goal>>({});
-
-    // State for new relationship
     const [newRelationship, setNewRelationship] = useState<Relationship>({
       from_id: 0,
       to_id: 0,
@@ -165,14 +161,6 @@ const NetworkView: React.FC
       });
       setDialogMode('relationship');
       callback(null); // Cancel the default edge creation
-    };
-
-    const handleGoalChange = (goal: Partial<Goal>) => {
-      if (dialogMode === 'create') {
-        setFormGoal(goal);
-      } else {
-        setSelectedGoal(goal as Goal);
-      }
     };
 
     const handleCreateRelationship = async (fromId: number, toId: number, relationshipType: string) => {
