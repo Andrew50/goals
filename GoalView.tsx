@@ -13,7 +13,7 @@ import {
 import EditIcon from '@mui/icons-material/Edit';
 import CloseIcon from '@mui/icons-material/Close';
 import { Goal, GoalType } from './frontend/src/types';
-import GoalDialog from './frontend/src/components/GoalDialog';
+import GoalDialog from './frontend/src/components/GoalMenu';
 import { privateRequest } from './frontend/src/utils/api';
 
 interface GoalViewProps {
