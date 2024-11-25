@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   DndContext, 
   useDraggable,
@@ -36,9 +36,10 @@ interface TaskActionsMenuProps {
   isOpen: boolean;
   onClose: () => void;
   onTimeSelect: (startTime: Date, endTime: Date) => void;
-  onDelete: () => void;
+  onDelete: (options: { deleteAll: boolean }) => void;
   onRepeat: (options: RepeatOptions) => void;
   task: Task;
+  isEvent?: boolean;
 }
 
 interface DraggableTaskProps {
@@ -63,6 +64,7 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
+    console.log('Task clicked:', task.title);
     onTaskClick(task, { x: rect.right + 5, y: rect.top });
   };
 
@@ -225,6 +227,14 @@ interface SelectedTaskState {
   task: Task;
   position: { x: number; y: number };
   date?: Date;
+  isEvent?: boolean;
+}
+
+interface CalendarDropAreaProps {
+  events: Event[];
+  onDeleteEvent: (id: string) => void;
+  onDropTask: (date: Date) => void;
+  onEventClick: (event: Event) => void;
 }
 
 const CalendarDropArea = ({ 
@@ -232,12 +242,7 @@ const CalendarDropArea = ({
   onDeleteEvent, 
   onDropTask,
   onEventClick 
-}: { 
-  events: Event[];
-  onDeleteEvent: (id: string) => void;
-  onDropTask: (date: Date) => void;
-  onEventClick: (event: Event) => void;
-}) => {
+}: CalendarDropAreaProps) => {
   const { setNodeRef, isOver } = useDroppable({
     id: 'calendar'
   });
@@ -480,18 +485,24 @@ const TaskActionsMenu = ({
   onTimeSelect, 
   onDelete, 
   onRepeat, 
-  task 
+  task,
+  isEvent 
 }: TaskActionsMenuProps) => {
+  console.log('TaskActionsMenu rendered:', { isOpen, task });
+  
   const [startTime, setStartTime] = useState(() => {
     const now = new Date();
     now.setMinutes(0, 0, 0);
     return now;
   });
   const [duration, setDuration] = useState(60);
+  const [showDeleteOptions, setShowDeleteOptions] = useState(false);
   const [showRepeatOptions, setShowRepeatOptions] = useState(false);
-  const [repeatFrequency, setRepeatFrequency] = useState('none');
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [repeatFrequency, setRepeatFrequency] = useState('one-time');
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [repeatType, setRepeatType] = useState('one-time');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const daysOfWeek = [
     'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
@@ -505,292 +516,320 @@ const TaskActionsMenu = ({
     );
   };
 
-  if (!isOpen) return null;
-
-  const handleTimeSelect = () => {
-    const endTime = new Date(startTime);
-    endTime.setMinutes(startTime.getMinutes() + duration);
-    onTimeSelect(startTime, endTime);
-    onClose();
+  const handleDeleteClick = () => {
+    setShowDeleteConfirm(true);
   };
 
   const handleRepeatClick = () => {
     setShowRepeatOptions(true);
+    setShowDeleteOptions(false);
   };
 
-  const handleRepeatSelect = () => {
-    onRepeat({
-      frequency: repeatFrequency,
-      days: selectedDays,
-      startDate: selectedDate
-    });
-    setShowRepeatOptions(false);
+  const handleTimeSelect = () => {
+    const eventStartTime = new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+      startTime.getHours(),
+      startTime.getMinutes()
+    );
+    
+    const eventEndTime = new Date(eventStartTime);
+    eventEndTime.setMinutes(eventStartTime.getMinutes() + duration);
+    
+    onTimeSelect(eventStartTime, eventEndTime);
     onClose();
   };
 
-  return (
-    <div 
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      {!showRepeatOptions ? (
-        // Main Menu
-        <div 
-          style={{
-            backgroundColor: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            overflow: 'hidden',
-            width: '400px',
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ padding: '24px', borderBottom: '1px solid #eee' }}>
-            <h3 style={{ margin: '0', color: '#333', fontSize: '20px', fontWeight: 600 }}>
-              {task.title}
-            </h3>
-          </div>
-          
-          <div style={{ padding: '24px' }}>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Date:
-              </label>
-              <input
-                type="date"
-                value={selectedDate.toISOString().split('T')[0]}
-                onChange={(e) => setSelectedDate(new Date(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none',
-                  marginBottom: '16px'
-                }}
-              />
-              
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Start Time:
-              </label>
-              <input
-                type="time"
-                value={startTime.toTimeString().slice(0, 5)}
-                onChange={(e) => {
-                  const [hours, minutes] = e.target.value.split(':');
-                  const newTime = new Date(startTime);
-                  newTime.setHours(parseInt(hours), parseInt(minutes), 0);
-                  setStartTime(newTime);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none'
-                }}
-              />
-            </div>
+  const handleDeleteConfirm = (deleteAll: boolean) => {
+    onDelete({ deleteAll });
+    onClose();
+  };
 
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Duration:
-              </label>
-              <select
-                value={duration}
-                onChange={(e) => setDuration(Number(e.target.value))}
+  const handleRepeatConfirm = () => {
+    const repeatOptions: RepeatOptions = {
+      frequency: repeatFrequency,
+      days: selectedDays,
+      startDate: new Date(
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        selectedDate.getDate(),
+        startTime.getHours(),
+        startTime.getMinutes()
+      )
+    };
+    onRepeat(repeatOptions);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 1000,
+    }}
+    onClick={onClose}
+    >
+      <div 
+        onClick={e => e.stopPropagation()}
+        style={{
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+          overflow: 'hidden',
+          width: '400px',
+        }}
+      >
+        {showDeleteConfirm ? (
+          <div style={{ padding: '24px' }}>
+            <h4 style={{ margin: '0 0 16px 0' }}>Delete Event</h4>
+            {isEvent && (
+              <button
+                onClick={() => handleDeleteConfirm(true)}
                 style={{
                   width: '100%',
-                  padding: '12px',
+                  padding: '10px',
+                  marginBottom: '8px',
+                  border: '1px solid #ff4444',
                   borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none'
+                  background: 'white',
+                  color: '#ff4444',
+                  cursor: 'pointer'
                 }}
               >
-                <option value={15}>15 minutes</option>
-                <option value={30}>30 minutes</option>
-                <option value={60}>1 hour</option>
-                <option value={90}>1.5 hours</option>
-                <option value={120}>2 hours</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                Delete All Recurring Events
+              </button>
+            )}
+            <button
+              onClick={() => handleDeleteConfirm(false)}
+              style={{
+                width: '100%',
+                padding: '10px',
+                marginBottom: '8px',
+                border: '1px solid #ff4444',
+                borderRadius: '6px',
+                background: 'white',
+                color: '#ff4444',
+                cursor: 'pointer'
+              }}
+            >
+              Delete This Event
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(false)}
+              style={{
+                width: '100%',
+                padding: '10px',
+                border: '1px solid #e0e0e0',
+                borderRadius: '6px',
+                background: 'white',
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : showRepeatOptions ? (
+          <div style={{ padding: '24px' }}>
+            <h4 style={{ margin: '0 0 16px 0' }}>Repeat Options</h4>
+            <select
+              value={repeatFrequency}
+              onChange={(e) => setRepeatFrequency(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                marginBottom: '16px',
+                borderRadius: '6px',
+                border: '1px solid #e0e0e0'
+              }}
+            >
+              <option value="one-time">One Time</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Bi-Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+            <div style={{ display: 'flex', gap: '8px' }}>
               <button
-                onClick={handleRepeatClick}
+                onClick={handleRepeatConfirm}
                 style={{
-                  padding: '10px 20px',
+                  flex: 1,
+                  padding: '10px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  background: '#2196f3',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                Apply
+              </button>
+              <button
+                onClick={() => setShowRepeatOptions(false)}
+                style={{
+                  flex: 1,
+                  padding: '10px',
                   border: '1px solid #e0e0e0',
                   borderRadius: '6px',
                   background: 'white',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
+                  cursor: 'pointer'
                 }}
               >
-                🔄 Repeat
+                Cancel
               </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ padding: '24px', borderBottom: '1px solid #eee' }}>
+              <h3 style={{ margin: '0', fontSize: '20px' }}>{task.title}</h3>
+            </div>
+            <div style={{ padding: '24px' }}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px',
+                  color: '#666',
+                  fontSize: '14px'
+                }}>
+                  Date:
+                </label>
+                <input
+                  type="date"
+                  value={selectedDate.toISOString().split('T')[0]}
+                  onChange={(e) => setSelectedDate(new Date(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    border: '1px solid #e0e0e0',
+                    fontSize: '14px',
+                    outline: 'none'
+                  }}
+                />
+              </div>
 
-              <div style={{ display: 'flex', gap: '12px' }}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px',
+                  color: '#666',
+                  fontSize: '14px'
+                }}>
+                  Start Time:
+                </label>
+                <input
+                  type="time"
+                  value={`${startTime.getHours().toString().padStart(2, '0')}:${startTime.getMinutes().toString().padStart(2, '0')}`}
+                  onChange={(e) => {
+                    const [hours, minutes] = e.target.value.split(':').map(Number);
+                    const newTime = new Date(startTime);
+                    newTime.setHours(hours, minutes, 0, 0);
+                    setStartTime(newTime);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    border: '1px solid #e0e0e0',
+                    fontSize: '14px',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px',
+                  color: '#666',
+                  fontSize: '14px'
+                }}>
+                  Duration:
+                </label>
+                <select
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    border: '1px solid #e0e0e0',
+                    fontSize: '14px',
+                    outline: 'none'
+                  }}
+                >
+                  <option value={15}>15 minutes</option>
+                  <option value={30}>30 minutes</option>
+                  <option value={60}>1 hour</option>
+                  <option value={90}>1.5 hours</option>
+                  <option value={120}>2 hours</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '24px' }}>
                 <button
-                  onClick={onDelete}
+                  onClick={handleDeleteClick}
                   style={{
                     padding: '10px 20px',
                     border: '1px solid #ff4444',
                     borderRadius: '6px',
                     background: 'white',
                     color: '#ff4444',
-                    cursor: 'pointer',
-                    fontSize: '14px'
+                    cursor: 'pointer'
                   }}
                 >
-                  🗑️ Delete
+                  Delete
                 </button>
-                
                 <button
-                  onClick={handleTimeSelect}
+                  onClick={() => setShowRepeatOptions(true)}
+                  style={{
+                    padding: '10px 20px',
+                    border: '1px solid #2196f3',
+                    borderRadius: '6px',
+                    background: 'white',
+                    color: '#2196f3',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Repeat
+                </button>
+                <button
+                  onClick={() => {
+                    const eventStartTime = new Date(selectedDate);
+                    eventStartTime.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
+                    
+                    const eventEndTime = new Date(eventStartTime);
+                    eventEndTime.setMinutes(eventStartTime.getMinutes() + duration);
+                    
+                    onTimeSelect(eventStartTime, eventEndTime);
+                  }}
                   style={{
                     padding: '10px 20px',
                     border: 'none',
                     borderRadius: '6px',
                     background: '#2196f3',
                     color: 'white',
-                    cursor: 'pointer',
-                    fontSize: '14px'
+                    cursor: 'pointer'
                   }}
                 >
-                  Reschedule
+                  {isEvent ? 'Update' : 'Schedule'}
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      ) : (
-        // Repeat Options Menu
-        <div 
-          style={{
-            backgroundColor: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            overflow: 'hidden',
-            width: '400px',
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ padding: '24px', borderBottom: '1px solid #eee' }}>
-            <h3 style={{ margin: '0', color: '#333', fontSize: '20px', fontWeight: 600 }}>
-              Set Repeat Options
-            </h3>
-          </div>
-          
-          <div style={{ padding: '24px' }}>
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Repeat Frequency:
-              </label>
-              <select
-                value={repeatFrequency}
-                onChange={(e) => setRepeatFrequency(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none',
-                  marginBottom: '16px'
-                }}
-              >
-                <option value="none">One-time Event</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="biweekly">Bi-weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-              </select>
-
-              {(repeatFrequency === 'weekly' || repeatFrequency === 'biweekly') && (
-                <div style={{ marginTop: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                    Repeat on Days:
-                  </label>
-                  <div style={{ 
-                    display: 'flex', 
-                    flexWrap: 'wrap', 
-                    gap: '8px',
-                    marginBottom: '16px'
-                  }}>
-                    {daysOfWeek.map(day => (
-                      <button
-                        key={day}
-                        onClick={() => handleDayToggle(day)}
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: '20px',
-                          border: '1px solid #e0e0e0',
-                          background: selectedDays.includes(day) ? '#2196f3' : 'white',
-                          color: selectedDays.includes(day) ? 'white' : '#333',
-                          cursor: 'pointer',
-                          fontSize: '14px',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        {day.slice(0, 3)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button
-                onClick={() => setShowRepeatOptions(false)}
-                style={{
-                  padding: '10px 20px',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '6px',
-                  background: 'white',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
-              >
-                Back
-              </button>
-              <button
-                onClick={handleRepeatSelect}
-                style={{
-                  padding: '10px 20px',
-                  border: 'none',
-                  borderRadius: '6px',
-                  background: '#2196f3',
-                  color: 'white',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
-              >
-                Set Repeat
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
@@ -839,13 +878,7 @@ const MyCalendar: React.FC = () => {
   const handleTimeSelect = (startTime: Date, endTime: Date) => {
     if (!selectedTask) return;
 
-    // Check for duplicates
-    if (isDuplicateEvent(startTime, endTime, selectedTask.task.id)) {
-      alert('There is already an event scheduled at this time. Please choose a different time.');
-      return;
-    }
-
-    // Create a new event from the task
+    // Create new event with exact dates
     const newEvent: Event = {
       id: selectedTask.task.id,
       title: selectedTask.task.title,
@@ -854,15 +887,9 @@ const MyCalendar: React.FC = () => {
       type: selectedTask.task.type
     };
 
-    // Add the event to the calendar
     setEvents(prevEvents => [...prevEvents, newEvent]);
-    
-    // Remove the task from the task list if it's not already on the calendar
     setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-    
-    // Close the modal and clear selection
     setSelectedTask(null);
-    setModalOpen(false);
   };
 
   const handleDropTask = (date: Date) => {
@@ -905,109 +932,138 @@ const MyCalendar: React.FC = () => {
     setNewTask('');
   };
 
-  const handleDeleteEvent = (eventId: string) => {
-    setEvents((prevEvents) => prevEvents.filter((event) => event.id !== eventId));
-  };
-
-  const handleDeleteTask = (taskId: string) => {
-    setTasks(prev => prev.filter(t => t.id !== taskId));
+  const handleDeleteTask = (taskId: string, options?: { deleteAll: boolean }) => {
+    if (options?.deleteAll) {
+      // Delete all recurring instances (events that start with the same base ID)
+      const baseId = taskId.split('-')[0]; // Get the base ID without the recurring suffix
+      setEvents(prevEvents => prevEvents.filter(event => !event.id.startsWith(baseId)));
+    } else {
+      // Delete only the specific instance
+      setEvents(prevEvents => prevEvents.filter(event => event.id !== taskId));
+    }
+    
+    // Remove from tasks list if it exists there
+    setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
     setSelectedTask(null);
   };
 
   const handleRepeat = (options: RepeatOptions) => {
     if (!selectedTask) return;
     
-    const { frequency, days, startDate } = options;
+    const { frequency, startDate } = options;
     const events: Event[] = [];
     
-    // Generate events based on frequency
+    const createEventDate = (baseDate: Date, daysToAdd: number = 0) => {
+      return new Date(
+        baseDate.getFullYear(),
+        baseDate.getMonth(),
+        baseDate.getDate() + daysToAdd,
+        baseDate.getHours(),
+        baseDate.getMinutes(),
+        0
+      );
+    };
+
     switch (frequency) {
       case 'daily':
-        // Create daily events for the next 30 days
         for (let i = 0; i < 30; i++) {
-          const eventDate = new Date(startDate);
-          eventDate.setDate(eventDate.getDate() + i);
+          const eventStartTime = createEventDate(startDate, i);
+          const eventEndTime = new Date(eventStartTime);
+          eventEndTime.setMinutes(eventStartTime.getMinutes() + 60);
+
           events.push({
             id: `${selectedTask.task.id}-${i}`,
             title: selectedTask.task.title,
-            start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)), // Default 1 hour duration
+            start: eventStartTime,
+            end: eventEndTime,
             type: selectedTask.task.type
           });
         }
         break;
 
       case 'weekly':
+        for (let i = 0; i < 12; i++) {
+          const eventStartTime = createEventDate(startDate, i * 7);
+          const eventEndTime = new Date(eventStartTime);
+          eventEndTime.setMinutes(eventStartTime.getMinutes() + 60);
+
+          events.push({
+            id: `${selectedTask.task.id}-week-${i}`,
+            title: selectedTask.task.title,
+            start: eventStartTime,
+            end: eventEndTime,
+            type: selectedTask.task.type
+          });
+        }
+        break;
+
       case 'biweekly':
-        // Create events for selected days for the next 12 weeks
-        const weekIncrement = frequency === 'weekly' ? 1 : 2;
-        for (let week = 0; week < 12; week++) {
-          days.forEach(day => {
-            const eventDate = new Date(startDate);
-            eventDate.setDate(eventDate.getDate() + (getDayNumber(day) - eventDate.getDay()) + (week * 7 * weekIncrement));
-            events.push({
-              id: `${selectedTask.task.id}-${week}-${day}`,
-              title: selectedTask.task.title,
-              start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-              end: new Date(eventDate.setHours(startDate.getHours() + 1)),
-              type: selectedTask.task.type
-            });
+        for (let i = 0; i < 12; i++) {
+          const eventStartTime = createEventDate(startDate, i * 14);
+          const eventEndTime = new Date(eventStartTime);
+          eventEndTime.setMinutes(eventStartTime.getMinutes() + 60);
+
+          events.push({
+            id: `${selectedTask.task.id}-biweek-${i}`,
+            title: selectedTask.task.title,
+            start: eventStartTime,
+            end: eventEndTime,
+            type: selectedTask.task.type
           });
         }
         break;
 
       case 'monthly':
-        // Create monthly events for the next 12 months
         for (let i = 0; i < 12; i++) {
-          const eventDate = new Date(startDate);
-          eventDate.setMonth(eventDate.getMonth() + i);
+          const eventStartTime = new Date(startDate);
+          eventStartTime.setMonth(eventStartTime.getMonth() + i);
+          const eventEndTime = new Date(eventStartTime);
+          eventEndTime.setMinutes(eventStartTime.getMinutes() + 60);
+
           events.push({
-            id: `${selectedTask.task.id}-${i}`,
+            id: `${selectedTask.task.id}-month-${i}`,
             title: selectedTask.task.title,
-            start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)),
+            start: eventStartTime,
+            end: eventEndTime,
             type: selectedTask.task.type
           });
         }
         break;
 
       case 'yearly':
-        // Create yearly events for the next 5 years
         for (let i = 0; i < 5; i++) {
-          const eventDate = new Date(startDate);
-          eventDate.setFullYear(eventDate.getFullYear() + i);
+          const eventStartTime = new Date(startDate);
+          eventStartTime.setFullYear(eventStartTime.getFullYear() + i);
+          const eventEndTime = new Date(eventStartTime);
+          eventEndTime.setMinutes(eventStartTime.getMinutes() + 60);
+
           events.push({
-            id: `${selectedTask.task.id}-${i}`,
+            id: `${selectedTask.task.id}-year-${i}`,
             title: selectedTask.task.title,
-            start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)),
+            start: eventStartTime,
+            end: eventEndTime,
             type: selectedTask.task.type
           });
         }
         break;
     }
 
-    // Add all generated events to the calendar
     setEvents(prevEvents => [...prevEvents, ...events]);
-    
-    // Remove the task from the task list
     setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-    
-    // Close the modal and clear selection
     setSelectedTask(null);
   };
 
-  // Helper function to convert day name to number
-  const getDayNumber = (day: string): number => {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return days.indexOf(day);
-  };
-
   const handleTaskClick = (task: Task, position: { x: number; y: number }) => {
-    setSelectedTask({ task, position });
+    console.log('handleTaskClick called:', task.title);
+    setSelectedTask({ 
+      task, 
+      position,
+      isEvent: false 
+    });
   };
 
   const handleEventClick = (event: Event) => {
+    console.log('handleEventClick called:', event.title);
     const task: Task = {
       id: event.id,
       title: event.title,
@@ -1017,63 +1073,74 @@ const MyCalendar: React.FC = () => {
     setSelectedTask({
       task,
       position: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 200 },
-      date: event.start
+      date: event.start,
+      isEvent: true
     });
   };
 
+  // Add this to monitor selectedTask changes
+  useEffect(() => {
+    console.log('selectedTask changed:', selectedTask);
+  }, [selectedTask]);
+
   return (
-    <DndContext 
-      onDragEnd={handleDragEnd}
-      onDragStart={(event) => {
-        const task = tasks.find(t => t.id === event.active.id);
-        setDraggedTask(task || null);
-      }}
-      onDragCancel={() => setDraggedTask(null)}
-    >
-      <div style={{ display: 'flex', height: '100vh' }}>
-        <TaskList 
-          tasks={tasks}
-          onAddTask={handleAddTask}
-          newTask={newTask}
-          setNewTask={setNewTask}
-          onTaskClick={handleTaskClick}
-        />
-        <CalendarDropArea 
-          events={events} 
-          onDeleteEvent={handleDeleteEvent}
-          onDropTask={handleDropTask}
-          onEventClick={handleEventClick}
-        />
-      </div>
-      <DragOverlay>
-        {draggedTask ? <TaskDragOverlay task={draggedTask} /> : null}
-      </DragOverlay>
-      
-      {modalOpen && selectedTask && (
-        <TimeSelectionModal
-          isOpen={modalOpen}
-          onClose={() => setModalOpen(false)}
-          onSave={handleTimeSelect}
-          defaultDate={selectedTask.date || new Date()}
-          taskTitle={selectedTask.task.title}
-        />
-      )}
-      
+    <div>
+      <DndContext 
+        onDragEnd={handleDragEnd}
+        onDragStart={(event) => {
+          const task = tasks.find(t => t.id === event.active.id);
+          setDraggedTask(task || null);
+        }}
+        onDragCancel={() => setDraggedTask(null)}
+      >
+        <div style={{ display: 'flex', height: '100vh' }}>
+          <TaskList 
+            tasks={tasks}
+            onAddTask={handleAddTask}
+            newTask={newTask}
+            setNewTask={setNewTask}
+            onTaskClick={handleTaskClick}
+          />
+          <CalendarDropArea 
+            events={events} 
+            onDeleteEvent={(id) => handleDeleteTask(id)}
+            onDropTask={handleDropTask}
+            onEventClick={handleEventClick}
+          />
+        </div>
+        
+        <DragOverlay>
+          {draggedTask ? <TaskDragOverlay task={draggedTask} /> : null}
+        </DragOverlay>
+      </DndContext>
+
+      {/* TaskActionsMenu outside DndContext to avoid interference */}
       {selectedTask && (
         <TaskActionsMenu
-          isOpen={!!selectedTask}
-          onClose={() => setSelectedTask(null)}
-          onTimeSelect={handleTimeSelect}
-          onDelete={() => {
-            handleDeleteTask(selectedTask.task.id);
-            setEvents(prev => prev.filter(event => event.id !== selectedTask.task.id));
+          isOpen={true}
+          onClose={() => {
+            console.log('Closing TaskActionsMenu');
+            setSelectedTask(null);
           }}
-          onRepeat={handleRepeat}
+          onTimeSelect={(startTime: Date, endTime: Date) => {
+            console.log('Time selected:', startTime, endTime);
+            handleTimeSelect(startTime, endTime);
+          }}
+          onDelete={(options) => {
+            console.log('Delete requested:', options);
+            handleDeleteTask(selectedTask.task.id, options);
+          }}
+          onRepeat={(options) => {
+            console.log('Repeat requested:', options);
+            handleRepeat(options);
+          }}
           task={selectedTask.task}
+          isEvent={selectedTask.isEvent}
         />
       )}
-    </DndContext>
+    </div>
   );
 };
 
 export default MyCalendar;
+
