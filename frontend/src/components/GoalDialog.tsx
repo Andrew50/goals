@@ -15,13 +15,6 @@ import { privateRequest } from '../utils/api';
 import { Goal, GoalType } from '../types';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
-let menuState = {
-    goal: {} as Goal,
-    mode: 'view' as Mode,
-    onSuccess: undefined as (() => void) | undefined,
-    isOpen: false
-};
-
 export const createRelationship = async (fromId: number, toId: number, relationshipType: string) => {
     return await privateRequest('goals/relationships', 'POST', {
         from_id: fromId,
@@ -50,7 +43,6 @@ const GoalMenu: React.FC = () => {
             'view': 'View Goal'
         }[initialMode]);
         setIsOpen(true);
-        menuState = { goal, mode: initialMode, onSuccess, isOpen: true };
     }
     const close = () => {
         setIsOpen(false);
@@ -60,7 +52,6 @@ const GoalMenu: React.FC = () => {
             setOnSuccess(undefined);
             setTitle('');
             setMode('view');
-            menuState = { goal: {}, mode: 'view', onSuccess: undefined, isOpen: false };
         }, 100);
     }
 
