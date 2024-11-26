@@ -12,15 +12,24 @@ import {
     Box
 } from '@mui/material';
 import { privateRequest } from '../utils/api';
-import { Goal, GoalType } from '../types';
+import { Goal, GoalType, RelationshipType } from '../types';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
-export const createRelationship = async (fromId: number, toId: number, relationshipType: string) => {
-    return await privateRequest('goals/relationships', 'POST', {
-        from_id: fromId,
-        to_id: toId,
-        relationship_type: relationshipType
-    });
+export const createRelationship = async (fromId: number, toId: number, relationshipType: RelationshipType) => {
+    try {
+        return await privateRequest('goals/relationship', 'POST', {
+            from_id: fromId,
+            to_id: toId,
+            relationship_type: relationshipType
+        });
+    } catch (error: any) {
+        if (error.response && error.response.status === 500) {
+            console.error('Error creating relationship:', error.response.data);
+        } else {
+            console.error('Error creating relationship:', error);
+        }
+        throw error;
+    }
 };
 
 interface GoalMenuComponent extends React.FC {
@@ -60,6 +69,8 @@ const GoalMenu: GoalMenuComponent = () => {
             setMode('view');
         }, 100);
     }
+
+
     const isViewOnly = mode === 'view';
 
     useEffect(() => {
@@ -71,20 +82,62 @@ const GoalMenu: GoalMenuComponent = () => {
         setGoal(newGoal);
     }
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (another: boolean = false) => {
+        if (another && mode !== 'create') {
+            throw new Error('Cannot create another goal in non-create mode');
+        }
+        const validationErrors: string[] = [];
+
+        if (!goal.goal_type) {
+            validationErrors.push('Goal type is required');
+        }
+
+        if (!goal.name) {
+            validationErrors.push('Name is required');
+        }
+
+        // Additional type-specific validations
+        if (goal.goal_type) {
+            switch (goal.goal_type) {
+                case 'routine':
+                    if (!goal.frequency) {
+                        validationErrors.push('Frequency is required for routine goals');
+                    }
+                    break;
+                case 'task':
+                    if (!goal.duration) {
+                        validationErrors.push('Duration is required for task goals');
+                    }
+                    break;
+                case 'project':
+                case 'achievement':
+                    if (!goal.start_timestamp) {
+                        validationErrors.push('Start timestamp is required for project and achievement goals');
+                    }
+                    break;
+            }
+        }
+
+        if (validationErrors.length > 0) {
+            setError(validationErrors.join('\n'));
+            return;
+        }
+
+        // Existing submission logic
         if (mode === 'create') {
             console.log('Attempting to create goal with data:', goal);
             const response = await privateRequest<Goal>('goals/create', 'POST', goal);
             Object.assign(goal, response);
-            //return response;
         } else if (mode === 'edit' && goal.id) {
             const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', goal);
-            //return response;
         }
+
         if (onSuccess) {
             onSuccess(goal);
         }
-        close();
+        if (!another) {
+            close();
+        }
     };
 
     const handleDelete = async () => {
@@ -495,7 +548,18 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     return (
-        <Dialog open={isOpen} onClose={close} maxWidth="sm" fullWidth>
+        <Dialog
+            open={isOpen}
+            onClose={close}
+            maxWidth="sm"
+            fullWidth
+            onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
+                    event.preventDefault();
+                    handleSubmit();
+                }
+            }}
+        >
             <DialogTitle>{title}</DialogTitle>
             <DialogContent>
                 {error && (
@@ -517,8 +581,13 @@ const GoalMenu: GoalMenuComponent = () => {
                         {isViewOnly ? 'Close' : 'Cancel'}
                     </Button>
                     {!isViewOnly && (
-                        <Button onClick={handleSubmit} color="primary">
+                        <Button onClick={() => handleSubmit()} color="primary">
                             {mode === 'create' ? 'Create' : 'Save'}
+                        </Button>
+                    )}
+                    {mode === 'create' && (
+                        <Button onClick={() => handleSubmit(true)} color="primary">
+                            Create Another
                         </Button>
                     )}
                 </Box>
