@@ -1,63 +1,68 @@
 services:
     goals_backend:
+        container_name: goals_backend
         build:
             context: ./backend
-            dockerfile: Dockerfile.dev
+            dockerfile: Dockerfile.prod
         restart: unless-stopped
-        ports:
-          - "5057:5057"
-        volumes:
-          - ./backend/:/usr/src/app
-          - /usr/src/app/target
+        expose:
+          - "5057"
         networks:
-            - dev_network
-            #    db:
-            #build:
-            #context: ./db
-            #dockerfile: Dockerfile.dev
-            #ports:
-            #- "5432:5432"
-            #networks:
-            #- dev_network
-            #volumes:
-            #- goal_db:/var/lib/postgresql/data
-            #restart: unless-stopped
+            - prod_network
+
     goals_db:
-      build:
-          context: ./db
-          dockerfile: Dockerfile.dev
-      ports:
-        - "7474:7474"
-        - "7687:7687"
-      volumes:
-        - goal_db:/data
-      networks:
-        - dev_network
+        container_name: goals_db
+        build:
+            context: ./db
+            dockerfile: Dockerfile.prod
+        #ports:
+          #- "7474:7474"
+        #- "7687:7687"
+        expose:
+          - "7474"
+          - "7687"
+        volumes:
+          - prod_goal_db:/data
+        networks:
+          - prod_network
 
     goals_frontend:
+        container_name: goals_frontend
         build:
             context: ./frontend
-            dockerfile: Dockerfile.dev
-        volumes:
-          - ./frontend:/app
-          - /app/node_modules
-        environment:
-          - CHOKIDAR_USEPOLLING=true #enable polling
-        ports:
-          - "3000:3000"
+            dockerfile: Dockerfile.prod
+        expose:
+          - "3000"
+        restart: unless-stopped
+        networks:
+          - prod_network
+        
+    goals_router:
+        container_name: goals_router
+        build:
+            context: ./router
+            dockerfile: Dockerfile.prod
+        expose:
+          - "80"
+        depends_on:
+          - goals_backend
+          - goals_frontend
+        networks:
+          - prod_network
         restart: unless-stopped
 
     goals_cloudflared:
-      image: cloudflare/cloudflared:latest
-      command: tunnel run --token ${GOALS_CLOUDFLARED_TOKEN}
-      restart: unless-stopped
-      networks:
-        - dev_network
+        container_name: goals_cloudflared
+        image: cloudflare/cloudflared:latest
+        command: tunnel run --token ${GOALS_CLOUDFLARED_TOKEN}
+        restart: unless-stopped
+        networks:
+          - prod_network
 
 volumes:
-  goal_db:
+    prod_goal_db:
 
 networks:
-  dev_network:
-    driver: bridge
+    prod_network:
+        driver: bridge
     

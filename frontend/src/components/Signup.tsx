@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { publicRequest } from "../utils/api";
 import {
   Container,
   Paper,
@@ -10,6 +11,11 @@ import {
   Box,
   Alert
 } from '@mui/material';
+
+interface SignupResponse {
+  message: string;
+  token: string;
+}
 
 const Signup: React.FC = () => {
   const [username, setUsername] = useState<string>("");
@@ -24,12 +30,13 @@ const Signup: React.FC = () => {
     setSuccess(null);
 
     try {
-      const response = await axios.post("http://localhost:5057/auth/signup", {
-        username,
-        password,
-      });
+      const response = await publicRequest<SignupResponse>(
+        'auth/signup',
+        'POST',
+        { username, password }
+      );
 
-      setSuccess(response.data.message);
+      setSuccess(response.message);
       setTimeout(() => navigate("/signin"), 2000); // Redirect to sign-in after 2 seconds
     } catch (err: any) {
       if (err.response?.status === 409) {

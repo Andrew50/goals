@@ -1,0 +1,22 @@
+# Build stage
+FROM node:18-alpine as builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+ENV REACT_APP_API_URL=https://goals.atlantis.trading
+RUN npm run build
+
+# Runtime stage
+FROM node:18-alpine
+WORKDIR /app
+# Install serve to run the production build
+RUN npm install -g serve
+# Copy built static files
+COPY --from=builder /app/build ./build
+
+ENV REACT_APP_API_URL=https://goals.atlantis.trading
+EXPOSE 3000
+
+# Use serve instead of npm start
+CMD ["serve", "-s", "build", "-l", "3000"]
