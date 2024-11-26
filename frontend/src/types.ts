@@ -1,6 +1,7 @@
 export type GoalType = 'directive' | 'project' | 'achievement' | 'routine' | 'task';
+export type RelationshipType = 'child' | 'queue';
 export interface Goal {
-    id?: number;
+    id: number;
     name: string;
     description?: string;
     goal_type: GoalType;
@@ -56,5 +57,5 @@ export interface NetworkEdge {
     to: number;
     label?: string;
     arrows?: string;
-    relationship_type?: 'parent' | 'queue';
+    relationship_type?: RelationshipType;
 }

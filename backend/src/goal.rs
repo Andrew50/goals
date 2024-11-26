@@ -57,6 +57,11 @@ pub enum GoalType {
     Routine,
     Task,
 }
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub enum RelationshipType {
+    Child,
+    Queue,
+}
 
 impl GoalType {
     pub fn as_str(&self) -> &'static str {
@@ -82,13 +87,6 @@ impl std::fmt::Display for GoalType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum RelationshipType {
-    Parent,
-    Child,
-    Queue,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Relationship {
     pub from_id: i64,
@@ -101,7 +99,35 @@ pub fn create_routes() -> Router {
         .route("/create", post(create_goal_handler))
         .route("/:id", put(update_goal_handler))
         .route("/:id", delete(delete_goal_handler))
-        .route("/relationships", post(create_relationship_handler))
+        .route("/relationship", post(create_relationship_handler))
+        .route(
+            "/relationship/:from_id/:to_id",
+            delete(delete_relationship_handler),
+        )
+}
+
+pub async fn delete_relationship_handler(
+    Extension(graph): Extension<Graph>,
+    Path((from_id, to_id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let query = query(
+        "MATCH (from:Goal)-[r]->(to:Goal) 
+         WHERE id(from) = $from_id AND id(to) = $to_id 
+         DELETE r",
+    )
+    .param("from_id", from_id)
+    .param("to_id", to_id);
+
+    match graph.run(query).await {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(e) => {
+            eprintln!("Error deleting relationship: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error deleting relationship: {}", e),
+            ))
+        }
+    }
 }
 
 pub async fn create_goal_handler(
@@ -122,8 +148,6 @@ pub async fn create_goal_handler(
     if goal.user_id.unwrap_or(0) < 0 {
         validation_errors.push(&error_msg);
     }
-
-    // Goal type specific validation
     match goal.goal_type {
         GoalType::Routine => {
             if goal.frequency.is_none() {
@@ -140,30 +164,21 @@ pub async fn create_goal_handler(
                 validation_errors
                     .push("Start timestamp is required for project and achievement goals");
             }
-            /*if goal.end_timestamp.is_none() {
-                validation_errors
-                    .push("End timestamp is required for project and achievement goals");
-            }*/
         }
         _ => {}
     }
-
-    // If there are any validation errors, return them all
     if !validation_errors.is_empty() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("Validation failed:\n- {}", validation_errors.join("\n- ")),
         ));
     }
-
-    // Attempt to create the goal
     match goal.create_goal(&graph).await {
         Ok(created_goal) => {
             println!("Successfully created goal: {:?}", created_goal);
             Ok((StatusCode::CREATED, Json(created_goal)))
         }
         Err(e) => {
-            // Enhanced error logging
             eprintln!("Error creating goal: {:?}", e);
             eprintln!("Goal data that caused error: {:?}", goal);
             eprintln!("Error details: {:#?}", e);
@@ -418,14 +433,17 @@ impl Goal {
             }
 
             // Create relationship if validation passes
-            let create_query = neo4rs::query(&format!(
+            let query_string = format!(
                 "MATCH (from:Goal), (to:Goal) 
                      WHERE id(from) = $from_id AND id(to) = $to_id 
                      CREATE (from)-[:{}]->(to)",
-                relationship.relationship_type
-            ))
-            .param("from_id", relationship.from_id)
-            .param("to_id", relationship.to_id);
+                relationship.relationship_type.to_uppercase()
+            );
+            println!("Query string: {}", query_string);
+            println!("with params: {:?}", relationship);
+            let create_query = neo4rs::query(&query_string)
+                .param("from_id", relationship.from_id)
+                .param("to_id", relationship.to_id);
 
             graph.run(create_query).await?;
             Ok(())

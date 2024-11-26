@@ -25,8 +25,10 @@ pub struct NetworkNode {
 pub struct NetworkEdge {
     from: i64,
     to: i64,
-    label: String,
-    arrows: String,
+    //label: String,
+    #[serde(rename = "relationship_type")]
+    relationship_type: String,
+    //arrows: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,6 +36,7 @@ struct RelationshipData {
     #[serde(default)]
     to: Option<i64>,
     #[serde(default)]
+    #[serde(rename = "type")]
     type_: String,
 }
 
@@ -46,8 +49,9 @@ pub async fn get_network_data(
     Extension(user_id): Extension<i64>,
 ) -> Result<Json<NetworkData>, (StatusCode, String)> {
     println!("Fetching network data for user: {}", user_id);
-    let query = query(
-        "MATCH (g:Goal) 
+
+    // Print the query for debugging
+    let query_str = "MATCH (g:Goal) 
          WHERE g.user_id = $user_id
          OPTIONAL MATCH (g)-[r]->(g2:Goal)
          WHERE g2.user_id = $user_id
@@ -66,9 +70,16 @@ pub async fn get_network_data(
             frequency: g.frequency,
             id: id(g)
          } as g, 
-         collect(DISTINCT {to: id(g2), type: type(r)}) as relationships",
-    )
-    .param("user_id", user_id);
+         collect(DISTINCT CASE
+             WHEN r IS NOT NULL THEN {
+                to: id(g2), 
+                type: type(r)
+            }
+            ELSE NULL
+         END) as relationships";
+
+    println!("Executing query: {}", query_str);
+    let query = query(query_str).param("user_id", user_id);
 
     let mut result = graph.execute(query).await.map_err(|e| {
         eprintln!("Database query failed: {:?}", e);
@@ -88,21 +99,15 @@ pub async fn get_network_data(
             format!("Error fetching row: {}", e),
         )
     })? {
+        // Debug print the raw row data
+        println!("Raw row data: {:?}", row);
+
         let goal: Goal = row.get("g").map_err(|e| {
             eprintln!("Error deserializing goal: {:?}", e);
             eprintln!("Row data: {:?}", row);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Error deserializing goal: {}", e),
-            )
-        })?;
-
-        let relationships: Vec<RelationshipData> = row.get("relationships").map_err(|e| {
-            eprintln!("Error deserializing relationships: {:?}", e);
-            eprintln!("Row data: {:?}", row);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Error deserializing relationships: {}", e),
             )
         })?;
 
@@ -119,32 +124,44 @@ pub async fn get_network_data(
             goal_data: goal.clone(),
         });
 
+        let relationships: Vec<RelationshipData> = row.get("relationships").map_err(|e| {
+            eprintln!("Error deserializing relationships: {:?}", e);
+            eprintln!("Row data: {:?}", row);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error deserializing relationships: {}", e),
+            )
+        })?;
+
+        // Debug print the relationships
+        println!("Deserialized relationships: {:?}", relationships);
+
         for rel in relationships {
             if let Some(to_id) = rel.to {
                 if to_id != 0 {
+                    // Debug print each relationship before creating NetworkEdge
+                    println!(
+                        "Creating edge - from: {}, to: {}, type: '{}'",
+                        goal_id, to_id, rel.type_
+                    );
+
                     edges.push(NetworkEdge {
                         from: goal_id,
                         to: to_id,
-                        label: rel.type_.clone(),
-                        arrows: "to".to_string(),
+                        relationship_type: rel.type_.to_lowercase(),
+                        //arrows: "to".to_string(),
                     });
                 }
             }
         }
     }
 
-    println!("Successfully fetched network data:");
-    println!("  Nodes: {}", nodes.len());
-    println!("  Edges: {}", edges.len());
+    // Debug print final edges
+    //println!("Final edges: {:?}", edges);
+
+    //println!("Successfully fetched network data:");
+    //println!("  Nodes: {}", nodes.len());
+    //println!("  Edges: {}", edges.len());
 
     Ok(Json(NetworkData { nodes, edges }))
 }
-
-/*fn get_node_color(goal_type: &GoalType) -> String {
-    GOAL_COLORS.get(goal_type).unwrap_or(&"#CCCCCC").to_string()
-}
-
-fn format_node_title(name: &str, goal_type: &GoalType) -> String {
-    format!("{} ({})", name, goal_type.as_str())
-}
-*/
