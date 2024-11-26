@@ -1,5 +1,10 @@
 import axios, { AxiosResponse, Method } from 'axios';
-const API_URL = 'http://localhost:5057'
+//const API_URL = 'http://localhost:5057'
+const API_URL = process.env.REACT_APP_API_URL;
+if (!API_URL) {
+    throw new Error('REACT_APP_API_URL is not set');
+}
+
 export async function privateRequest<T>(
     endpoint: string,
     method: Method = 'GET',

@@ -1,0 +1,18 @@
+# Build stage
+FROM rust:1.75-slim as builder
+WORKDIR /usr/src/app
+COPY . .
+RUN cargo build --release
+
+# Runtime stage
+FROM debian:bookworm-slim
+WORKDIR /usr/src/app
+COPY --from=builder /usr/src/app/target/release/backend ./backend
+# Copy any additional necessary files (configs, etc)
+
+ENV NEO4J_URI=bolt://goals_db:7687
+ENV NEO4J_USERNAME=neo4j
+ENV NEO4J_PASSWORD=password123
+
+EXPOSE 5057
+CMD ["./backend"]

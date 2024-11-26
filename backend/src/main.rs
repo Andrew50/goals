@@ -33,9 +33,13 @@ async fn main() {
 
     // Configure CORS
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(HeaderValue::from_static(
-            "http://localhost:3000",
-        )))
+        //.allow_origin(AllowOrigin::exact(HeaderValue::from_static(
+        //    "http://localhost:3000",
+        //)))
+        .allow_origin([
+            "http://localhost:3000".parse().unwrap(),
+            "https://goals.atlantis.trading".parse().unwrap(),
+        ])
         .allow_methods(Any)
         .allow_headers(Any);
 
