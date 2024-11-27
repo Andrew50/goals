@@ -13,24 +13,15 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { privateRequest } from '../utils/api';
 import { Goal, CalendarEvent, CalendarTask } from '../types';
 import { fetchCalendarData } from '../utils/calendarData';
-import GoalDialog from './GoalMenu';
-
-/*interface Task {
-  id: string;
-  title: string;
-  type: 'meeting' | 'task' | 'appointment';
-}*/
-
+import { goalColors } from '../theme/colors';
+import GoalMenu from './GoalMenu';
 type EventType = 'meeting' | 'task' | 'appointment';
-
-
 interface SlotInfo {
   start: Date;
   end: Date;
   slots: Date[];
   action: 'select' | 'click' | 'doubleClick';
 }
-
 interface TaskActionsMenuProps {
   isOpen: boolean;
   onClose: () => void;
@@ -50,23 +41,17 @@ interface RepeatOptions {
   days: string[];
   startDate: Date;
 }
-
-
-
 const localizer = momentLocalizer(moment);
-
 const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
     data: task
   });
-
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     onTaskClick(task, { x: rect.right + 5, y: rect.top });
   };
-
   if (isDragging) {
     return (
       <div
@@ -79,7 +64,6 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
       />
     );
   }
-
   const getTaskColor = (type: string) => {
     switch (type) {
       case 'meeting': return { bg: '#e3f2fd', border: '#2196f3' };
@@ -123,7 +107,6 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
     </div>
   );
 };
-
 const TaskList = ({
   tasks,
   onAddTask,
@@ -196,34 +179,57 @@ const TaskList = ({
           Add Task
         </button>
       </div>
-      <div style={{marginTop: '20px'}}>
-        {tasks.length ===0 ? (
-          <div style={{textAlign: 'center', color: '#666', fontSize: '14px'}}>
+      <div style={{ marginTop: '20px' }}>
+        {tasks.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#666', fontSize: '14px' }}>
             No tasks yet
           </div>
         ) : (
           tasks.map((task, index) => (
-        <DraggableTask
-          key={task.id}
-          task={task}
-          onTaskClick={onTaskClick}
-        />
-      ))
-    )}
+            <DraggableTask
+              key={task.id}
+              task={task}
+              onTaskClick={onTaskClick}
+            />
+          ))
+        )}
+      </div>
     </div>
-  </div>
   );
 };
 
 const CalendarEventDisplay: React.FC<{ event: CalendarEvent }> = ({ event }) => {
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    GoalMenu.open(event.goal, 'view', () => {
+      //update event
+    });
+
+  }
+  const handleRightClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    GoalMenu.open(event.goal, 'edit', () => {
+      //update event
+    });
+  }
+
+  const backgroundColor = event.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
   return (
-    <div style={{
-      padding: '2px 4px',
-      fontSize: '14px',
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }}>
+    <div
+      onClick={handleClick}
+      onContextMenu={handleRightClick}
+      style={{
+        padding: '2px 4px',
+        fontSize: '14px',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        backgroundColor: backgroundColor,
+        border: `1px solid ${backgroundColor}`
+      }}>
       {event.title}
     </div>
   );
@@ -234,8 +240,6 @@ interface SelectedTaskState {
   position: { x: number; y: number };
   date?: Date;
 }
-
-
 
 const eventColors: Record<EventType, { backgroundColor: string; color: string }> = {
   meeting: { backgroundColor: '#e3f2fd', color: '#2196f3' },
@@ -288,152 +292,20 @@ const CalendarDropArea = ({
         onSelectSlot={handleSelectSlot}
         onSelectEvent={(event: CalendarEvent) => onEventClick(event)}
         step={60}
-        eventPropGetter={(event: CalendarEvent) => {
-          const eventType = (event.type || 'task') as EventType;
-          return {
-            style: eventColors[eventType]
-          };
-        }}
+        eventPropGetter={() => ({
+          style: {
+            border: 'none',
+            background: 'none',
+            padding: 0
+          }
+        })}
+      /*eventPropGetter={(event: CalendarEvent) => {
+        const eventType = (event.type || 'task') as EventType;
+        return {
+          style: eventColors[eventType]
+        };
+      }}*/
       />
-    </div>
-  );
-};
-
-interface TimeSelectionModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (startTime: Date, endTime: Date) => void;
-  defaultDate: Date;
-  taskTitle: string;
-}
-
-const TimeSelectionModal = ({ isOpen, onClose, onSave, defaultDate, taskTitle }: TimeSelectionModalProps) => {
-  const [startTime, setStartTime] = useState(defaultDate);
-  const [duration, setDuration] = useState(60);
-
-  if (!isOpen) return null;
-
-  return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 1000
-    }}>
-      <div style={{
-        backgroundColor: 'white',
-        padding: '24px',
-        borderRadius: '12px',
-        width: '400px',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
-      }}>
-        <h3 style={{
-          margin: '0 0 20px 0',
-          color: '#333',
-          fontSize: '20px',
-          fontWeight: 600
-        }}>Schedule: {taskTitle}</h3>
-
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{
-            display: 'block',
-            marginBottom: '8px',
-            color: '#666',
-            fontSize: '14px'
-          }}>
-            Start Time:
-          </label>
-          <input
-            type="datetime-local"
-            value={startTime.toISOString().slice(0, 16)}
-            onChange={(e) => setStartTime(new Date(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '12px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              fontSize: '14px',
-              outline: 'none'
-            }}
-          />
-        </div>
-
-        <div style={{ marginBottom: '24px' }}>
-          <label style={{
-            display: 'block',
-            marginBottom: '8px',
-            color: '#666',
-            fontSize: '14px'
-          }}>
-            Duration:
-          </label>
-          <select
-            value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '12px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              fontSize: '14px',
-              outline: 'none'
-            }}
-          >
-            <option value={15}>15 minutes</option>
-            <option value={30}>30 minutes</option>
-            <option value={60}>1 hour</option>
-            <option value={90}>1.5 hours</option>
-            <option value={120}>2 hours</option>
-          </select>
-        </div>
-
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '12px'
-        }}>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '10px 20px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              backgroundColor: 'white',
-              cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'all 0.2s'
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              const endTime = new Date(startTime);
-              endTime.setMinutes(startTime.getMinutes() + duration);
-              onSave(startTime, endTime);
-              onClose();
-            }}
-            style={{
-              padding: '10px 20px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: '#2196f3',
-              color: 'white',
-              cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'all 0.2s'
-            }}
-          >
-            Save
-          </button>
-        </div>
-      </div>
     </div>
   );
 };
@@ -862,30 +734,6 @@ const MyCalendar: React.FC = () => {
       return sameDay && timeOverlap;
     });
   };
-
-  /*const handleTimeSelect = (startTime: Date, endTime: Date) => {
-  if (!selectedTask) return;
-
-  if (isDuplicateEvent(startTime, endTime, selectedTask.task.id)) {
-    alert('There is already an event scheduled at this time. Please choose a different time.');
-    return;
-  }
-
-  //const newEvent: CalendarEvent = {
-    id: selectedTask.task.id,
-    title: selectedTask.task.title,
-    start: startTime,
-    end: endTime,
-    type: selectedTask.task.type
-  };
-
-  setEvents(prevEvents => [...prevEvents, newEvent]);
-
-  setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-
-  setSelectedTask(null);
-  setModalOpen(false);
-};*/
 
   const handleDropTask = (date: Date) => {
     if (!draggedTask) return;
