@@ -8,6 +8,8 @@ import Signin from './components/Signin';
 import Root from './components/Root';
 import Network from './components/Network';
 import GoalMenu from './components/GoalMenu';
+import List from './components/List';
+import Day from './components/Day';
 
 const App: React.FC = () => {
   return (
@@ -19,6 +21,8 @@ const App: React.FC = () => {
               <Button color="inherit" component={Link} to="/">Home</Button>
               <Button color="inherit" component={Link} to="/network">Network</Button>
               <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
+              <Button color="inherit" component={Link} to="/list">List</Button>
+              <Button color="inherit" component={Link} to="/day">Day</Button>
             </Box>
             <Box sx={{ display: 'flex', gap: 2 }}>
               <Button color="inherit" component={Link} to="/signin">Sign In</Button>
@@ -32,6 +36,8 @@ const App: React.FC = () => {
           <Route path="/signin" element={<Signin />} />
           <Route path="/" element={<Root />} />
           <Route path="/network" element={<Network />} />
+          <Route path="/list" element={<List />} />
+          <Route path="/day" element={<Day />} />
         </Routes>
         <GoalMenu />
       </Router>
