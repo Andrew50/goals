@@ -12,6 +12,7 @@ import GoalMenu, { createRelationship } from './GoalMenu';
 //import GoalView from '../../../GoalView';
 import { privateRequest } from '../utils/api';
 import { buildHierarchy } from '../utils/buildHierarchy';
+import { goalColors } from '../theme/colors';
 
 interface NetworkData {
   nodes: NetworkNode[];
@@ -19,18 +20,11 @@ interface NetworkData {
 }
 
 const formatNetworkNode = (goal: Goal): NetworkNode => {
-  const colorMap = {
-    directive: '#9370DB', // purple
-    project: '#4682B4',   // steel blue
-    achievement: '#CD5C5C', // indian red
-    routine: '#DAA520',   // goldenrod
-    task: '#3CB371'       // medium sea green
-  }
   return {
     ...goal,
     label: goal.name,
     title: goal.name + ' (' + goal.goal_type + ')',
-    color: colorMap[goal.goal_type]
+    color: goalColors[goal.goal_type]
   }
 }
 

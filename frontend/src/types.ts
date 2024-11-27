@@ -20,8 +20,8 @@ export interface Goal {
     duration?: number;
 }
 export interface CalendarResponse {
-    assigned_tasks: Goal[];
-    unassigned_tasks: Goal[];
+    scheduled_tasks: Goal[];
+    unscheduled_tasks: Goal[];
     routines: Goal[];
     achievements: Goal[];
 }
