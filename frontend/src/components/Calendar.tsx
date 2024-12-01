@@ -13,33 +13,15 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { privateRequest } from '../utils/api';
 import { Goal, CalendarEvent, CalendarTask } from '../types';
 import { fetchCalendarData } from '../utils/calendarData';
-import GoalDialog from './GoalMenu';
-
-/*interface Task {
-  id: string;
-  title: string;
-  type: 'meeting' | 'task' | 'appointment';
-}*/
-
+import { goalColors } from '../theme/colors';
+import GoalMenu from './GoalMenu';
 type EventType = 'meeting' | 'task' | 'appointment';
-
-
 interface SlotInfo {
   start: Date;
   end: Date;
   slots: Date[];
   action: 'select' | 'click' | 'doubleClick';
 }
-
-interface TaskActionsMenuProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onTimeSelect: (startTime: Date, endTime: Date) => void;
-  onDelete: () => void;
-  onRepeat: (options: RepeatOptions) => void;
-  task: CalendarTask;
-}
-
 interface DraggableTaskProps {
   task: CalendarTask;
   onTaskClick: (task: CalendarTask, position: { x: number; y: number }) => void;
@@ -50,23 +32,17 @@ interface RepeatOptions {
   days: string[];
   startDate: Date;
 }
-
-
-
 const localizer = momentLocalizer(moment);
-
 const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
     data: task
   });
-
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     onTaskClick(task, { x: rect.right + 5, y: rect.top });
   };
-
   if (isDragging) {
     return (
       <div
@@ -79,7 +55,6 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
       />
     );
   }
-
   const getTaskColor = (type: string) => {
     switch (type) {
       case 'meeting': return { bg: '#e3f2fd', border: '#2196f3' };
@@ -123,18 +98,13 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
     </div>
   );
 };
-
 const TaskList = ({
   tasks,
   onAddTask,
-  newTask,
-  setNewTask,
   onTaskClick
 }: {
   tasks: CalendarTask[];
   onAddTask: () => void;
-  newTask: string;
-  setNewTask: (value: string) => void;
   onTaskClick: (task: CalendarTask, position: { x: number; y: number }) => void;
 }) => {
   return (
@@ -158,24 +128,6 @@ const TaskList = ({
       }}>Tasks</h3>
 
       <div style={{ marginBottom: '20px' }}>
-        <input
-          type="text"
-          value={newTask}
-          onChange={(e) => setNewTask(e.target.value)}
-          placeholder="Enter a task"
-          style={{
-            width: '92%',
-            padding: '12px',
-            borderRadius: '6px',
-            border: '1px solid #e0e0e0',
-            marginBottom: '10px',
-            fontSize: '14px',
-            outline: 'none',
-            transition: 'border-color 0.2s',
-          }}
-          onFocus={(e) => e.target.style.borderColor = '#2196f3'}
-          onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
-        />
         <button
           onClick={onAddTask}
           style={{
@@ -196,34 +148,57 @@ const TaskList = ({
           Add Task
         </button>
       </div>
-      <div style={{marginTop: '20px'}}>
-        {tasks.length ===0 ? (
-          <div style={{textAlign: 'center', color: '#666', fontSize: '14px'}}>
+      <div style={{ marginTop: '20px' }}>
+        {tasks.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#666', fontSize: '14px' }}>
             No tasks yet
           </div>
         ) : (
-          tasks.map((task, index) => (
-        <DraggableTask
-          key={task.id}
-          task={task}
-          onTaskClick={onTaskClick}
-        />
-      ))
-    )}
+          tasks.map((task) => (
+            <DraggableTask
+              key={task.id}
+              task={task}
+              onTaskClick={onTaskClick}
+            />
+          ))
+        )}
+      </div>
     </div>
-  </div>
   );
 };
 
 const CalendarEventDisplay: React.FC<{ event: CalendarEvent }> = ({ event }) => {
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    GoalMenu.open(event.goal, 'view', () => {
+      //update event
+    });
+
+  }
+  const handleRightClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    GoalMenu.open(event.goal, 'edit', () => {
+      //update event
+    });
+  }
+
+  const backgroundColor = event.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
   return (
-    <div style={{
-      padding: '2px 4px',
-      fontSize: '14px',
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }}>
+    <div
+      onClick={handleClick}
+      onContextMenu={handleRightClick}
+      style={{
+        padding: '2px 4px',
+        fontSize: '14px',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        backgroundColor: backgroundColor,
+        border: `1px solid ${backgroundColor}`
+      }}>
       {event.title}
     </div>
   );
@@ -234,8 +209,6 @@ interface SelectedTaskState {
   position: { x: number; y: number };
   date?: Date;
 }
-
-
 
 const eventColors: Record<EventType, { backgroundColor: string; color: string }> = {
   meeting: { backgroundColor: '#e3f2fd', color: '#2196f3' },
@@ -288,152 +261,20 @@ const CalendarDropArea = ({
         onSelectSlot={handleSelectSlot}
         onSelectEvent={(event: CalendarEvent) => onEventClick(event)}
         step={60}
-        eventPropGetter={(event: CalendarEvent) => {
-          const eventType = (event.type || 'task') as EventType;
-          return {
-            style: eventColors[eventType]
-          };
-        }}
+        eventPropGetter={() => ({
+          style: {
+            border: 'none',
+            background: 'none',
+            padding: 0
+          }
+        })}
+      /*eventPropGetter={(event: CalendarEvent) => {
+        const eventType = (event.type || 'task') as EventType;
+        return {
+          style: eventColors[eventType]
+        };
+      }}*/
       />
-    </div>
-  );
-};
-
-interface TimeSelectionModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (startTime: Date, endTime: Date) => void;
-  defaultDate: Date;
-  taskTitle: string;
-}
-
-const TimeSelectionModal = ({ isOpen, onClose, onSave, defaultDate, taskTitle }: TimeSelectionModalProps) => {
-  const [startTime, setStartTime] = useState(defaultDate);
-  const [duration, setDuration] = useState(60);
-
-  if (!isOpen) return null;
-
-  return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 1000
-    }}>
-      <div style={{
-        backgroundColor: 'white',
-        padding: '24px',
-        borderRadius: '12px',
-        width: '400px',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
-      }}>
-        <h3 style={{
-          margin: '0 0 20px 0',
-          color: '#333',
-          fontSize: '20px',
-          fontWeight: 600
-        }}>Schedule: {taskTitle}</h3>
-
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{
-            display: 'block',
-            marginBottom: '8px',
-            color: '#666',
-            fontSize: '14px'
-          }}>
-            Start Time:
-          </label>
-          <input
-            type="datetime-local"
-            value={startTime.toISOString().slice(0, 16)}
-            onChange={(e) => setStartTime(new Date(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '12px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              fontSize: '14px',
-              outline: 'none'
-            }}
-          />
-        </div>
-
-        <div style={{ marginBottom: '24px' }}>
-          <label style={{
-            display: 'block',
-            marginBottom: '8px',
-            color: '#666',
-            fontSize: '14px'
-          }}>
-            Duration:
-          </label>
-          <select
-            value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '12px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              fontSize: '14px',
-              outline: 'none'
-            }}
-          >
-            <option value={15}>15 minutes</option>
-            <option value={30}>30 minutes</option>
-            <option value={60}>1 hour</option>
-            <option value={90}>1.5 hours</option>
-            <option value={120}>2 hours</option>
-          </select>
-        </div>
-
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '12px'
-        }}>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '10px 20px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              backgroundColor: 'white',
-              cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'all 0.2s'
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              const endTime = new Date(startTime);
-              endTime.setMinutes(startTime.getMinutes() + duration);
-              onSave(startTime, endTime);
-              onClose();
-            }}
-            style={{
-              padding: '10px 20px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: '#2196f3',
-              color: 'white',
-              cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'all 0.2s'
-            }}
-          >
-            Save
-          </button>
-        </div>
-      </div>
     </div>
   );
 };
@@ -486,341 +327,10 @@ const TaskDragOverlay = ({ task }: { task: CalendarTask | null }) => {
   );
 };
 
-const TaskActionsMenu = ({
-  isOpen,
-  onClose,
-  onTimeSelect,
-  onDelete,
-  onRepeat,
-  task
-}: TaskActionsMenuProps) => {
-  const [startTime, setStartTime] = useState(() => {
-    const now = new Date();
-    now.setMinutes(0, 0, 0);
-    return now;
-  });
-  const [duration, setDuration] = useState(60);
-  const [showRepeatOptions, setShowRepeatOptions] = useState(false);
-  const [repeatFrequency, setRepeatFrequency] = useState('none');
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedDays, setSelectedDays] = useState<string[]>([]);
-
-  const daysOfWeek = [
-    'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
-  ];
-
-  const handleDayToggle = (day: string) => {
-    setSelectedDays(prev =>
-      prev.includes(day)
-        ? prev.filter(d => d !== day)
-        : [...prev, day]
-    );
-  };
-
-  if (!isOpen) return null;
-
-  const handleTimeSelect = () => {
-    const endTime = new Date(startTime);
-    endTime.setMinutes(startTime.getMinutes() + duration);
-    onTimeSelect(startTime, endTime);
-    onClose();
-  };
-
-  const handleRepeatClick = () => {
-    setShowRepeatOptions(true);
-  };
-
-  const handleRepeatSelect = () => {
-    onRepeat({
-      frequency: repeatFrequency,
-      days: selectedDays,
-      startDate: selectedDate
-    });
-    setShowRepeatOptions(false);
-    onClose();
-  };
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      {!showRepeatOptions ? (
-        // Main Menu
-        <div
-          style={{
-            backgroundColor: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            overflow: 'hidden',
-            width: '400px',
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ padding: '24px', borderBottom: '1px solid #eee' }}>
-            <h3 style={{ margin: '0', color: '#333', fontSize: '20px', fontWeight: 600 }}>
-              {task.title}
-            </h3>
-          </div>
-
-          <div style={{ padding: '24px' }}>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Date:
-              </label>
-              <input
-                type="date"
-                value={selectedDate.toISOString().split('T')[0]}
-                onChange={(e) => setSelectedDate(new Date(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none',
-                  marginBottom: '16px'
-                }}
-              />
-
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Start Time:
-              </label>
-              <input
-                type="time"
-                value={startTime.toTimeString().slice(0, 5)}
-                onChange={(e) => {
-                  const [hours, minutes] = e.target.value.split(':');
-                  const newTime = new Date(startTime);
-                  newTime.setHours(parseInt(hours), parseInt(minutes), 0);
-                  setStartTime(newTime);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none'
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Duration:
-              </label>
-              <select
-                value={duration}
-                onChange={(e) => setDuration(Number(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none'
-                }}
-              >
-                <option value={15}>15 minutes</option>
-                <option value={30}>30 minutes</option>
-                <option value={60}>1 hour</option>
-                <option value={90}>1.5 hours</option>
-                <option value={120}>2 hours</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-              <button
-                onClick={handleRepeatClick}
-                style={{
-                  padding: '10px 20px',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '6px',
-                  background: 'white',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                🔄 Repeat
-              </button>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  onClick={onDelete}
-                  style={{
-                    padding: '10px 20px',
-                    border: '1px solid #ff4444',
-                    borderRadius: '6px',
-                    background: 'white',
-                    color: '#ff4444',
-                    cursor: 'pointer',
-                    fontSize: '14px'
-                  }}
-                >
-                  🗑️ Delete
-                </button>
-
-                <button
-                  onClick={handleTimeSelect}
-                  style={{
-                    padding: '10px 20px',
-                    border: 'none',
-                    borderRadius: '6px',
-                    background: '#2196f3',
-                    color: 'white',
-                    cursor: 'pointer',
-                    fontSize: '14px'
-                  }}
-                >
-                  Reschedule
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        // Repeat Options Menu
-        <div
-          style={{
-            backgroundColor: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            overflow: 'hidden',
-            width: '400px',
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ padding: '24px', borderBottom: '1px solid #eee' }}>
-            <h3 style={{ margin: '0', color: '#333', fontSize: '20px', fontWeight: 600 }}>
-              Set Repeat Options
-            </h3>
-          </div>
-
-          <div style={{ padding: '24px' }}>
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                Repeat Frequency:
-              </label>
-              <select
-                value={repeatFrequency}
-                onChange={(e) => setRepeatFrequency(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0',
-                  fontSize: '14px',
-                  outline: 'none',
-                  marginBottom: '16px'
-                }}
-              >
-                <option value="none">One-time Event</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="biweekly">Bi-weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-              </select>
-
-              {(repeatFrequency === 'weekly' || repeatFrequency === 'biweekly') && (
-                <div style={{ marginTop: '16px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', color: '#666', fontSize: '14px' }}>
-                    Repeat on Days:
-                  </label>
-                  <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '8px',
-                    marginBottom: '16px'
-                  }}>
-                    {daysOfWeek.map(day => (
-                      <button
-                        key={day}
-                        onClick={() => handleDayToggle(day)}
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: '20px',
-                          border: '1px solid #e0e0e0',
-                          background: selectedDays.includes(day) ? '#2196f3' : 'white',
-                          color: selectedDays.includes(day) ? 'white' : '#333',
-                          cursor: 'pointer',
-                          fontSize: '14px',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        {day.slice(0, 3)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button
-                onClick={() => setShowRepeatOptions(false)}
-                style={{
-                  padding: '10px 20px',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '6px',
-                  background: 'white',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
-              >
-                Back
-              </button>
-              <button
-                onClick={handleRepeatSelect}
-                style={{
-                  padding: '10px 20px',
-                  border: 'none',
-                  borderRadius: '6px',
-                  background: '#2196f3',
-                  color: 'white',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
-              >
-                Set Repeat
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const MyCalendar: React.FC = () => {
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [newTask, setNewTask] = useState('');
-  const [selectedTask, setSelectedTask] = useState<SelectedTaskState | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
   const [draggedTask, setDraggedTask] = useState<CalendarTask | null>(null);
-  const [isGoalDialogOpen, setIsGoalDialogOpen] = useState(false);
-  const [newGoalData, setNewGoalData] = useState<Partial<Goal>>({
-    goal_type: 'task',
-    name: '',
-    description: '',
-    priority: 'medium'
-  });
 
   useEffect(() => {
     const loadCalendarData = async () => {
@@ -863,30 +373,6 @@ const MyCalendar: React.FC = () => {
     });
   };
 
-  /*const handleTimeSelect = (startTime: Date, endTime: Date) => {
-  if (!selectedTask) return;
-
-  if (isDuplicateEvent(startTime, endTime, selectedTask.task.id)) {
-    alert('There is already an event scheduled at this time. Please choose a different time.');
-    return;
-  }
-
-  //const newEvent: CalendarEvent = {
-    id: selectedTask.task.id,
-    title: selectedTask.task.title,
-    start: startTime,
-    end: endTime,
-    type: selectedTask.task.type
-  };
-
-  setEvents(prevEvents => [...prevEvents, newEvent]);
-
-  setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-
-  setSelectedTask(null);
-  setModalOpen(false);
-};*/
-
   const handleDropTask = (date: Date) => {
     if (!draggedTask) return;
 
@@ -903,38 +389,31 @@ const MyCalendar: React.FC = () => {
       return;
     }
 
-    setSelectedTask({
-      task: draggedTask,
-      position: { x: 0, y: 0 },
-      date: dropDate
+    GoalMenu.open(draggedTask.goal, 'edit', async (updatedGoal) => {
+      const data = await fetchCalendarData();
+      setEvents([...data.events, ...data.achievements]);
+      setTasks(data.unscheduledTasks);
     });
-    setModalOpen(true);
+
     setDraggedTask(null);
   };
 
   const handleAddTask = () => {
-
-    if (!newTask.trim()) return;
-    setNewGoalData({
-      ...newGoalData,
-      name: newTask.trim(),
-      goal_type: 'task'
-    })
-
-    setIsGoalDialogOpen(true);
-
-    // Clear the input field
-    setNewTask('');
-  };
-  const handleGoalSuccess = async () => {
-    // Refresh the calendar data
-    await fetchCalendarData();
-    setIsGoalDialogOpen(false);
-    setNewGoalData({
-      goal_type: 'task',
+    // Create a temporary goal object with all required fields
+    const tempGoal: Goal = {
+      id: 0,
       name: '',
+      goal_type: 'task',
       description: '',
       priority: 'medium'
+    };
+
+    // Open the goal menu with create mode
+    GoalMenu.open(tempGoal, 'create', async (updatedGoal) => {
+      // Refresh calendar data after goal creation
+      const data = await fetchCalendarData();
+      setEvents([...data.events, ...data.achievements]);
+      setTasks(data.unscheduledTasks);
     });
   };
 
@@ -942,109 +421,22 @@ const MyCalendar: React.FC = () => {
     setEvents((prevEvents) => prevEvents.filter((event) => event.id !== eventId));
   };
 
-  const handleDeleteTask = (taskId: string) => {
-    setTasks(prev => prev.filter(t => t.id !== taskId));
-    setSelectedTask(null);
-  };
-
-  /*const handleRepeat = (options: RepeatOptions) => {
-    if (!selectedTask) return;
-
-    const { frequency, days, startDate } = options;
-    const events: CalendarEvent[] = [];
-
-    switch (frequency) {
-      case 'daily':
-        for (let i = 0; i < 30; i++) {
-          const eventDate = new Date(startDate);
-          eventDate.setDate(eventDate.getDate() + i);
-          events.push({
-            id: `${selectedTask.task.id}-${i}`,
-            title: selectedTask.task.title,
-            start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)),
-            type: selectedTask.task.type,
-            goal: selectedTask.task.goal
-          });
-        }
-        break;
-
-      case 'weekly':
-      case 'biweekly':
-        const weekIncrement = frequency === 'weekly' ? 1 : 2;
-        for (let week = 0; week < 12; week++) {
-          days.forEach(day => {
-            const eventDate = new Date(startDate);
-            eventDate.setDate(eventDate.getDate() + (getDayNumber(day) - eventDate.getDay()) + (week * 7 * weekIncrement));
-            events.push({
-              id: `${selectedTask.task.id}-${week}-${day}`,
-              title: selectedTask.task.title,
-              start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-              end: new Date(eventDate.setHours(startDate.getHours() + 1)),
-              type: selectedTask.task.type
-            });
-          });
-        }
-        break;
-
-      case 'monthly':
-        for (let i = 0; i < 12; i++) {
-          const eventDate = new Date(startDate);
-          eventDate.setMonth(eventDate.getMonth() + i);
-          events.push({
-            id: `${selectedTask.task.id}-${i}`,
-            title: selectedTask.task.title,
-            start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)),
-            type: selectedTask.task.type
-          });
-        }
-        break;
-
-      case 'yearly':
-        for (let i = 0; i < 5; i++) {
-          const eventDate = new Date(startDate);
-          eventDate.setFullYear(eventDate.getFullYear() + i);
-          events.push({
-            id: `${selectedTask.task.id}-${i}`,
-            title: selectedTask.task.title,
-            start: new Date(eventDate.setHours(startDate.getHours(), startDate.getMinutes())),
-            end: new Date(eventDate.setHours(startDate.getHours() + 1)),
-            type: selectedTask.task.type
-          });
-        }
-        break;
-    }
-
-    setEvents(prevEvents => [...prevEvents, ...events]);
-
-    setTasks(prevTasks => prevTasks.filter(task => task.id !== selectedTask.task.id));
-
-    setSelectedTask(null);
-  };*/
-
-  const getDayNumber = (day: string): number => {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return days.indexOf(day);
-  };
-
   const handleTaskClick = (task: CalendarTask, position: { x: number; y: number }) => {
-    setSelectedTask({ task, position });
+    GoalMenu.open(task.goal, 'edit', async (updatedGoal) => {
+      const data = await fetchCalendarData();
+      setEvents([...data.events, ...data.achievements]);
+      setTasks(data.unscheduledTasks);
+    });
   };
 
   const handleEventClick = (event: CalendarEvent) => {
-    const task: CalendarTask = {
-      id: event.id,
-      title: event.title,
-      type: event.type || 'task',
-      goal: event.goal
-    };
-
-    setSelectedTask({
-      task,
-      position: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 200 },
-      date: event.start
-    });
+    if (event.goal) {
+      GoalMenu.open(event.goal, 'view', async (updatedGoal) => {
+        const data = await fetchCalendarData();
+        setEvents([...data.events, ...data.achievements]);
+        setTasks(data.unscheduledTasks);
+      });
+    }
   };
 
   return (
@@ -1061,8 +453,6 @@ const MyCalendar: React.FC = () => {
           <TaskList
             tasks={tasks}
             onAddTask={handleAddTask}
-            newTask={newTask}
-            setNewTask={setNewTask}
             onTaskClick={handleTaskClick}
           />
           <CalendarDropArea
@@ -1075,43 +465,7 @@ const MyCalendar: React.FC = () => {
         <DragOverlay>
           {draggedTask ? <TaskDragOverlay task={draggedTask} /> : null}
         </DragOverlay>
-        {/*
-        {modalOpen && selectedTask && (
-          <TimeSelectionModal
-            isOpen={modalOpen}
-            onClose={() => setModalOpen(false)}
-            onSave={handleTimeSelect}
-            defaultDate={selectedTask.date || new Date()}
-            taskTitle={selectedTask.task.title}
-          />
-        )}
-
-        {selectedTask && (
-          <TaskActionsMenu
-            isOpen={!!selectedTask}
-            onClose={() => setSelectedTask(null)}
-            onTimeSelect={handleTimeSelect}
-            onDelete={() => {
-              handleDeleteTask(selectedTask.task.id);
-              setEvents(prev => prev.filter(event => event.id !== selectedTask.task.id));
-            }}
-            onRepeat={handleRepeat}
-            task={selectedTask.task}
-          />
-        )}*/
-        }
       </DndContext>
-
-      {/*<GoalDialog
-        open={isGoalDialogOpen}
-      onClose={() => setIsGoalDialogOpen(false)}
-      goal={newGoalData}
-      onChange={setNewGoalData}
-      mode="create"
-      error=""
-      onSuccess={handleGoalSuccess}
-      />
-      */}
     </div>
   );
 };

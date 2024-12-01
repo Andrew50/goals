@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Container, Box, Paper, Typography, TextField, Button, Alert } from "@mui/material";
 import { publicRequest } from "../utils/api";
+import { useAuth } from "../contexts/AuthContext";
 
 interface SigninResponse {
   message: string;
@@ -9,6 +10,7 @@ interface SigninResponse {
 }
 
 const Signin: React.FC = () => {
+  const { setIsAuthenticated } = useAuth();
   const [username, setUsername] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -29,8 +31,10 @@ const Signin: React.FC = () => {
 
       setSuccess(response.message);
       localStorage.setItem("authToken", response.token);
+      setIsAuthenticated(true);
       navigate("/calendar");
     } catch (err: any) {
+      setIsAuthenticated(false);
       if (err.response?.status === 401) {
         setError("Invalid username or password");
       } else {

@@ -5,6 +5,8 @@ mod goal;
 mod middleware;
 mod network;
 mod traversal;
+mod list;
+mod day;
 
 use axum::{middleware::from_fn, Extension, Router};
 use dotenvy::dotenv;
@@ -61,6 +63,14 @@ async fn main() {
         .nest(
             "/calender",
             calender::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
+            "/list",
+            list::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
+            "/day",
+            day::create_routes().route_layer(from_fn(middleware::auth_middleware)),
         )
         .layer(Extension(pool))
         .layer(cors);

@@ -47,7 +47,10 @@ const GoalMenu: GoalMenuComponent = () => {
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
-        console.log('GoalMenu open called');
+        if (initialMode === 'create' && !goal.start_timestamp) {
+            goal.start_timestamp = Date.now();
+        }
+        console.log('GoalMenu open called', goal);
         setGoal(goal);
         setMode(initialMode);
         setOnSuccess(() => onSuccess);
@@ -167,194 +170,185 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
 
-    const PriorityField = () => {
-        return isViewOnly ? (
+    //const PriorityField = () => {
+    //return
+    const priorityField = isViewOnly ? (
+        <Box sx={{ mb: 2 }}>
+            <strong>Priority:</strong> {goal.priority ? goal.priority.charAt(0).toUpperCase() + goal.priority.slice(1) : 'Not set'}
+        </Box>
+    ) : (
+        <TextField
+            label="Priority"
+            select
+            value={goal.priority || ''}
+            onChange={(e) => handleChange({
+                ...goal,
+                priority: e.target.value as 'high' | 'medium' | 'low'
+            })}
+            fullWidth
+            margin="dense"
+            disabled={isViewOnly}
+        >
+            <MenuItem value="high">High</MenuItem>
+            <MenuItem value="medium">Medium</MenuItem>
+            <MenuItem value="low">Low</MenuItem>
+        </TextField>
+    );
+    //};
+
+    //const ScheduleField = () => {
+    const scheduleField = isViewOnly ? (
+        <>
             <Box sx={{ mb: 2 }}>
-                <strong>Priority:</strong> {goal.priority ? goal.priority.charAt(0).toUpperCase() + goal.priority.slice(1) : 'Not set'}
+                <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toLocaleString() : 'Not set'}
             </Box>
-        ) : (
+            <Box sx={{ mb: 2 }}>
+                <strong>Duration:</strong> {goal.duration ? `${goal.duration} hours` : 'Not set'}
+            </Box>
+        </>
+    ) : (
+        <>
             <TextField
-                label="Priority"
-                select
-                value={goal.priority || ''}
-                onChange={(e) => handleChange({
-                    ...goal,
-                    priority: e.target.value as 'high' | 'medium' | 'low'
-                })}
+                label="Schedule Date"
+                type="datetime-local"
+                value={formatDateForInput(goal.scheduled_timestamp)}
+                onChange={(e) => {
+                    const timestamp = e.target.value
+                        ? parseInt(String(new Date(e.target.value).getTime()))
+                        : undefined;
+                    handleChange({
+                        ...goal,
+                        scheduled_timestamp: timestamp
+                    });
+                }}
                 fullWidth
                 margin="dense"
+                InputLabelProps={{ shrink: true }}
                 disabled={isViewOnly}
-            >
-                <MenuItem value="high">High</MenuItem>
-                <MenuItem value="medium">Medium</MenuItem>
-                <MenuItem value="low">Low</MenuItem>
-            </TextField>
-        );
-    };
-
-    const ScheduleField = () => {
-        return isViewOnly ? (
-            <>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toLocaleTimeString() : 'Not set'}
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Duration:</strong> {goal.duration ? `${goal.duration} hours` : 'Not set'}
-                </Box>
-            </>
-        ) : (
-            <>
-                <TextField
-                    label="Schedule Date"
-                    type="time"
-                    value={formatDateForInput(goal.scheduled_timestamp)}
-                    onChange={(e) => {
-                        const [hours, minutes] = e.target.value.split(':').map(Number);
-                        const timeInMs = (hours * 60 + minutes) * 60 * 1000;
-                        handleChange({
-                            ...goal,
-                            scheduled_timestamp: timeInMs
-                        });
-                    }}
-                    fullWidth
-                    margin="dense"
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{
-                        step: 300 // 5 min intervals
-                    }}
-                    disabled={isViewOnly}
-                />
-                <TextField
-                    label="Duration (hours)"
-                    type="number"
-                    value={goal.duration || ''}
-                    onChange={(e) => {
-                        const duration = e.target.value ? parseFloat(e.target.value) : undefined;
-                        handleChange({
-                            ...goal,
-                            duration
-                        });
-                    }}
-                    fullWidth
-                    margin="dense"
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{
-                        min: 0.25,
-                        max: 24,
-                        step: 0.25
-                    }}
-                    disabled={isViewOnly}
-                />
-            </>
-        );
-    };
-
-    const DateFields = () => {
-        return isViewOnly ? (
-            <>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Start Date:</strong> {goal.start_timestamp ? new Date(goal.start_timestamp).toLocaleString() : 'Not set'}
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                    <strong>End Date:</strong> {goal.end_timestamp ? new Date(goal.end_timestamp).toLocaleString() : 'Not set'}
-                </Box>
-            </>
-        ) : (
-            <>
-                <TextField
-                    label="Start Date"
-                    type="datetime-local"
-                    value={formatDateForInput(goal.start_timestamp)}
-                    onChange={(e) => {
-                        const timestamp = e.target.value
-                            ? parseInt(String(new Date(e.target.value).getTime()))
-                            : undefined;
-                        handleChange({
-                            ...goal,
-                            start_timestamp: timestamp
-                        });
-                    }}
-                    fullWidth
-                    margin="dense"
-                    InputLabelProps={{ shrink: true }}
-                    disabled={isViewOnly}
-                />
-                <TextField
-                    label="End Date"
-                    type="datetime-local"
-                    value={formatDateForInput(goal.end_timestamp)}
-                    onChange={(e) => {
-                        const timestamp = e.target.value
-                            ? parseInt(String(new Date(e.target.value).getTime()))
-                            : undefined;
-                        handleChange({
-                            ...goal,
-                            end_timestamp: timestamp
-                        });
-                    }}
-                    fullWidth
-                    margin="dense"
-                    InputLabelProps={{ shrink: true }}
-                    disabled={isViewOnly}
-                />
-            </>
-        );
-    };
-
-    const CompletedField = () => {
-        return (
-            <FormControlLabel
-                control={
-                    <Checkbox
-                        checked={goal.completed || false}
-                        onChange={(e) => handleChange({
-                            ...goal,
-                            completed: e.target.checked
-                        })}
-                        disabled={isViewOnly}
-                    />
-                }
-                label="Completed"
             />
-        );
-    };
-
-    const FrequencyField = () => {
-        const frequencyMap: { [key: string]: string } = {
-            'P1D': 'Daily',
-            'P7D': 'Weekly',
-            'P14D': 'Bi-weekly',
-            'P1M': 'Monthly',
-            'P3M': 'Quarterly',
-            'P1Y': 'Yearly'
-        };
-
-        return isViewOnly ? (
-            <Box sx={{ mb: 2 }}>
-                <strong>Frequency:</strong> {goal.frequency ? frequencyMap[goal.frequency] : 'Not set'}
-            </Box>
-        ) : (
             <TextField
-                label="Frequency"
-                value={goal.frequency || ''}
-                onChange={(e) => handleChange({
-                    ...goal,
-                    frequency: e.target.value
-                })}
-                select
+                label="Duration (hours)"
+                type="number"
+                value={goal.duration || ''}
+                onChange={(e) => {
+                    const duration = e.target.value ? parseFloat(e.target.value) : undefined;
+                    handleChange({
+                        ...goal,
+                        duration
+                    });
+                }}
                 fullWidth
                 margin="dense"
+                InputLabelProps={{ shrink: true }}
+                inputProps={{
+                    min: 0.25,
+                    max: 24,
+                    step: 0.25
+                }}
                 disabled={isViewOnly}
-            >
-                <MenuItem value="P1D">Daily</MenuItem>
-                <MenuItem value="P7D">Weekly</MenuItem>
-                <MenuItem value="P14D">Bi-weekly</MenuItem>
-                <MenuItem value="P1M">Monthly</MenuItem>
-                <MenuItem value="P3M">Quarterly</MenuItem>
-                <MenuItem value="P1Y">Yearly</MenuItem>
-            </TextField>
-        );
+            />
+        </>
+    );
+
+    const dateFields = isViewOnly ? (
+        <>
+            <Box sx={{ mb: 2 }}>
+                <strong>Start Date:</strong> {goal.start_timestamp ? new Date(goal.start_timestamp).toLocaleString() : 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>End Date:</strong> {goal.end_timestamp ? new Date(goal.end_timestamp).toLocaleString() : 'Not set'}
+            </Box>
+        </>
+    ) : (
+        <>
+            <TextField
+                label="Start Date"
+                type="datetime-local"
+                value={formatDateForInput(goal.start_timestamp)}
+                onChange={(e) => {
+                    const timestamp = e.target.value
+                        ? parseInt(String(new Date(e.target.value).getTime()))
+                        : undefined;
+                    handleChange({
+                        ...goal,
+                        start_timestamp: timestamp
+                    });
+                }}
+                fullWidth
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                disabled={isViewOnly}
+            />
+            <TextField
+                label="End Date"
+                type="datetime-local"
+                value={formatDateForInput(goal.end_timestamp)}
+                onChange={(e) => {
+                    const timestamp = e.target.value
+                        ? parseInt(String(new Date(e.target.value).getTime()))
+                        : undefined;
+                    handleChange({
+                        ...goal,
+                        end_timestamp: timestamp
+                    });
+                }}
+                fullWidth
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                disabled={isViewOnly}
+            />
+        </>
+    );
+
+    const completedField = (
+        <FormControlLabel
+            control={
+                <Checkbox
+                    checked={goal.completed || false}
+                    onChange={(e) => handleChange({
+                        ...goal,
+                        completed: e.target.checked
+                    })}
+                    disabled={isViewOnly}
+                />
+            }
+            label="Completed"
+        />
+    );
+    const frequencyMap: { [key: string]: string } = {
+        'P1D': 'Daily',
+        'P7D': 'Weekly',
+        'P14D': 'Bi-weekly',
+        'P1M': 'Monthly',
+        'P3M': 'Quarterly',
+        'P1Y': 'Yearly'
     };
+
+    const frequencyField = isViewOnly ? (
+        <Box sx={{ mb: 2 }}>
+            <strong>Frequency:</strong> {goal.frequency ? frequencyMap[goal.frequency] : 'Not set'}
+        </Box>
+    ) : (
+        <TextField
+            label="Frequency"
+            value={goal.frequency || ''}
+            onChange={(e) => handleChange({
+                ...goal,
+                frequency: e.target.value
+            })}
+            select
+            fullWidth
+            margin="dense"
+            disabled={isViewOnly}
+        >
+            <MenuItem value="P1D">Daily</MenuItem>
+            <MenuItem value="P7D">Weekly</MenuItem>
+            <MenuItem value="P14D">Bi-weekly</MenuItem>
+            <MenuItem value="P1M">Monthly</MenuItem>
+            <MenuItem value="P3M">Quarterly</MenuItem>
+            <MenuItem value="P1Y">Yearly</MenuItem>
+        </TextField>
+    );
 
     const commonFields = isViewOnly ? (
         <>
@@ -410,115 +404,111 @@ const GoalMenu: GoalMenuComponent = () => {
         </>
     );
 
-    const RoutineFields = () => (
-        isViewOnly ? (
-            <>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Routine Type:</strong> {goal.routine_type ? goal.routine_type.charAt(0).toUpperCase() + goal.routine_type.slice(1) : 'Not set'}
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Routine Name:</strong> {goal.routine_name || 'Not set'}
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Routine Description:</strong> {goal.routine_description || 'Not set'}
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Routine Duration:</strong> {goal.routine_duration ? `${goal.routine_duration} minutes` : 'Not set'}
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                    <strong>Routine Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
-                </Box>
-            </>
-        ) : (
-            <>
-                <TextField
-                    label="Routine Type"
-                    value={goal.routine_type || ''}
-                    onChange={(e) => {
-                        handleChange({
-                            ...goal,
-                            routine_type: e.target.value as 'task' | 'achievement'
-                        } as Goal);
-                    }}
-                    select
-                    fullWidth
-                    margin="dense"
-                    disabled={isViewOnly}
-                >
-                    <MenuItem value="task">Task</MenuItem>
-                    <MenuItem value="achievement">Achievement</MenuItem>
-                </TextField>
-                <TextField
-                    label="Routine Name"
-                    value={goal.routine_name || ''}
-                    onChange={(e) => handleChange({
+    const routineFields = isViewOnly ? (
+        <>
+            <Box sx={{ mb: 2 }}>
+                <strong>Routine Type:</strong> {goal.routine_type ? goal.routine_type.charAt(0).toUpperCase() + goal.routine_type.slice(1) : 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>Routine Name:</strong> {goal.routine_name || 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>Routine Description:</strong> {goal.routine_description || 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>Routine Duration:</strong> {goal.routine_duration ? `${goal.routine_duration} minutes` : 'Not set'}
+            </Box>
+            <Box sx={{ mb: 2 }}>
+                <strong>Routine Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
+            </Box>
+        </>
+    ) : (
+        <>
+            <TextField
+                label="Routine Type"
+                value={goal.routine_type || ''}
+                onChange={(e) => handleChange({
+                    ...goal,
+                    routine_type: e.target.value as "task" | "achievement"
+                })}
+                select
+                fullWidth
+                margin="dense"
+                disabled={isViewOnly}
+            >
+                <MenuItem value="task">Task</MenuItem>
+                <MenuItem value="achievement">Achievement</MenuItem>
+            </TextField>
+            <TextField
+                label="Routine Name"
+                value={goal.routine_name || ''}
+                onChange={(e) => handleChange({
+                    ...goal,
+                    routine_name: e.target.value
+                })}
+                fullWidth
+                margin="dense"
+                disabled={isViewOnly}
+                inputProps={{
+                    autoComplete: 'off'
+                }}
+            />
+            <TextField
+                label="Routine Description"
+                value={goal.routine_description || ''}
+                onChange={(e) => handleChange({
+                    ...goal,
+                    routine_description: e.target.value
+                })}
+                fullWidth
+                margin="dense"
+                multiline
+                rows={4}
+                disabled={isViewOnly}
+                inputProps={{
+                    autoComplete: 'off'
+                }}
+            />
+            <TextField
+                label="Routine Duration (minutes)"
+                type="number"
+                value={goal.routine_duration || ''}
+                onChange={(e) => handleChange({
+                    ...goal,
+                    routine_duration: parseInt(e.target.value) || undefined
+                })}
+                fullWidth
+                margin="dense"
+                disabled={isViewOnly}
+            />
+            <TextField
+                label="Routine Time (24-hour format)"
+                type="time"
+                value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
+                onChange={(e) => {
+                    const [hours, minutes] = e.target.value.split(':').map(Number);
+                    const timeInMs = (hours * 60 + minutes) * 60 * 1000;
+                    handleChange({
                         ...goal,
-                        routine_name: e.target.value
-                    } as Goal)}
-                    fullWidth
-                    margin="dense"
-                    disabled={isViewOnly}
-                    inputProps={{
-                        autoComplete: 'off'
-                    }}
-                />
-                <TextField
-                    label="Routine Description"
-                    value={goal.routine_description || ''}
-                    onChange={(e) => handleChange({
-                        ...goal,
-                        routine_description: e.target.value
-                    } as Goal)}
-                    fullWidth
-                    margin="dense"
-                    multiline
-                    rows={4}
-                    disabled={isViewOnly}
-                    inputProps={{
-                        autoComplete: 'off'
-                    }}
-                />
-                <TextField
-                    label="Routine Duration (minutes)"
-                    type="number"
-                    value={goal.routine_duration || ''}
-                    onChange={(e) => handleChange({
-                        ...goal,
-                        routine_duration: parseInt(e.target.value) || undefined
-                    })}
-                    fullWidth
-                    margin="dense"
-                    disabled={isViewOnly}
-                />
-                <TextField
-                    label="Routine Time (24-hour format)"
-                    type="time"
-                    value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
-                    onChange={(e) => {
-                        const [hours, minutes] = e.target.value.split(':').map(Number);
-                        const timeInMs = (hours * 60 + minutes) * 60 * 1000;
-                        handleChange({
-                            ...goal,
-                            routine_time: timeInMs
-                        });
-                    }}
-                    fullWidth
-                    margin="dense"
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ step: 300 }}
-                    disabled={isViewOnly}
-                />
-            </>
-        )
-    );
+                        routine_time: timeInMs
+                    });
+                }}
+                fullWidth
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ step: 300 }}
+                disabled={isViewOnly}
+            />
+        </>
+    )
     const renderTypeSpecificFields = () => {
         if (!goal.goal_type) return null;
 
         const project_and_achievement_fields = (
             <>
-                <PriorityField />
-                <DateFields />
-                <CompletedField />
+                {priorityField}
+                {dateFields}
+                {completedField}
             </>
         );
         switch (goal.goal_type) {
@@ -531,17 +521,18 @@ const GoalMenu: GoalMenuComponent = () => {
             case 'routine':
                 return (
                     <>
-                        <PriorityField />
-                        <FrequencyField />
-                        <DateFields />
-                        <RoutineFields />
+                        {priorityField}
+                        {frequencyField}
+                        {dateFields}
+                        {routineFields}
                     </>
                 );
             case 'task':
                 return (
                     <>
-                        <PriorityField />
-                        <ScheduleField />
+                        {priorityField}
+                        {dateFields}
+                        {scheduleField}
                     </>
                 );
         }
