@@ -618,6 +618,54 @@ const GoalMenu: GoalMenuComponent = () => {
         }
     };
 
+    const handleCreateChild = () => {
+        const parentGoal = goal; // Store the current goal as parent
+        const newGoal: Goal = {} as Goal;
+
+        // Close current edit window and open create window
+        close();
+        setTimeout(() => {
+            open(newGoal, 'create', async (createdGoal: Goal) => {
+                try {
+                    // Create the relationship after successful goal creation
+                    await createRelationship(parentGoal.id!, createdGoal.id!, 'child');
+                    if (onSuccess) {
+                        onSuccess(parentGoal);
+                    }
+                } catch (error) {
+                    console.error('Failed to create child relationship:', error);
+                    setError('Failed to create child relationship');
+                }
+            });
+        }, 100);
+    };
+
+    const handleCreateQueue = () => {
+        const previousGoal = goal; // Store the current goal as previous
+        const newGoal: Goal = {} as Goal;
+
+        close();
+        setTimeout(() => {
+            open(newGoal, 'create', async (createdGoal: Goal) => {
+                try {
+                    await createRelationship(previousGoal.id!, createdGoal.id!, 'queue');
+                    if (onSuccess) {
+                        onSuccess(previousGoal);
+                    }
+                } catch (error) {
+                    console.error('Failed to create queue relationship:', error);
+                    setError('Failed to create queue relationship');
+                }
+            });
+        }, 100);
+    };
+
+    // Add this handler function
+    const handleEdit = () => {
+        setMode('edit');
+        setTitle('Edit Goal');
+    };
+
     return (
         <Dialog
             open={isOpen}
@@ -642,11 +690,26 @@ const GoalMenu: GoalMenuComponent = () => {
                 {renderTypeSpecificFields()}
             </DialogContent>
             <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
-                {mode === 'edit' && (
-                    <Button onClick={handleDelete} color="error">
-                        Delete
-                    </Button>
-                )}
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                    {mode === 'view' && (
+                        <>
+                            <Button onClick={handleCreateChild} color="secondary">
+                                Create Child
+                            </Button>
+                            <Button onClick={handleCreateQueue} color="secondary">
+                                Create Queue
+                            </Button>
+                            <Button onClick={handleEdit} color="primary">
+                                Edit
+                            </Button>
+                        </>
+                    )}
+                    {mode === 'edit' && (
+                        <Button onClick={handleDelete} color="error">
+                            Delete
+                        </Button>
+                    )}
+                </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <Button onClick={close}>
                         {isViewOnly ? 'Close' : 'Cancel'}
