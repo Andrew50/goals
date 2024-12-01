@@ -69,7 +69,7 @@ async fn execute_query<T>(
             format!("Error fetching row: {}", e),
         )
     })? {
-        let event_data: Goal = row.get("event").map_err(|e| {
+        let event_data: Goal = row.get("g").map_err(|e| {
             eprintln!("Error deserializing event: {:?}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

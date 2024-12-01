@@ -91,34 +91,69 @@ const mapGoalTypeToTaskType = (goalType: string): 'meeting' | 'task' | 'appointm
 };
 
 const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[] => {
-    const initialStartDate = new Date(Math.max(routine.start_timestamp!, currentDate.getTime() + 24 * 60 * 60 * 1000));
-    const end = routine.end_timestamp ? new Date(routine.end_timestamp) : new Date('2029-12-31');
+    if (!routine.routine_time || !routine.start_timestamp) {
+        console.warn(`Routine ${routine.name} is missing required time fields`);
+        return [];
+    }
+
     const events: CalendarEvent[] = [];
+    const initialStartDate = new Date(Math.max(routine.start_timestamp, currentDate.getTime()));
+    const end = new Date(currentDate);
+    end.setDate(end.getDate() + 30); // Generate events for next 30 days
 
     let currentDateIter = new Date(initialStartDate);
     while (currentDateIter <= end) {
         const eventStart = new Date(currentDateIter);
+        const routineHours = Math.floor(routine.routine_time / (1000 * 60 * 60));
+        const routineMinutes = Math.floor((routine.routine_time % (1000 * 60 * 60)) / (1000 * 60));
+
+        eventStart.setHours(routineHours, routineMinutes, 0, 0);
         const eventEnd = new Date(eventStart);
-        eventEnd.setHours(eventEnd.getHours() + 1);
+        const durationInMinutes = routine.duration || 60;
+        eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
 
-        events.push({
-            id: `routine-${routine.id}-${currentDateIter.getTime()}`,
-            title: routine.name,
-            start: eventStart,
-            end: eventEnd,
-            type: 'task',
-            goal: routine
-        });
+        // Check if event spans midnight
+        if (eventStart.getDate() !== eventEnd.getDate()) {
+            // Create first event that ends at midnight
+            const midnightEnd = new Date(eventStart);
+            midnightEnd.setHours(23, 59, 59, 999);
+            events.push({
+                id: `routine-${routine.id}-${currentDateIter.getTime()}-1`,
+                title: routine.name,
+                start: eventStart,
+                end: midnightEnd,
+                type: 'task',
+                goal: routine
+            });
 
-        // Increment based on frequency
-        switch (routine.frequency) {
-            case 'P1D':
-                currentDateIter.setDate(currentDateIter.getDate() + 1);
-                break;
-            case 'P1W':
-                currentDateIter.setDate(currentDateIter.getDate() + 7);
-                break;
-            // Add other frequency patterns as needed
+            // Create second event that starts at midnight
+            const nextDayStart = new Date(eventEnd);
+            nextDayStart.setHours(0, 0, 0, 0);
+            events.push({
+                id: `routine-${routine.id}-${currentDateIter.getTime()}-2`,
+                title: routine.name,
+                start: nextDayStart,
+                end: eventEnd,
+                type: 'task',
+                goal: routine
+            });
+        } else {
+            // Regular event that doesn't span midnight
+            events.push({
+                id: `routine-${routine.id}-${currentDateIter.getTime()}`,
+                title: routine.name,
+                start: eventStart,
+                end: eventEnd,
+                type: 'task',
+                goal: routine
+            });
+        }
+
+        // Move to next occurrence based on frequency
+        if (routine.frequency === 'P1D') {
+            currentDateIter.setDate(currentDateIter.getDate() + 1);
+        } else if (routine.frequency === 'P1W') {
+            currentDateIter.setDate(currentDateIter.getDate() + 7);
         }
     }
 

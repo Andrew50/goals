@@ -29,10 +29,7 @@ pub struct Goal {
     pub completed: Option<bool>,
     pub frequency: Option<String>,
     pub routine_type: Option<String>,
-    pub routine_duration: Option<i32>,
     pub routine_time: Option<i64>,
-    //pub min_timestamp: Option<i64>,
-    //pub max_timestamp: Option<i64>,
 }
 
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
@@ -49,10 +46,9 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     completed: g.completed,
                     frequency: g.frequency,
                     routine_type: g.routine_type,
-                    routine_duration: g.routine_duration,
                     routine_time: g.routine_time,
                     id: id(g)
-                 } as event";
+                 } as g";
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -165,7 +161,6 @@ pub async fn create_goal_handler(
             "completed",
             "frequency",
             "routine_type",
-            "routine_duration",
             "routine_time",
         ];
 
@@ -315,10 +310,6 @@ pub async fn update_goal_handler(
         set_clauses.push("g.routine_type = $routine_type");
         params.push(("routine_type", routine_type.clone().into()));
     }
-    if let Some(routine_duration) = goal.routine_duration {
-        set_clauses.push("g.routine_duration = $routine_duration");
-        params.push(("routine_duration", routine_duration.into()));
-    }
     if let Some(routine_time) = goal.routine_time {
         set_clauses.push("g.routine_time = $routine_time");
         params.push(("routine_time", routine_time.into()));
@@ -328,6 +319,9 @@ pub async fn update_goal_handler(
         "MATCH (g:Goal) WHERE id(g) = $id SET {}",
         set_clauses.join(", ")
     );
+
+    println!("Final query string: {}", query_str);
+    println!("Final params: {:?}", params);
 
     let query = query(&query_str).params(params);
 
@@ -369,6 +363,11 @@ impl Goal {
     pub async fn create_goal(&self, graph: &Graph) -> Result<Goal, neo4rs::Error> {
         // Log the goal creation attempt
         println!("Attempting to create goal in database: {:?}", self);
+
+        // Add these debug prints
+        println!("Routine fields in incoming goal:");
+        println!("routine_type: {:?}", self.routine_type);
+        println!("routine_time: {:?}", self.routine_time);
 
         // Define all possible properties and their corresponding parameter values
         let property_params: Vec<(&str, Option<neo4rs::BoltType>)> = vec![
@@ -420,11 +419,6 @@ impl Goal {
                 self.routine_type.as_ref().map(|v| v.clone().into()),
             ),
             (
-                "routine_duration",
-                self.routine_duration
-                    .map(|v| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: v as i64 })),
-            ),
-            (
                 "routine_time",
                 self.routine_time
                     .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
@@ -446,6 +440,10 @@ impl Goal {
             "CREATE (g:Goal {{ {} }}) RETURN g, id(g) as id",
             properties.join(", ")
         );
+
+        // After building properties, add this debug print
+        println!("Final query string: {}", query_str);
+        println!("Final params: {:?}", params);
 
         // Execute query with parameters
         let mut result = graph.execute(query(&query_str).params(params)).await?;

@@ -46,7 +46,9 @@ const GoalMenu: GoalMenuComponent = () => {
     const [error, setError] = useState<string>('');
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
+    console.log('Component Initial Goal Duration:', goal.duration);
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+        console.log('Open Function Duration:', goal.duration);
         if (initialMode === 'create' && !goal.start_timestamp) {
             goal.start_timestamp = Date.now();
         }
@@ -82,6 +84,7 @@ const GoalMenu: GoalMenuComponent = () => {
     }, []);
 
     const handleChange = (newGoal: Goal) => {
+        console.log('HandleChange Duration:', newGoal.duration);
         setGoal(newGoal);
     }
 
@@ -90,16 +93,12 @@ const GoalMenu: GoalMenuComponent = () => {
             throw new Error('Cannot create another goal in non-create mode');
         }
         const validationErrors: string[] = [];
-
         if (!goal.goal_type) {
             validationErrors.push('Goal type is required');
         }
-
         if (!goal.name) {
             validationErrors.push('Name is required');
         }
-
-        // Additional type-specific validations
         if (goal.goal_type) {
             switch (goal.goal_type) {
                 case 'routine':
@@ -120,26 +119,67 @@ const GoalMenu: GoalMenuComponent = () => {
                     break;
             }
         }
-
         if (validationErrors.length > 0) {
             setError(validationErrors.join('\n'));
             return;
         }
+        const submissionGoal = { ...goal };
+        const timestampFields = [
+            'start_timestamp',
+            'end_timestamp',
+            'scheduled_timestamp',
+            'routine_time',
+            'next_timestamp'
+        ] as const;
+
+        type TimestampField = typeof timestampFields[number];
+
+        timestampFields.forEach((field: TimestampField) => {
+            const value = submissionGoal[field];
+            if (value !== undefined && value !== null) {
+                // Ensure the timestamp is a number
+                submissionGoal[field] = typeof value === 'string'
+                    ? parseInt(value)
+                    : value;
+            } else {
+                // If the field is undefined or null, delete it so it won't be sent
+                delete submissionGoal[field];
+            }
+        });
+
+        console.log('Duration before conversion:', submissionGoal.duration);
 
         // Convert duration from hours.minutes to total minutes before submission
-        if (goal.duration) {
-            const hours = Math.floor(goal.duration);
-            const minutes = Math.round((goal.duration % 1) * 60);
-            goal.duration = hours * 60 + minutes;
+        if (submissionGoal.duration) {
+            // REMOVE THIS CONVERSION - it's causing the issue
+            // const hours = Math.floor(submissionGoal.duration);
+            // const minutes = Math.round((submissionGoal.duration % 1) * 60);
+            // submissionGoal.duration = hours * 60 + minutes;
+
+            // The duration is already in minutes, no need to convert
+        } else {
+            delete submissionGoal.duration;
         }
 
-        // Existing submission logic
+        console.log('Duration after conversion:', submissionGoal.duration);
+
+        // Remove any undefined or null fields
+        (Object.keys(submissionGoal) as Array<keyof Goal>).forEach(key => {
+            if (submissionGoal[key] === undefined || submissionGoal[key] === null) {
+                delete submissionGoal[key];
+            }
+        });
+
+        // Add this log to see what's being sent
+        console.log('Submitting goal data:', submissionGoal);
+
+        // Existing submission logic with the cleaned goal object
         if (mode === 'create') {
-            console.log('Attempting to create goal with data:', goal);
-            const response = await privateRequest<Goal>('goals/create', 'POST', goal);
+            console.log('Attempting to create goal with data:', submissionGoal);
+            const response = await privateRequest<Goal>('goals/create', 'POST', submissionGoal);
             Object.assign(goal, response);
         } else if (mode === 'edit' && goal.id) {
-            const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', goal);
+            const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', submissionGoal);
         }
 
         if (onSuccess) {
@@ -202,23 +242,54 @@ const GoalMenu: GoalMenuComponent = () => {
         </TextField>
     );
     //};
+    console.log('Duration:', goal.duration);
+    console.log('Duration Type:', !(!goal.duration));
+
+    console.log('Pre-render Duration:', {
+        value: goal.duration,
+        type: typeof goal.duration,
+        truthyCheck: !!goal.duration,
+        directCheck: goal.duration ? true : false
+    });
 
     const durationField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Duration:</strong> {goal.duration ? `${Math.floor(goal.duration / 60)}h ${goal.duration % 60}m` : 'Not set'}
+            <strong>Duration:</strong> {(() => {
+                const duration = goal.duration;
+                console.log('Duration Field Render:', {
+                    value: duration,
+                    type: typeof duration,
+                    truthyCheck: !!duration,
+                    directCheck: duration ? true : false
+                });
+                return duration ? `${(duration / 60).toFixed(2)}h` : 'Not set';
+            })()}
         </Box>
     ) : (
         <Box sx={{ display: 'flex', gap: 2 }}>
             <TextField
                 label="Hours"
                 type="number"
-                value={goal.duration ? Math.floor(goal.duration / 60) : ''}
+                value={(() => {
+                    const hours = goal.duration ? Math.floor(goal.duration / 60) : '';
+                    console.log('Displaying Hours:', {
+                        rawDuration: goal.duration,
+                        calculatedHours: hours
+                    });
+                    return hours;
+                })()}
                 onChange={(e) => {
                     const hours = e.target.value ? parseInt(e.target.value) : 0;
                     const minutes = goal.duration ? goal.duration % 60 : 0;
+                    const newDuration = hours * 60 + minutes;
+                    console.log('Setting Hours:', {
+                        inputHours: hours,
+                        existingMinutes: minutes,
+                        newTotalMinutes: newDuration
+                    });
                     handleChange({
                         ...goal,
-                        duration: hours * 60 + minutes
+                        duration: newDuration
                     });
                 }}
                 margin="dense"
@@ -233,13 +304,26 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Minutes"
                 type="number"
-                value={goal.duration ? goal.duration % 60 : ''}
+                value={(() => {
+                    const minutes = goal.duration ? goal.duration % 60 : '';
+                    console.log('Displaying Minutes:', {
+                        rawDuration: goal.duration,
+                        calculatedMinutes: minutes
+                    });
+                    return minutes;
+                })()}
                 onChange={(e) => {
                     const minutes = e.target.value ? parseInt(e.target.value) : 0;
                     const hours = goal.duration ? Math.floor(goal.duration / 60) : 0;
+                    const newDuration = hours * 60 + minutes;
+                    console.log('Setting Minutes:', {
+                        existingHours: hours,
+                        inputMinutes: minutes,
+                        newTotalMinutes: newDuration
+                    });
                     handleChange({
                         ...goal,
-                        duration: hours * 60 + minutes
+                        duration: newDuration
                     });
                 }}
                 margin="dense"
@@ -445,9 +529,7 @@ const GoalMenu: GoalMenuComponent = () => {
             </Box>
             {goal.routine_type === 'task' && (
                 <>
-                    <Box sx={{ mb: 2 }}>
-                        <strong>Duration:</strong> {goal.routine_duration ? `${goal.routine_duration} minutes` : 'Not set'}
-                    </Box>
+                    {durationField}
                     <Box sx={{ mb: 2 }}>
                         <strong>Scheduled Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
                     </Box>

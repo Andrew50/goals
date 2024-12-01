@@ -1,9 +1,5 @@
 use axum::{
-    extract::Extension,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
+    extract::Extension, http::StatusCode, response::IntoResponse, routing::get, Json, Router,
 };
 use neo4rs::{query, Graph};
 use serde_json::Value;
@@ -31,8 +27,8 @@ pub async fn get_list_data(
         Ok(mut result) => {
             let mut goals: Vec<Value> = Vec::new();
             while let Ok(Some(row)) = result.next().await {
-                if let Ok(event) = row.get::<Value>("event") {
-                    goals.push(event);
+                if let Ok(goal) = row.get::<Value>("goal") {
+                    goals.push(goal);
                 }
             }
             Ok(Json(goals))

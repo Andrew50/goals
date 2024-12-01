@@ -74,8 +74,8 @@ async fn get_day_tasks(
         Ok(mut result) => {
             let mut tasks = Vec::new();
             while let Ok(Some(row)) = result.next().await {
-                if let Ok(event) = row.get::<serde_json::Value>("event") {
-                    tasks.push(event);
+                if let Ok(goal) = row.get::<serde_json::Value>("goal") {
+                    tasks.push(goal);
                 }
             }
             println!("Found {} tasks", tasks.len());
