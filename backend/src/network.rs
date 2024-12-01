@@ -50,36 +50,25 @@ pub async fn get_network_data(
 ) -> Result<Json<NetworkData>, (StatusCode, String)> {
     println!("Fetching network data for user: {}", user_id);
 
-    // Print the query for debugging
-    let query_str = "MATCH (g:Goal) 
+    // Use the global GOAL_RETURN_QUERY constant
+    let query_str = format!(
+        "MATCH (g:Goal) 
          WHERE g.user_id = $user_id
          OPTIONAL MATCH (g)-[r]->(g2:Goal)
          WHERE g2.user_id = $user_id
-         RETURN {
-            name: g.name,
-            description: g.description,
-            goal_type: g.goal_type,
-            user_id: g.user_id,
-            priority: g.priority,
-            start_timestamp: g.start_timestamp,
-            end_timestamp: g.end_timestamp,
-            next_timestamp: g.next_timestamp,
-            scheduled_timestamp: g.scheduled_timestamp,
-            duration: g.duration,
-            completed: g.completed,
-            frequency: g.frequency,
-            id: id(g)
-         } as g, 
+         {}, 
          collect(DISTINCT CASE
-             WHEN r IS NOT NULL THEN {
+             WHEN r IS NOT NULL THEN {{
                 to: id(g2), 
                 type: type(r)
-            }
+            }}
             ELSE NULL
-         END) as relationships";
+         END) as relationships",
+        crate::goal::GOAL_RETURN_QUERY
+    );
 
     println!("Executing query: {}", query_str);
-    let query = query(query_str).param("user_id", user_id);
+    let query = query(&query_str).param("user_id", user_id);
 
     let mut result = graph.execute(query).await.map_err(|e| {
         eprintln!("Database query failed: {:?}", e);

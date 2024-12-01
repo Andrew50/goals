@@ -168,15 +168,14 @@ const TaskList = ({
 };
 
 const CalendarEventDisplay: React.FC<{ event: CalendarEvent }> = ({ event }) => {
-
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     GoalMenu.open(event.goal, 'view', () => {
       //update event
     });
-
   }
+
   const handleRightClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -185,20 +184,19 @@ const CalendarEventDisplay: React.FC<{ event: CalendarEvent }> = ({ event }) => 
     });
   }
 
-  const backgroundColor = event.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
   return (
     <div
       onClick={handleClick}
       onContextMenu={handleRightClick}
       style={{
-        padding: '2px 4px',
-        fontSize: '14px',
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        backgroundColor: backgroundColor,
-        border: `1px solid ${backgroundColor}`
-      }}>
+        height: '100%',
+        width: '100%',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        cursor: 'pointer'
+      }}
+    >
       {event.title}
     </div>
   );
@@ -227,6 +225,7 @@ const CalendarDropArea = ({
   onDropTask: (date: Date) => void;
   onEventClick: (event: CalendarEvent) => void;
 }) => {
+  const [currentView, setCurrentView] = useState('month');
   const { setNodeRef, isOver } = useDroppable({
     id: 'calendar'
   });
@@ -257,23 +256,56 @@ const CalendarDropArea = ({
         }}
         views={['month', 'week', 'day']}
         defaultView="month"
+        view={currentView}
+        onView={setCurrentView}
         selectable={true}
         onSelectSlot={handleSelectSlot}
         onSelectEvent={(event: CalendarEvent) => onEventClick(event)}
         step={60}
-        eventPropGetter={() => ({
-          style: {
-            border: 'none',
-            background: 'none',
-            padding: 0
+        eventPropGetter={(event: CalendarEvent, start: Date, end: Date, isSelected: boolean) => {
+          const duration = event.goal?.duration || 60;
+          const backgroundColor = event.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
+
+          // Adjust styling based on view
+          const baseStyle = {
+            backgroundColor: backgroundColor,
+            border: `2px solid ${backgroundColor}`,
+            borderLeft: `4px solid ${backgroundColor}`,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            margin: '1px',
+            borderRadius: '4px',
+            padding: '2px 4px',
+            fontSize: '14px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: 'flex',
+            alignItems: 'center',
+            zIndex: 1
+          };
+
+          // Add height only for week and day views
+          if (currentView === 'week' || currentView === 'day') {
+            const heightPerHour = 50;
+            const height = (duration / 60) * heightPerHour;
+            return {
+              style: {
+                ...baseStyle,
+                height: `${height}px`,
+                minHeight: `${height}px`,
+              }
+            };
           }
-        })}
-      /*eventPropGetter={(event: CalendarEvent) => {
-        const eventType = (event.type || 'task') as EventType;
-        return {
-          style: eventColors[eventType]
-        };
-      }}*/
+
+          // For month view, use minimal height
+          return {
+            style: {
+              ...baseStyle,
+              height: '20px',
+              minHeight: '20px',
+            }
+          };
+        }}
       />
     </div>
   );
