@@ -126,6 +126,13 @@ const GoalMenu: GoalMenuComponent = () => {
             return;
         }
 
+        // Convert duration from hours.minutes to total minutes before submission
+        if (goal.duration) {
+            const hours = Math.floor(goal.duration);
+            const minutes = Math.round((goal.duration % 1) * 60);
+            goal.duration = hours * 60 + minutes;
+        }
+
         // Existing submission logic
         if (mode === 'create') {
             console.log('Attempting to create goal with data:', goal);
@@ -163,7 +170,7 @@ const GoalMenu: GoalMenuComponent = () => {
         try {
             const timestampNum = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
             const date = new Date(timestampNum);
-            return date.toISOString().slice(0, 16);
+            return date.toISOString().slice(0, 10);
         } catch {
             return '';
         }
@@ -196,15 +203,63 @@ const GoalMenu: GoalMenuComponent = () => {
     );
     //};
 
-    //const ScheduleField = () => {
+    const durationField = isViewOnly ? (
+        <Box sx={{ mb: 2 }}>
+            <strong>Duration:</strong> {goal.duration ? `${Math.floor(goal.duration / 60)}h ${goal.duration % 60}m` : 'Not set'}
+        </Box>
+    ) : (
+        <Box sx={{ display: 'flex', gap: 2 }}>
+            <TextField
+                label="Hours"
+                type="number"
+                value={goal.duration ? Math.floor(goal.duration / 60) : ''}
+                onChange={(e) => {
+                    const hours = e.target.value ? parseInt(e.target.value) : 0;
+                    const minutes = goal.duration ? goal.duration % 60 : 0;
+                    handleChange({
+                        ...goal,
+                        duration: hours * 60 + minutes
+                    });
+                }}
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                inputProps={{
+                    min: 0,
+                    step: 1
+                }}
+                disabled={isViewOnly}
+                sx={{ width: '50%' }}
+            />
+            <TextField
+                label="Minutes"
+                type="number"
+                value={goal.duration ? goal.duration % 60 : ''}
+                onChange={(e) => {
+                    const minutes = e.target.value ? parseInt(e.target.value) : 0;
+                    const hours = goal.duration ? Math.floor(goal.duration / 60) : 0;
+                    handleChange({
+                        ...goal,
+                        duration: hours * 60 + minutes
+                    });
+                }}
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                inputProps={{
+                    min: 0,
+                    max: 59,
+                    step: 1
+                }}
+                disabled={isViewOnly}
+                sx={{ width: '50%' }}
+            />
+        </Box>
+    );
     const scheduleField = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
                 <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toLocaleString() : 'Not set'}
             </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Duration:</strong> {goal.duration ? `${goal.duration} hours` : 'Not set'}
-            </Box>
+
         </>
     ) : (
         <>
@@ -226,48 +281,27 @@ const GoalMenu: GoalMenuComponent = () => {
                 InputLabelProps={{ shrink: true }}
                 disabled={isViewOnly}
             />
-            <TextField
-                label="Duration (hours)"
-                type="number"
-                value={goal.duration || ''}
-                onChange={(e) => {
-                    const duration = e.target.value ? parseFloat(e.target.value) : undefined;
-                    handleChange({
-                        ...goal,
-                        duration
-                    });
-                }}
-                fullWidth
-                margin="dense"
-                InputLabelProps={{ shrink: true }}
-                inputProps={{
-                    min: 0.25,
-                    max: 24,
-                    step: 0.25
-                }}
-                disabled={isViewOnly}
-            />
         </>
     );
 
     const dateFields = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
-                <strong>Start Date:</strong> {goal.start_timestamp ? new Date(goal.start_timestamp).toLocaleString() : 'Not set'}
+                <strong>Start Date:</strong> {goal.start_timestamp ? new Date(goal.start_timestamp).toLocaleDateString() : 'Not set'}
             </Box>
             <Box sx={{ mb: 2 }}>
-                <strong>End Date:</strong> {goal.end_timestamp ? new Date(goal.end_timestamp).toLocaleString() : 'Not set'}
+                <strong>End Date:</strong> {goal.end_timestamp ? new Date(goal.end_timestamp).toLocaleDateString() : 'Not set'}
             </Box>
         </>
     ) : (
         <>
             <TextField
                 label="Start Date"
-                type="datetime-local"
+                type="date"
                 value={formatDateForInput(goal.start_timestamp)}
                 onChange={(e) => {
                     const timestamp = e.target.value
-                        ? parseInt(String(new Date(e.target.value).getTime()))
+                        ? new Date(e.target.value).setHours(0, 0, 0, 0)
                         : undefined;
                     handleChange({
                         ...goal,
@@ -281,11 +315,11 @@ const GoalMenu: GoalMenuComponent = () => {
             />
             <TextField
                 label="End Date"
-                type="datetime-local"
+                type="date"
                 value={formatDateForInput(goal.end_timestamp)}
                 onChange={(e) => {
                     const timestamp = e.target.value
-                        ? parseInt(String(new Date(e.target.value).getTime()))
+                        ? new Date(e.target.value).setHours(23, 59, 59, 999)
                         : undefined;
                     handleChange({
                         ...goal,
@@ -409,18 +443,16 @@ const GoalMenu: GoalMenuComponent = () => {
             <Box sx={{ mb: 2 }}>
                 <strong>Routine Type:</strong> {goal.routine_type ? goal.routine_type.charAt(0).toUpperCase() + goal.routine_type.slice(1) : 'Not set'}
             </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Routine Name:</strong> {goal.routine_name || 'Not set'}
-            </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Routine Description:</strong> {goal.routine_description || 'Not set'}
-            </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Routine Duration:</strong> {goal.routine_duration ? `${goal.routine_duration} minutes` : 'Not set'}
-            </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Routine Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
-            </Box>
+            {goal.routine_type === 'task' && (
+                <>
+                    <Box sx={{ mb: 2 }}>
+                        <strong>Duration:</strong> {goal.routine_duration ? `${goal.routine_duration} minutes` : 'Not set'}
+                    </Box>
+                    <Box sx={{ mb: 2 }}>
+                        <strong>Scheduled Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
+                    </Box>
+                </>
+            )}
         </>
     ) : (
         <>
@@ -439,68 +471,33 @@ const GoalMenu: GoalMenuComponent = () => {
                 <MenuItem value="task">Task</MenuItem>
                 <MenuItem value="achievement">Achievement</MenuItem>
             </TextField>
-            <TextField
-                label="Routine Name"
-                value={goal.routine_name || ''}
-                onChange={(e) => handleChange({
-                    ...goal,
-                    routine_name: e.target.value
-                })}
-                fullWidth
-                margin="dense"
-                disabled={isViewOnly}
-                inputProps={{
-                    autoComplete: 'off'
-                }}
-            />
-            <TextField
-                label="Routine Description"
-                value={goal.routine_description || ''}
-                onChange={(e) => handleChange({
-                    ...goal,
-                    routine_description: e.target.value
-                })}
-                fullWidth
-                margin="dense"
-                multiline
-                rows={4}
-                disabled={isViewOnly}
-                inputProps={{
-                    autoComplete: 'off'
-                }}
-            />
-            <TextField
-                label="Routine Duration (minutes)"
-                type="number"
-                value={goal.routine_duration || ''}
-                onChange={(e) => handleChange({
-                    ...goal,
-                    routine_duration: parseInt(e.target.value) || undefined
-                })}
-                fullWidth
-                margin="dense"
-                disabled={isViewOnly}
-            />
-            <TextField
-                label="Routine Time (24-hour format)"
-                type="time"
-                value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
-                onChange={(e) => {
-                    const [hours, minutes] = e.target.value.split(':').map(Number);
-                    const timeInMs = (hours * 60 + minutes) * 60 * 1000;
-                    handleChange({
-                        ...goal,
-                        routine_time: timeInMs
-                    });
-                }}
-                fullWidth
-                margin="dense"
-                InputLabelProps={{ shrink: true }}
-                inputProps={{ step: 300 }}
-                disabled={isViewOnly}
-            />
+            {goal.routine_type === 'task' && (
+                <>
+                    {durationField}
+
+                    <TextField
+                        label="Scheduled Time"
+                        type="time"
+                        value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
+                        onChange={(e) => {
+                            const [hours, minutes] = e.target.value.split(':').map(Number);
+                            const timeInMs = (hours * 60 + minutes) * 60 * 1000;
+                            handleChange({
+                                ...goal,
+                                routine_time: timeInMs
+                            });
+                        }}
+                        fullWidth
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ step: 300 }}
+                        disabled={isViewOnly}
+                    />
+                </>
+            )}
         </>
-    )
+    );
+
     const renderTypeSpecificFields = () => {
         if (!goal.goal_type) return null;
 
@@ -533,6 +530,7 @@ const GoalMenu: GoalMenuComponent = () => {
                         {priorityField}
                         {dateFields}
                         {scheduleField}
+                        {durationField}
                     </>
                 );
         }

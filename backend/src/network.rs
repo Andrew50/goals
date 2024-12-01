@@ -3,7 +3,7 @@ use axum::{extract::Extension, http::StatusCode, routing::get, Json, Router};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 
-use crate::goal::{Goal, GoalType};
+use crate::goal::Goal;
 
 #[derive(Debug, Serialize)]
 pub struct NetworkData {
@@ -100,7 +100,7 @@ pub async fn get_network_data(
         )
     })? {
         // Debug print the raw row data
-        println!("Raw row data: {:?}", row);
+        //println!("Raw row data: {:?}", row);
 
         let goal: Goal = row.get("g").map_err(|e| {
             eprintln!("Error deserializing goal: {:?}", e);
@@ -134,16 +134,16 @@ pub async fn get_network_data(
         })?;
 
         // Debug print the relationships
-        println!("Deserialized relationships: {:?}", relationships);
+        //println!("Deserialized relationships: {:?}", relationships);
 
         for rel in relationships {
             if let Some(to_id) = rel.to {
                 if to_id != 0 {
                     // Debug print each relationship before creating NetworkEdge
-                    println!(
+                    /*println!(
                         "Creating edge - from: {}, to: {}, type: '{}'",
                         goal_id, to_id, rel.type_
-                    );
+                    );*/
 
                     edges.push(NetworkEdge {
                         from: goal_id,

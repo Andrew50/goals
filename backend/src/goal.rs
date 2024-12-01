@@ -28,6 +28,9 @@ pub struct Goal {
     pub duration: Option<i32>,
     pub completed: Option<bool>,
     pub frequency: Option<String>,
+    pub routine_type: Option<String>,
+    pub routine_duration: Option<i32>,
+    pub routine_time: Option<i64>,
     //pub min_timestamp: Option<i64>,
     //pub max_timestamp: Option<i64>,
 }
@@ -45,6 +48,9 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     duration: g.duration,
                     completed: g.completed,
                     frequency: g.frequency,
+                    routine_type: g.routine_type,
+                    routine_duration: g.routine_duration,
+                    routine_time: g.routine_time,
                     id: id(g)
                  } as event";
 
@@ -135,6 +141,48 @@ pub async fn create_goal_handler(
     Extension(user_id): Extension<i64>,
     Json(goal): Json<Goal>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Log the entire received goal data
+    println!("Received goal creation request: {:?}", goal);
+
+    // Deserialize the raw JSON to check for extra fields
+    let raw_value: serde_json::Value = serde_json::to_value(&goal)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let serde_json::Value::Object(map) = raw_value {
+        let known_fields = vec![
+            "id",
+            "name",
+            "goal_type",
+            "description",
+            "user_id",
+            "priority",
+            "start_timestamp",
+            "end_timestamp",
+            "completion_date",
+            "next_timestamp",
+            "scheduled_timestamp",
+            "duration",
+            "completed",
+            "frequency",
+            "routine_type",
+            "routine_duration",
+            "routine_time",
+        ];
+
+        let unknown_fields: Vec<String> = map
+            .keys()
+            .filter(|k| !known_fields.contains(&k.as_str()))
+            .cloned()
+            .collect();
+
+        if !unknown_fields.is_empty() {
+            println!(
+                "Warning: Received unhandled fields in goal creation: {:?}",
+                unknown_fields
+            );
+        }
+    }
+
     let goal = Goal {
         user_id: Some(user_id),
         ..goal
@@ -263,6 +311,18 @@ pub async fn update_goal_handler(
         set_clauses.push("g.frequency = $frequency");
         params.push(("frequency", frequency.clone().into()));
     }
+    if let Some(routine_type) = &goal.routine_type {
+        set_clauses.push("g.routine_type = $routine_type");
+        params.push(("routine_type", routine_type.clone().into()));
+    }
+    if let Some(routine_duration) = goal.routine_duration {
+        set_clauses.push("g.routine_duration = $routine_duration");
+        params.push(("routine_duration", routine_duration.into()));
+    }
+    if let Some(routine_time) = goal.routine_time {
+        set_clauses.push("g.routine_time = $routine_time");
+        params.push(("routine_time", routine_time.into()));
+    }
 
     let query_str = format!(
         "MATCH (g:Goal) WHERE id(g) = $id SET {}",
@@ -354,6 +414,20 @@ impl Goal {
             (
                 "frequency",
                 self.frequency.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "routine_type",
+                self.routine_type.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "routine_duration",
+                self.routine_duration
+                    .map(|v| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: v as i64 })),
+            ),
+            (
+                "routine_time",
+                self.routine_time
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
             ),
         ];
 
