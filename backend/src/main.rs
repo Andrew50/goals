@@ -1,18 +1,17 @@
 mod auth;
 mod calender;
+mod day;
 mod db;
 mod goal;
+mod list;
 mod middleware;
 mod network;
 mod traversal;
-mod list;
-mod day;
 
 use axum::{middleware::from_fn, Extension, Router};
 use dotenvy::dotenv;
-use hyper::header::HeaderValue;
 use tokio::net::TcpListener;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::Level;
 use tracing_subscriber;
 
@@ -35,9 +34,6 @@ async fn main() {
 
     // Configure CORS
     let cors = CorsLayer::new()
-        //.allow_origin(AllowOrigin::exact(HeaderValue::from_static(
-        //    "http://localhost:3000",
-        //)))
         .allow_origin([
             "http://localhost:3000".parse().unwrap(),
             "https://goals.atlantis.trading".parse().unwrap(),

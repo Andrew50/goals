@@ -5,11 +5,10 @@ use axum::{
     routing::{get, put},
     Router,
 };
+use chrono::{DateTime, Local, Utc};
 use neo4rs::{query, Graph};
-use serde::{Deserialize, Serialize};
-use chrono::{Local, Timelike, NaiveDateTime, Utc};
 
-use crate::goal::{Goal, GOAL_RETURN_QUERY};
+use crate::goal::GOAL_RETURN_QUERY;
 
 pub fn create_routes() -> Router {
     Router::new()
@@ -28,20 +27,31 @@ async fn get_day_tasks(
         .unwrap()
         .and_local_timezone(Local)
         .unwrap()
-        .timestamp() * 1000;
-    
+        .timestamp()
+        * 1000;
+
     let today_end = local_now
         .date_naive()
         .and_hms_opt(23, 59, 59)
         .unwrap()
         .and_local_timezone(Local)
         .unwrap()
-        .timestamp() * 1000;
+        .timestamp()
+        * 1000;
 
     println!("Current time: {}", local_now);
-    println!("Checking for tasks between {} and {}", today_start, today_end);
-    println!("Start date: {}", NaiveDateTime::from_timestamp_opt(today_start/1000, 0).unwrap());
-    println!("End date: {}", NaiveDateTime::from_timestamp_opt(today_end/1000, 0).unwrap());
+    println!(
+        "Checking for tasks between {} and {}",
+        today_start, today_end
+    );
+    println!(
+        "Start date: {}",
+        DateTime::from_timestamp(today_start / 1000, 0).unwrap()
+    );
+    println!(
+        "End date: {}",
+        DateTime::from_timestamp(today_end / 1000, 0).unwrap()
+    );
 
     let query_str = format!(
         "MATCH (g:Goal) 
@@ -86,13 +96,13 @@ async fn toggle_complete_task(
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let now = Utc::now().timestamp();
-    
+
     let query = query(
         "MATCH (g:Goal) 
          WHERE id(g) = $id 
          SET g.completed = CASE WHEN g.completed = true THEN false ELSE true END,
              g.completion_date = CASE WHEN g.completed = true THEN null ELSE $completion_date END
-         RETURN g"
+         RETURN g",
     )
     .param("id", id)
     .param("completion_date", now);
