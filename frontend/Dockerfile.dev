@@ -1,5 +1,6 @@
 # Use Node.js as the base
 FROM node:18
+ENV REACT_APP_API_URL=http://localhost:5057
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -15,7 +16,6 @@ RUN npm install
 
 # Expose the port the app will run on
 EXPOSE 3000
-ENV REACT_APP_API_URL=http://localhost:5057
 
 # Start the app
 CMD ["sh", "-c", "npm install && npm start"]

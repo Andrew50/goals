@@ -7,8 +7,8 @@ use crate::goal::{Goal, GOAL_RETURN_QUERY};
 
 #[derive(Debug, Serialize)]
 pub struct CalenderData {
-    unassigned_tasks: Vec<Goal>,
-    assigned_tasks: Vec<Goal>,
+    unscheduled_tasks: Vec<Goal>,
+    scheduled_tasks: Vec<Goal>,
     routines: Vec<Goal>,
     achievements: Vec<Goal>,
 }
@@ -25,7 +25,7 @@ pub struct CalendarEvent {
 }
 
 #[derive(Debug, Serialize)]
-pub struct UnassignedTask {
+pub struct UnscheduledTask {
     id: i64,
     title: String,
     end_timestamp: i64,
@@ -171,8 +171,8 @@ pub async fn get_calender_data(
     }
 
     Ok(Json(CalenderData {
-        assigned_tasks: results[0].clone(),
-        unassigned_tasks: results[1].clone(),
+        scheduled_tasks: results[0].clone(),
+        unscheduled_tasks: results[1].clone(),
         routines: results[2].clone(),
         achievements: results[3].clone(),
     }))
