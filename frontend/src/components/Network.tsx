@@ -7,7 +7,7 @@ import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { createResizeObserver } from '../utils/resizeObserver';
-import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType } from '../types';
+import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType, goalToLocal } from '../types';
 import GoalMenu, { createRelationship } from './GoalMenu';
 //import GoalView from '../../../GoalView';
 import { privateRequest } from '../utils/api';
@@ -20,11 +20,12 @@ interface NetworkData {
 }
 
 const formatNetworkNode = (goal: Goal): NetworkNode => {
+  const localGoal = goalToLocal(goal);
   return {
-    ...goal,
-    label: goal.name,
-    title: goal.name + ' (' + goal.goal_type + ')',
-    color: goalColors[goal.goal_type]
+    ...localGoal,
+    label: localGoal.name,
+    title: localGoal.name + ' (' + localGoal.goal_type + ')',
+    color: goalColors[localGoal.goal_type]
   }
 }
 

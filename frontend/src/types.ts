@@ -18,6 +18,7 @@ export interface Goal {
     routine_time?: number;
     scheduled_timestamp?: number;
     duration?: number;
+    _tz?: 'utc' | 'user';
 }
 
 // Utility functions for timezone conversion
@@ -32,23 +33,37 @@ export const toUTCTimestamp = (timestamp?: number | null): number | undefined =>
 };
 
 // Goal conversion utilities
-export const goalToLocal = (goal: Goal): Goal => ({
-    ...goal,
-    start_timestamp: toLocalTimestamp(goal.start_timestamp),
-    end_timestamp: toLocalTimestamp(goal.end_timestamp),
-    next_timestamp: toLocalTimestamp(goal.next_timestamp),
-    scheduled_timestamp: toLocalTimestamp(goal.scheduled_timestamp),
-    routine_time: toLocalTimestamp(goal.routine_time)
-});
+export const goalToLocal = (goal: Goal): Goal => {
+    if (goal._tz === 'user') {
+        throw new Error('Goal is already in user timezone');
+    }
 
-export const goalToUTC = (goal: Goal): Goal => ({
-    ...goal,
-    start_timestamp: toUTCTimestamp(goal.start_timestamp),
-    end_timestamp: toUTCTimestamp(goal.end_timestamp),
-    next_timestamp: toUTCTimestamp(goal.next_timestamp),
-    scheduled_timestamp: toUTCTimestamp(goal.scheduled_timestamp),
-    routine_time: toUTCTimestamp(goal.routine_time)
-});
+    return {
+        ...goal,
+        start_timestamp: toLocalTimestamp(goal.start_timestamp),
+        end_timestamp: toLocalTimestamp(goal.end_timestamp),
+        next_timestamp: toLocalTimestamp(goal.next_timestamp),
+        scheduled_timestamp: toLocalTimestamp(goal.scheduled_timestamp),
+        routine_time: toLocalTimestamp(goal.routine_time),
+        _tz: 'user'
+    };
+};
+
+export const goalToUTC = (goal: Goal): Goal => {
+    if (goal._tz === undefined || goal._tz === 'utc') {
+        throw new Error('Goal is already in UTC timezone');
+    }
+
+    return {
+        ...goal,
+        start_timestamp: toUTCTimestamp(goal.start_timestamp),
+        end_timestamp: toUTCTimestamp(goal.end_timestamp),
+        next_timestamp: toUTCTimestamp(goal.next_timestamp),
+        scheduled_timestamp: toUTCTimestamp(goal.scheduled_timestamp),
+        routine_time: toUTCTimestamp(goal.routine_time),
+        _tz: 'utc'
+    };
+};
 
 export interface CalendarResponse {
     scheduled_tasks: Goal[];

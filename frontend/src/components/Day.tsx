@@ -1,6 +1,6 @@
 import { privateRequest } from '../utils/api';
 import React, { useEffect, useState } from 'react';
-import { Goal } from '../types';
+import { Goal, goalToLocal } from '../types';
 import { goalColors } from '../theme/colors';
 import GoalMenu from './GoalMenu';
 //
@@ -9,9 +9,31 @@ const Day: React.FC = () => {
     const [tasks, setTasks] = useState<Goal[]>([]);
 
     useEffect(() => {
-        privateRequest<Goal[]>('day').then((tasks) => {
-            setTasks(tasks);
-            console.log(tasks);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const startTimestamp = today.getTime();
+        const endTimestamp = todayEnd.getTime();
+
+        console.log('Frontend timestamps:', {
+            start: startTimestamp,
+            end: endTimestamp,
+            startDate: new Date(startTimestamp).toISOString(),
+            endDate: new Date(endTimestamp).toISOString()
+        });
+
+        privateRequest<Goal[]>('day', 'GET', {
+            params: {
+                start: startTimestamp,
+                end: endTimestamp
+            }
+        }).then((tasks) => {
+            console.log('Received tasks:', tasks);
+            setTasks(tasks.map(goalToLocal));
+        }).catch(error => {
+            console.error('Error fetching tasks:', error);
         });
     }, []);
 
@@ -66,9 +88,19 @@ const Day: React.FC = () => {
         };
     };
 
+    const getCompletionPercentage = () => {
+        if (tasks.length === 0) return 0;
+        const completed = tasks.filter(task => task.completed).length;
+        return Math.round((completed / tasks.length) * 100);
+    };
+
     return (
         <div className="p-4 max-w-3xl mx-auto">
-            <h2 className="text-2xl font-bold mb-6">Today's Tasks</h2>
+            <h2 className="text-2xl font-bold mb-2">Today's Tasks</h2>
+            <div className="flex items-center gap-2 mb-6 text-gray-600">
+                <span>{getCompletionPercentage()}% complete</span>
+                <span>({organizedTasks().completed.length}/{tasks.length} tasks)</span>
+            </div>
 
             <div className="tasks-list space-y-4 mb-8">
                 {organizedTasks().todo.map(task => {

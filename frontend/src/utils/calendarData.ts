@@ -1,4 +1,4 @@
-import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../types';
+import { Goal, CalendarResponse, CalendarEvent, CalendarTask, goalToLocal } from '../types';
 import { privateRequest } from './api';
 
 const ROUTINE_GENERATION_DAYS = 90;
@@ -12,16 +12,19 @@ export interface TransformedCalendarData {
 export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
     try {
         const response = await privateRequest<CalendarResponse>('calender');
-        console.log(response);
         const currentDate = new Date();
 
-        // Generate routine events first
-        const routineEvents = response.routines.map(routine =>
+        // Convert routines to local timezone before generating events
+        const localRoutines = response.routines.map(goalToLocal);
+
+        // Generate routine events with local timezone data
+        const routineEvents = localRoutines.map(routine =>
             generateRoutineEvents(routine, currentDate)
         ).flat();
 
-        // Handle scheduled tasks (excluding routines since they're handled separately)
+        // Handle scheduled tasks with local timezone
         const scheduledEvents = response.scheduled_tasks
+            .map(goalToLocal)  // Convert to local timezone first
             .filter(item => item.scheduled_timestamp)
             .map(item => ({
                 id: `scheduled-${item.id || Date.now()}`,
@@ -34,8 +37,9 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
                 goal: item
             } as CalendarEvent));
 
-        // Handle unscheduled tasks (excluding routines)
+        // Handle unscheduled tasks with local timezone
         const unscheduledTasks = response.unscheduled_tasks
+            .map(goalToLocal)  // Convert to local timezone first
             .filter(item => !item.scheduled_timestamp)
             .map(item => ({
                 id: (item.id || Date.now()).toString(),
@@ -44,22 +48,25 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
                 goal: item
             } as CalendarTask));
 
-        const achievementEvents = response.achievements.map(achievement => {
-            const completionTime = achievement.completed ?
-                (typeof achievement.completed === 'number' ? achievement.completed : Date.now())
-                : Date.now();
+        // Handle achievements with local timezone
+        const achievementEvents = response.achievements
+            .map(goalToLocal)  // Convert to local timezone first
+            .map(achievement => {
+                const completionTime = achievement.completed ?
+                    (typeof achievement.completed === 'number' ? achievement.completed : Date.now())
+                    : Date.now();
 
-            return {
-                id: `achievement-${achievement.id || Date.now()}`,
-                title: achievement.name,
-                start: new Date(completionTime),
-                end: new Date(new Date(completionTime).setHours(
-                    new Date(completionTime).getHours() + 1
-                )),
-                type: 'task' as const
-            };
-        });
-        console.log(routineEvents);
+                return {
+                    id: `achievement-${achievement.id || Date.now()}`,
+                    title: achievement.name,
+                    start: new Date(completionTime),
+                    end: new Date(new Date(completionTime).setHours(
+                        new Date(completionTime).getHours() + 1
+                    )),
+                    type: 'task' as const
+                };
+            });
+
 
         return {
             events: [...routineEvents, ...scheduledEvents] as CalendarEvent[],

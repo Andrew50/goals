@@ -1,6 +1,6 @@
 import { privateRequest } from '../utils/api';
 import React, { useEffect, useState, useMemo } from 'react';
-import { Goal, GoalType } from '../types';
+import { Goal, GoalType, goalToLocal } from '../types';
 import { goalColors } from '../theme/colors';
 import GoalMenu from './GoalMenu';
 
@@ -14,7 +14,9 @@ const List: React.FC = () => {
     const [refreshTrigger, setRefreshTrigger] = useState(0);
 
     useEffect(() => {
-        privateRequest<Goal[]>('list').then(setList);
+        privateRequest<Goal[]>('list').then(goals => {
+            setList(goals.map(goalToLocal));
+        });
     }, [refreshTrigger]);
 
     // Dynamically generate filter options based on the data
