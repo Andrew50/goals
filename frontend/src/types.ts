@@ -76,8 +76,13 @@ export interface CalendarEvent {
     title: string;
     start: Date;
     end: Date;
-    type?: 'meeting' | 'task' | 'appointment';
+    allDay?: boolean;
+    backgroundColor?: string;
+    borderColor?: string;
+    textColor?: string;
+    display?: 'auto' | 'block' | 'list-item' | 'background' | 'none';
     goal: Goal;
+    type: 'scheduled' | 'routine' | 'achievement' | 'all-day';
 }
 export interface CalendarTask {
     id: string;

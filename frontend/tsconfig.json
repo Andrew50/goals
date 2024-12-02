@@ -22,6 +22,8 @@
   },
   "include": [
     "src",
-    "../Calendar copy.tsx"
-, "../GoalView.tsx"  ]
+    "../Calendar copy.tsx",
+    "../GoalView.tsx",
+    "../Calendar_old.tsx"
+  ]
 }
