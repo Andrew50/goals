@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
     Router,
 };
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc};
 use neo4rs::{query, Graph};
 
 use crate::goal::GOAL_RETURN_QUERY;
@@ -20,26 +20,24 @@ async fn get_day_tasks(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let local_now = Local::now();
-    let today_start = local_now
+    let now = Utc::now();
+    let today_start = now
         .date_naive()
         .and_hms_opt(0, 0, 0)
         .unwrap()
-        .and_local_timezone(Local)
-        .unwrap()
+        .and_utc()
         .timestamp()
         * 1000;
 
-    let today_end = local_now
+    let today_end = now
         .date_naive()
         .and_hms_opt(23, 59, 59)
         .unwrap()
-        .and_local_timezone(Local)
-        .unwrap()
+        .and_utc()
         .timestamp()
         * 1000;
 
-    println!("Current time: {}", local_now);
+    println!("Current time: {}", now);
     println!(
         "Checking for tasks between {} and {}",
         today_start, today_end

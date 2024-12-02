@@ -1,6 +1,7 @@
 import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../types';
 import { privateRequest } from './api';
 
+const ROUTINE_GENERATION_DAYS = 90;
 export interface TransformedCalendarData {
     events: CalendarEvent[];
     unscheduledTasks: CalendarTask[];
@@ -99,15 +100,17 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     const events: CalendarEvent[] = [];
     const initialStartDate = new Date(Math.max(routine.start_timestamp, currentDate.getTime()));
     const end = new Date(currentDate);
-    end.setDate(end.getDate() + 30); // Generate events for next 30 days
+    end.setDate(end.getDate() + ROUTINE_GENERATION_DAYS);
+
+    // Extract hours and minutes from routine_time
+    const routineHours = Math.floor(routine.routine_time / (60 * 60 * 1000));
+    const routineMinutes = Math.floor((routine.routine_time % (60 * 60 * 1000)) / (60 * 1000));
 
     let currentDateIter = new Date(initialStartDate);
     while (currentDateIter <= end) {
         const eventStart = new Date(currentDateIter);
-        const routineHours = Math.floor(routine.routine_time / (1000 * 60 * 60));
-        const routineMinutes = Math.floor((routine.routine_time % (1000 * 60 * 60)) / (1000 * 60));
+        eventStart.setHours(routineHours, routineMinutes, 0, 0);  // Set exact routine time
 
-        eventStart.setHours(routineHours, routineMinutes, 0, 0);
         const eventEnd = new Date(eventStart);
         const durationInMinutes = routine.duration || 60;
         eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);

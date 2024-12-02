@@ -10,7 +10,7 @@ use axum::{
     routing::{delete, post, put},
     Json, Router,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 
@@ -186,11 +186,6 @@ pub async fn create_goal_handler(
         ..goal
     };
 
-    // If this is a routine and no start_timestamp is provided, set it to current time
-    if goal.goal_type == GoalType::Routine && goal.start_timestamp.is_none() {
-        goal.start_timestamp = Some(Utc::now().timestamp() * 1_000_000_000);
-    }
-
     println!("Processed goal creation request: {:?}", goal);
 
     let mut validation_errors = Vec::new();
@@ -205,6 +200,9 @@ pub async fn create_goal_handler(
         GoalType::Routine => {
             if goal.frequency.is_none() {
                 validation_errors.push("Frequency is required for routine goals");
+            }
+            if goal.start_timestamp.is_none() {
+                validation_errors.push("Start timestamp is required for routine goals");
             }
         }
         GoalType::Task => {
@@ -234,10 +232,7 @@ pub async fn create_goal_handler(
             // If this is a routine, process it immediately
             if created_goal.goal_type == GoalType::Routine {
                 let routine_processor = RoutineProcessor::new(graph);
-                if let Err(e) = routine_processor
-                    .process_single_routine(&created_goal)
-                    .await
-                {
+                if let Err(e) = routine_processor.catch_up_routine(&created_goal).await {
                     eprintln!("Error processing new routine: {}", e);
                 }
             }

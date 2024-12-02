@@ -19,6 +19,37 @@ export interface Goal {
     scheduled_timestamp?: number;
     duration?: number;
 }
+
+// Utility functions for timezone conversion
+export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
+    if (!timestamp) return undefined;
+    return timestamp + new Date().getTimezoneOffset() * 60 * 1000;
+};
+
+export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
+    if (!timestamp) return undefined;
+    return timestamp - new Date().getTimezoneOffset() * 60 * 1000;
+};
+
+// Goal conversion utilities
+export const goalToLocal = (goal: Goal): Goal => ({
+    ...goal,
+    start_timestamp: toLocalTimestamp(goal.start_timestamp),
+    end_timestamp: toLocalTimestamp(goal.end_timestamp),
+    next_timestamp: toLocalTimestamp(goal.next_timestamp),
+    scheduled_timestamp: toLocalTimestamp(goal.scheduled_timestamp),
+    routine_time: toLocalTimestamp(goal.routine_time)
+});
+
+export const goalToUTC = (goal: Goal): Goal => ({
+    ...goal,
+    start_timestamp: toUTCTimestamp(goal.start_timestamp),
+    end_timestamp: toUTCTimestamp(goal.end_timestamp),
+    next_timestamp: toUTCTimestamp(goal.next_timestamp),
+    scheduled_timestamp: toUTCTimestamp(goal.scheduled_timestamp),
+    routine_time: toUTCTimestamp(goal.routine_time)
+});
+
 export interface CalendarResponse {
     scheduled_tasks: Goal[];
     unscheduled_tasks: Goal[];

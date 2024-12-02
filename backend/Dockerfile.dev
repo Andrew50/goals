@@ -15,7 +15,7 @@ ENV DATABASE_URL=postgres://postgres:pass@db:5432/postgres
 ENV NEO4J_URI=bolt://goals_db:7687
 ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
-ENV TZ=America/New_York
+#ENV TZ=America/New_York
 
 # Expose the port your application runs on
 EXPOSE 3000
@@ -23,5 +23,5 @@ EXPOSE 3000
 # Run cargo-watch to monitor for file changes and hot reload
 CMD ["cargo-watch", "-x", "run"]
 
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+#RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
