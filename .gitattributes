@@ -1,0 +1,28 @@
+# Rust files
+*.rs linguist-language=Rust
+Cargo.toml linguist-language=Rust
+Cargo.lock linguist-language=Rust
+
+# TypeScript/JavaScript files
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+*.js linguist-language=JavaScript
+*.jsx linguist-language=JavaScript
+
+# Configuration files
+*.json linguist-language=JSON
+*.yaml linguist-language=YAML
+*.yml linguist-language=YAML
+*.conf linguist-language=Nginx
+
+# Docker files
+Dockerfile* linguist-language=Dockerfile
+docker-compose* linguist-language=YAML
+
+# Documentation
+*.md linguist-documentation
+README.md linguist-documentation
+
+# Ensure GitHub detects the correct languages
+* text=auto
+*.css linguist-language=CSS
