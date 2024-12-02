@@ -2,6 +2,7 @@
 manage operations on goals and relationships between goals
 doesnt include fetching of all goals as that is handled by endpoints specific to that frontend view
 */
+use crate::routine_processor::RoutineProcessor;
 use axum::{
     extract::{Extension, Path},
     http::StatusCode,
@@ -9,6 +10,7 @@ use axum::{
     routing::{delete, post, put},
     Json, Router,
 };
+use chrono::{DateTime, Utc};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 
@@ -178,11 +180,19 @@ pub async fn create_goal_handler(
         }
     }
 
-    let goal = Goal {
+    // Create a mutable copy of the goal with the user_id and start_timestamp
+    let mut goal = Goal {
         user_id: Some(user_id),
         ..goal
     };
-    println!("Received goal creation request: {:?}", goal);
+
+    // If this is a routine and no start_timestamp is provided, set it to current time
+    if goal.goal_type == GoalType::Routine && goal.start_timestamp.is_none() {
+        goal.start_timestamp = Some(Utc::now().timestamp() * 1_000_000_000);
+    }
+
+    println!("Processed goal creation request: {:?}", goal);
+
     let mut validation_errors = Vec::new();
     if goal.name.trim().is_empty() {
         validation_errors.push("Name is required");
@@ -216,9 +226,22 @@ pub async fn create_goal_handler(
             format!("Validation failed:\n- {}", validation_errors.join("\n- ")),
         ));
     }
+
     match goal.create_goal(&graph).await {
         Ok(created_goal) => {
             println!("Successfully created goal: {:?}", created_goal);
+
+            // If this is a routine, process it immediately
+            if created_goal.goal_type == GoalType::Routine {
+                let routine_processor = RoutineProcessor::new(graph);
+                if let Err(e) = routine_processor
+                    .process_single_routine(&created_goal)
+                    .await
+                {
+                    eprintln!("Error processing new routine: {}", e);
+                }
+            }
+
             Ok((StatusCode::CREATED, Json(created_goal)))
         }
         Err(e) => {

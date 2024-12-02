@@ -6,13 +6,16 @@ mod goal;
 mod list;
 mod middleware;
 mod network;
+mod routine_processor;
 mod traversal;
 
 use axum::{middleware::from_fn, Extension, Router};
 use dotenvy::dotenv;
+use routine_processor::RoutineProcessor;
 use tokio::net::TcpListener;
+use tokio::time;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::Level;
+use tracing::{error, info, Level};
 use tracing_subscriber;
 
 #[tokio::main]
@@ -31,6 +34,28 @@ async fn main() {
     };
 
     println!("Database connection pool created successfully");
+
+    // Initialize routine processor
+    let routine_processor = RoutineProcessor::new(pool.clone());
+
+    // Initialize routines on startup
+    if let Err(e) = routine_processor.initialize_routines().await {
+        eprintln!("Error initializing routines: {}", e);
+    }
+
+    // Start the routine processing task
+    let processor_pool = pool.clone();
+    tokio::spawn(async move {
+        let processor = RoutineProcessor::new(processor_pool);
+        let mut interval = time::interval(time::Duration::from_secs(60));
+
+        loop {
+            interval.tick().await;
+            if let Err(e) = processor.process_routines().await {
+                error!("Error processing routines: {}", e);
+            }
+        }
+    });
 
     // Configure CORS
     let cors = CorsLayer::new()

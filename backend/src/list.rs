@@ -27,7 +27,7 @@ pub async fn get_list_data(
         Ok(mut result) => {
             let mut goals: Vec<Value> = Vec::new();
             while let Ok(Some(row)) = result.next().await {
-                if let Ok(goal) = row.get::<Value>("goal") {
+                if let Ok(goal) = row.get::<Value>("g") {
                     goals.push(goal);
                 }
             }
