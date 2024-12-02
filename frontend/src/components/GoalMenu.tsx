@@ -47,6 +47,7 @@ const GoalMenu: GoalMenuComponent = () => {
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
     console.log('Component Initial Goal Duration:', goal.duration);
+    const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         console.log('Open Function Duration:', goal.duration);
         if (initialMode === 'create' && !goal.start_timestamp) {
@@ -72,6 +73,7 @@ const GoalMenu: GoalMenuComponent = () => {
             setOnSuccess(undefined);
             setTitle('');
             setMode('view');
+            setRelationshipMode(null);
         }, 100);
     }
 
@@ -174,19 +176,38 @@ const GoalMenu: GoalMenuComponent = () => {
         console.log('Submitting goal data:', submissionGoal);
 
         // Existing submission logic with the cleaned goal object
-        if (mode === 'create') {
-            console.log('Attempting to create goal with data:', submissionGoal);
-            const response = await privateRequest<Goal>('goals/create', 'POST', submissionGoal);
-            Object.assign(goal, response);
-        } else if (mode === 'edit' && goal.id) {
-            const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', submissionGoal);
-        }
+        try {
+            if (mode === 'create') {
+                const response = await privateRequest<Goal>('goals/create', 'POST', submissionGoal);
+                Object.assign(goal, response);
 
-        if (onSuccess) {
-            onSuccess(goal);
-        }
-        if (!another) {
-            close();
+                if (relationshipMode) {
+                    await createRelationship(
+                        relationshipMode.parentId,
+                        response.id!,
+                        relationshipMode.type
+                    );
+                }
+            } else if (mode === 'edit' && goal.id) {
+                const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', submissionGoal);
+            }
+
+            if (onSuccess) {
+                onSuccess(goal);
+            }
+
+            if (another) {
+                const { id, ...restGoal } = goal;
+                const newGoal: Goal = { ...restGoal, name: '', description: '' } as Goal;
+                close();
+                setTimeout(() => {
+                    open(newGoal, 'create', onSuccess);
+                }, 300);
+            } else {
+                close();
+            }
+        } catch (error) {
+            // ... error handling ...
         }
     };
 
@@ -619,15 +640,13 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     const handleCreateChild = () => {
-        const parentGoal = goal; // Store the current goal as parent
+        const parentGoal = goal;
         const newGoal: Goal = {} as Goal;
 
-        // Close current edit window and open create window
         close();
         setTimeout(() => {
             open(newGoal, 'create', async (createdGoal: Goal) => {
                 try {
-                    // Create the relationship after successful goal creation
                     await createRelationship(parentGoal.id!, createdGoal.id!, 'child');
                     if (onSuccess) {
                         onSuccess(parentGoal);
@@ -637,11 +656,13 @@ const GoalMenu: GoalMenuComponent = () => {
                     setError('Failed to create child relationship');
                 }
             });
+            // Set relationship mode
+            setRelationshipMode({ type: 'child', parentId: parentGoal.id! });
         }, 100);
     };
 
     const handleCreateQueue = () => {
-        const previousGoal = goal; // Store the current goal as previous
+        const previousGoal = goal;
         const newGoal: Goal = {} as Goal;
 
         close();
@@ -657,6 +678,8 @@ const GoalMenu: GoalMenuComponent = () => {
                     setError('Failed to create queue relationship');
                 }
             });
+            // Set relationship mode
+            setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
         }, 100);
     };
 

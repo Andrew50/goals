@@ -125,7 +125,7 @@ const TaskList = ({
         color: '#333',
         fontSize: '20px',
         fontWeight: 600
-      }}>Tasks</h3>
+      }}>Unscheduled Tasks</h3>
 
       <div style={{ marginBottom: '20px' }}>
         <button
