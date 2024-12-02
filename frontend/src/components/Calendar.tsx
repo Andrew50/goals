@@ -168,36 +168,99 @@ const TaskList = ({
 };
 
 const CalendarEventDisplay: React.FC<{ event: CalendarEvent }> = ({ event }) => {
+  const [isHovered, setIsHovered] = useState(false);
+
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    GoalMenu.open(event.goal, 'view', () => {
-      //update event
-    });
+    const eventElement = e.currentTarget as HTMLElement;
+    const eventId = eventElement.getAttribute('data-event-id');
+    const clickedEvent = event.id === eventId ? event : null;
+
+    if (clickedEvent) {
+      GoalMenu.open(clickedEvent.goal, 'view', () => {
+        //update event
+      });
+    }
   }
 
   const handleRightClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    GoalMenu.open(event.goal, 'edit', () => {
-      //update event
-    });
+    const eventElement = e.currentTarget as HTMLElement;
+    const eventId = eventElement.getAttribute('data-event-id');
+    const clickedEvent = event.id === eventId ? event : null;
+
+    if (clickedEvent) {
+      GoalMenu.open(clickedEvent.goal, 'edit', () => {
+        //update event
+      });
+    }
   }
 
   return (
     <div
+      data-event-id={event.id}
       onClick={handleClick}
       onContextMenu={handleRightClick}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       style={{
         height: '100%',
         width: '100%',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        cursor: 'pointer'
+        position: 'relative',
+        cursor: 'pointer',
+        padding: '2px 4px',
+        overflow: 'hidden'
       }}
     >
-      {event.title}
+      {isHovered && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1000,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            color: 'white',
+            padding: '8px',
+            borderRadius: '4px',
+            fontSize: '12px',
+            whiteSpace: 'nowrap',
+            top: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            pointerEvents: 'none'
+          }}
+        >
+          <div>{event.title}</div>
+          <div>{`${moment(event.start).format('h:mm A')} - ${moment(event.end).format('h:mm A')}`}</div>
+        </div>
+      )}
+      <div className="event-content" style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden'
+      }}>
+        <div className="event-title" style={{
+          fontSize: '12px',
+          fontWeight: 500,
+          lineHeight: 1.2,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}>
+          {event.title}
+        </div>
+        <div className="event-time" style={{
+          fontSize: '11px',
+          opacity: 0.8,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}>
+          {moment(event.start).format('h:mm A')}
+        </div>
+      </div>
     </div>
   );
 };
@@ -227,8 +290,15 @@ const CalendarDropArea = ({
 }) => {
   const [currentView, setCurrentView] = useState('month');
   const { setNodeRef, isOver } = useDroppable({
-    id: 'calendar'
+    id: 'calendar',
+    data: {
+      accepts: ['task']
+    }
   });
+
+  useEffect(() => {
+    console.log('Drop area is over:', isOver);
+  }, [isOver]);
 
   const handleSelectSlot = (slotInfo: { start: Date; end: Date }) => {
     onDropTask(slotInfo.start);
@@ -266,25 +336,20 @@ const CalendarDropArea = ({
           const duration = event.goal?.duration || 60;
           const backgroundColor = event.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
 
-          // Adjust styling based on view
           const baseStyle = {
             backgroundColor: backgroundColor,
-            border: `2px solid ${backgroundColor}`,
+            border: `1px solid ${backgroundColor}`,
             borderLeft: `4px solid ${backgroundColor}`,
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-            margin: '1px',
-            borderRadius: '4px',
-            padding: '2px 4px',
-            fontSize: '14px',
-            whiteSpace: 'nowrap',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+            margin: '1px 0',
+            borderRadius: '3px',
+            fontSize: '12px',
             overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            display: 'flex',
-            alignItems: 'center',
-            zIndex: 1
+            display: 'block',
+            position: 'relative',
+            zIndex: 1,
           };
 
-          // Add height only for week and day views
           if (currentView === 'week' || currentView === 'day') {
             const heightPerHour = 50;
             const height = (duration / 60) * heightPerHour;
@@ -293,19 +358,33 @@ const CalendarDropArea = ({
                 ...baseStyle,
                 height: `${height}px`,
                 minHeight: `${height}px`,
+                display: height < 20 ? 'none' : 'block', // Hide if too small
               }
             };
           }
 
-          // For month view, use minimal height
+          // Month view styles
+          const minEventHeight = 22;
           return {
             style: {
               ...baseStyle,
-              height: '20px',
-              minHeight: '20px',
+              height: 'auto',
+              minHeight: `${minEventHeight}px`,
+              display: minEventHeight < 15 ? 'none' : 'block', // Hide if too small
             }
           };
         }}
+        formats={{
+          eventTimeRangeFormat: () => '',
+          timeGutterFormat: (date: Date, culture?: string, localizer?: any) =>
+            localizer.format(date, 'h:mm A', culture),
+        }}
+        dayPropGetter={(date: Date) => ({
+          style: {
+            backgroundColor: '#ffffff',
+            height: '120px',
+          }
+        })}
       />
     </div>
   );
@@ -376,6 +455,7 @@ const MyCalendar: React.FC = () => {
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    console.log('Drag end:', { active, over });
 
     if (!over || over.id !== 'calendar') {
       setDraggedTask(null);
@@ -384,10 +464,10 @@ const MyCalendar: React.FC = () => {
 
     const task = tasks.find((t) => t.id === active.id);
     if (task) {
-      setDraggedTask(task);
       const dropDate = new Date();
       handleDropTask(dropDate);
     }
+    setDraggedTask(null);
   };
 
   const isDuplicateEvent = (newStart: Date, newEnd: Date, taskId: string): boolean => {

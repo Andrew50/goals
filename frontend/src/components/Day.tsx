@@ -48,7 +48,14 @@ const Day: React.FC = () => {
     };
 
     const handleTaskClick = (task: Goal) => {
-        GoalMenu.open(task, 'view');
+        GoalMenu.open(task, 'view', (updatedTask) => {
+            setTasks(prevTasks => {
+                if (!updatedTask.id) {
+                    return prevTasks.filter(t => t.id !== task.id);
+                }
+                return prevTasks.map(t => t.id === updatedTask.id ? updatedTask : t);
+            });
+        });
     };
 
     const handleTaskContextMenu = (event: React.MouseEvent, task: Goal) => {
