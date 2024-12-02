@@ -24,18 +24,20 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
 
         // Handle scheduled tasks with local timezone
         const scheduledEvents = response.scheduled_tasks
-            .map(goalToLocal)  // Convert to local timezone first
+            .map(goalToLocal)
             .filter(item => item.scheduled_timestamp)
-            .map(item => ({
-                id: `scheduled-${item.id || Date.now()}`,
-                title: item.name,
-                start: new Date(item.scheduled_timestamp!),
-                end: new Date(new Date(item.scheduled_timestamp!).setHours(
-                    new Date(item.scheduled_timestamp!).getHours() + 1
-                )),
-                type: mapGoalTypeToTaskType(item.goal_type),
-                goal: item
-            } as CalendarEvent));
+            .map(item => {
+                const start = new Date(item.scheduled_timestamp!);
+                return {
+                    id: `scheduled-${item.id || Date.now()}`,
+                    title: item.name,
+                    start,
+                    end: new Date(start.getTime() + (item.duration || 60) * 60 * 1000),
+                    type: 'scheduled',
+                    goal: item,
+                    allDay: item.duration === 1440  // true if duration is 24 hours
+                } as CalendarEvent;
+            });
 
         // Handle unscheduled tasks with local timezone
         const unscheduledTasks = response.unscheduled_tasks
@@ -50,26 +52,27 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
 
         // Handle achievements with local timezone
         const achievementEvents = response.achievements
-            .map(goalToLocal)  // Convert to local timezone first
+            .map(goalToLocal)
             .map(achievement => {
                 const completionTime = achievement.completed ?
                     (typeof achievement.completed === 'number' ? achievement.completed : Date.now())
                     : Date.now();
+                const start = new Date(completionTime);
 
                 return {
                     id: `achievement-${achievement.id || Date.now()}`,
                     title: achievement.name,
-                    start: new Date(completionTime),
-                    end: new Date(new Date(completionTime).setHours(
-                        new Date(completionTime).getHours() + 1
-                    )),
-                    type: 'task' as const
-                };
+                    start,
+                    end: new Date(start.getTime() + 60 * 60 * 1000),
+                    type: 'achievement',
+                    goal: achievement,
+                    allDay: false
+                } as CalendarEvent;
             });
 
 
         return {
-            events: [...routineEvents, ...scheduledEvents] as CalendarEvent[],
+            events: [...routineEvents, ...scheduledEvents, ...achievementEvents] as CalendarEvent[],
             unscheduledTasks: unscheduledTasks as CalendarTask[],
             achievements: achievementEvents as CalendarEvent[]
         };
@@ -116,48 +119,21 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     let currentDateIter = new Date(initialStartDate);
     while (currentDateIter <= end) {
         const eventStart = new Date(currentDateIter);
-        eventStart.setHours(routineHours, routineMinutes, 0, 0);  // Set exact routine time
+        eventStart.setHours(routineHours, routineMinutes, 0, 0);
 
         const eventEnd = new Date(eventStart);
         const durationInMinutes = routine.duration || 60;
         eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
 
-        // Check if event spans midnight
-        if (eventStart.getDate() !== eventEnd.getDate()) {
-            // Create first event that ends at midnight
-            const midnightEnd = new Date(eventStart);
-            midnightEnd.setHours(23, 59, 59, 999);
-            events.push({
-                id: `routine-${routine.id}-${currentDateIter.getTime()}-1`,
-                title: routine.name,
-                start: eventStart,
-                end: midnightEnd,
-                type: 'task',
-                goal: routine
-            });
-
-            // Create second event that starts at midnight
-            const nextDayStart = new Date(eventEnd);
-            nextDayStart.setHours(0, 0, 0, 0);
-            events.push({
-                id: `routine-${routine.id}-${currentDateIter.getTime()}-2`,
-                title: routine.name,
-                start: nextDayStart,
-                end: eventEnd,
-                type: 'task',
-                goal: routine
-            });
-        } else {
-            // Regular event that doesn't span midnight
-            events.push({
-                id: `routine-${routine.id}-${currentDateIter.getTime()}`,
-                title: routine.name,
-                start: eventStart,
-                end: eventEnd,
-                type: 'task',
-                goal: routine
-            });
-        }
+        events.push({
+            id: `routine-${routine.id}-${currentDateIter.getTime()}`,
+            title: routine.name,
+            start: eventStart,
+            end: eventEnd,
+            type: 'routine',
+            goal: routine,
+            allDay: routine.duration === 1440  // true if duration is 24 hours
+        } as CalendarEvent);
 
         // Move to next occurrence based on frequency
         if (routine.frequency === 'P1D') {
