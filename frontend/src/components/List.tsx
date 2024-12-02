@@ -72,7 +72,10 @@ const List: React.FC = () => {
     };
 
     const handleGoalClick = (goal: Goal) => {
-        GoalMenu.open(goal, 'view');
+        GoalMenu.open(goal, 'view', (updatedGoal) => {
+            // Trigger a refresh instead of manually updating the list
+            setRefreshTrigger(prev => prev + 1);
+        });
     };
 
     const handleGoalContextMenu = (event: React.MouseEvent, goal: Goal) => {

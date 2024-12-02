@@ -99,8 +99,6 @@ pub async fn get_calender_data(
                  WHERE g.user_id = $user_id 
                  AND g.goal_type = 'task'
                  AND g.scheduled_timestamp IS NOT NULL
-                 AND g.start_timestamp <= $current_time 
-                 AND (g.end_timestamp IS NULL OR g.end_timestamp >= $current_time)
                  {}",
                     GOAL_RETURN_QUERY
                 )
@@ -130,7 +128,6 @@ pub async fn get_calender_data(
                     "MATCH (g:Goal) 
                  WHERE g.user_id = $user_id 
                  AND g.goal_type = 'routine'
-                 AND g.start_timestamp <= $current_time 
                  AND (g.end_timestamp IS NULL OR g.end_timestamp >= $current_time)
                  {}",
                     GOAL_RETURN_QUERY
@@ -145,7 +142,6 @@ pub async fn get_calender_data(
                     "MATCH (g:Goal) 
                  WHERE g.user_id = $user_id 
                  AND g.goal_type = 'achievement'
-                 AND g.start_timestamp <= $current_time 
                  AND (g.end_timestamp IS NULL OR g.end_timestamp >= $current_time)
                  {}",
                     GOAL_RETURN_QUERY

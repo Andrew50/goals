@@ -87,8 +87,16 @@ const GoalMenu: GoalMenuComponent = () => {
 
     const handleChange = (newGoal: Goal) => {
         console.log('HandleChange Duration:', newGoal.duration);
+
+        // If in view mode and completion status changed, update it on the server
+        if (mode === 'view' && newGoal.completed !== goal.completed) {
+            handleCompletionToggle(newGoal.completed || false);
+            return; // Don't call setGoal here as handleCompletionToggle will do it
+        }
+
+        // For all other changes, update the local state
         setGoal(newGoal);
-    }
+    };
 
     const handleSubmit = async (another: boolean = false) => {
         if (another && mode !== 'create') {
@@ -106,6 +114,9 @@ const GoalMenu: GoalMenuComponent = () => {
                 case 'routine':
                     if (!goal.frequency) {
                         validationErrors.push('Frequency is required for routine goals');
+                    }
+                    if (!goal.start_timestamp) {
+                        validationErrors.push('Start timestamp is required for routine goals');
                     }
                     break;
                 case 'task':
@@ -448,7 +459,7 @@ const GoalMenu: GoalMenuComponent = () => {
                         ...goal,
                         completed: e.target.checked
                     })}
-                    disabled={isViewOnly}
+                //disabled={isViewOnly}
                 />
             }
             label="Completed"
@@ -634,6 +645,7 @@ const GoalMenu: GoalMenuComponent = () => {
                         {dateFields}
                         {scheduleField}
                         {durationField}
+                        {completedField}
                     </>
                 );
         }
@@ -687,6 +699,22 @@ const GoalMenu: GoalMenuComponent = () => {
     const handleEdit = () => {
         setMode('edit');
         setTitle('Edit Goal');
+    };
+
+    // Add this function to handle completion toggle
+    const handleCompletionToggle = async (completed: boolean) => {
+        try {
+            const updatedGoal = { ...goal, completed };
+            await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', updatedGoal);
+            // Don't call handleChange here, just set the goal directly
+            setGoal(updatedGoal);
+            if (onSuccess) {
+                onSuccess(updatedGoal);
+            }
+        } catch (error) {
+            console.error('Failed to update completion status:', error);
+            setError('Failed to update completion status');
+        }
     };
 
     return (

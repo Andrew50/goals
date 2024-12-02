@@ -15,16 +15,14 @@ use routine_processor::RoutineProcessor;
 use tokio::net::TcpListener;
 use tokio::time;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info, Level};
+use tracing::{error, Level};
 use tracing_subscriber;
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
     dotenv().ok();
 
-    // Create the database connection pool
     let pool = match db::create_pool().await {
         Ok(pool) => pool,
         Err(e) => {
@@ -35,15 +33,12 @@ async fn main() {
 
     println!("Database connection pool created successfully");
 
-    // Initialize routine processor
     let routine_processor = RoutineProcessor::new(pool.clone());
 
-    // Initialize routines on startup
-    if let Err(e) = routine_processor.initialize_routines().await {
+    if let Err(e) = routine_processor.process_routines().await {
         eprintln!("Error initializing routines: {}", e);
     }
 
-    // Start the routine processing task
     let processor_pool = pool.clone();
     tokio::spawn(async move {
         let processor = RoutineProcessor::new(processor_pool);
@@ -57,7 +52,6 @@ async fn main() {
         }
     });
 
-    // Configure CORS
     let cors = CorsLayer::new()
         .allow_origin([
             "http://localhost:3000".parse().unwrap(),
@@ -66,7 +60,6 @@ async fn main() {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // Set up the application router
     let app = Router::new()
         .nest("/auth", auth::create_routes())
         .nest(
@@ -95,18 +88,9 @@ async fn main() {
         )
         .layer(Extension(pool))
         .layer(cors);
-
-    // Set the server address
-    //let addr = SocketAddr::from(([0, 0, 0, 0], 5057));
     let listener = TcpListener::bind("0.0.0.0:5057").await.unwrap();
     println!("Listening on {}", "0.0.0.0:5057");
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
-
-    // Start the server
-    /*Server::bind(&addr)
-    .serve(app.into_make_service())
-        .await
-        .unwrap();*/
 }
