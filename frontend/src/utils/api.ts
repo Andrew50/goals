@@ -1,6 +1,6 @@
 import axios, { AxiosResponse, Method } from 'axios';
 import { Goal } from '../types';
-import { goalToLocal, goalToUTC } from '../utils/timezone';
+//import { goalToLocal, goalToUTC } from '../utils / timezone';
 
 const API_URL = process.env.REACT_APP_API_URL;
 if (!API_URL) {
@@ -13,20 +13,20 @@ const isGoal = (obj: any): obj is Goal => {
 };
 
 // Helper to convert data to UTC before sending to backend
-const convertToUTC = (data: any): any => {
-    if (!data) return data;
+/*const convertToUTC = (data: any): any => {
+if (!data) return data;
 
-    // Handle arrays
-    if (Array.isArray(data)) {
-        return data.map(item => convertToUTC(item));
-    }
+// Handle arrays
+if (Array.isArray(data)) {
+    return data.map(item => convertToUTC(item));
+}
 
-    // Handle Goal objects
-    if (isGoal(data)) {
-        return goalToUTC(data);
-    }
+// Handle Goal objects
+if (isGoal(data)) {
+    return goalToUTC(data);
+}
 
-    return data;
+return data;
 };
 
 // Helper to convert response data to local timezone
@@ -44,7 +44,7 @@ const convertToLocal = (data: any): any => {
     }
 
     return data;
-};
+};*/
 
 export async function privateRequest<T>(
     endpoint: string,
@@ -55,7 +55,7 @@ export async function privateRequest<T>(
     const token = localStorage.getItem('authToken');
     try {
         // Convert request data to UTC
-        const utcData = convertToUTC(data);
+        //const utcData = convertToUTC(data);
 
         const response: AxiosResponse<T> = await axios({
             url: `${API_URL}/${endpoint}`,
@@ -64,7 +64,8 @@ export async function privateRequest<T>(
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
-            data: utcData,
+            // data: utcData,
+            data,
             params,
         });
 

@@ -13,6 +13,7 @@ use axum::{
 use chrono::Utc;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Goal {
@@ -98,6 +99,13 @@ pub struct Relationship {
     pub relationship_type: String,
 }
 
+// Add this new struct for partial updates
+#[derive(Debug, Deserialize)]
+pub struct GoalUpdate {
+    pub id: i64,
+    pub completed: bool,
+}
+
 pub fn create_routes() -> Router {
     Router::new()
         .route("/create", post(create_goal_handler))
@@ -108,6 +116,7 @@ pub fn create_routes() -> Router {
             "/relationship/:from_id/:to_id",
             delete(delete_relationship_handler),
         )
+        .route("/:id/complete", put(toggle_completion))
 }
 
 pub async fn delete_relationship_handler(
@@ -372,6 +381,61 @@ pub async fn delete_goal_handler(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Error deleting goal: {}", e),
+            ))
+        }
+    }
+}
+
+pub async fn toggle_completion(
+    Extension(graph): Extension<Graph>,
+    Json(update): Json<GoalUpdate>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    println!(
+        "Toggling completion for goal {}: {}",
+        update.id, update.completed
+    );
+
+    let query_str = "MATCH (g:Goal) 
+         WHERE id(g) = $id 
+         SET g.completed = $completed
+         RETURN g.completed as completed";
+
+    let query = query(&query_str)
+        .param("id", update.id)
+        .param("completed", update.completed);
+
+    match graph.execute(query).await {
+        Ok(mut result) => match result.next().await {
+            Ok(Some(row)) => match row.get::<bool>("completed") {
+                Ok(completed) => {
+                    //                    println!("Successfully updated completion status to: {}", completed);
+                    Ok(Json(json!({ "completed": completed })))
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse completion status: {}", e);
+                    Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to parse completion status".to_string(),
+                    ))
+                }
+            },
+            Ok(None) => {
+                eprintln!("Goal not found: {}", update.id);
+                Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
+            }
+            Err(e) => {
+                eprintln!("Error fetching result: {}", e);
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error fetching result: {}", e),
+                ))
+            }
+        },
+        Err(e) => {
+            eprintln!("Database error: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
             ))
         }
     }

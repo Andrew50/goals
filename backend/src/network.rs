@@ -50,12 +50,14 @@ pub async fn get_network_data(
 ) -> Result<Json<NetworkData>, (StatusCode, String)> {
     println!("Fetching network data for user: {}", user_id);
 
-    // Use the global GOAL_RETURN_QUERY constant
+    // Add filter to exclude tasks
     let query_str = format!(
         "MATCH (g:Goal) 
          WHERE g.user_id = $user_id
+         AND g.goal_type <> 'task'
          OPTIONAL MATCH (g)-[r]->(g2:Goal)
          WHERE g2.user_id = $user_id
+         AND g2.goal_type <> 'task'
          {}, 
          collect(DISTINCT CASE
              WHEN r IS NOT NULL THEN {{
