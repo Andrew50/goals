@@ -11,7 +11,7 @@ import {
     Checkbox,
     Box
 } from '@mui/material';
-import { privateRequest } from '../utils/api';
+import { privateRequest, updateRoutines } from '../utils/api';
 import { Goal, GoalType, RelationshipType, goalToLocal, goalToUTC, toUTCTimestamp } from '../types';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
@@ -181,11 +181,15 @@ const GoalMenu: GoalMenuComponent = () => {
                         relationshipMode.type
                     );
                 }
+
             } else if (mode === 'edit' && goal.id) {
                 const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', submissionGoal);
                 // Convert the response back to local timezone before updating state
                 const localResponse = goalToLocal(response);
                 Object.assign(goal, localResponse);
+            }
+            if (goal.goal_type === 'routine') {
+                await updateRoutines();
             }
 
             if (onSuccess) {

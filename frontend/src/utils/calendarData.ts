@@ -108,17 +108,25 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     }
 
     const events: CalendarEvent[] = [];
-    const initialStartDate = new Date(Math.max(routine.start_timestamp, currentDate.getTime()));
+
+    // Create start date at the beginning of tomorrow in client's timezone
+    const tomorrow = new Date(currentDate);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const initialStartDate = new Date(Math.max(routine.start_timestamp, tomorrow.getTime()));
     const end = new Date(currentDate);
     end.setDate(end.getDate() + ROUTINE_GENERATION_DAYS);
 
-    // Extract hours and minutes from routine_time
-    const routineHours = Math.floor(routine.routine_time / (60 * 60 * 1000));
-    const routineMinutes = Math.floor((routine.routine_time % (60 * 60 * 1000)) / (60 * 1000));
+    // Create a date object with the routine time in local timezone
+    const routineTimeDate = new Date(routine.routine_time);
+    const routineHours = routineTimeDate.getHours();
+    const routineMinutes = routineTimeDate.getMinutes();
 
     let currentDateIter = new Date(initialStartDate);
     while (currentDateIter <= end) {
         const eventStart = new Date(currentDateIter);
+        // Set the time in local timezone
         eventStart.setHours(routineHours, routineMinutes, 0, 0);
 
         const eventEnd = new Date(eventStart);
@@ -132,7 +140,7 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
             end: eventEnd,
             type: 'routine',
             goal: routine,
-            allDay: routine.duration === 1440  // true if duration is 24 hours
+            allDay: routine.duration === 1440
         } as CalendarEvent);
 
         // Move to next occurrence based on frequency

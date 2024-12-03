@@ -2,7 +2,7 @@
 manage operations on goals and relationships between goals
 doesnt include fetching of all goals as that is handled by endpoints specific to that frontend view
 */
-use crate::routine_processor::RoutineProcessor;
+//use crate::routine::catch_up_routine;
 use axum::{
     extract::{Extension, Path},
     http::StatusCode,
@@ -239,12 +239,12 @@ pub async fn create_goal_handler(
             println!("Successfully created goal: {:?}", created_goal);
 
             // If this is a routine, process it immediately
+            /*let timestamp = Utc::now().timestamp_millis();
             if created_goal.goal_type == GoalType::Routine {
-                let routine_processor = RoutineProcessor::new(graph);
-                if let Err(e) = routine_processor.catch_up_routine(&created_goal).await {
+                if let Err(e) = catch_up_routine(&graph, &created_goal, timestamp).await {
                     eprintln!("Error processing new routine: {}", e);
                 }
-            }
+            }*/
 
             Ok((StatusCode::CREATED, Json(created_goal)))
         }

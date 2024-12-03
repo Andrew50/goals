@@ -10,12 +10,12 @@ interface SigninResponse {
 }
 
 const Signin: React.FC = () => {
-  const { setIsAuthenticated } = useAuth();
-  const [username, setUsername] = useState<string>("");
-  const [password, setPassword] = useState<string>("");
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const navigate = useNavigate();
 
   const handleSignin = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -23,23 +23,11 @@ const Signin: React.FC = () => {
     setSuccess(null);
 
     try {
-      const response = await publicRequest<SigninResponse>(
-        'auth/signin',
-        'POST',
-        { username, password }
-      );
-
-      setSuccess(response.message);
-      localStorage.setItem("authToken", response.token);
-      setIsAuthenticated(true);
+      const message = await login(username, password);
+      setSuccess(message);
       navigate("/calendar");
     } catch (err: any) {
-      setIsAuthenticated(false);
-      if (err.response?.status === 401) {
-        setError("Invalid username or password");
-      } else {
-        setError("An error occurred during sign-in");
-      }
+      setError(err.message || "An error occurred during sign in");
     }
   };
 

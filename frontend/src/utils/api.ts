@@ -97,3 +97,21 @@ export async function publicRequest<T>(
         throw error;
     }
 }
+
+export async function updateRoutines(): Promise<void> {
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+    const timestamp = endOfDay.getTime();
+
+    console.log(`Sending routine update request for ${endOfDay.toLocaleString()}`);
+    try {
+        await privateRequest(
+            `routine/${timestamp}`,
+            'POST'
+        );
+        console.log('Routine update request completed successfully');
+    } catch (error) {
+        console.error("Failed to update routines:", error);
+        throw error;
+    }
+}
