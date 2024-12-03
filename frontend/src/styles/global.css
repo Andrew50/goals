@@ -10,17 +10,17 @@
 /* Body styling */
 body {
     font-family: Arial, sans-serif;
-    background-color: white;
-    color: #333;
+    background-color: #0a1929;
+    color: #ffffff;
     overflow-x: hidden;
     max-width: 100vw;
 }
 
 /* Navigation bar styling */
 nav {
-    background-color: #4a90e2;
+    background-color: #101f33;
     padding: 15px 30px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 nav ul {
@@ -34,13 +34,14 @@ nav ul li {
 }
 
 nav ul li a {
-    color: #ffffff;
+    color: #2196f3;
     text-decoration: none;
     font-size: 1.1rem;
 }
 
 nav ul li a:hover {
-    text-decoration: underline;
+    color: #64b5f6;
+    text-decoration: none;
 }
 
 /* Content area styling */
@@ -51,17 +52,17 @@ main {
 
 /* General styling for Dayview component */
 .dayview-container {
-    background-color: #ffffff;
-    border: 1px solid #ddd;
+    background-color: #101f33;
+    border: 1px solid #1e3a5f;
     border-radius: 8px;
     padding: 20px;
     max-width: 800px;
     margin: 20px auto;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
 .dayview-title {
     font-size: 1.5rem;
-    color: #333;
+    color: #ffffff;
     margin-bottom: 10px;
 }

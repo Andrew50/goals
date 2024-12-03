@@ -87,9 +87,20 @@ const NetworkView: React.FC
             bottom: 10,
             left: 10
           },
-          font: { size: 14 },
+          font: {
+            size: 14,
+            color: '#ffffff'
+          },
           widthConstraint: {
             maximum: 150
+          },
+          color: {
+            background: '#1e1e1e',
+            border: '#333333',
+            highlight: {
+              background: '#2e2e2e',
+              border: '#90caf9'
+            }
           }
         },
         edges: {
@@ -101,14 +112,17 @@ const NetworkView: React.FC
           },
           font: {
             size: 0,
-            //align: 'middle'
           },
           smooth: {
             enabled: true,
             type: 'cubicBezier',
             roundness: 0.5
           },
-          width: 2
+          width: 2,
+          color: {
+            color: '#666666',
+            highlight: '#90caf9'
+          }
         },
         layout: {
           hierarchical: {
@@ -120,25 +134,12 @@ const NetworkView: React.FC
             parentCentralization: true,
             edgeMinimization: false,
             blockShifting: true,
-            //shakeTowards: 'roots'
           }
         },
         manipulation: {
           enabled: false,
           addNode: true,
-          addEdge: async function (data: any, callback: Function) {
-            try {
-              setPendingRelationship({
-                from: data.from,
-                to: data.to
-              });
-              setDialogMode('relationship');
-              callback(data);
-            } catch (err) {
-              console.error('Edge creation error:', err);
-              callback(null);
-            }
-          },
+          addEdge: true,
           editEdge: false,
           deleteNode: true,
           deleteEdge: true,
