@@ -1,7 +1,13 @@
 import React from 'react';
 import { BrowserRouter as Router, Route, Routes, Link, useNavigate } from 'react-router-dom';
-import { ThemeProvider, AppBar, Toolbar, Button, Box } from '@mui/material';
+import { ThemeProvider, AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
 import { theme } from './styles/theme';
+
+// Import CSS files in correct order
+import './index.css';
+import './styles/global.css';
+import './App.css';
+
 import Calendar from './components/Calendar';
 import Signup from './components/Signup';
 import Signin from './components/Signin';
@@ -53,37 +59,51 @@ const App: React.FC = () => {
   return (
     <AuthProvider>
       <ThemeProvider theme={theme}>
+        <CssBaseline />
         <Router>
-          <NavBar />
-          <Routes>
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/signin" element={<Signin />} />
-            <Route path="/welcome" element={<Welcome />} />
-            <Route path="/" element={<Root />} />
+          <Box sx={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            bgcolor: 'background.default',
+            color: 'text.primary'
+          }}>
+            <NavBar />
+            <Box sx={{
+              flexGrow: 1,
+              overflow: 'auto'
+            }}>
+              <Routes>
+                <Route path="/signup" element={<Signup />} />
+                <Route path="/signin" element={<Signin />} />
+                <Route path="/welcome" element={<Welcome />} />
+                <Route path="/" element={<Root />} />
 
-            {/* Protected Routes */}
-            <Route path="/calendar" element={
-              <ProtectedRoute>
-                <Calendar />
-              </ProtectedRoute>
-            } />
-            <Route path="/network" element={
-              <ProtectedRoute>
-                <Network />
-              </ProtectedRoute>
-            } />
-            <Route path="/list" element={
-              <ProtectedRoute>
-                <List />
-              </ProtectedRoute>
-            } />
-            <Route path="/day" element={
-              <ProtectedRoute>
-                <Day />
-              </ProtectedRoute>
-            } />
-          </Routes>
-          <GoalMenu />
+                {/* Protected Routes */}
+                <Route path="/calendar" element={
+                  <ProtectedRoute>
+                    <Calendar />
+                  </ProtectedRoute>
+                } />
+                <Route path="/network" element={
+                  <ProtectedRoute>
+                    <Network />
+                  </ProtectedRoute>
+                } />
+                <Route path="/list" element={
+                  <ProtectedRoute>
+                    <List />
+                  </ProtectedRoute>
+                } />
+                <Route path="/day" element={
+                  <ProtectedRoute>
+                    <Day />
+                  </ProtectedRoute>
+                } />
+              </Routes>
+            </Box>
+            <GoalMenu />
+          </Box>
         </Router>
       </ThemeProvider>
     </AuthProvider>

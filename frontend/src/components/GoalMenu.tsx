@@ -48,6 +48,7 @@ const GoalMenu: GoalMenuComponent = () => {
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+        console.log('open', goal);
         if (initialMode === 'create' && !goal.start_timestamp) {
             goal.start_timestamp = Date.now();
         }
