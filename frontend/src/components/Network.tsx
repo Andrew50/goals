@@ -7,10 +7,10 @@ import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { createResizeObserver } from '../utils/resizeObserver';
-import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType, goalToLocal } from '../types';
-import GoalMenu, { createRelationship } from './GoalMenu';
+import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType } from '../types';
+import GoalMenu from './GoalMenu';
 //import GoalView from '../../../GoalView';
-import { privateRequest } from '../utils/api';
+import { privateRequest, goalToLocal, completeGoal, createRelationship, deleteRelationship } from '../utils/api';
 import { buildHierarchy } from '../utils/buildHierarchy';
 import { goalColors } from '../theme/colors';
 
@@ -162,76 +162,19 @@ const NetworkView: React.FC
 
 
       if (networkContainer.current && networkData) {
-        /*
 
-
-        const nodeLevels: { [key: number]: number } = {};
-        networkData.edges.forEach(edge => {
-          if (edge.relationship_type === 'child') {
-            if (edge.from && edge.to) {
-              nodeLevels[edge.to] = (nodeLevels[edge.from] || 0) + 1;
-            }
-          } else if (edge.relationship_type === 'queue') {
-            if (edge.from && edge.to) {
-              nodeLevels[edge.to] = nodeLevels[edge.from] || 0;
-            }
-          }
-        });
-
-        const formattedNodes = networkData.nodes.map(node => {
-          return {
-            ...node,
-            level: node.id !== undefined ? nodeLevels[node.id] || 0 : 0
-          }
-        });
-
-        const formattedData = {
-          //nodes: networkData.nodes,
-          nodes: formattedNodes,
-          edges: networkData.edges.map(edge => {
-            const isQueue = edge.relationship_type === 'queue';
-            return {
-              ...edge,
-              id: `${edge.from}-${edge.to}`,
-              label: undefined,
-              color: isQueue ? '#ff9800' : '#2196F3',
-              arrows: {
-                to: {
-                  enabled: true
-                }
-              },
-              dashes: isQueue,
-              smooth: {
-                enabled: true,
-                type: isQueue ? 'curvedCW' : 'cubicBezier',
-                roundness: isQueue ? 0.2 : 0.5
-              },
-              physics: !isQueue,
-              //constraints: {
-              //  type: isQueue ? 'fixed' : undefined,
-              //  vertical: isQueue ? 0 : undefined
-              //}
-              //layout: isQueue ? { hierarchical: false } : undefined
-            };
-          })
-        };*/
         const formattedData = buildHierarchy(networkData);
         const network = new VisNetwork(
           networkContainer.current,
           formattedData,
           options
         );
-
-
-
         network.on('click', (params: any) => handleClick(params, 'view'));
         network.on('oncontext', (params: any) => handleClick(params, 'edit'));
         networkRef.current = network;
       }
 
     };
-
-    // Initial data load and network setup
     useEffect(() => {
       const loadInitialData = async () => {
         await fetchNetwork();

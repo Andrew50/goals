@@ -11,26 +11,10 @@ import {
     Checkbox,
     Box
 } from '@mui/material';
-import { privateRequest, updateRoutines } from '../utils/api';
-import { Goal, GoalType, RelationshipType, goalToLocal, goalToUTC, toUTCTimestamp } from '../types';
+import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
+import { Goal, GoalType, RelationshipType } from '../types';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
-export const createRelationship = async (fromId: number, toId: number, relationshipType: RelationshipType) => {
-    try {
-        return await privateRequest('goals/relationship', 'POST', {
-            from_id: fromId,
-            to_id: toId,
-            relationship_type: relationshipType
-        });
-    } catch (error: any) {
-        if (error.response && error.response.status === 500) {
-            console.error('Error creating relationship:', error.response.data);
-        } else {
-            console.error('Error creating relationship:', error);
-        }
-        throw error;
-    }
-};
 
 interface GoalMenuComponent extends React.FC {
     open: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
@@ -48,6 +32,9 @@ const GoalMenu: GoalMenuComponent = () => {
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+        if (goal._tz === undefined) {
+            goal._tz = 'user';
+        }
         console.log('open', goal);
         if (initialMode === 'create' && !goal.start_timestamp) {
             goal.start_timestamp = Date.now();
@@ -98,6 +85,8 @@ const GoalMenu: GoalMenuComponent = () => {
         if (another && mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
         }
+
+        // Validation checks
         const validationErrors: string[] = [];
         if (!goal.goal_type) {
             validationErrors.push('Goal type is required');
@@ -133,71 +122,38 @@ const GoalMenu: GoalMenuComponent = () => {
             return;
         }
 
-        // Create a deep copy of the goal for submission
-        const submissionGoal = { ...goal };
-
-        // Convert timestamps to UTC
-        const timestampFields = [
-            'start_timestamp',
-            'end_timestamp',
-            'scheduled_timestamp',
-            'routine_time',
-            'next_timestamp'
-        ] as const;
-
-        type TimestampField = typeof timestampFields[number];
-
-        timestampFields.forEach((field: TimestampField) => {
-            const value = submissionGoal[field];
-            if (value !== undefined && value !== null) {
-                // Convert to UTC timestamp
-                submissionGoal[field] = toUTCTimestamp(value);
-            } else {
-                // If the field is undefined or null, delete it so it won't be sent
-                delete submissionGoal[field];
-            }
-        });
-
-        // Remove any undefined or null fields
-        (Object.keys(submissionGoal) as Array<keyof Goal>).forEach(key => {
-            if (submissionGoal[key] === undefined || submissionGoal[key] === null) {
-                delete submissionGoal[key];
-            }
-        });
-
-        // Add this log to see what's being sent
-
         try {
+            let updatedGoal: Goal;
+
             if (mode === 'create') {
-                const response = await privateRequest<Goal>('goals/create', 'POST', submissionGoal);
-                // Convert the response back to local timezone before updating state
-                const localResponse = goalToLocal(response);
-                Object.assign(goal, localResponse);
+                updatedGoal = await createGoal(goal);
 
                 if (relationshipMode) {
                     await createRelationship(
                         relationshipMode.parentId,
-                        response.id!,
+                        updatedGoal.id!,
                         relationshipMode.type
                     );
                 }
-
             } else if (mode === 'edit' && goal.id) {
-                const response = await privateRequest<Goal>(`goals/${goal.id}`, 'PUT', submissionGoal);
-                // Convert the response back to local timezone before updating state
-                const localResponse = goalToLocal(response);
-                Object.assign(goal, localResponse);
+                updatedGoal = await updateGoal(goal.id, goal);
+            } else {
+                throw new Error('Invalid mode or missing goal ID');
             }
+
+            // Update the local state with the response
+            setGoal(updatedGoal);
+
             if (goal.goal_type === 'routine') {
                 await updateRoutines();
             }
 
             if (onSuccess) {
-                onSuccess(goal);
+                onSuccess(updatedGoal);
             }
 
             if (another) {
-                const { id, ...restGoal } = goal;
+                const { id, ...restGoal } = updatedGoal;
                 const newGoal: Goal = { ...restGoal, name: '', description: '' } as Goal;
                 close();
                 setTimeout(() => {
@@ -207,25 +163,71 @@ const GoalMenu: GoalMenuComponent = () => {
                 close();
             }
         } catch (error) {
-            // ... error handling ...
+            console.error('Failed to submit goal:', error);
+            setError(error instanceof Error ? error.message : 'Failed to submit goal');
         }
     };
 
     const handleDelete = async () => {
-        if (goal.id) {
-            try {
-                await privateRequest(`goals/${goal.id}`, 'DELETE');
-            } catch (err) {
-                setError(err instanceof Error ? err.message : 'Failed to delete goal');
-                throw err;
-            }
+        if (!goal.id) {
+            setError('Cannot delete goal without ID');
+            return;
+        }
+
+        try {
+            await deleteGoal(goal.id);
             if (onSuccess) {
                 onSuccess(goal);
             }
             close();
+        } catch (error) {
+            console.error('Failed to delete goal:', error);
+            setError(error instanceof Error ? error.message : 'Failed to delete goal');
         }
     };
-    ;
+
+    const handleCreateChild = () => {
+        const parentGoal = goal;
+        const newGoal: Goal = {} as Goal;
+
+        close();
+        setTimeout(() => {
+            open(newGoal, 'create', async (createdGoal: Goal) => {
+                try {
+                    await createRelationship(parentGoal.id!, createdGoal.id!, 'child');
+                    if (onSuccess) {
+                        onSuccess(parentGoal);
+                    }
+                } catch (error) {
+                    console.error('Failed to create child relationship:', error);
+                    setError('Failed to create child relationship');
+                }
+            });
+            setRelationshipMode({ type: 'child', parentId: parentGoal.id! });
+        }, 100);
+    };
+
+    const handleCreateQueue = () => {
+        const previousGoal = goal;
+        const newGoal: Goal = {} as Goal;
+
+        close();
+        setTimeout(() => {
+            open(newGoal, 'create', async (createdGoal: Goal) => {
+                try {
+                    await createRelationship(previousGoal.id!, createdGoal.id!, 'queue');
+                    if (onSuccess) {
+                        onSuccess(previousGoal);
+                    }
+                } catch (error) {
+                    console.error('Failed to create queue relationship:', error);
+                    setError('Failed to create queue relationship');
+                }
+            });
+            setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
+        }, 100);
+    };
+
     const formatDateForInput = (timestamp: number | string | undefined): string => {
         if (!timestamp) return '';
         try {
@@ -372,7 +374,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 value={formatDateForInput(goal.start_timestamp)}
                 onChange={(e) => {
                     const timestamp = e.target.value
-                        ? new Date(e.target.value).setHours(0, 0, 0, 0)
+                        ? new Date(e.target.value + 'T00:00:00').getTime()
                         : undefined;
                     handleChange({
                         ...goal,
@@ -606,50 +608,6 @@ const GoalMenu: GoalMenuComponent = () => {
         }
     };
 
-    const handleCreateChild = () => {
-        const parentGoal = goal;
-        const newGoal: Goal = {} as Goal;
-
-        close();
-        setTimeout(() => {
-            open(newGoal, 'create', async (createdGoal: Goal) => {
-                try {
-                    await createRelationship(parentGoal.id!, createdGoal.id!, 'child');
-                    if (onSuccess) {
-                        onSuccess(parentGoal);
-                    }
-                } catch (error) {
-                    console.error('Failed to create child relationship:', error);
-                    setError('Failed to create child relationship');
-                }
-            });
-            // Set relationship mode
-            setRelationshipMode({ type: 'child', parentId: parentGoal.id! });
-        }, 100);
-    };
-
-    const handleCreateQueue = () => {
-        const previousGoal = goal;
-        const newGoal: Goal = {} as Goal;
-
-        close();
-        setTimeout(() => {
-            open(newGoal, 'create', async (createdGoal: Goal) => {
-                try {
-                    await createRelationship(previousGoal.id!, createdGoal.id!, 'queue');
-                    if (onSuccess) {
-                        onSuccess(previousGoal);
-                    }
-                } catch (error) {
-                    console.error('Failed to create queue relationship:', error);
-                    setError('Failed to create queue relationship');
-                }
-            });
-            // Set relationship mode
-            setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
-        }, 100);
-    };
-
     // Add this handler function
     const handleEdit = () => {
         setMode('edit');
@@ -659,22 +617,17 @@ const GoalMenu: GoalMenuComponent = () => {
     // Add this function to handle completion toggle
     const handleCompletionToggle = async (completed: boolean) => {
         try {
-            const response = await privateRequest<{ completed: boolean }>(
-                `goals/${goal.id}/complete`,
-                'PUT',
-                { id: goal.id, completed }
-            );
-
+            const completion = await completeGoal(goal.id!, completed);
             // Only update the completion status
             setGoal(prev => ({
                 ...prev,
-                completed: response.completed
+                completed: completion
             }));
 
             if (onSuccess) {
                 onSuccess({
                     ...goal,
-                    completed: response.completed
+                    completed: completion
                 });
             }
         } catch (error) {

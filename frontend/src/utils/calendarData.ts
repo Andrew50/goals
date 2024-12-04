@@ -1,5 +1,5 @@
-import { Goal, CalendarResponse, CalendarEvent, CalendarTask, goalToLocal } from '../types';
-import { privateRequest } from './api';
+import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../types';
+import { privateRequest, goalToLocal } from './api';
 
 const ROUTINE_GENERATION_DAYS = 90;
 export interface TransformedCalendarData {
