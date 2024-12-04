@@ -11,9 +11,9 @@ import { Calendar, momentLocalizer } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { privateRequest } from './frontend/src/utils/api';
-import { Goal, CalendarEvent, CalendarTask } from './frontend/src/types';
-import { fetchCalendarData } from './frontend/src/utils/calendarData';
-import { goalColors } from './frontend/src/theme/colors';
+import { Goal, CalendarEvent, CalendarTask } from './frontend/src/types/goals';
+import { fetchCalendarData } from './frontend/src/pages/calendar/calendarData';
+import { goalColors } from './frontend/src/shared/styles/colors';
 import GoalMenu from './frontend/src/components/GoalMenu';
 type EventType = 'meeting' | 'task' | 'appointment';
 interface SlotInfo {
