@@ -1,24 +1,24 @@
 import React from 'react';
 import { BrowserRouter as Router, Route, Routes, Link, useNavigate } from 'react-router-dom';
 import { ThemeProvider, AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
-import { theme } from './styles/theme';
+import { theme } from './shared/styles/theme';
 
 // Import CSS files in correct order
 import './index.css';
-import './styles/global.css';
+import './shared/styles/global.css';
 import './App.css';
 
-import Calendar from './components/Calendar';
-import Signup from './components/Signup';
-import Signin from './components/Signin';
-import Root from './components/Root';
-import Network from './components/Network';
-import GoalMenu from './components/GoalMenu';
-import List from './components/List';
-import Day from './components/Day';
-import Welcome from './components/Welcome';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import ProtectedRoute from './components/ProtectedRoute';
+import Calendar from './pages/calendar/Calendar';
+import Signup from './pages/signup/Signup';
+import Signin from './pages/signin/Signin';
+import Root from './pages/root/Root';
+import Network from './pages/network/Network';
+import GoalMenu from './shared/components/GoalMenu';
+import List from './pages/list/List';
+import Day from './pages/day/Day';
+import Welcome from './pages/root/Welcome';
+import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
+import ProtectedRoute from './shared/components/ProtectedRoute';
 
 const NavBar: React.FC = () => {
   const { isAuthenticated, setIsAuthenticated } = useAuth();
