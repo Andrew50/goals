@@ -3,35 +3,58 @@ import FullCalendar from '@fullcalendar/react';
 import { EventApi } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
-import interactionPlugin, { Draggable, DateClickArg, EventReceiveArg } from '@fullcalendar/interaction';
+import interactionPlugin, { Draggable, DateClickArg, EventReceiveArg, EventResizeStopArg } from '@fullcalendar/interaction';
 import { EventClickArg, EventDropArg } from '@fullcalendar/core';
 
 import { Goal, CalendarEvent, CalendarTask } from '../types';
-import { fetchCalendarData } from '../utils/calendarData';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship } from '../utils/api';
 import { goalColors } from '../theme/colors';
+import { privateRequest } from '../utils/api';
 import GoalMenu from './GoalMenu';
+import { fetchCalendarData } from '../utils/calendarData';
 
 interface DraggableTaskProps {
   task: CalendarTask;
   onTaskClick: (task: CalendarTask) => void;
+  onTaskUpdate: (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => void;
 }
 
-const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
+const DraggableTask = ({ task, onTaskClick, onTaskUpdate }: DraggableTaskProps) => {
   const taskRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (taskRef.current) {
-      new Draggable(taskRef.current, {
-        eventData: {
-          id: task.id,
-          title: task.title,
-        },
+  const handleClick = () => {
+    if (task.goal) {
+      GoalMenu.open(task.goal, 'view', async (updatedGoal) => {
+        const data = await fetchCalendarData();
+        const formattedEvents = [...data.events, ...data.achievements].map(event => ({
+          ...event,
+          start: new Date(event.start),
+          end: new Date(event.end),
+        }));
+        onTaskUpdate({
+          events: formattedEvents,
+          tasks: data.unscheduledTasks
+        });
       });
     }
-  }, [task]);
+  };
 
-  const handleClick = () => {
-    onTaskClick(task);
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (task.goal) {
+      GoalMenu.open(task.goal, 'edit', async (updatedGoal) => {
+        const data = await fetchCalendarData();
+        const formattedEvents = [...data.events, ...data.achievements].map(event => ({
+          ...event,
+          start: new Date(event.start),
+          end: new Date(event.end),
+        }));
+        onTaskUpdate({
+          events: formattedEvents,
+          tasks: data.unscheduledTasks
+        });
+      });
+    }
   };
 
   const getTaskColor = (type: string) => {
@@ -49,6 +72,7 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
     <div
       ref={taskRef}
       className="fc-event"
+      data-task-id={task.id}
       style={{
         marginBottom: '8px',
         padding: '12px 16px',
@@ -62,6 +86,7 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
         color: '#ffffff',
       }}
       onClick={handleClick}
+      onContextMenu={handleContextMenu}
     >
       <div style={{
         width: '8px',
@@ -74,15 +99,19 @@ const DraggableTask = ({ task, onTaskClick }: DraggableTaskProps) => {
   );
 };
 
+interface TaskListProps {
+  tasks: CalendarTask[];
+  onAddTask: () => void;
+  onTaskClick: (task: CalendarTask) => void;
+  onTaskUpdate: (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => void;
+}
+
 const TaskList = ({
   tasks,
   onAddTask,
   onTaskClick,
-}: {
-  tasks: CalendarTask[];
-  onAddTask: () => void;
-  onTaskClick: (task: CalendarTask) => void;
-}) => {
+  onTaskUpdate
+}: TaskListProps) => {
   const taskListRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -139,6 +168,7 @@ const TaskList = ({
               key={task.id}
               task={task}
               onTaskClick={onTaskClick}
+              onTaskUpdate={onTaskUpdate}
             />
           ))
         )}
@@ -180,50 +210,37 @@ const Calendar: React.FC = () => {
       new Draggable(taskListRef.current, {
         itemSelector: '.fc-event',
         eventData: (eventEl) => {
-          const id = eventEl.getAttribute('data-task-id');
-          const task = tasks.find((t) => t.id.toString() === id);
-          return task ? {
-            id: task.id,
-            title: task.title,
-            extendedProps: { task },
-          } : null;
+          const taskId = eventEl.getAttribute('data-task-id');
+          const task = tasks.find(t => t.id === taskId);
+          const durationMinutes = task?.goal?.duration || 60; // Default to 60 minutes if duration not set
+          const hours = Math.floor(durationMinutes / 60);
+          const minutes = durationMinutes % 60;
+          const duration = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+          return {
+            id: task?.id,
+            title: task?.title,
+            duration: duration, // Use duration from goal
+            extendedProps: {
+              task: task
+            }
+          };
         },
       });
     }
   }, [tasks]);
 
 
-  const handleDateClick = (arg: DateClickArg) => {
-    // Open GoalMenu or handle date click events
-  };
-
-  const handleEventReceive = (info: EventReceiveArg) => {
-    const task: CalendarTask = info.event.extendedProps.task;
-    const dropDate = info.event.start;
-
-    GoalMenu.open(task.goal, 'edit', async (updatedGoal) => {
-      const data = await fetchCalendarData();
-      const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-        ...event,
-        start: new Date(event.start),
-        end: new Date(event.end),
-        allDay: false
-      }));
-      setEvents(formattedEvents);
-      setTasks(data.unscheduledTasks);
-    });
-  };
 
   const handleEventClick = (info: EventClickArg) => {
     const event = events.find((e) => e.id === info.event.id);
     if (event && event.goal) {
       GoalMenu.open(event.goal, 'view', async (updatedGoal) => {
         const data = await fetchCalendarData();
-        const formattedEvents = [...data.events, ...data.achievements].map(event => ({
+        const formattedEvents = [...data.events, ...data.achievements].map((event) => ({
           ...event,
           start: new Date(event.start),
           end: new Date(event.end),
-          allDay: false
+          allDay: false,
         }));
         setEvents(formattedEvents);
         setTasks(data.unscheduledTasks);
@@ -231,23 +248,145 @@ const Calendar: React.FC = () => {
     }
   };
 
-  const handleEventDrop = (info: EventDropArg) => {
-    const existingEvent = events.find(e => e.id === info.event.id);
-    if (!existingEvent) return;
+
+  const handleDateClick = (arg: DateClickArg) => {
+    // Open GoalMenu or handle date click events
+  };
+
+  const handleEventReceive = async (info: EventReceiveArg) => {
+    const task = info.event.extendedProps.task;
+    console.log('task', task);
+    if (!task || !task.goal) {
+      console.error('Task or goal information missing');
+      info.revert(); // Revert the drop
+      return;
+    }
+
+    const start = info.event.start;
+    if (!start) {
+      console.error('Event start date missing');
+      info.revert(); // Revert the drop
+      return;
+    }
+
+    // Update the task's goal with the scheduled timestamp
+    const updatedGoal = {
+      ...task.goal,
+      scheduled_timestamp: start.getTime(),
+    };
+
+    try {
+      // Send update to backend
+      await updateGoal(task.goal.id, updatedGoal);
+
+      // Update local state
+      setEvents((prevEvents) => [...prevEvents, {
+        id: task.id,
+        title: task.title,
+        start: start,
+        end: new Date(start.getTime() + (task.duration || 60) * 60000),
+        goal: updatedGoal,
+        type: task.type || 'task',
+      }]);
+
+      // Remove the task from the tasks list
+      setTasks((prevTasks) => prevTasks.filter((t) => t.id !== task.id));
+    } catch (error) {
+      console.error('Failed to update goal:', error);
+      // Revert the event on the calendar
+      info.revert();
+    }
+  };
+
+  const handleEventDrop = async (info: EventDropArg) => {
+    const existingEvent = events.find((e: CalendarEvent) => e.id === info.event.id);
+    if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
+      console.error('Event drop failed: missing event or goal');
+      return;
+    }
+
+    const start = info.event.start;
+    const end = info.event.end;
+
+    const submissionGoal = {
+      ...existingEvent.goal,
+      scheduled_timestamp: start.getTime(),
+    };
+
+    if (existingEvent.goal.goal_type === 'routine') {
+      submissionGoal.routine_time = start.getTime();
+    }
 
     const updatedEvent: CalendarEvent = {
       ...existingEvent,
       id: info.event.id,
       title: info.event.title,
-      start: info.event.start || existingEvent.start,
-      end: info.event.end || existingEvent.end,
+      start: start,
+      end: end,
       allDay: info.event.allDay,
+      goal: submissionGoal,
     };
 
-    setEvents((prevEvents) =>
-      prevEvents.map((event) => (event.id === updatedEvent.id ? updatedEvent : event))
-    );
+    try {
+      // Send update to backend
+      await updateGoal(existingEvent.goal.id, submissionGoal);
+
+      // Update local state if backend call succeeds
+      setEvents((prevEvents: CalendarEvent[]) =>
+        prevEvents.map((event: CalendarEvent) =>
+          event.id === updatedEvent.id ? updatedEvent : event
+        )
+      );
+    } catch (error) {
+      console.error('Failed to update event schedule:', error);
+      // Revert the drag if the backend update fails
+      info.revert();
+    }
   };
+
+
+
+
+  const handleEventResize = async (info: EventResizeStopArg) => {
+    const existingEvent = events.find((e) => e.id === info.event.id);
+    if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
+      console.error('Event resize failed: missing event or goal');
+      return;
+    }
+
+    const start = info.event.start;
+    const end = info.event.end;
+    const durationInMinutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
+
+    const submissionGoal = {
+      ...existingEvent.goal,
+      duration: durationInMinutes,
+      scheduled_timestamp: start.getTime()
+    };
+
+    if (existingEvent.goal.goal_type === 'routine') {
+      submissionGoal.routine_time = start.getTime();
+    }
+
+    const updatedEvent = {
+      ...existingEvent,
+      start,
+      end,
+      goal: submissionGoal,
+    };
+
+    try {
+      await updateGoal(submissionGoal.id, submissionGoal);
+      setEvents((prevEvents) =>
+        prevEvents.map((event) => (event.id === updatedEvent.id ? updatedEvent : event))
+      );
+    } catch (error) {
+      console.error('Failed to update event duration:', error);
+      info.event.setStart(existingEvent.start);
+      info.event.setEnd(existingEvent.end);
+    }
+  };
+
 
   const handleAddTask = () => {
     const tempGoal: Goal = {
@@ -285,6 +424,11 @@ const Calendar: React.FC = () => {
     });
   };
 
+  const handleTaskUpdate = (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => {
+    setEvents(data.events);
+    setTasks(data.tasks);
+  };
+
   return (
     <div style={{
       height: 'calc(100vh - 64px)',
@@ -307,6 +451,7 @@ const Calendar: React.FC = () => {
           tasks={tasks}
           onAddTask={handleAddTask}
           onTaskClick={handleTaskClick}
+          onTaskUpdate={handleTaskUpdate}
         />
       </div>
 
@@ -335,9 +480,31 @@ const Calendar: React.FC = () => {
           eventReceive={handleEventReceive}
           eventClick={handleEventClick}
           eventDrop={handleEventDrop}
+          eventResize={handleEventResize}
+          eventResizableFromStart={true}
           slotMinTime="00:00:00"
           slotMaxTime="24:00:00"
           allDaySlot={true}
+          /*eventContent={(arg) => {
+            const event = events.find((e) => e.id === arg.event.id);
+            const backgroundColor = event?.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
+            return (
+              <div style={{
+                backgroundColor,
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
+                padding: '4px',
+                color: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+              }}>
+                {arg.event.title}
+              </div>
+            );
+          }}*/
           eventContent={(arg) => {
             const event = events.find((e) => e.id === arg.event.id);
             const backgroundColor = event?.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';
@@ -386,6 +553,7 @@ const Calendar: React.FC = () => {
               }
             });
           }}
+          snapDuration="00:01:00"
         />
       </div>
     </div>

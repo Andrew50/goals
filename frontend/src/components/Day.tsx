@@ -1,6 +1,6 @@
-import { privateRequest } from '../utils/api';
+import { privateRequest, goalToLocal } from '../utils/api';
 import React, { useEffect, useState } from 'react';
-import { Goal, goalToLocal } from '../types';
+import { Goal } from '../types';
 import { goalColors } from '../theme/colors';
 import GoalMenu from './GoalMenu';
 //
