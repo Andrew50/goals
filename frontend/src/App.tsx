@@ -16,7 +16,6 @@ import Network from './components/Network';
 import GoalMenu from './components/GoalMenu';
 import List from './components/List';
 import Day from './components/Day';
-import Welcome from './components/Welcome';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -76,7 +75,6 @@ const App: React.FC = () => {
               <Routes>
                 <Route path="/signup" element={<Signup />} />
                 <Route path="/signin" element={<Signin />} />
-                <Route path="/welcome" element={<Welcome />} />
                 <Route path="/" element={<Root />} />
 
                 {/* Protected Routes */}
