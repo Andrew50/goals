@@ -1,3 +1,4 @@
+//calender.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import { EventApi } from '@fullcalendar/core';
@@ -62,8 +63,6 @@ const Calendar: React.FC = () => {
     }
   }, [tasks]);
 
-
-
   const handleEventClick = (info: EventClickArg) => {
     const event = events.find((e) => e.id === info.event.id);
     if (event && event.goal) {
@@ -81,8 +80,8 @@ const Calendar: React.FC = () => {
     }
   };
 
-
   const handleDateClick = (arg: DateClickArg) => {
+      console.warn("to implement")
     // Open GoalMenu or handle date click events
   };
 
@@ -102,18 +101,13 @@ const Calendar: React.FC = () => {
       info.revert(); // Revert the drop
       return;
     }
-
-    // Update the task's goal with the scheduled timestamp
     const updatedGoal = {
       ...task.goal,
       scheduled_timestamp: start.getTime(),
     };
 
     try {
-      // Send update to backend
       await updateGoal(task.goal.id, updatedGoal);
-
-      // Update local state
       setEvents((prevEvents) => [...prevEvents, {
         id: task.id,
         title: task.title,
@@ -133,6 +127,7 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDrop = async (info: EventDropArg) => {
+    console.log(info)
     const existingEvent = events.find((e: CalendarEvent) => e.id === info.event.id);
     if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
       console.error('Event drop failed: missing event or goal');
@@ -162,10 +157,7 @@ const Calendar: React.FC = () => {
     };
 
     try {
-      // Send update to backend
       await updateGoal(existingEvent.goal.id, submissionGoal);
-
-      // Update local state if backend call succeeds
       setEvents((prevEvents: CalendarEvent[]) =>
         prevEvents.map((event: CalendarEvent) =>
           event.id === updatedEvent.id ? updatedEvent : event
@@ -177,31 +169,23 @@ const Calendar: React.FC = () => {
       info.revert();
     }
   };
-
-
-
-
   const handleEventResize = async (info: EventResizeStopArg) => {
     const existingEvent = events.find((e) => e.id === info.event.id);
     if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
       console.error('Event resize failed: missing event or goal');
       return;
     }
-
     const start = info.event.start;
     const end = info.event.end;
     const durationInMinutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
-
     const submissionGoal = {
       ...existingEvent.goal,
       duration: durationInMinutes,
       scheduled_timestamp: start.getTime()
     };
-
     if (existingEvent.goal.goal_type === 'routine') {
       submissionGoal.routine_time = start.getTime();
     }
-
     const updatedEvent = {
       ...existingEvent,
       start,
@@ -220,7 +204,6 @@ const Calendar: React.FC = () => {
       info.event.setEnd(existingEvent.end);
     }
   };
-
 
   const handleAddTask = () => {
     const tempGoal: Goal = {
@@ -282,13 +265,13 @@ const Calendar: React.FC = () => {
         boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
       }}>
         <TaskList
+        ref={taskListRef}
           tasks={tasks}
           onAddTask={handleAddTask}
-          onTaskClick={handleTaskClick}
+         // onTaskClick={handleTaskClick}
           onTaskUpdate={handleTaskUpdate}
         />
       </div>
-
       <div style={{
         flex: 1,
         height: '100%',
@@ -349,8 +332,7 @@ const Calendar: React.FC = () => {
           }}
           eventDidMount={(info) => {
             info.el.addEventListener('contextmenu', (e) => {
-              e.preventDefault(); // Prevent default context menu
-
+              e.preventDefault();
               const fcEvent = info.event;
               const event = events.find((e) => e.id === fcEvent.id);
               if (event && event.goal) {
