@@ -1,3 +1,4 @@
+//tasklist.tsx
 import { CalendarTask, CalendarEvent } from '../../types/goals';
 import { goalColors } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
@@ -8,20 +9,11 @@ import { Draggable } from '@fullcalendar/interaction';
 
 interface DraggableTaskProps {
     task: CalendarTask;
-    onTaskClick: (task: CalendarTask) => void;
+    //onTaskClick: (task: CalendarTask) => void;
     onTaskUpdate: (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => void;
 }
 
-const DraggableTask = ({ task, onTaskClick, onTaskUpdate }: DraggableTaskProps) => {
-    const taskRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (taskRef.current) {
-            new Draggable(taskRef.current, {
-                itemSelector: '.external-event',
-            });
-        }
-    }, []);
+const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
 
     const handleClick = () => {
         if (task.goal) {
@@ -60,7 +52,6 @@ const DraggableTask = ({ task, onTaskClick, onTaskUpdate }: DraggableTaskProps) 
 
     return (
         <div
-            ref={taskRef}
             className="external-event"
             data-task-id={task.id}
             style={{
@@ -92,21 +83,21 @@ const DraggableTask = ({ task, onTaskClick, onTaskUpdate }: DraggableTaskProps) 
 interface TaskListProps {
     tasks: CalendarTask[];
     onAddTask: () => void;
-    onTaskClick: (task: CalendarTask) => void;
+    //onTaskClick: (task: CalendarTask) => void;
     onTaskUpdate: (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => void;
+    ref: React.RefObject<HTMLDivElement>;
 }
 
 const TaskList = ({
     tasks,
     onAddTask,
-    onTaskClick,
-    onTaskUpdate
+    //onTaskClick,
+    onTaskUpdate,
+    ref
 }: TaskListProps) => {
-    const taskListRef = useRef<HTMLDivElement>(null);
-
     return (
         <div
-            ref={taskListRef}
+            ref={ref}
             style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -157,7 +148,7 @@ const TaskList = ({
                         <DraggableTask
                             key={task.id}
                             task={task}
-                            onTaskClick={onTaskClick}
+                 //           onTaskClick={onTaskClick}
                             onTaskUpdate={onTaskUpdate}
                         />
                     ))

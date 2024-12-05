@@ -16,7 +16,6 @@ import Network from './pages/network/Network';
 import GoalMenu from './shared/components/GoalMenu';
 import List from './pages/list/List';
 import Day from './pages/day/Day';
-import Welcome from './pages/root/Welcome';
 import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 
