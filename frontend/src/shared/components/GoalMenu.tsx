@@ -39,6 +39,12 @@ const GoalMenu: GoalMenuComponent = () => {
         if (initialMode === 'create' && !goal.start_timestamp) {
             goal.start_timestamp = Date.now();
         }
+
+        //queue relationships can only between achievements, default to achievement and force achievemnt in ui
+        if (relationshipMode?.type === 'queue') {
+            goal.goal_type = 'achievement';
+        }
+
         setGoal(goal);
         setMode(initialMode);
         setOnSuccess(() => onSuccess);
@@ -70,7 +76,6 @@ const GoalMenu: GoalMenuComponent = () => {
     }, []);
 
     const handleChange = (newGoal: Goal) => {
-
         // If in view mode and completion status changed, update it on the server
         if (mode === 'view' && newGoal.completed !== goal.completed) {
             handleCompletionToggle(newGoal.completed || false);
@@ -215,7 +220,7 @@ const GoalMenu: GoalMenuComponent = () => {
 
     const handleCreateQueue = () => {
         const previousGoal = goal;
-        const newGoal: Goal = {} as Goal;
+        const newGoal: Goal = { goal_type: 'achievement' } as Goal;
 
         close();
         setTimeout(() => {
@@ -239,7 +244,7 @@ const GoalMenu: GoalMenuComponent = () => {
         try {
             const timestampNum = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
             const date = new Date(timestampNum);
-            return date.toISOString().slice(0, 10);
+            return date.toISOString().slice(0, 16);
         } catch {
             return '';
         }
@@ -354,33 +359,28 @@ const GoalMenu: GoalMenuComponent = () => {
         </Box>
     );
     const scheduleField = isViewOnly ? (
-        <>
-            <Box sx={{ mb: 2 }}>
-                <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toLocaleString() : 'Not set'}
-            </Box>
-
-        </>
+        <Box sx={{ mb: 2 }}>
+            <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toISOString().slice(0, 16).replace('T', ' ') : 'Not set'}
+        </Box>
     ) : (
-        <>
-            <TextField
-                label="Schedule Date"
-                type="datetime-local"
-                value={formatDateForInput(goal.scheduled_timestamp)}
-                onChange={(e) => {
-                    const timestamp = e.target.value
-                        ? parseInt(String(new Date(e.target.value).getTime()))
-                        : undefined;
-                    handleChange({
-                        ...goal,
-                        scheduled_timestamp: timestamp
-                    });
-                }}
-                fullWidth
-                margin="dense"
-                InputLabelProps={{ shrink: true }}
-                disabled={isViewOnly}
-            />
-        </>
+        <TextField
+            label="Schedule Date"
+            type="datetime-local"
+            value={formatDateForInput(goal.scheduled_timestamp)}
+            onChange={(e) => {
+                const timestamp = e.target.value
+                    ? new Date(e.target.value).getTime()
+                    : undefined;
+                handleChange({
+                    ...goal,
+                    scheduled_timestamp: timestamp
+                });
+            }}
+            fullWidth
+            margin="dense"
+            InputLabelProps={{ shrink: true }}
+            disabled={isViewOnly}
+        />
     );
 
     const dateFields = isViewOnly ? (
@@ -510,11 +510,17 @@ const GoalMenu: GoalMenuComponent = () => {
                 required
                 disabled={isViewOnly}
             >
+                {/*relationshipMode?.type === 'queue' ? (
+                    <MenuItem value="achievement">Achievement</MenuItem>
+                ) : (
+                    <>*/}
                 <MenuItem value="directive">Directive</MenuItem>
                 <MenuItem value="project">Project</MenuItem>
                 <MenuItem value="achievement">Achievement</MenuItem>
                 <MenuItem value="routine">Routine</MenuItem>
                 <MenuItem value="task">Task</MenuItem>
+                {/*</>
+                )*/}
             </TextField>
             <TextField
                 label="Name"
@@ -644,13 +650,10 @@ const GoalMenu: GoalMenuComponent = () => {
         }
     };
 
-    // Add this handler function
     const handleEdit = () => {
         setMode('edit');
         setTitle('Edit Goal');
     };
-
-    // Add this function to handle completion toggle
     const handleCompletionToggle = async (completed: boolean) => {
         try {
             const completion = await completeGoal(goal.id!, completed);
@@ -699,12 +702,15 @@ const GoalMenu: GoalMenuComponent = () => {
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     {mode === 'view' && (
                         <>
+
                             <Button onClick={handleCreateChild} color="secondary">
                                 Create Child
                             </Button>
-                            <Button onClick={handleCreateQueue} color="secondary">
-                                Create Queue
-                            </Button>
+                            {goal.goal_type === 'achievement' && (
+                                <Button onClick={handleCreateQueue} color="secondary">
+                                    Create Queue
+                                </Button>
+                            )}
                             <Button onClick={handleEdit} color="primary">
                                 Edit
                             </Button>

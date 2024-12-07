@@ -1,0 +1,137 @@
+.day-container {
+    padding: 1rem;
+    width: 100%;
+}
+
+.day-title {
+    margin-bottom: 0.5rem;
+    color: white;
+}
+
+.completion-status {
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+}
+
+.columns-container {
+    display: flex;
+    gap: 2rem;
+    width: 100%;
+}
+
+.column {
+    flex: 1;
+    min-width: 0;
+}
+
+.todo-column {
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    padding-right: 1rem;
+}
+
+.completed-column {
+    padding-left: 1rem;
+}
+
+.column-title {
+    margin-bottom: 1rem;
+    color: white;
+}
+
+.column-title.completed {
+    color: var(--text-secondary);
+}
+
+.tasks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.tasks-list.completed {
+    opacity: 0.6;
+}
+
+/* Task card styling */
+.task-card {
+    display: flex !important;
+    /* Override Material-UI Paper default */
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem !important;
+    /* Override Material-UI Paper default */
+    gap: 1rem;
+}
+
+.task-content {
+    flex: 1;
+    min-width: 0;
+    /* Allows content to shrink below min-content width */
+}
+
+/* Checkbox styling */
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    /* Prevents checkbox from shrinking */
+}
+
+.hidden-checkbox {
+    display: none;
+}
+
+.custom-checkbox {
+    width: 24px;
+    height: 24px;
+    border-width: 2px;
+    border-style: solid;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    background-color: transparent;
+}
+
+.custom-checkbox:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.custom-checkbox.checked {
+    background-color: currentColor;
+    position: relative;
+}
+
+.custom-checkbox.checked::after {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 4px;
+    width: 5px;
+    height: 10px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* Task header styling */
+.task-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.task-name {
+    font-weight: 500;
+    color: white;
+}
+
+.task-time {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.task-description {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}

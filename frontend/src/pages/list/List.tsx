@@ -3,6 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Goal, GoalType } from '../../types/goals';
 import { goalColors } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
+import './List.css';
 
 const List: React.FC = () => {
     const [list, setList] = useState<Goal[]>([]);
@@ -133,30 +134,30 @@ const List: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <div className="max-w-7xl mx-auto py-10 px-6">
-                <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-8">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-4 md:mb-0">Goals</h2>
+        <div className="list-container">
+            <div className="list-content">
+                <div className="list-header">
+                    <h2 className="list-title">Goals</h2>
                     <button
                         onClick={handleCreateGoal}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center gap-2 shadow-sm hover:shadow-md text-sm font-medium"
+                        className="new-goal-button"
                     >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="new-goal-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
                         <span>New Goal</span>
                     </button>
                 </div>
 
-                <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-8">
-                    <h3 className="text-lg font-semibold text-gray-700 mb-4">Filters</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <div className="filters-section">
+                    <h3 className="filters-title">Filters</h3>
+                    <div className="filters-grid">
                         {Object.entries(filterOptions).map(([field, values]) => {
                             if (values.size <= 1) return null;
 
                             return (
                                 <div key={field} className="filter-control">
-                                    <label className="block text-sm font-medium text-gray-600 mb-2 capitalize">
+                                    <label className="filter-label">
                                         {field.replace(/_/g, ' ')}
                                     </label>
                                     {renderFilterInput(field, values)}
@@ -166,11 +167,11 @@ const List: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                    <div className="overflow-x-auto">
-                        <table className="w-full table-fixed">
-                            <thead>
-                                <tr className="text-left border-b border-gray-200 bg-gray-100">
+                <div className="table-container">
+                    <div className="table-wrapper">
+                        <table className="goals-table">
+                            <thead className="table-header">
+                                <tr>
                                     {[
                                         { key: 'name' as keyof Goal, label: 'Name', width: '15%' },
                                         { key: 'goal_type' as keyof Goal, label: 'Type', width: '8%' },
@@ -186,14 +187,13 @@ const List: React.FC = () => {
                                     ].map(({ key, label, width }) => (
                                         <th
                                             key={key}
-                                            className="px-4 py-3 cursor-pointer hover:bg-gray-200 select-none"
                                             style={{ width }}
                                             onClick={() => handleSort(key)}
                                         >
-                                            <div className="flex items-center gap-1 text-sm font-semibold text-gray-700">
+                                            <div className="header-content">
                                                 {label}
                                                 {sortConfig.key === key && (
-                                                    <span className="text-blue-500">
+                                                    <span className="sort-indicator">
                                                         {sortConfig.direction === 'asc' ? '↑' : '↓'}
                                                     </span>
                                                 )}
@@ -208,17 +208,17 @@ const List: React.FC = () => {
                                     return (
                                         <tr
                                             key={goal.id}
-                                            className="hover:bg-gray-50 cursor-pointer transition-all border-b border-gray-200 last:border-0"
+                                            className="table-row"
                                             style={{
                                                 borderLeft: `4px solid ${goalColor}`,
                                             }}
                                             onClick={() => handleGoalClick(goal)}
                                             onContextMenu={(e) => handleGoalContextMenu(e, goal)}
                                         >
-                                            <td className="px-4 py-3 font-medium text-sm text-gray-800">{goal.name}</td>
-                                            <td className="px-4 py-3">
+                                            <td className="table-cell">{goal.name}</td>
+                                            <td className="table-cell">
                                                 <span
-                                                    className="px-2 py-1 rounded-full text-xs whitespace-nowrap"
+                                                    className="goal-type-badge"
                                                     style={{
                                                         backgroundColor: `${goalColor}20`,
                                                         color: goalColor
@@ -227,44 +227,41 @@ const List: React.FC = () => {
                                                     {goal.goal_type}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3 text-gray-600 text-sm">{goal.description}</td>
-                                            <td className="px-4 py-3">
+                                            <td className="table-cell">{goal.description}</td>
+                                            <td className="table-cell">
                                                 {goal.priority && (
-                                                    <span className="px-2 py-1 rounded-full bg-gray-100 text-xs text-gray-700">
+                                                    <span className="priority-badge">
                                                         {goal.priority}
                                                     </span>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-3">
-                                                <span className={`px-2 py-1 rounded-full text-xs ${goal.completed
-                                                    ? 'bg-green-100 text-green-700'
-                                                    : 'bg-yellow-100 text-yellow-700'
-                                                    }`}>
+                                            <td className="table-cell">
+                                                <span className={`status-badge ${goal.completed ? 'completed' : 'in-progress'}`}>
                                                     {goal.completed ? 'Completed' : 'In Progress'}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="table-cell">
                                                 {goal.start_timestamp && new Date(goal.start_timestamp).toLocaleDateString()}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="table-cell">
                                                 {goal.end_timestamp && new Date(goal.end_timestamp).toLocaleDateString()}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="table-cell">
                                                 {goal.scheduled_timestamp && new Date(goal.scheduled_timestamp).toLocaleDateString()}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="table-cell">
                                                 {goal.next_timestamp && new Date(goal.next_timestamp).toLocaleDateString()}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="table-cell">
                                                 {goal.frequency && (
-                                                    <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 text-xs">
+                                                    <span className="frequency-badge">
                                                         {goal.frequency}
                                                     </span>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="table-cell">
                                                 {goal.duration && (
-                                                    <span className="px-2 py-1 rounded-full bg-gray-50 text-gray-700 text-xs">
+                                                    <span className="duration-badge">
                                                         {goal.duration} min
                                                     </span>
                                                 )}

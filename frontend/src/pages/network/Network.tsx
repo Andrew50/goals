@@ -1,6 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-
-import axios from 'axios';
+import React, { useState, useEffect, useRef } from 'react';
 import { Network as VisNetwork } from 'vis-network/standalone';
 import { Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem, FormControl, InputLabel, Box, FormControlLabel, Checkbox } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -9,10 +7,10 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
 import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType } from '../../types/goals';
 import GoalMenu from '../../shared/components/GoalMenu';
-//import GoalView from '../../../GoalView';
 import { privateRequest, goalToLocal, completeGoal, createRelationship, deleteRelationship } from '../../shared/utils/api';
 import { buildHierarchy } from './buildHierarchy';
 import { goalColors } from '../../shared/styles/colors';
+import { validateRelationship } from '../../shared/utils/goalValidation';
 
 interface NetworkData {
   nodes: NetworkNode[];
@@ -20,12 +18,12 @@ interface NetworkData {
 }
 
 const formatNetworkNode = (goal: Goal, inlineUpdate: boolean = false): NetworkNode => {
-    let localGoal: Goal
-    if (!inlineUpdate){
-   localGoal = goalToLocal(goal);
-    }else{
-        localGoal = goal
-    }
+  let localGoal: Goal
+  if (!inlineUpdate) {
+    localGoal = goalToLocal(goal);
+  } else {
+    localGoal = goal
+  }
   return {
     ...localGoal,
     label: localGoal.name,
@@ -144,7 +142,19 @@ const NetworkView: React.FC
         manipulation: {
           enabled: false,
           addNode: true,
-          addEdge: true,
+          addEdge: async function (data: any, callback: Function) {
+            try {
+              setPendingRelationship({
+                from: data.from,
+                to: data.to
+              });
+              setDialogMode('relationship');
+              callback(data);
+            } catch (err) {
+              console.error('Edge creation error:', err);
+              callback(null);
+            }
+          },
           editEdge: false,
           deleteNode: true,
           deleteEdge: true,
@@ -311,13 +321,31 @@ const NetworkView: React.FC
     }
 
     const handleCreateRelationship = async (fromId: number, toId: number, relationshipType: RelationshipType) => {
-      await createRelationship(fromId, toId, relationshipType);
       if (networkData) {
+        const fromGoal = networkData.nodes.find(n => n.id === fromId);
+        const toGoal = networkData.nodes.find(n => n.id === toId);
+
+        if (!fromGoal || !toGoal) {
+          console.error('Could not find goals for relationship');
+          return;
+        }
+
+        // Validate the relationship
+        const error = validateRelationship(fromGoal, toGoal, relationshipType);
+        if (error) {
+          // You might want to show this error in a more user-friendly way
+          alert(error);
+          setDialogMode(null);
+          setPendingRelationship(null);
+          updateNetwork();
+          return;
+        }
+
+        await createRelationship(fromId, toId, relationshipType);
         const newEdge: NetworkEdge = {
           from: fromId,
           to: toId,
           relationship_type: relationshipType as 'child' | 'queue',
-          //id: `${fromId}-${toId}`
         };
 
         setNetworkData({
@@ -447,7 +475,17 @@ const NetworkView: React.FC
                 })}
               >
                 <MenuItem value="child">Child</MenuItem>
-                <MenuItem value="queue">Queue</MenuItem>
+                <MenuItem
+                  value="queue"
+                  disabled={
+                    pendingRelationship && networkData ?
+                      networkData.nodes.find(n => n.id === pendingRelationship.from)?.goal_type !== 'achievement' ||
+                      networkData.nodes.find(n => n.id === pendingRelationship.to)?.goal_type !== 'task'
+                      : false
+                  }
+                >
+                  Queue
+                </MenuItem>
               </Select>
             </FormControl>
           </DialogContent>
