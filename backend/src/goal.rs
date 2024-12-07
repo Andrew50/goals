@@ -572,15 +572,24 @@ impl Goal {
             let to_type = parse_goal_type(&to_type)?;
 
             // Validate relationship types
-            match (from_type, to_type) {
-                (GoalType::Task, _) => {
+            match (
+                from_type,
+                to_type,
+                relationship.relationship_type.to_uppercase().as_str(),
+            ) {
+                (GoalType::Task, _, _) => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Tasks cannot have children".to_string(),
                     ))
                 }
-                (GoalType::Directive, GoalType::Achievement) => {
+                (GoalType::Directive, GoalType::Achievement, _) => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Directives cannot directly connect to achievements".to_string(),
+                    ))
+                }
+                (_, _, "QUEUE") if from_type != GoalType::Achievement => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Queue relationships can only be created on achievements".to_string(),
                     ))
                 }
                 _ => {}

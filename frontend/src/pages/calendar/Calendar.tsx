@@ -130,57 +130,114 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDrop = async (info: EventDropArg) => {
-    console.log(info)
     const existingEvent = events.find((e: CalendarEvent) => e.id === info.event.id);
-    if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
+    if (!existingEvent || !existingEvent.goal) {
       console.error('Event drop failed: missing event or goal');
+      info.revert();
       return;
     }
 
     const _start = info.event.start;
-    const start = Date.UTC(
-      _start.getFullYear(),
-      _start.getMonth(),
-      _start.getDate(),
-      _start.getHours(),
-      _start.getMinutes(),
-      _start.getSeconds()
-    );
-    console.log("moving to " + start)
-    console.log("moving to __ " + _start)
-    const end = info.event.end;
-    const isAllDay = info.event.allDay;
-
-    const submissionGoal = existingEvent.goal;
-    if (existingEvent.goal.goal_type === 'routine') {
-      submissionGoal.routine_time = start
-    } else {
-      submissionGoal.scheduled_timestamp = start
+    if (!_start) {
+      console.error('Event drop failed: missing start date');
+      info.revert();
+      return;
     }
 
+    let start: number;
+    let eventStart: Date;
+    let eventEnd: Date;
 
+    const newDuration = (() => {
+      if (info.event.allDay) {
+        return 1440;
+      } else if (existingEvent.goal.duration === 1440) {
+        return 60;
+      }
+      return existingEvent.goal.duration || 60;
+    })();
 
-    const updatedEvent: CalendarEvent = {
-      ...existingEvent,
-      id: info.event.id,
-      title: info.event.title,
-      start: info.event.start,
-      end: end,
-      allDay: isAllDay,
-      goal: submissionGoal,
+    if (info.event.allDay) {
+      // When moving to all-day section, set time to midnight
+      eventStart = new Date(_start.setHours(0, 0, 0, 0));
+      eventEnd = new Date(_start.setHours(23, 59, 59, 999));
+      start = Date.UTC(
+        _start.getFullYear(),
+        _start.getMonth(),
+        _start.getDate(),
+        0, 0, 0
+      );
+    } else {
+      // Regular timed event
+      eventStart = _start;
+      eventEnd = new Date(_start.getTime() + (newDuration * 60000));
+      start = Date.UTC(
+        _start.getFullYear(),
+        _start.getMonth(),
+        _start.getDate(),
+        _start.getHours(),
+        _start.getMinutes(),
+        _start.getSeconds()
+      );
+    }
+
+    const submissionGoal = {
+      ...existingEvent.goal,
+      duration: newDuration,
+      allDay: info.event.allDay
     };
 
-    try {
-      await updateGoal(existingEvent.goal.id, submissionGoal);
-      setEvents((prevEvents: CalendarEvent[]) =>
-        prevEvents.map((event: CalendarEvent) =>
-          event.id === updatedEvent.id ? updatedEvent : event
-        )
-      );
-    } catch (error) {
-      console.error('Failed to update event schedule:', error);
-      // Revert the drag if the backend update fails
-      info.revert();
+    if (existingEvent.goal.goal_type === 'routine') {
+      submissionGoal.routine_time = start;
+      try {
+        await updateGoal(existingEvent.goal.id, submissionGoal);
+        setEvents((prevEvents: CalendarEvent[]) =>
+          prevEvents.map((event: CalendarEvent) => {
+            if (event.goal.id === existingEvent.goal.id) {
+              const newStart = new Date(event.start);
+              newStart.setHours(_start.getHours(), _start.getMinutes(), _start.getSeconds());
+              const newEnd = new Date(newStart);
+              const durationInMinutes = submissionGoal.duration;
+              newEnd.setMinutes(newStart.getMinutes() + durationInMinutes);
+
+              return {
+                ...event,
+                start: newStart,
+                end: newEnd,
+                allDay: info.event.allDay, // Propagate allDay property
+                goal: submissionGoal,
+              };
+            }
+            return event;
+          })
+        );
+      } catch (error) {
+        console.error('Failed to update routine schedule:', error);
+        info.revert();
+      }
+    } else {
+      submissionGoal.scheduled_timestamp = start;
+      const updatedEvent: CalendarEvent = {
+        ...existingEvent,
+        id: info.event.id,
+        title: info.event.title,
+        start: eventStart,
+        end: eventEnd,
+        allDay: info.event.allDay, // Propagate allDay property
+        goal: submissionGoal,
+      };
+
+      try {
+        await updateGoal(existingEvent.goal.id, submissionGoal);
+        setEvents((prevEvents: CalendarEvent[]) =>
+          prevEvents.map((event: CalendarEvent) =>
+            event.id === updatedEvent.id ? updatedEvent : event
+          )
+        );
+      } catch (error) {
+        console.error('Failed to update event schedule:', error);
+        info.revert();
+      }
     }
   };
   const handleEventResize = async (info: EventResizeStopArg) => {
@@ -216,25 +273,50 @@ const Calendar: React.FC = () => {
       duration: durationInMinutes,
       scheduled_timestamp: start
     };
+
     if (existingEvent.goal.goal_type === 'routine') {
       submissionGoal.routine_time = start;
-    }
-    const updatedEvent = {
-      ...existingEvent,
-      start: _start,
-      end: _end,
-      goal: submissionGoal,
-    };
+      try {
+        await updateGoal(submissionGoal.id, submissionGoal);
+        setEvents((prevEvents) =>
+          prevEvents.map((event) => {
+            if (event.goal.id === existingEvent.goal.id) {
+              const newStart = new Date(event.start);
+              newStart.setHours(_start.getHours(), _start.getMinutes(), _start.getSeconds());
+              const newEnd = new Date(newStart);
+              newEnd.setMinutes(newStart.getMinutes() + durationInMinutes);
 
-    try {
-      await updateGoal(submissionGoal.id, submissionGoal);
-      setEvents((prevEvents) =>
-        prevEvents.map((event) => (event.id === updatedEvent.id ? updatedEvent : event))
-      );
-    } catch (error) {
-      console.error('Failed to update event duration:', error);
-      info.event.setStart(existingEvent.start);
-      info.event.setEnd(existingEvent.end);
+              return {
+                ...event,
+                start: newStart,
+                end: newEnd,
+                goal: submissionGoal,
+              };
+            }
+            return event;
+          })
+        );
+      } catch (error) {
+        console.error('Failed to update routine duration:', error);
+        info.event.setStart(existingEvent.start);
+        info.event.setEnd(existingEvent.end);
+      }
+    } else {
+      try {
+        await updateGoal(submissionGoal.id, submissionGoal);
+        setEvents((prevEvents) =>
+          prevEvents.map((event) => (event.id === existingEvent.id ? {
+            ...existingEvent,
+            start: _start,
+            end: _end,
+            goal: submissionGoal,
+          } : event))
+        );
+      } catch (error) {
+        console.error('Failed to update event duration:', error);
+        info.event.setStart(existingEvent.start);
+        info.event.setEnd(existingEvent.end);
+      }
     }
   };
 

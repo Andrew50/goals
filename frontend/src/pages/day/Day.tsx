@@ -3,7 +3,9 @@ import React, { useEffect, useState } from 'react';
 import { Goal } from '../../types/goals';
 import { goalColors } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
-//
+import { Box, Typography, Paper, Button } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
+import './Day.css';
 
 const Day: React.FC = () => {
     const [tasks, setTasks] = useState<Goal[]>([]);
@@ -17,20 +19,12 @@ const Day: React.FC = () => {
         const startTimestamp = today.getTime();
         const endTimestamp = todayEnd.getTime();
 
-        console.log('Frontend timestamps:', {
-            start: startTimestamp,
-            end: endTimestamp,
-            startDate: new Date(startTimestamp).toISOString(),
-            endDate: new Date(endTimestamp).toISOString()
-        });
-
         privateRequest<Goal[]>('day', 'GET', {
             params: {
                 start: startTimestamp,
                 end: endTimestamp
             }
         }).then((tasks) => {
-            console.log('Received tasks:', tasks);
             setTasks(tasks.map(goalToLocal));
         }).catch(error => {
             console.error('Error fetching tasks:', error);
@@ -42,8 +36,12 @@ const Day: React.FC = () => {
             `day/complete/${task.id}`,
             'PUT'
         ).then(() => {
-
-            setTasks(prevTasks => prevTasks.filter(t => t.id !== task.id));
+            setTasks(prevTasks => prevTasks.map(t => {
+                if (t.id === task.id) {
+                    return { ...t, completed: !t.completed };
+                }
+                return t;
+            }));
         });
     };
 
@@ -101,119 +99,138 @@ const Day: React.FC = () => {
         return Math.round((completed / tasks.length) * 100);
     };
 
+    const handleCreateGoal = () => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        GoalMenu.open(
+            { scheduled_timestamp: today.getTime(), goal_type: 'task' } as Goal,
+            'create',
+            (newGoal) => {
+                if (newGoal.id) {
+                    setTasks(prevTasks => [...prevTasks, goalToLocal(newGoal)]);
+                }
+            }
+        );
+    };
+
     return (
-        <div className="p-4 max-w-2xl mx-auto">
-            <h2 className="text-2xl font-bold mb-2">Today's Tasks</h2>
-            <div className="flex items-center gap-2 mb-4 text-gray-600">
+        <Box className="day-container">
+            <div className="day-header">
+                <Typography variant="h4" className="day-title">Today's Tasks</Typography>
+                <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={handleCreateGoal}
+                    startIcon={<AddIcon />}
+                >
+                    New Task
+                </Button>
+            </div>
+            <Box className="completion-status">
                 <span>{getCompletionPercentage()}% complete</span>
                 <span>({organizedTasks().completed.length}/{tasks.length} tasks)</span>
-            </div>
+            </Box>
 
-            <div className="tasks-list space-y-2">
-                {organizedTasks().todo.map(task => {
-                    const goalColor = goalColors[task.goal_type];
-                    const timeString = formatTime(task.scheduled_timestamp);
-                    return (
-                        <div
-                            key={task.id}
-                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-all border border-gray-100"
-                            style={{
-                                borderLeft: `4px solid ${goalColor}`,
-                            }}
-                        >
-                            <div
-                                className="flex-grow cursor-pointer"
-                                onClick={() => handleTaskClick(task)}
-                                onContextMenu={(e) => handleTaskContextMenu(e, task)}
-                            >
-                                <div className="flex items-center gap-2">
-                                    <h3 className="font-medium">{task.name}</h3>
-                                    {timeString && (
-                                        <span className="text-sm text-gray-500">
-                                            {timeString}
-                                        </span>
-                                    )}
-                                </div>
-                                {task.description && (
-                                    <p className="text-gray-600 text-sm mt-1">{task.description}</p>
-                                )}
-                            </div>
-
-                            <label className="flex-shrink-0 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={false}
-                                    onChange={() => handleTaskComplete(task)}
-                                />
-                                <div 
-                                    className="w-4 h-4 border-2 rounded peer-checked:bg-gray-100 hover:bg-gray-50 flex items-center justify-center"
-                                    style={{ borderColor: goalColor }}
-                                >
-                                    {task.completed && (
-                                        <svg viewBox="0 0 24 24" className="w-3 h-3 text-gray-600">
-                                            <path
-                                                fill="currentColor"
-                                                d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
-                                            />
-                                        </svg>
-                                    )}
-                                </div>
-                            </label>
-                        </div>
-                    );
-                })}
-            </div>
-
-            {organizedTasks().completed.length > 0 && (
-                <div className="mt-8">
-                    <h2 className="text-lg font-bold mb-2 text-gray-500">Completed</h2>
-                    <div className="tasks-list space-y-2 opacity-60">
-                        {organizedTasks().completed.map(task => {
+            <Box className="columns-container">
+                <Box className="column todo-column">
+                    <Typography variant="h6" className="column-title">To Do</Typography>
+                    <div className="tasks-list">
+                        {organizedTasks().todo.map(task => {
                             const goalColor = goalColors[task.goal_type];
+                            const timeString = formatTime(task.scheduled_timestamp);
                             return (
-                                <div
+                                <Paper
                                     key={task.id}
-                                    className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-all border border-gray-100"
+                                    className="task-card"
                                     style={{
                                         borderLeft: `4px solid ${goalColor}`,
                                     }}
                                 >
                                     <div
-                                        className="flex-grow cursor-pointer line-through"
+                                        className="task-content"
                                         onClick={() => handleTaskClick(task)}
                                         onContextMenu={(e) => handleTaskContextMenu(e, task)}
                                     >
-                                        <h3 className="font-medium">{task.name}</h3>
+                                        <div className="task-header">
+                                            <Typography variant="body1" className="task-name">
+                                                {task.name}
+                                            </Typography>
+                                            {timeString && (
+                                                <span className="task-time">{timeString}</span>
+                                            )}
+                                        </div>
+                                        {task.description && (
+                                            <Typography variant="body2" className="task-description">
+                                                {task.description}
+                                            </Typography>
+                                        )}
                                     </div>
 
-                                    <label className="flex-shrink-0 cursor-pointer">
+                                    <label className="checkbox-container">
                                         <input
                                             type="checkbox"
-                                            className="sr-only peer"
-                                            checked={true}
+                                            className="hidden-checkbox"
+                                            checked={false}
                                             onChange={() => handleTaskComplete(task)}
                                         />
-                                        <div 
-                                            className="w-4 h-4 border-2 rounded bg-gray-100 hover:bg-gray-50 flex items-center justify-center"
+                                        <div
+                                            className="custom-checkbox"
                                             style={{ borderColor: goalColor }}
-                                        >
-                                            <svg viewBox="0 0 24 24" className="w-3 h-3 text-gray-600">
-                                                <path
-                                                    fill="currentColor"
-                                                    d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
-                                                />
-                                            </svg>
-                                        </div>
+                                        />
                                     </label>
-                                </div>
+                                </Paper>
                             );
                         })}
                     </div>
-                </div>
-            )}
-        </div>
+                </Box>
+
+                <Box className="column completed-column">
+                    <Typography variant="h6" className="column-title completed">
+                        Completed
+                    </Typography>
+                    <div className="tasks-list completed">
+                        {organizedTasks().completed.map(task => {
+                            const goalColor = goalColors[task.goal_type];
+                            return (
+                                <Paper
+                                    key={task.id}
+                                    className="task-card completed"
+                                    style={{
+                                        borderLeft: `4px solid ${goalColor}`,
+                                    }}
+                                >
+                                    <div
+                                        className="task-content completed"
+                                        onClick={() => handleTaskClick(task)}
+                                        onContextMenu={(e) => handleTaskContextMenu(e, task)}
+                                    >
+                                        <Typography variant="body1" className="task-name">
+                                            {task.name}
+                                        </Typography>
+                                    </div>
+
+                                    <label className="checkbox-container">
+                                        <input
+                                            type="checkbox"
+                                            className="hidden-checkbox"
+                                            checked={true}
+                                            onChange={() => handleTaskComplete(task)}
+                                        />
+                                        <div
+                                            className="custom-checkbox checked"
+                                            style={{ borderColor: goalColor }}
+                                        />
+                                    </label>
+                                </Paper>
+                            );
+                        })}
+                    </div>
+                </Box>
+            </Box>
+        </Box>
     );
 };
 
 export default Day;
+

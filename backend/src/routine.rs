@@ -140,7 +140,7 @@ pub async fn catch_up_routine(
             end_timestamp: Some(new_next_timestamp),
             completion_date: None,
             next_timestamp: None,
-            scheduled_timestamp: scheduled_timestamp,
+            scheduled_timestamp,
             duration: routine.duration,
             completed: Some(false),
             frequency: None,

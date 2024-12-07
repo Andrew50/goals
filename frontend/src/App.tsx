@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Route, Routes, Link, useNavigate } from 'react
 import { ThemeProvider, AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
 import { theme } from './shared/styles/theme';
 
+
 // Import CSS files in correct order
 import './index.css';
 import './shared/styles/global.css';
