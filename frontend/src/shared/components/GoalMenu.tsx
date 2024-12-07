@@ -98,21 +98,27 @@ const GoalMenu: GoalMenuComponent = () => {
             switch (goal.goal_type) {
                 case 'routine':
                     if (!goal.frequency) {
-                        validationErrors.push('Frequency is required for routine goals');
+                        validationErrors.push('Frequency is required');
                     }
                     if (!goal.start_timestamp) {
-                        validationErrors.push('Start timestamp is required for routine goals');
+                        validationErrors.push('Start Date is required');
+                    }
+                    if (!goal.routine_type) {
+                        validationErrors.push('Routine type is required');
+                    }
+                    if (goal.routine_type === "task" && !goal.duration) {
+                        validationErrors.push('Duration is required')
                     }
                     break;
                 case 'task':
                     if (!goal.duration) {
-                        validationErrors.push('Duration is required for task goals');
+                        validationErrors.push('Duration is required');
                     }
                     break;
                 case 'project':
                 case 'achievement':
                     if (!goal.start_timestamp) {
-                        validationErrors.push('Start timestamp is required for project and achievement goals');
+                        validationErrors.push('Start Date is required');
                     }
                     break;
             }
@@ -269,62 +275,82 @@ const GoalMenu: GoalMenuComponent = () => {
         <Box sx={{ mb: 2 }}>
             <strong>Duration:</strong> {(() => {
                 const duration = goal.duration;
-                return duration ? `${(duration / 60).toFixed(2)}h` : 'Not set';
+                if (!duration) return 'Not set';
+                return duration === 1440 ? 'All Day' : `${(duration / 60).toFixed(2)}h`;
             })()}
         </Box>
     ) : (
-        <Box sx={{ display: 'flex', gap: 2 }}>
-            <TextField
-                label="Hours"
-                type="number"
-                value={(() => {
-                    const hours = goal.duration ? Math.floor(goal.duration / 60) : '';
-                    return hours;
-                })()}
-                onChange={(e) => {
-                    const hours = e.target.value ? parseInt(e.target.value) : 0;
-                    const minutes = goal.duration ? goal.duration % 60 : 0;
-                    const newDuration = hours * 60 + minutes;
-                    handleChange({
-                        ...goal,
-                        duration: newDuration
-                    });
-                }}
-                margin="dense"
-                InputLabelProps={{ shrink: true }}
-                inputProps={{
-                    min: 0,
-                    step: 1
-                }}
-                disabled={isViewOnly}
-                sx={{ width: '50%' }}
+        <Box>
+            <FormControlLabel
+                control={
+                    <Checkbox
+                        checked={goal.duration === 1440}
+                        onChange={(e) => {
+                            handleChange({
+                                ...goal,
+                                duration: e.target.checked ? 1440 : 60 // Default to 1 hour when unchecking
+                            });
+                        }}
+                    />
+                }
+                label="All Day"
             />
-            <TextField
-                label="Minutes"
-                type="number"
-                value={(() => {
-                    const minutes = goal.duration ? goal.duration % 60 : '';
-                    return minutes;
-                })()}
-                onChange={(e) => {
-                    const minutes = e.target.value ? parseInt(e.target.value) : 0;
-                    const hours = goal.duration ? Math.floor(goal.duration / 60) : 0;
-                    const newDuration = hours * 60 + minutes;
-                    handleChange({
-                        ...goal,
-                        duration: newDuration
-                    });
-                }}
-                margin="dense"
-                InputLabelProps={{ shrink: true }}
-                inputProps={{
-                    min: 0,
-                    max: 59,
-                    step: 1
-                }}
-                disabled={isViewOnly}
-                sx={{ width: '50%' }}
-            />
+
+            {goal.duration !== 1440 && (
+                <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                    <TextField
+                        label="Hours"
+                        type="number"
+                        value={(() => {
+                            const hours = goal.duration ? Math.floor(goal.duration / 60) : '';
+                            return hours;
+                        })()}
+                        onChange={(e) => {
+                            const hours = e.target.value ? parseInt(e.target.value) : 0;
+                            const minutes = goal.duration ? goal.duration % 60 : 0;
+                            const newDuration = hours * 60 + minutes;
+                            handleChange({
+                                ...goal,
+                                duration: newDuration
+                            });
+                        }}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{
+                            min: 0,
+                            step: 1
+                        }}
+                        disabled={isViewOnly}
+                        sx={{ width: '50%' }}
+                    />
+                    <TextField
+                        label="Minutes"
+                        type="number"
+                        value={(() => {
+                            const minutes = goal.duration ? goal.duration % 60 : '';
+                            return minutes;
+                        })()}
+                        onChange={(e) => {
+                            const minutes = e.target.value ? parseInt(e.target.value) : 0;
+                            const hours = goal.duration ? Math.floor(goal.duration / 60) : 0;
+                            const newDuration = hours * 60 + minutes;
+                            handleChange({
+                                ...goal,
+                                duration: newDuration
+                            });
+                        }}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{
+                            min: 0,
+                            max: 59,
+                            step: 1
+                        }}
+                        disabled={isViewOnly}
+                        sx={{ width: '50%' }}
+                    />
+                </Box>
+            )}
         </Box>
     );
     const scheduleField = isViewOnly ? (
@@ -519,9 +545,18 @@ const GoalMenu: GoalMenuComponent = () => {
             {goal.routine_type === 'task' && (
                 <>
                     {durationField}
-                    <Box sx={{ mb: 2 }}>
-                        <strong>Scheduled Time:</strong> {goal.routine_time ? new Date(goal.routine_time).toLocaleTimeString() : 'Not set'}
-                    </Box>
+                    {goal.duration !== 1440 && (
+                        <Box sx={{ mb: 2 }}>
+                            <strong>Scheduled Time:</strong> {goal.routine_time ?
+                                new Intl.DateTimeFormat('default', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true,
+                                    timeZone: 'UTC'
+                                }).format(goal.routine_time)
+                                : 'Not set'}
+                        </Box>
+                    )}
                 </>
             )}
         </>
@@ -545,25 +580,27 @@ const GoalMenu: GoalMenuComponent = () => {
             {goal.routine_type === 'task' && (
                 <>
                     {durationField}
-
-                    <TextField
-                        label="Scheduled Time"
-                        type="time"
-                        value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
-                        onChange={(e) => {
-                            const [hours, minutes] = e.target.value.split(':').map(Number);
-                            const timeInMs = (hours * 60 + minutes) * 60 * 1000;
-                            handleChange({
-                                ...goal,
-                                routine_time: timeInMs
-                            });
-                        }}
-                        fullWidth
-                        margin="dense"
-                        InputLabelProps={{ shrink: true }}
-                        inputProps={{ step: 300 }}
-                        disabled={isViewOnly}
-                    />
+                    {goal.duration !== 1440 && (
+                        <TextField
+                            label="Scheduled Time"
+                            type="time"
+                            value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
+                            onChange={(e) => {
+                                console.log(e.target.value);
+                                const [hours, minutes] = e.target.value.split(':').map(Number);
+                                const timeInMs = ((hours * 60 * 60) + (minutes * 60)) * 1000;
+                                handleChange({
+                                    ...goal,
+                                    routine_time: timeInMs
+                                });
+                            }}
+                            fullWidth
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            inputProps={{ step: 300 }}
+                            disabled={isViewOnly}
+                        />
+                    )}
                 </>
             )}
         </>
@@ -571,7 +608,6 @@ const GoalMenu: GoalMenuComponent = () => {
 
     const renderTypeSpecificFields = () => {
         if (!goal.goal_type) return null;
-
         const project_and_achievement_fields = (
             <>
                 {priorityField}
@@ -590,8 +626,8 @@ const GoalMenu: GoalMenuComponent = () => {
                 return (
                     <>
                         {priorityField}
-                        {frequencyField}
                         {dateFields}
+                        {frequencyField}
                         {routineFields}
                     </>
                 );

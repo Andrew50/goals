@@ -15,7 +15,9 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
         const currentDate = new Date();
 
         // Convert routines to local timezone before generating events
+        console.log(response.routines);
         const localRoutines = response.routines.map(goalToLocal);
+        console.log(localRoutines);
 
         // Generate routine events with local timezone data
         const routineEvents = localRoutines.map(routine =>
@@ -27,15 +29,33 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
             .map(goalToLocal)
             .filter(item => item.scheduled_timestamp)
             .map(item => {
-                const start = new Date(item.scheduled_timestamp!);
+                const isAllDay = item.duration === 1440;
+
+                // Parse the timestamp maintaining local time, as the timestamp has already been converted to client tz
+                const timestamp = new Date(item.scheduled_timestamp!);
+                const start = new Date(
+                    timestamp.getUTCFullYear(),
+                    timestamp.getUTCMonth(),
+                    timestamp.getUTCDate(),
+                    timestamp.getUTCHours(),
+                    timestamp.getUTCMinutes(),
+                    timestamp.getUTCSeconds()
+                );
+
+                console.log('Original timestamp:', item.scheduled_timestamp);
+                console.log('Constructed local date:', start);
+
                 return {
                     id: `scheduled-${item.id || Date.now()}`,
                     title: item.name,
-                    start,
-                    end: new Date(start.getTime() + (item.duration || 60) * 60 * 1000),
+                    start: isAllDay ? new Date(start.setHours(0, 0, 0, 0)) : start,
+                    end: isAllDay
+                        ? new Date(start.setHours(23, 59, 59, 999))
+                        : new Date(start.getTime() + (item.duration || 60) * 60 * 1000),
                     type: 'scheduled',
                     goal: item,
-                    allDay: item.duration === 1440  // true if duration is 24 hours
+                    allDay: isAllDay,
+                    timezone: 'local'
                 } as CalendarEvent;
             });
 
@@ -50,23 +70,20 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
                 goal: item
             } as CalendarTask));
 
-        // Handle achievements with local timezone
+        // Handle achievements with local timezone - all achievements are all-day events
         const achievementEvents = response.achievements
             .map(goalToLocal)
+            .filter(achievement => achievement.end_timestamp)
             .map(achievement => {
-                const completionTime = achievement.completed ?
-                    (typeof achievement.completed === 'number' ? achievement.completed : Date.now())
-                    : Date.now();
-                const start = new Date(completionTime);
-
+                const end = new Date(achievement.end_timestamp!);
                 return {
                     id: `achievement-${achievement.id || Date.now()}`,
                     title: achievement.name,
-                    start,
-                    end: new Date(start.getTime() + 60 * 60 * 1000),
+                    start: new Date(end.setHours(0, 0, 0, 0)), // Set to start of day
+                    end: new Date(end.setHours(23, 59, 59, 999)), // Set to end of day
                     type: 'achievement',
                     goal: achievement,
-                    allDay: false
+                    allDay: true // Always true for achievements
                 } as CalendarEvent;
             });
 
@@ -108,6 +125,7 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     }
 
     const events: CalendarEvent[] = [];
+    const isAllDay = routine.duration === 1440;
 
     // Create start date at the beginning of tomorrow in client's timezone
     const tomorrow = new Date(currentDate);
@@ -119,19 +137,30 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     end.setDate(end.getDate() + ROUTINE_GENERATION_DAYS);
 
     // Create a date object with the routine time in local timezone
+    //const routineTimeDate = new Date(routine.routine_time + 'Z');
     const routineTimeDate = new Date(routine.routine_time);
-    const routineHours = routineTimeDate.getHours();
-    const routineMinutes = routineTimeDate.getMinutes();
+    //const routineHours = routineTimeDate.getHours();
+    //const routineMinutes = routineTimeDate.getMinutes();
+    const routineHours = routineTimeDate.getUTCHours();
+    const routineMinutes = routineTimeDate.getUTCMinutes();
 
     let currentDateIter = new Date(initialStartDate);
     while (currentDateIter <= end) {
         const eventStart = new Date(currentDateIter);
-        // Set the time in local timezone
-        eventStart.setHours(routineHours, routineMinutes, 0, 0);
+
+        if (isAllDay) {
+            eventStart.setHours(0, 0, 0, 0);
+        } else {
+            eventStart.setHours(routineHours, routineMinutes, 0, 0);
+        }
 
         const eventEnd = new Date(eventStart);
-        const durationInMinutes = routine.duration || 60;
-        eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
+        if (isAllDay) {
+            eventEnd.setHours(23, 59, 59, 999);
+        } else {
+            const durationInMinutes = routine.duration || 60;
+            eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
+        }
 
         events.push({
             id: `routine-${routine.id}-${currentDateIter.getTime()}`,
@@ -140,7 +169,7 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
             end: eventEnd,
             type: 'routine',
             goal: routine,
-            allDay: routine.duration === 1440
+            allDay: isAllDay
         } as CalendarEvent);
 
         // Move to next occurrence based on frequency

@@ -1,5 +1,6 @@
 //tasklist.tsx
 import { CalendarTask, CalendarEvent } from '../../types/goals';
+import React from 'react';
 import { goalColors } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
@@ -81,81 +82,85 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
 };
 
 interface TaskListProps {
-    tasks: CalendarTask[];
-    onAddTask: () => void;
-    //onTaskClick: (task: CalendarTask) => void;
-    onTaskUpdate: (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => void;
-    ref: React.RefObject<HTMLDivElement>;
+  tasks: CalendarTask[];
+  onAddTask: () => void;
+  onTaskUpdate: (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => void;
+  // Removed 'ref' from props
 }
 
-const TaskList = ({
-    tasks,
-    onAddTask,
-    //onTaskClick,
-    onTaskUpdate,
-    ref
-}: TaskListProps) => {
+const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
+  ({ tasks, onAddTask, onTaskUpdate }, ref) => {
     return (
-        <div
-            ref={ref}
-            style={{
-                display: 'flex',
-                flexDirection: 'column',
-                height: '100%',
-                padding: '16px',
-            }}
+      <div
+        ref={ref}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          padding: '16px',
+        }}
+      >
+        {/* Rest of your component code */}
+        <h3
+          style={{
+            margin: '0 0 16px 0',
+            color: '#ffffff',
+            fontSize: '20px',
+            fontWeight: 600,
+          }}
         >
-            <h3 style={{
-                margin: '0 0 16px 0',
-                color: '#ffffff',
-                fontSize: '20px',
-                fontWeight: 600,
-            }}>Unscheduled Tasks</h3>
+          Unscheduled Tasks
+        </h3>
 
-            <button
-                onClick={onAddTask}
-                style={{
-                    padding: '12px',
-                    backgroundColor: '#2196f3',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    marginBottom: '16px',
-                }}
+        <button
+          onClick={onAddTask}
+          style={{
+            padding: '12px',
+            backgroundColor: '#2196f3',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontSize: '14px',
+            fontWeight: 500,
+            marginBottom: '16px',
+          }}
+        >
+          Add Task
+        </button>
+
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            marginRight: '-8px',
+            paddingRight: '8px',
+          }}
+        >
+          {tasks.length === 0 ? (
+            <div
+              style={{
+                textAlign: 'center',
+                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '14px',
+              }}
             >
-                Add Task
-            </button>
-
-            <div style={{
-                flex: 1,
-                overflowY: 'auto',
-                marginRight: '-8px',
-                paddingRight: '8px'
-            }}>
-                {tasks.length === 0 ? (
-                    <div style={{
-                        textAlign: 'center',
-                        color: 'rgba(255, 255, 255, 0.7)',
-                        fontSize: '14px'
-                    }}>
-                        No tasks yet
-                    </div>
-                ) : (
-                    tasks.map((task) => (
-                        <DraggableTask
-                            key={task.id}
-                            task={task}
-                 //           onTaskClick={onTaskClick}
-                            onTaskUpdate={onTaskUpdate}
-                        />
-                    ))
-                )}
+              No tasks yet
             </div>
+          ) : (
+            tasks.map((task) => (
+              <DraggableTask
+                key={task.id}
+                task={task}
+                onTaskUpdate={onTaskUpdate}
+              />
+            ))
+          )}
         </div>
+      </div>
     );
-};
+  }
+);
 
 export default TaskList;
+

@@ -1,9 +1,10 @@
-import axios, { AxiosResponse, Method } from 'axios';
+import axios, { AxiosResponse, Method, type AxiosError } from 'axios';
 import { Goal, RelationshipType } from '../../types/goals';
 const API_URL = process.env.REACT_APP_API_URL;
 if (!API_URL) {
     throw new Error('REACT_APP_API_URL is not set');
 }
+
 
 function cloneGoal(goal: Goal): Goal {
     return JSON.parse(JSON.stringify(goal));
@@ -26,9 +27,6 @@ export async function privateRequest<T>(
 ): Promise<T> {
     const token = localStorage.getItem('authToken');
     try {
-        // Convert request data to UTC
-        //const utcData = convertToUTC(data);
-
         const response: AxiosResponse<T> = await axios({
             url: `${API_URL}/${endpoint}`,
             method,
@@ -36,17 +34,19 @@ export async function privateRequest<T>(
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
-            // data: utcData,
             data,
             params,
         });
 
-        // Convert response data to local timezone
         return response.data as T;
-        //return convertToLocal(response.data) as T;
-    } catch (error) {
-        console.error(`API request failed for ${endpoint}:`, error);
-        throw error;
+    } catch (error: any) {
+        if (error.response.status === 404){
+            window.location.href = '/signin';
+            throw error
+        }else{
+            console.error(`API request failed for ${endpoint}:`, error);
+            throw error;
+        }
     }
 }
 
@@ -102,6 +102,9 @@ export const goalToLocal = (goal: Goal): Goal => {
     if (goal._tz === 'user') {
         throw new Error('Goal is already in user timezone');
     }
+    console.trace()
+    console.log(goal.scheduled_timestamp, toLocalTimestamp(goal.scheduled_timestamp))
+    console.log(goal.routine_time, toLocalTimestamp(goal.routine_time))
 
     return {
         ...goal,
@@ -134,14 +137,17 @@ export const goalToUTC = (goal: Goal): Goal => {
 
 // Goal CRUD operations
 export async function createGoal(goal: Goal): Promise<Goal> {
+    console.log(goal)
     const preparedGoal = prepareGoalForAPI(goal);
+    console.log(preparedGoal)
     const response = await privateRequest<Goal>('goals/create', 'POST', preparedGoal);
     return processGoalFromAPI(response);
 }
 
 export async function updateGoal(goalId: number, goal: Goal): Promise<Goal> {
+    console.log(goal)
     const preparedGoal = prepareGoalForAPI(goal);
-    console.log('updateGoalRoutineTime', preparedGoal.routine_time);
+    console.log(preparedGoal)
     const response = await privateRequest<Goal>(`goals/${goalId}`, 'PUT', preparedGoal);
     return processGoalFromAPI(response);
 }
@@ -156,7 +162,7 @@ export async function createRelationship(
     toId: number,
     relationshipType: RelationshipType
 ): Promise<void> {
-    await privateRequest('relationships', 'POST', {
+    await privateRequest('goals/relationship', 'POST', {
         from_id: fromId,
         to_id: toId,
         relationship_type: relationshipType
@@ -168,7 +174,7 @@ export async function deleteRelationship(
     toId: number,
     relationshipType: RelationshipType
 ): Promise<void> {
-    await privateRequest('relationships', 'DELETE', {
+    await privateRequest('goals/relationship', 'DELETE', {
         from_id: fromId,
         to_id: toId,
         relationship_type: relationshipType
