@@ -30,7 +30,7 @@ const Calendar: React.FC = () => {
         ...event,
         start: new Date(event.start),
         end: new Date(event.end),
-        //allDay: false
+        allDay: event.allDay || false,
       }));
       setEvents(formattedEvents);
       setTasks(data.unscheduledTasks);
@@ -81,7 +81,7 @@ const Calendar: React.FC = () => {
   };
 
   const handleDateClick = (arg: DateClickArg) => {
-      console.warn("to implement")
+    console.warn("to implement")
     // Open GoalMenu or handle date click events
   };
 
@@ -101,6 +101,8 @@ const Calendar: React.FC = () => {
       info.revert(); // Revert the drop
       return;
     }
+
+    const isAllDay = task.goal.duration === 1440;
     const updatedGoal = {
       ...task.goal,
       scheduled_timestamp: start.getTime(),
@@ -112,9 +114,10 @@ const Calendar: React.FC = () => {
         id: task.id,
         title: task.title,
         start: start,
-        end: new Date(start.getTime() + (task.duration || 60) * 60000),
+        end: isAllDay ? new Date(start.setHours(23, 59, 59, 999)) : new Date(start.getTime() + (task.duration || 60) * 60000),
         goal: updatedGoal,
         type: task.type || 'task',
+        allDay: isAllDay,
       }]);
 
       // Remove the task from the tasks list
@@ -134,25 +137,36 @@ const Calendar: React.FC = () => {
       return;
     }
 
-    const start = info.event.start;
+    const _start = info.event.start;
+    const start = Date.UTC(
+      _start.getFullYear(),
+      _start.getMonth(),
+      _start.getDate(),
+      _start.getHours(),
+      _start.getMinutes(),
+      _start.getSeconds()
+    );
+    console.log("moving to " + start)
+    console.log("moving to __ " + _start)
     const end = info.event.end;
+    const isAllDay = info.event.allDay;
 
-    const submissionGoal = {
-      ...existingEvent.goal,
-      scheduled_timestamp: start.getTime(),
-    };
-
+    const submissionGoal = existingEvent.goal;
     if (existingEvent.goal.goal_type === 'routine') {
-      submissionGoal.routine_time = start.getTime();
+      submissionGoal.routine_time = start
+    } else {
+      submissionGoal.scheduled_timestamp = start
     }
+
+
 
     const updatedEvent: CalendarEvent = {
       ...existingEvent,
       id: info.event.id,
       title: info.event.title,
-      start: start,
+      start: info.event.start,
       end: end,
-      allDay: info.event.allDay,
+      allDay: isAllDay,
       goal: submissionGoal,
     };
 
@@ -234,7 +248,7 @@ const Calendar: React.FC = () => {
         ...event,
         start: new Date(event.start),
         end: new Date(event.end),
-        allDay: false
+        allDay: event.allDay || false,
       }));
       setEvents(formattedEvents);
       setTasks(data.unscheduledTasks);
@@ -265,10 +279,10 @@ const Calendar: React.FC = () => {
         boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
       }}>
         <TaskList
-        ref={taskListRef}
+          ref={taskListRef}
           tasks={tasks}
           onAddTask={handleAddTask}
-         // onTaskClick={handleTaskClick}
+          // onTaskClick={handleTaskClick}
           onTaskUpdate={handleTaskUpdate}
         />
       </div>
@@ -302,6 +316,7 @@ const Calendar: React.FC = () => {
           slotMinTime="00:00:00"
           slotMaxTime="24:00:00"
           allDaySlot={true}
+          timeZone="local"
           eventContent={(arg) => {
             const event = events.find((e) => e.id === arg.event.id);
             const backgroundColor = event?.goal ? goalColors[event.goal.goal_type] : '#f5f5f5';

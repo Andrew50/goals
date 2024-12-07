@@ -102,122 +102,115 @@ const Day: React.FC = () => {
     };
 
     return (
-        <div className="p-4 max-w-3xl mx-auto">
+        <div className="p-4 max-w-2xl mx-auto">
             <h2 className="text-2xl font-bold mb-2">Today's Tasks</h2>
-            <div className="flex items-center gap-2 mb-6 text-gray-600">
+            <div className="flex items-center gap-2 mb-4 text-gray-600">
                 <span>{getCompletionPercentage()}% complete</span>
                 <span>({organizedTasks().completed.length}/{tasks.length} tasks)</span>
             </div>
 
-            <div className="tasks-list space-y-4 mb-8">
+            <div className="tasks-list space-y-2">
                 {organizedTasks().todo.map(task => {
                     const goalColor = goalColors[task.goal_type];
                     const timeString = formatTime(task.scheduled_timestamp);
                     return (
                         <div
                             key={task.id}
-                            className="flex items-start gap-4 p-4 rounded-lg shadow-sm transition-all hover:shadow-md"
+                            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-all border border-gray-100"
                             style={{
                                 borderLeft: `4px solid ${goalColor}`,
-                                backgroundColor: `${goalColor}10`,
                             }}
                         >
-                            <div
-                                className="flex-shrink-0 w-6 h-6 border-2 rounded cursor-pointer hover:bg-gray-100"
-                                style={{ borderColor: goalColor }}
-                                onClick={() => handleTaskComplete(task)}
-                            />
-
                             <div
                                 className="flex-grow cursor-pointer"
                                 onClick={() => handleTaskClick(task)}
                                 onContextMenu={(e) => handleTaskContextMenu(e, task)}
                             >
-                                {timeString && (
-                                    <span className="text-sm text-gray-500 mb-1 block">
-                                        {timeString}
-                                    </span>
-                                )}
-                                <h3 className="font-bold text-lg mb-2">{task.name}</h3>
-                                <p className="text-gray-600 mb-3 text-sm">{task.description}</p>
-                                <div className="flex flex-wrap gap-2 text-sm">
-                                    <span
-                                        className="px-2 py-1 rounded-full text-xs"
-                                        style={{
-                                            backgroundColor: `${goalColor}30`,
-                                            color: goalColor
-                                        }}
-                                    >
-                                        {task.goal_type}
-                                    </span>
-                                    {task.priority && (
-                                        <span className="px-2 py-1 rounded-full bg-gray-100 text-xs">
-                                            {task.priority}
+                                <div className="flex items-center gap-2">
+                                    <h3 className="font-medium">{task.name}</h3>
+                                    {timeString && (
+                                        <span className="text-sm text-gray-500">
+                                            {timeString}
                                         </span>
                                     )}
                                 </div>
+                                {task.description && (
+                                    <p className="text-gray-600 text-sm mt-1">{task.description}</p>
+                                )}
                             </div>
+
+                            <label className="flex-shrink-0 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={false}
+                                    onChange={() => handleTaskComplete(task)}
+                                />
+                                <div 
+                                    className="w-4 h-4 border-2 rounded peer-checked:bg-gray-100 hover:bg-gray-50 flex items-center justify-center"
+                                    style={{ borderColor: goalColor }}
+                                >
+                                    {task.completed && (
+                                        <svg viewBox="0 0 24 24" className="w-3 h-3 text-gray-600">
+                                            <path
+                                                fill="currentColor"
+                                                d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
+                                            />
+                                        </svg>
+                                    )}
+                                </div>
+                            </label>
                         </div>
                     );
                 })}
             </div>
 
             {organizedTasks().completed.length > 0 && (
-                <>
-                    <h2 className="text-xl font-bold mb-4">Completed</h2>
-                    <div className="tasks-list space-y-4 opacity-60">
+                <div className="mt-8">
+                    <h2 className="text-lg font-bold mb-2 text-gray-500">Completed</h2>
+                    <div className="tasks-list space-y-2 opacity-60">
                         {organizedTasks().completed.map(task => {
                             const goalColor = goalColors[task.goal_type];
-                            const timeString = formatTime(task.scheduled_timestamp);
                             return (
                                 <div
                                     key={task.id}
-                                    className="flex items-start gap-4 p-4 rounded-lg shadow-sm transition-all hover:shadow-md"
+                                    className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-all border border-gray-100"
                                     style={{
                                         borderLeft: `4px solid ${goalColor}`,
-                                        backgroundColor: `${goalColor}10`,
                                     }}
                                 >
                                     <div
-                                        className="flex-shrink-0 w-6 h-6 border-2 rounded cursor-pointer hover:bg-gray-100"
-                                        style={{ borderColor: goalColor }}
-                                        onClick={() => handleTaskComplete(task)}
-                                    />
-
-                                    <div
-                                        className="flex-grow cursor-pointer"
+                                        className="flex-grow cursor-pointer line-through"
                                         onClick={() => handleTaskClick(task)}
                                         onContextMenu={(e) => handleTaskContextMenu(e, task)}
                                     >
-                                        {timeString && (
-                                            <span className="text-sm text-gray-500 mb-1 block">
-                                                {timeString}
-                                            </span>
-                                        )}
-                                        <h3 className="font-bold text-lg mb-2">{task.name}</h3>
-                                        <p className="text-gray-600 mb-3 text-sm">{task.description}</p>
-                                        <div className="flex flex-wrap gap-2 text-sm">
-                                            <span
-                                                className="px-2 py-1 rounded-full text-xs"
-                                                style={{
-                                                    backgroundColor: `${goalColor}30`,
-                                                    color: goalColor
-                                                }}
-                                            >
-                                                {task.goal_type}
-                                            </span>
-                                            {task.priority && (
-                                                <span className="px-2 py-1 rounded-full bg-gray-100 text-xs">
-                                                    {task.priority}
-                                                </span>
-                                            )}
-                                        </div>
+                                        <h3 className="font-medium">{task.name}</h3>
                                     </div>
+
+                                    <label className="flex-shrink-0 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={true}
+                                            onChange={() => handleTaskComplete(task)}
+                                        />
+                                        <div 
+                                            className="w-4 h-4 border-2 rounded bg-gray-100 hover:bg-gray-50 flex items-center justify-center"
+                                            style={{ borderColor: goalColor }}
+                                        >
+                                            <svg viewBox="0 0 24 24" className="w-3 h-3 text-gray-600">
+                                                <path
+                                                    fill="currentColor"
+                                                    d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
+                                                />
+                                            </svg>
+                                        </div>
+                                    </label>
                                 </div>
                             );
                         })}
                     </div>
-                </>
+                </div>
             )}
         </div>
     );

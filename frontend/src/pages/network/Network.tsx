@@ -19,8 +19,13 @@ interface NetworkData {
   edges: NetworkEdge[];
 }
 
-const formatNetworkNode = (goal: Goal): NetworkNode => {
-  const localGoal = goalToLocal(goal);
+const formatNetworkNode = (goal: Goal, inlineUpdate: boolean = false): NetworkNode => {
+    let localGoal: Goal
+    if (!inlineUpdate){
+   localGoal = goalToLocal(goal);
+    }else{
+        localGoal = goal
+    }
   return {
     ...localGoal,
     label: localGoal.name,
@@ -272,7 +277,7 @@ const NetworkView: React.FC
         setDeleteMode(false);
         deleteModeRef.current = false;
         GoalMenu.open({} as Goal, 'create', (goal: Goal) => {
-          const newNode = formatNetworkNode(goal);
+          const newNode = formatNetworkNode(goal, true);
           networkData.nodes.push(newNode);
           setNetworkData({ ...networkData });
           setAddNodeMode(false);
