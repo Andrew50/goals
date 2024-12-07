@@ -189,21 +189,40 @@ const Calendar: React.FC = () => {
       console.error('Event resize failed: missing event or goal');
       return;
     }
-    const start = info.event.start;
-    const end = info.event.end;
-    const durationInMinutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
+    const _start = info.event.start;
+    const _end = info.event.end;
+
+    const start = Date.UTC(
+      _start.getFullYear(),
+      _start.getMonth(),
+      _start.getDate(),
+      _start.getHours(),
+      _start.getMinutes(),
+      _start.getSeconds()
+    );
+
+    const end = Date.UTC(
+      _end.getFullYear(),
+      _end.getMonth(),
+      _end.getDate(),
+      _end.getHours(),
+      _end.getMinutes(),
+      _end.getSeconds()
+    );
+
+    const durationInMinutes = Math.round((end - start) / (1000 * 60));
     const submissionGoal = {
       ...existingEvent.goal,
       duration: durationInMinutes,
-      scheduled_timestamp: start.getTime()
+      scheduled_timestamp: start
     };
     if (existingEvent.goal.goal_type === 'routine') {
-      submissionGoal.routine_time = start.getTime();
+      submissionGoal.routine_time = start;
     }
     const updatedEvent = {
       ...existingEvent,
-      start,
-      end,
+      start: _start,
+      end: _end,
       goal: submissionGoal,
     };
 
