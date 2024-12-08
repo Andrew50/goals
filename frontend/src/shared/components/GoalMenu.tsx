@@ -13,6 +13,12 @@ import {
 } from '@mui/material';
 import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
 import { Goal, GoalType, RelationshipType } from '../../types/goals';
+import {
+    timestampToInputString,
+    inputStringToTimestamp,
+    timestampToDisplayString
+} from '../utils/time';
+import { validateGoal} from '../utils/goalValidation'
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
 
@@ -23,7 +29,6 @@ interface GoalMenuComponent extends React.FC {
 
 
 const GoalMenu: GoalMenuComponent = () => {
-    //const singletonInstanceRef = useRef<{ open: Function; close: Function } | null>(null);
     const [isOpen, setIsOpen] = useState(false);
     const [goal, setGoal] = useState<Goal>({} as Goal);
     const [mode, setMode] = useState<Mode>('view');
@@ -92,50 +97,13 @@ const GoalMenu: GoalMenuComponent = () => {
         }
 
         // Validation checks
-        const validationErrors: string[] = [];
-        if (!goal.goal_type) {
-            validationErrors.push('Goal type is required');
-        }
-        if (!goal.name) {
-            validationErrors.push('Name is required');
-        }
-        if (goal.goal_type) {
-            switch (goal.goal_type) {
-                case 'routine':
-                    if (!goal.frequency) {
-                        validationErrors.push('Frequency is required');
-                    }
-                    if (!goal.start_timestamp) {
-                        validationErrors.push('Start Date is required');
-                    }
-                    if (!goal.routine_type) {
-                        validationErrors.push('Routine type is required');
-                    }
-                    if (goal.routine_type === "task" && !goal.duration) {
-                        validationErrors.push('Duration is required')
-                    }
-                    break;
-                case 'task':
-                    if (!goal.duration) {
-                        validationErrors.push('Duration is required');
-                    }
-                    break;
-                case 'project':
-                case 'achievement':
-                    if (!goal.start_timestamp) {
-                        validationErrors.push('Start Date is required');
-                    }
-                    break;
-            }
-        }
+        const validationErrors = validateGoal(goal);
         if (validationErrors.length > 0) {
             setError(validationErrors.join('\n'));
             return;
         }
-
         try {
             let updatedGoal: Goal;
-
             if (mode === 'create') {
                 updatedGoal = await createGoal(goal);
 
@@ -151,18 +119,13 @@ const GoalMenu: GoalMenuComponent = () => {
             } else {
                 throw new Error('Invalid mode or missing goal ID');
             }
-
-            // Update the local state with the response
             setGoal(updatedGoal);
-
             if (goal.goal_type === 'routine') {
                 await updateRoutines();
             }
-
             if (onSuccess) {
                 onSuccess(updatedGoal);
             }
-
             if (another) {
                 const { id, ...restGoal } = updatedGoal;
                 const newGoal: Goal = { ...restGoal, name: '', description: '' } as Goal;
@@ -184,7 +147,6 @@ const GoalMenu: GoalMenuComponent = () => {
             setError('Cannot delete goal without ID');
             return;
         }
-
         try {
             await deleteGoal(goal.id);
             if (onSuccess) {
@@ -221,7 +183,6 @@ const GoalMenu: GoalMenuComponent = () => {
     const handleCreateQueue = () => {
         const previousGoal = goal;
         const newGoal: Goal = { goal_type: 'achievement' } as Goal;
-
         close();
         setTimeout(() => {
             open(newGoal, 'create', async (createdGoal: Goal) => {
@@ -239,20 +200,6 @@ const GoalMenu: GoalMenuComponent = () => {
         }, 100);
     };
 
-    const formatDateForInput = (timestamp: number | string | undefined): string => {
-        if (!timestamp) return '';
-        try {
-            const timestampNum = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
-            const date = new Date(timestampNum);
-            return date.toISOString().slice(0, 16);
-        } catch {
-            return '';
-        }
-    };
-
-
-    //const PriorityField = () => {
-    //return
     const priorityField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Priority:</strong> {goal.priority ? goal.priority.charAt(0).toUpperCase() + goal.priority.slice(1) : 'Not set'}
@@ -275,7 +222,6 @@ const GoalMenu: GoalMenuComponent = () => {
             <MenuItem value="low">Low</MenuItem>
         </TextField>
     );
-    //};
     const durationField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Duration:</strong> {(() => {
@@ -300,7 +246,6 @@ const GoalMenu: GoalMenuComponent = () => {
                 }
                 label="All Day"
             />
-
             {goal.duration !== 1440 && (
                 <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
                     <TextField
@@ -360,20 +305,17 @@ const GoalMenu: GoalMenuComponent = () => {
     );
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Schedule Time:</strong> {goal.scheduled_timestamp ? new Date(goal.scheduled_timestamp).toISOString().slice(0, 16).replace('T', ' ') : 'Not set'}
+            <strong>Schedule Time:</strong> {timestampToDisplayString(goal.scheduled_timestamp)}
         </Box>
     ) : (
         <TextField
             label="Schedule Date"
             type="datetime-local"
-            value={formatDateForInput(goal.scheduled_timestamp)}
+            value={timestampToInputString(goal.scheduled_timestamp,'datetime')}
             onChange={(e) => {
-                const timestamp = e.target.value
-                    ? new Date(e.target.value).getTime()
-                    : undefined;
                 handleChange({
                     ...goal,
-                    scheduled_timestamp: timestamp
+                    scheduled_timestamp: inputStringToTimestamp(e.target.value,'datetime')
                 });
             }}
             fullWidth
@@ -386,10 +328,10 @@ const GoalMenu: GoalMenuComponent = () => {
     const dateFields = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
-                <strong>Start Date:</strong> {goal.start_timestamp ? new Date(goal.start_timestamp).toLocaleDateString() : 'Not set'}
+                <strong>Start Date:</strong> {timestampToDisplayString(goal.start_timestamp, 'date')}
             </Box>
             <Box sx={{ mb: 2 }}>
-                <strong>End Date:</strong> {goal.end_timestamp ? new Date(goal.end_timestamp).toLocaleDateString() : 'Not set'}
+                <strong>End Date:</strong> {timestampToDisplayString(goal.end_timestamp, 'date')}
             </Box>
         </>
     ) : (
@@ -397,14 +339,11 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Start Date"
                 type="date"
-                value={formatDateForInput(goal.start_timestamp)}
+                value={timestampToInputString(goal.start_timestamp,'date')}
                 onChange={(e) => {
-                    const timestamp = e.target.value
-                        ? new Date(e.target.value + 'T00:00:00').getTime()
-                        : undefined;
                     handleChange({
                         ...goal,
-                        start_timestamp: timestamp
+                        start_timestamp: inputStringToTimestamp(e.target.value,"date")
                     });
                 }}
                 fullWidth
@@ -415,14 +354,11 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="End Date"
                 type="date"
-                value={formatDateForInput(goal.end_timestamp)}
+                value={timestampToInputString(goal.end_timestamp,'date')}
                 onChange={(e) => {
-                    const timestamp = e.target.value
-                        ? new Date(e.target.value).setHours(23, 59, 59, 999)
-                        : undefined;
                     handleChange({
                         ...goal,
-                        end_timestamp: timestamp
+                        end_timestamp: inputStringToTimestamp(e.target.value,'end-date')
                     });
                 }}
                 fullWidth
@@ -553,14 +489,7 @@ const GoalMenu: GoalMenuComponent = () => {
                     {durationField}
                     {goal.duration !== 1440 && (
                         <Box sx={{ mb: 2 }}>
-                            <strong>Scheduled Time:</strong> {goal.routine_time ?
-                                new Intl.DateTimeFormat('default', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: true,
-                                    timeZone: 'UTC'
-                                }).format(goal.routine_time)
-                                : 'Not set'}
+                            <strong>Scheduled Time:</strong> {timestampToDisplayString(goal.routine_time, 'time')}
                         </Box>
                     )}
                 </>
@@ -590,14 +519,11 @@ const GoalMenu: GoalMenuComponent = () => {
                         <TextField
                             label="Scheduled Time"
                             type="time"
-                            value={goal.routine_time ? new Date(goal.routine_time).toISOString().substr(11, 5) : ''}
+                            value={timestampToInputString(goal.routine_time,'time')}
                             onChange={(e) => {
-                                console.log(e.target.value);
-                                const [hours, minutes] = e.target.value.split(':').map(Number);
-                                const timeInMs = ((hours * 60 * 60) + (minutes * 60)) * 1000;
                                 handleChange({
                                     ...goal,
-                                    routine_time: timeInMs
+                                    routine_time: inputStringToTimestamp(e.target.value,'time')
                                 });
                             }}
                             fullWidth

@@ -1,5 +1,6 @@
 import axios, { AxiosResponse, Method, type AxiosError } from 'axios';
 import { Goal, RelationshipType } from '../../types/goals';
+import { goalToUTC, goalToLocal } from './time';
 const API_URL = process.env.REACT_APP_API_URL;
 if (!API_URL) {
     throw new Error('REACT_APP_API_URL is not set');
@@ -40,10 +41,10 @@ export async function privateRequest<T>(
 
         return response.data as T;
     } catch (error: any) {
-        if (error.response.status === 404){
+        if (error.response.status === 404) {
             window.location.href = '/signin';
             throw error
-        }else{
+        } else {
             console.error(`API request failed for ${endpoint}:`, error);
             throw error;
         }
@@ -87,54 +88,6 @@ export async function updateRoutines(): Promise<void> {
         throw error;
     }
 }
-export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
-    if (!timestamp) return undefined;
-    return timestamp + new Date().getTimezoneOffset() * 60 * 1000;
-};
-
-export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
-    if (!timestamp) return undefined;
-    return timestamp - new Date().getTimezoneOffset() * 60 * 1000;
-};
-
-// Goal conversion utilities
-export const goalToLocal = (goal: Goal): Goal => {
-    if (goal._tz === 'user') {
-        throw new Error('Goal is already in user timezone');
-    }
-    console.trace()
-    console.log(goal.scheduled_timestamp, toLocalTimestamp(goal.scheduled_timestamp))
-    console.log(goal.routine_time, toLocalTimestamp(goal.routine_time))
-
-    return {
-        ...goal,
-        start_timestamp: toLocalTimestamp(goal.start_timestamp),
-        end_timestamp: toLocalTimestamp(goal.end_timestamp),
-        next_timestamp: toLocalTimestamp(goal.next_timestamp),
-        scheduled_timestamp: toLocalTimestamp(goal.scheduled_timestamp),
-        routine_time: toLocalTimestamp(goal.routine_time),
-        _tz: 'user'
-    };
-};
-
-export const goalToUTC = (goal: Goal): Goal => {
-    if (goal._tz === undefined || goal._tz === 'utc') {
-        throw new Error('Goal is already in UTC timezone');
-    }
-
-    return {
-        ...goal,
-        start_timestamp: toUTCTimestamp(goal.start_timestamp),
-        end_timestamp: toUTCTimestamp(goal.end_timestamp),
-        next_timestamp: toUTCTimestamp(goal.next_timestamp),
-        scheduled_timestamp: toUTCTimestamp(goal.scheduled_timestamp),
-        routine_time: toUTCTimestamp(goal.routine_time),
-        _tz: 'utc'
-    };
-};
-
-
-
 // Goal CRUD operations
 export async function createGoal(goal: Goal): Promise<Goal> {
     console.log(goal)

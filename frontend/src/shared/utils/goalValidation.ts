@@ -23,3 +23,44 @@ export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipT
 
     return null; // Return null if validation passes
 } 
+
+
+export function validateGoal(goal:Goal): string[] {
+    const validationErrors: string[] = [];
+    if (!goal.goal_type) {
+        validationErrors.push('Goal type is required');
+    }
+    if (!goal.name) {
+        validationErrors.push('Name is required');
+    }
+    if (goal.goal_type) {
+        switch (goal.goal_type) {
+            case 'routine':
+                if (!goal.frequency) {
+                    validationErrors.push('Frequency is required');
+                }
+                if (!goal.start_timestamp) {
+                    validationErrors.push('Start Date is required');
+                }
+                if (!goal.routine_type) {
+                    validationErrors.push('Routine type is required');
+                }
+                if (goal.routine_type === "task" && !goal.duration) {
+                    validationErrors.push('Duration is required')
+                }
+                break;
+            case 'task':
+                if (!goal.duration) {
+                    validationErrors.push('Duration is required');
+                }
+                break;
+            case 'project':
+            case 'achievement':
+                if (!goal.start_timestamp) {
+                    validationErrors.push('Start Date is required');
+                }
+                break;
+        }
+    }
+    return validationErrors
+}
