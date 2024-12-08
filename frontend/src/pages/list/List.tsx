@@ -1,4 +1,5 @@
-import { privateRequest, goalToLocal } from '../../shared/utils/api';
+import { privateRequest } from '../../shared/utils/api';
+import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState, useMemo } from 'react';
 import { Goal, GoalType } from '../../types/goals';
 import { goalColors } from '../../shared/styles/colors';
