@@ -9,7 +9,10 @@ import {
     MenuItem,
     FormControlLabel,
     Checkbox,
-    Box
+    Box,
+    Switch,
+    Typography,
+    Chip
 } from '@mui/material';
 import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
 import { Goal, GoalType, RelationshipType } from '../../types/goals';
@@ -18,7 +21,7 @@ import {
     inputStringToTimestamp,
     timestampToDisplayString
 } from '../utils/time';
-import { validateGoal} from '../utils/goalValidation'
+import { validateGoal } from '../utils/goalValidation'
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
 
@@ -311,11 +314,11 @@ const GoalMenu: GoalMenuComponent = () => {
         <TextField
             label="Schedule Date"
             type="datetime-local"
-            value={timestampToInputString(goal.scheduled_timestamp,'datetime')}
+            value={timestampToInputString(goal.scheduled_timestamp, 'datetime')}
             onChange={(e) => {
                 handleChange({
                     ...goal,
-                    scheduled_timestamp: inputStringToTimestamp(e.target.value,'datetime')
+                    scheduled_timestamp: inputStringToTimestamp(e.target.value, 'datetime')
                 });
             }}
             fullWidth
@@ -339,11 +342,11 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Start Date"
                 type="date"
-                value={timestampToInputString(goal.start_timestamp,'date')}
+                value={timestampToInputString(goal.start_timestamp, 'date')}
                 onChange={(e) => {
                     handleChange({
                         ...goal,
-                        start_timestamp: inputStringToTimestamp(e.target.value,"date")
+                        start_timestamp: inputStringToTimestamp(e.target.value, "date")
                     });
                 }}
                 fullWidth
@@ -354,11 +357,11 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="End Date"
                 type="date"
-                value={timestampToInputString(goal.end_timestamp,'date')}
+                value={timestampToInputString(goal.end_timestamp, 'date')}
                 onChange={(e) => {
                     handleChange({
                         ...goal,
-                        end_timestamp: inputStringToTimestamp(e.target.value,'end-date')
+                        end_timestamp: inputStringToTimestamp(e.target.value, 'end-date')
                     });
                 }}
                 fullWidth
@@ -519,11 +522,11 @@ const GoalMenu: GoalMenuComponent = () => {
                         <TextField
                             label="Scheduled Time"
                             type="time"
-                            value={timestampToInputString(goal.routine_time,'time')}
+                            value={timestampToInputString(goal.routine_time, 'time')}
                             onChange={(e) => {
                                 handleChange({
                                     ...goal,
-                                    routine_time: inputStringToTimestamp(e.target.value,'time')
+                                    routine_time: inputStringToTimestamp(e.target.value, 'time')
                                 });
                             }}
                             fullWidth
