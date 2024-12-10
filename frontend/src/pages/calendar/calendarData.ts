@@ -138,46 +138,94 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     end.setDate(end.getDate() + ROUTINE_GENERATION_DAYS);
 
     // Create a date object with the routine time in local timezone
-    //const routineTimeDate = new Date(routine.routine_time + 'Z');
     const routineTimeDate = new Date(routine.routine_time);
-    //const routineHours = routineTimeDate.getHours();
-    //const routineMinutes = routineTimeDate.getMinutes();
     const routineHours = routineTimeDate.getUTCHours();
     const routineMinutes = routineTimeDate.getUTCMinutes();
 
+    // Parse frequency pattern: {multiplier}{unit}[:days]
+    const frequencyMatch = routine.frequency?.match(/^(\d+)([DWMY])(?::(.+))?$/);
+    if (!frequencyMatch) {
+        console.warn(`Invalid frequency format for routine ${routine.name}`);
+        return [];
+    }
+
+    const [_, intervalStr, unit, daysStr] = frequencyMatch;
+    const interval = parseInt(intervalStr);
+    const selectedDays = daysStr?.split(',').map(Number) || [];
+
     let currentDateIter = new Date(initialStartDate);
     while (currentDateIter <= end) {
-        const eventStart = new Date(currentDateIter);
+        let shouldCreateEvent = true;
 
-        if (isAllDay) {
-            eventStart.setHours(0, 0, 0, 0);
-        } else {
-            eventStart.setHours(routineHours, routineMinutes, 0, 0);
+        // For weekly frequency, check if current day is in selected days
+        if (unit === 'W' && selectedDays.length > 0) {
+            const currentDay = currentDateIter.getDay(); // 0-6, Sunday-Saturday
+            if (!selectedDays.includes(currentDay)) {
+                shouldCreateEvent = false;
+            }
         }
 
-        const eventEnd = new Date(eventStart);
-        if (isAllDay) {
-            eventEnd.setHours(23, 59, 59, 999);
-        } else {
-            const durationInMinutes = routine.duration || 60;
-            eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
+        if (shouldCreateEvent) {
+            const eventStart = new Date(currentDateIter);
+
+            if (isAllDay) {
+                eventStart.setHours(0, 0, 0, 0);
+            } else {
+                eventStart.setHours(routineHours, routineMinutes, 0, 0);
+            }
+
+            const eventEnd = new Date(eventStart);
+            if (isAllDay) {
+                eventEnd.setHours(23, 59, 59, 999);
+            } else {
+                const durationInMinutes = routine.duration || 60;
+                eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
+            }
+
+            events.push({
+                id: `routine-${routine.id}-${currentDateIter.getTime()}`,
+                title: routine.name,
+                start: eventStart,
+                end: eventEnd,
+                type: 'routine',
+                goal: routine,
+                allDay: isAllDay
+            } as CalendarEvent);
         }
 
-        events.push({
-            id: `routine-${routine.id}-${currentDateIter.getTime()}`,
-            title: routine.name,
-            start: eventStart,
-            end: eventEnd,
-            type: 'routine',
-            goal: routine,
-            allDay: isAllDay
-        } as CalendarEvent);
+        // Move to next day
+        currentDateIter.setDate(currentDateIter.getDate() + 1);
 
-        // Move to next occurrence based on frequency
-        if (routine.frequency === 'P1D') {
-            currentDateIter.setDate(currentDateIter.getDate() + 1);
-        } else if (routine.frequency === 'P1W') {
-            currentDateIter.setDate(currentDateIter.getDate() + 7);
+        // If we've moved past the interval, adjust to the next interval start
+        if (unit !== 'W' || !selectedDays.length) {
+            const daysSinceStart = Math.floor(
+                (currentDateIter.getTime() - initialStartDate.getTime()) / (1000 * 60 * 60 * 24)
+            );
+
+            let intervalDays;
+            switch (unit) {
+                case 'D':
+                    intervalDays = interval;
+                    break;
+                case 'W':
+                    intervalDays = interval * 7;
+                    break;
+                case 'M':
+                    intervalDays = interval * 30;
+                    break;
+                case 'Y':
+                    intervalDays = interval * 365;
+                    break;
+                default:
+                    intervalDays = interval;
+            }
+
+            if (daysSinceStart % intervalDays === 0) {
+                // Skip to the start of the next interval
+                currentDateIter.setDate(
+                    initialStartDate.getDate() + Math.floor(daysSinceStart / intervalDays) * intervalDays
+                );
+            }
         }
     }
 

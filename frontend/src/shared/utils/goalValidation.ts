@@ -1,31 +1,25 @@
 import { Goal, RelationshipType } from '../../types/goals';
 
 export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipType: RelationshipType): string | null {
-    // Check if source is a task
     if (fromGoal.goal_type === 'task') {
         return 'Tasks cannot have children';
     }
-
-    // Check directive to achievement connection
     if (fromGoal.goal_type === 'directive' && toGoal.goal_type === 'achievement') {
         return 'Directives cannot directly connect to achievements';
     }
-
-    // Check queue relationship constraints
     if (relationshipType === 'queue') {
         if (fromGoal.goal_type !== 'achievement') {
             return 'Queue relationships can only be created on achievements';
         }
-        if (toGoal.goal_type !== 'task') {
+        if (toGoal.goal_type !== 'achievement') {
             return 'Queue relationships can only connect to tasks';
         }
     }
-
     return null; // Return null if validation passes
-} 
+}
 
 
-export function validateGoal(goal:Goal): string[] {
+export function validateGoal(goal: Goal): string[] {
     const validationErrors: string[] = [];
     if (!goal.goal_type) {
         validationErrors.push('Goal type is required');
@@ -38,6 +32,19 @@ export function validateGoal(goal:Goal): string[] {
             case 'routine':
                 if (!goal.frequency) {
                     validationErrors.push('Frequency is required');
+                } else {
+                    const frequencyMatch = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
+                    if (!frequencyMatch) {
+                        validationErrors.push('Invalid frequency format');
+                    } else {
+                        const [_, interval, unit, days] = frequencyMatch;
+                        if (parseInt(interval) < 1) {
+                            validationErrors.push('Frequency interval must be at least 1');
+                        }
+                        if (unit === 'W' && (!days || days.split(',').length === 0)) {
+                            validationErrors.push('At least one day must be selected for weekly frequency');
+                        }
+                    }
                 }
                 if (!goal.start_timestamp) {
                     validationErrors.push('Start Date is required');

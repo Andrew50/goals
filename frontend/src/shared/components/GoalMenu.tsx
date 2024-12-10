@@ -387,39 +387,146 @@ const GoalMenu: GoalMenuComponent = () => {
             label="Completed"
         />
     );
-    const frequencyMap: { [key: string]: string } = {
-        'P1D': 'Daily',
-        'P7D': 'Weekly',
-        'P14D': 'Bi-weekly',
-        'P1M': 'Monthly',
-        'P3M': 'Quarterly',
-        'P1Y': 'Yearly'
-    };
-
     const frequencyField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Frequency:</strong> {goal.frequency ? frequencyMap[goal.frequency] : 'Not set'}
+            <strong>Frequency:</strong> {(() => {
+                if (!goal.frequency) return 'Not set';
+                const match = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
+                if (!match) return goal.frequency;
+
+                const [_, interval, unit, days] = match;
+                let text = `Every ${interval} `;
+
+                switch (unit) {
+                    case 'D': text += interval === '1' ? 'day' : 'days'; break;
+                    case 'W':
+                        text += interval === '1' ? 'week' : 'weeks';
+                        if (days) {
+                            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                            const selectedDays = days.split(',').map(d => dayNames[Number(d)]);
+                            text += ` on ${selectedDays.join(', ')}`;
+                        }
+                        break;
+                    case 'M': text += interval === '1' ? 'month' : 'months'; break;
+                    case 'Y': text += interval === '1' ? 'year' : 'years'; break;
+                }
+
+                return text;
+            })()}
         </Box>
     ) : (
-        <TextField
-            label="Frequency"
-            value={goal.frequency || ''}
-            onChange={(e) => handleChange({
-                ...goal,
-                frequency: e.target.value
-            })}
-            select
-            fullWidth
-            margin="dense"
-            disabled={isViewOnly}
-        >
-            <MenuItem value="P1D">Daily</MenuItem>
-            <MenuItem value="P7D">Weekly</MenuItem>
-            <MenuItem value="P14D">Bi-weekly</MenuItem>
-            <MenuItem value="P1M">Monthly</MenuItem>
-            <MenuItem value="P3M">Quarterly</MenuItem>
-            <MenuItem value="P1Y">Yearly</MenuItem>
-        </TextField>
+        <Box sx={{ mb: 2 }}>
+            <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                mb: goal.frequency?.includes('W') ? 2 : 0
+            }}>
+                <Typography>Repeat every</Typography>
+                <TextField
+                    value={(() => {
+                        const match = goal.frequency?.match(/^(\d+)[DWMY]/);
+                        return match ? match[1] : '1';
+                    })()}
+                    onChange={(e) => {
+                        const value = e.target.value;
+                        const unit = goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
+                        const days = goal.frequency?.split(':')?.[1] || '';
+                        const newFreq = `${value}${unit}${days ? ':' + days : ''}`;
+                        console.log(newFreq);
+                        handleChange({
+                            ...goal,
+                            frequency: newFreq
+                        });
+                    }}
+                    type="number"
+                    inputProps={{
+                        min: 1,
+                        style: {
+                            width: '60px',
+                            padding: '8px',
+                            textAlign: 'center'
+                        }
+                    }}
+                    variant="outlined"
+                    size="small"
+                />
+                <TextField
+                    select
+                    value={goal.frequency?.match(/[DWMY]/)?.[0] || 'D'}
+                    onChange={(e) => {
+                        const interval = goal.frequency?.match(/^\d+/)?.[0] || '1';
+                        const days = e.target.value === 'W' && goal.frequency?.includes('W')
+                            ? (goal.frequency?.split(':')?.[1] ? ':' + goal.frequency.split(':')[1] : '')
+                            : '';
+                        const newFreq = `${interval}${e.target.value}${days}`;
+                        console.log(newFreq);
+                        handleChange({
+                            ...goal,
+                            frequency: newFreq
+                        });
+                    }}
+                    sx={{ minWidth: 120 }}
+                    size="small"
+                >
+                    <MenuItem value="D">day</MenuItem>
+                    <MenuItem value="W">week</MenuItem>
+                    <MenuItem value="M">month</MenuItem>
+                    <MenuItem value="Y">year</MenuItem>
+                </TextField>
+            </Box>
+
+            {goal.frequency?.includes('W') && (
+                <Box>
+                    <Typography sx={{ mb: 1 }}>Repeat on</Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => {
+                            const days = goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
+                            const isSelected = days.includes(index);
+
+                            return (
+                                <Box
+                                    key={index}
+                                    onClick={() => {
+                                        const interval = goal.frequency?.match(/^\d+/)?.[0] || '1';
+                                        let days = goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
+
+                                        if (isSelected) {
+                                            days = days.filter(d => d !== index);
+                                        } else {
+                                            days.push(index);
+                                        }
+
+                                        const newFreq = `${interval}W${days.length ? ':' + days.sort().join(',') : ''}`;
+                                        console.log(newFreq);
+                                        handleChange({
+                                            ...goal,
+                                            frequency: newFreq
+                                        });
+                                    }}
+                                    sx={{
+                                        width: 36,
+                                        height: 36,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        borderRadius: '50%',
+                                        cursor: 'pointer',
+                                        bgcolor: isSelected ? 'primary.main' : 'action.selected',
+                                        color: isSelected ? 'primary.contrastText' : 'text.primary',
+                                        '&:hover': {
+                                            bgcolor: isSelected ? 'primary.dark' : 'action.selected',
+                                        }
+                                    }}
+                                >
+                                    {day}
+                                </Box>
+                            );
+                        })}
+                    </Box>
+                </Box>
+            )}
+        </Box>
     );
 
     const commonFields = isViewOnly ? (
