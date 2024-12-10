@@ -5,7 +5,7 @@ use axum::{
     routing::post,
     Router,
 };
-use chrono::{Duration, TimeZone, Utc};
+use chrono::{Datelike, Duration, TimeZone, Utc};
 use neo4rs::Graph;
 use serde_json;
 use std::fmt;
@@ -183,20 +183,92 @@ fn calculate_next_timestamp(current: i64, frequency: &str) -> i64 {
         .timestamp_millis_opt(current)
         .earliest()
         .expect("Invalid timestamp");
+    // frequency pattern: {multiplier}{unit}[:days]
+    let parts: Vec<&str> = frequency.split(':').collect();
+    let freq_part = parts[0];
+    if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
+        let multiplier: i64 = freq_part[..unit_pos].parse().unwrap_or(1);
+        let unit = &freq_part[unit_pos..];
 
-    let next_dt = match frequency.to_lowercase().as_str() {
-        "daily" => current_dt + Duration::days(1),
-        "weekly" => current_dt + Duration::weeks(1),
-        "monthly" => current_dt + Duration::days(30),
-        "yearly" => current_dt + Duration::days(365),
-        _ => current_dt + Duration::days(1),
-    };
+        match unit {
+            "D" => current_dt + Duration::days(multiplier),
+            "W" => {
+                if let Some(days) = parts.get(1) {
+                    // Get selected days as numbers (0-6)
+                    let selected_days: Vec<u32> =
+                        days.split(',').filter_map(|d| d.parse().ok()).collect();
 
-    next_dt.timestamp_millis()
+                    if selected_days.is_empty() {
+                        // Fallback if no days specified
+                        current_dt + Duration::weeks(multiplier)
+                    } else {
+                        let current_day = current_dt.weekday().num_days_from_sunday();
+                        let mut next_dt = current_dt + Duration::days(1);
+
+                        // Find the next occurrence of any selected day
+                        while !selected_days.contains(&next_dt.weekday().num_days_from_sunday()) {
+                            next_dt = next_dt + Duration::days(1);
+                        }
+
+                        // If multiplier > 1, add additional weeks after finding next day
+                        if multiplier > 1 {
+                            next_dt = next_dt + Duration::weeks(multiplier - 1);
+                        }
+
+                        next_dt
+                    }
+                } else {
+                    current_dt + Duration::weeks(multiplier)
+                }
+            }
+            "M" => current_dt + Duration::days(multiplier * 30),
+            "Y" => current_dt + Duration::days(multiplier * 365),
+            _ => current_dt + Duration::days(multiplier), // Default to daily if unit is unknown
+        }
+    } else {
+        // Default to daily if format is invalid
+        current_dt + Duration::days(1)
+    }
+    .timestamp_millis()
 }
 
 fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
     let day_in_ms: i64 = 24 * 60 * 60 * 1000;
     let start_of_day = (base_timestamp / day_in_ms) * day_in_ms;
     start_of_day + time_of_day
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_calculate_next_timestamp() {
+        let current = Utc.ymd(2024, 3, 13).and_hms(12, 0, 0);
+        let current_ts = current.timestamp_millis();
+        let next_daily = calculate_next_timestamp(current_ts, "1D");
+        assert_eq!(
+            Utc.timestamp_millis_opt(next_daily).unwrap().date(),
+            current.date() + Duration::days(1)
+        );
+        let next_weekly = calculate_next_timestamp(current_ts, "1W:1,3,5");
+        assert_eq!(
+            Utc.timestamp_millis_opt(next_weekly)
+                .unwrap()
+                .weekday()
+                .num_days_from_sunday(),
+            5 // Should be Friday (next selected day after Wednesday)
+        );
+        let next_biweekly = calculate_next_timestamp(current_ts, "2W:1,3,5");
+        assert_eq!(
+            Utc.timestamp_millis_opt(next_biweekly).unwrap().date(),
+            Utc.timestamp_millis_opt(next_weekly).unwrap().date() + Duration::weeks(1)
+        );
+        let next_monthly = calculate_next_timestamp(current_ts, "1M");
+        assert_eq!(
+            Utc.timestamp_millis_opt(next_monthly).unwrap().date(),
+            current.date() + Duration::days(30)
+        );
+    }
 }

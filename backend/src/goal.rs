@@ -395,49 +395,159 @@ pub async fn toggle_completion(
         update.id, update.completed
     );
 
-    let query_str = "MATCH (g:Goal) 
-         WHERE id(g) = $id 
-         SET g.completed = $completed
-         RETURN g.completed as completed";
+    // First, check if this is an achievement type goal
+    let type_query = query(
+        "MATCH (g:Goal) WHERE id(g) = $id 
+         RETURN g.goal_type as goal_type, g.completed as current_completed",
+    )
+    .param("id", update.id);
 
-    let query = query(&query_str)
-        .param("id", update.id)
-        .param("completed", update.completed);
+    let mut result = graph.execute(type_query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Database error: {}", e),
+        )
+    })?;
 
-    match graph.execute(query).await {
-        Ok(mut result) => match result.next().await {
-            Ok(Some(row)) => match row.get::<bool>("completed") {
-                Ok(completed) => {
-                    //                    println!("Successfully updated completion status to: {}", completed);
-                    Ok(Json(json!({ "completed": completed })))
-                }
-                Err(e) => {
-                    eprintln!("Failed to parse completion status: {}", e);
-                    Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to parse completion status".to_string(),
-                    ))
-                }
-            },
-            Ok(None) => {
-                eprintln!("Goal not found: {}", update.id);
-                Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
-            }
-            Err(e) => {
-                eprintln!("Error fetching result: {}", e);
-                Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Error fetching result: {}", e),
-                ))
-            }
-        },
-        Err(e) => {
-            eprintln!("Database error: {}", e);
-            Err((
+    if let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Error fetching result: {}", e),
+        )
+    })? {
+        let goal_type: String = row.get("goal_type").map_err(|e| {
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Database error: {}", e),
-            ))
+                format!("Error getting goal type: {}", e),
+            )
+        })?;
+
+        if goal_type == "achievement" {
+            if update.completed {
+                // Verify this is the highest uncompleted achievement in the queue
+                let queue_check = query(
+                    "MATCH (g:Goal)
+                     WHERE id(g) = $id
+                     OPTIONAL MATCH (prev:Goal)-[:QUEUE*]->(g)
+                     WHERE prev.completed = false
+                     RETURN count(prev) as count",
+                )
+                .param("id", update.id);
+
+                let mut check_result = graph.execute(queue_check).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Database error: {}", e),
+                    )
+                })?;
+
+                if let Some(check_row) = check_result.next().await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Error checking queue: {}", e),
+                    )
+                })? {
+                    let count: i64 = check_row.get("count").unwrap_or(0);
+                    if count > 0 {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "Cannot complete this achievement as there are uncompleted achievements before it in the queue"
+                                .to_string(),
+                        ));
+                    }
+                }
+
+                // Complete this achievement and transfer relationships to next in queue
+                let transfer_query = query(
+                    "MATCH (current:Goal) WHERE id(current) = $id
+                     OPTIONAL MATCH (current)-[:QUEUE]->(next:Goal)
+                     WHERE next.completed = false
+                     OPTIONAL MATCH (parent:Goal)-[r:CHILD]->(current)
+                     WITH current, next, collect(parent) as parents
+                     SET current.completed = true
+                     WITH current, next, parents
+                     WHERE next IS NOT NULL
+                     UNWIND parents as parent
+                     MERGE (parent)-[:CHILD]->(next)
+                     WITH current, next, parent
+                     MATCH (parent)-[r:CHILD]->(current)
+                     DELETE r
+                     WITH current, next
+                     OPTIONAL MATCH (current)-[r:CHILD]->(child:Goal)
+                     WHERE NOT child = next
+                     WITH current, next, child, r
+                     WHERE child IS NOT NULL
+                     MERGE (next)-[:CHILD]->(child)
+                     DELETE r",
+                )
+                .param("id", update.id);
+
+                graph.run(transfer_query).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Error updating relationships: {}", e),
+                    )
+                })?;
+            } else {
+                // Uncomplete this achievement and all following in queue
+                let uncomplete_query = query(
+                    "MATCH (current:Goal) WHERE id(current) = $id
+                     OPTIONAL MATCH (current)-[:QUEUE*]->(following:Goal)
+                     WITH current, collect(following) as following_goals
+                     SET current.completed = false
+                     FOREACH (goal IN following_goals | SET goal.completed = false)
+                     WITH current, following_goals
+                     UNWIND following_goals as following
+                     OPTIONAL MATCH (parent:Goal)-[r:CHILD]->(following)
+                     WITH current, following, following_goals, collect(parent) as parents
+                     UNWIND parents as parent
+                     MERGE (parent)-[:CHILD]->(current)
+                     WITH current, following, following_goals, parent
+                     MATCH (parent)-[r:CHILD]->(following)
+                     DELETE r
+                     WITH current, following_goals
+                     UNWIND following_goals as following
+                     OPTIONAL MATCH (following)-[r:CHILD]->(child:Goal)
+                     WHERE child IS NOT NULL
+                     WITH current, child, r
+                     MERGE (current)-[:CHILD]->(child)
+                     DELETE r",
+                )
+                .param("id", update.id);
+
+                graph.run(uncomplete_query).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Error updating relationships: {}", e),
+                    )
+                })?;
+            }
+        } else if goal_type == "task" || goal_type == "project" {
+            // For non-achievement goals, just toggle completion
+            let toggle_query = query(
+                "MATCH (g:Goal) 
+                 WHERE id(g) = $id 
+                 SET g.completed = $completed",
+            )
+            .param("id", update.id)
+            .param("completed", update.completed);
+
+            graph.run(toggle_query).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Database error: {}", e),
+                )
+            })?;
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Cannot toggle completion for non achievement, task, or project goals".to_string(),
+            ));
         }
+
+        Ok(Json(json!({ "completed": update.completed })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
     }
 }
 
