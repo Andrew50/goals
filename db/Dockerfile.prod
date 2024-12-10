@@ -3,7 +3,24 @@ FROM neo4j:5-enterprise
 ENV NEO4J_AUTH=neo4j/password123
 ENV NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
 
-# Add any custom configurations if needed
-# COPY neo4j.conf /var/lib/neo4j/conf/
+# Install cron
+RUN apt-get update && apt-get install -y cron
 
-EXPOSE 7474 7687 
+# Copy backup script
+COPY backup.sh /scripts/backup.sh
+RUN chmod +x /scripts/backup.sh
+
+# Add crontab file
+COPY crontab /etc/cron.d/backup-cron
+RUN chmod 0644 /etc/cron.d/backup-cron
+
+# Create the log file
+RUN touch /var/log/cron.log
+
+# Start command to run both Neo4j and cron
+COPY start.sh /scripts/start.sh
+RUN chmod +x /scripts/start.sh
+
+EXPOSE 7474 7687
+
+CMD ["/scripts/start.sh"]
