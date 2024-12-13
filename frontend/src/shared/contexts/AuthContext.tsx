@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { publicRequest, updateRoutines } from "../utils/api";
+import { publicRequest, privateRequest, updateRoutines } from "../utils/api";
 
 interface SigninResponse {
     token: string;
@@ -11,6 +11,7 @@ interface AuthContextType {
     setIsAuthenticated: (value: boolean) => void;
     scheduleRoutineUpdate: () => void;
     login: (username: string, password: string) => Promise<string>;
+    logout: () => void;
 }
 
 export const AuthContext = createContext<AuthContextType>({
@@ -18,12 +19,40 @@ export const AuthContext = createContext<AuthContextType>({
     setIsAuthenticated: () => { },
     scheduleRoutineUpdate: () => { },
     login: async () => '',
+    logout: () => { },
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    // Initialize from localStorage first
     const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
         return !!localStorage.getItem('authToken');
     });
+
+    // Function to validate token and update auth state if invalid
+    const validateAndUpdateAuthState = useCallback(async () => {
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+            setIsAuthenticated(false);
+            return;
+        }
+
+        try {
+            // Try to make a request to validate the token using privateRequest
+            await privateRequest('auth/validate', 'GET');
+            // Token is valid, we're already authenticated
+        } catch (error) {
+            console.error('Token validation failed:', error);
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('routineUpdateTimeout');
+            localStorage.removeItem('nextRoutineUpdate');
+            setIsAuthenticated(false);
+        }
+    }, []);
+
+    // Validate token on mount
+    useEffect(() => {
+        validateAndUpdateAuthState();
+    }, [validateAndUpdateAuthState]);
 
     const scheduleRoutineUpdate = useCallback(() => {
         // Clear any existing timeout
@@ -63,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 const endOfDay = new Date();
                 endOfDay.setHours(23, 59, 59, 999);
                 console.log(`Catching up missed routine update for ${endOfDay.toLocaleString()}`);
-                publicRequest(
+                privateRequest(
                     `routine/${endOfDay.getTime()}`,
                     'POST'
                 )
@@ -74,6 +103,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [isAuthenticated, scheduleRoutineUpdate]);
 
+    const logout = useCallback(() => {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('routineUpdateTimeout');
+        localStorage.removeItem('nextRoutineUpdate');
+        setIsAuthenticated(false);
+    }, []);
+
     const login = useCallback(async (username: string, password: string): Promise<string> => {
         const response = await publicRequest<SigninResponse>(
             'auth/signin',
@@ -81,14 +117,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             { username, password }
         );
 
+        // First store the token
         localStorage.setItem("authToken", response.token);
+
+        // Then set auth state
         setIsAuthenticated(true);
+
+        // Wait for next tick to ensure auth state is updated
+        await new Promise(resolve => setTimeout(resolve, 0));
 
         try {
             await updateRoutines();
             scheduleRoutineUpdate();
         } catch (routineErr) {
             console.error("Failed to update routines:", routineErr);
+            // Don't throw the error as it's not critical for login
         }
 
         return response.message;
@@ -99,7 +142,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isAuthenticated,
             setIsAuthenticated,
             scheduleRoutineUpdate,
-            login
+            login,
+            logout
         }}>
             {children}
         </AuthContext.Provider>

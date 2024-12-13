@@ -1,12 +1,12 @@
 use axum::{
     extract::{Extension, Json},
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::IntoResponse,
-    routing::post,
+    routing::{post, get},
     Router,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{encode, EncodingKey, Header, decode, DecodingKey, Validation};
 use neo4rs::{Graph, Query};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -15,6 +15,7 @@ pub fn create_routes() -> Router {
     Router::new()
         .route("/signup", post(sign_up))
         .route("/signin", post(sign_in))
+        .route("/validate", get(validate_token))
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,4 +166,20 @@ async fn sign_in(
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+// Token validation handler
+async fn validate_token(
+    Extension(graph): Extension<Graph>,
+    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
+    let token_data = jsonwebtoken::decode::<Claims>(
+        auth.token(),
+        &DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &Validation::default(),
+    ).map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Token is valid, return success
+    Ok(StatusCode::OK)
 }

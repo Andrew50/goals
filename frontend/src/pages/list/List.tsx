@@ -2,7 +2,7 @@ import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState, useMemo } from 'react';
 import { Goal, GoalType } from '../../types/goals';
-import { goalColors } from '../../shared/styles/colors';
+import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
 
@@ -205,7 +205,7 @@ const List: React.FC = () => {
                             </thead>
                             <tbody>
                                 {sortedList.map(goal => {
-                                    const goalColor = goalColors[goal.goal_type];
+                                    const goalColor = getGoalColor(goal);
                                     return (
                                         <tr
                                             key={goal.id}

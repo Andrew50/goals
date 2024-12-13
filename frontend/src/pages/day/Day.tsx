@@ -2,7 +2,7 @@ import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState } from 'react';
 import { Goal } from '../../types/goals';
-import { goalColors } from '../../shared/styles/colors';
+import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { Box, Typography, Paper, Button } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -138,7 +138,7 @@ const Day: React.FC = () => {
                     <Typography variant="h6" className="column-title">To Do</Typography>
                     <div className="tasks-list">
                         {organizedTasks().todo.map(task => {
-                            const goalColor = goalColors[task.goal_type];
+                            const goalColor = getGoalColor(task);
                             const timeString = formatTime(task.scheduled_timestamp);
                             return (
                                 <Paper
@@ -192,7 +192,7 @@ const Day: React.FC = () => {
                     </Typography>
                     <div className="tasks-list completed">
                         {organizedTasks().completed.map(task => {
-                            const goalColor = goalColors[task.goal_type];
+                            const goalColor = getGoalColor(task);
                             return (
                                 <Paper
                                     key={task.id}

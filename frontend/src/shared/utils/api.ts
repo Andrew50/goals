@@ -41,8 +41,10 @@ export async function privateRequest<T>(
 
         return response.data as T;
     } catch (error: any) {
-        if (error.response.status === 401) {
-            window.location.href = '/signin';
+        if (error.response?.status === 401) {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('routineUpdateTimeout');
+            localStorage.removeItem('nextRoutineUpdate');
             throw error;
         } else {
             console.error(`API request failed for ${endpoint}:`, error);

@@ -29,7 +29,8 @@
     "@mui/material": "^5.15.4",
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
-    "@mui/icons-material": "^5.15.4"
+    "@mui/icons-material": "^5.15.4",
+    "react-hotkeys-hook": "^4.4.1"
   },
   "scripts": {
     "start": "react-scripts start",

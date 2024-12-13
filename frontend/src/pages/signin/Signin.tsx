@@ -1,13 +1,8 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Container, Box, Paper, Typography, TextField, Button, Alert } from "@mui/material";
-import { publicRequest } from "../../shared/utils/api";
 import { useAuth } from "../../shared/contexts/AuthContext";
 
-interface SigninResponse {
-  message: string;
-  token: string;
-}
 
 const Signin: React.FC = () => {
   const { login } = useAuth();
