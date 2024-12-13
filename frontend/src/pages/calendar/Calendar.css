@@ -1,0 +1,67 @@
+.fc-event,
+.fc-event-main,
+.fc-event-main-frame {
+    background-color: transparent !important;
+    border: none !important;
+}
+
+.custom-calendar-event {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 4px;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+}
+
+/* Remove current day highlighting */
+.fc .fc-day-today {
+    background-color: transparent !important;
+}
+
+/* Style the current time indicator */
+.fc .fc-timegrid-now-indicator-line {
+    border-color: #ff0000;
+    /* Change color as needed */
+    border-width: 2px;
+    /* Make the line thicker if desired */
+}
+
+.fc .fc-timegrid-now-indicator-arrow {
+    border-color: #ff0000;
+    /* Match the line color */
+}
+
+/* Container styles */
+.calendar-container {
+    height: calc(100vh - 64px);
+    display: flex;
+    padding: 20px;
+    gap: 20px;
+    overflow: hidden;
+}
+
+/* Sidebar styles */
+.calendar-sidebar {
+    width: 250px;
+    height: 100%;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background-color: #101f33;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* Main calendar area */
+.calendar-main {
+    flex: 1;
+    height: 100%;
+    background-color: #101f33;
+    border-radius: 12px;
+    padding: 16px;
+    overflow: hidden;
+}

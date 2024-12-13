@@ -21,12 +21,11 @@ import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 
 const NavBar: React.FC = () => {
-  const { isAuthenticated, setIsAuthenticated } = useAuth();
+  const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleSignOut = () => {
-    localStorage.removeItem('authToken');
-    setIsAuthenticated(false);
+    logout();
     navigate('/');
   };
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useHistoryState } from '../hooks/useHistoryState';
 import {
     Dialog,
     DialogTitle,
@@ -30,12 +31,30 @@ interface GoalMenuComponent extends React.FC {
     close: () => void;
 }
 
+interface GoalMenuState {
+    goal: Goal;
+    error: string;
+    mode: Mode;
+}
 
 const GoalMenu: GoalMenuComponent = () => {
     const [isOpen, setIsOpen] = useState(false);
-    const [goal, setGoal] = useState<Goal>({} as Goal);
-    const [mode, setMode] = useState<Mode>('view');
-    const [error, setError] = useState<string>('');
+    const [state, setState] = useHistoryState<GoalMenuState>(
+        {
+            goal: {} as Goal,
+            error: '',
+            mode: 'view'
+        },
+        {
+            hotkeyScope: 'goalMenu',
+            onUndo: (newState) => {
+                console.log('Undid goal menu change');
+            },
+            onRedo: (newState) => {
+                console.log('Redid goal menu change');
+            }
+        }
+    );
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
@@ -53,8 +72,11 @@ const GoalMenu: GoalMenuComponent = () => {
             goal.goal_type = 'achievement';
         }
 
-        setGoal(goal);
-        setMode(initialMode);
+        setState({
+            goal,
+            mode: initialMode,
+            error: ''
+        });
         setOnSuccess(() => onSuccess);
         setTitle({
             'create': 'Create New Goal',
@@ -66,17 +88,18 @@ const GoalMenu: GoalMenuComponent = () => {
     const close = () => {
         setIsOpen(false);
         setTimeout(() => {
-            setGoal({} as Goal);
-            setError('');
+            setState({
+                goal: {} as Goal,
+                error: '',
+                mode: 'view'
+            });
             setOnSuccess(undefined);
             setTitle('');
-            setMode('view');
             setRelationshipMode(null);
         }, 100);
     }
 
-
-    const isViewOnly = mode === 'view';
+    const isViewOnly = state.mode === 'view';
 
     useEffect(() => {
         GoalMenu.open = open;
@@ -85,30 +108,36 @@ const GoalMenu: GoalMenuComponent = () => {
 
     const handleChange = (newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server
-        if (mode === 'view' && newGoal.completed !== goal.completed) {
+        if (state.mode === 'view' && newGoal.completed !== state.goal.completed) {
             handleCompletionToggle(newGoal.completed || false);
-            return; // Don't call setGoal here as handleCompletionToggle will do it
+            return;
         }
 
         // For all other changes, update the local state
-        setGoal(newGoal);
+        setState({
+            ...state,
+            goal: newGoal
+        });
     };
 
     const handleSubmit = async (another: boolean = false) => {
-        if (another && mode !== 'create') {
+        if (another && state.mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
         }
 
         // Validation checks
-        const validationErrors = validateGoal(goal);
+        const validationErrors = validateGoal(state.goal);
         if (validationErrors.length > 0) {
-            setError(validationErrors.join('\n'));
+            setState({
+                ...state,
+                error: validationErrors.join('\n')
+            });
             return;
         }
         try {
             let updatedGoal: Goal;
-            if (mode === 'create') {
-                updatedGoal = await createGoal(goal);
+            if (state.mode === 'create') {
+                updatedGoal = await createGoal(state.goal);
 
                 if (relationshipMode) {
                     await createRelationship(
@@ -117,13 +146,16 @@ const GoalMenu: GoalMenuComponent = () => {
                         relationshipMode.type
                     );
                 }
-            } else if (mode === 'edit' && goal.id) {
-                updatedGoal = await updateGoal(goal.id, goal);
+            } else if (state.mode === 'edit' && state.goal.id) {
+                updatedGoal = await updateGoal(state.goal.id, state.goal);
             } else {
                 throw new Error('Invalid mode or missing goal ID');
             }
-            setGoal(updatedGoal);
-            if (goal.goal_type === 'routine') {
+            setState({
+                ...state,
+                goal: updatedGoal
+            });
+            if (state.goal.goal_type === 'routine') {
                 await updateRoutines();
             }
             if (onSuccess) {
@@ -141,29 +173,38 @@ const GoalMenu: GoalMenuComponent = () => {
             }
         } catch (error) {
             console.error('Failed to submit goal:', error);
-            setError(error instanceof Error ? error.message : 'Failed to submit goal');
+            setState({
+                ...state,
+                error: error instanceof Error ? error.message : 'Failed to submit goal'
+            });
         }
     };
 
     const handleDelete = async () => {
-        if (!goal.id) {
-            setError('Cannot delete goal without ID');
+        if (!state.goal.id) {
+            setState({
+                ...state,
+                error: 'Cannot delete goal without ID'
+            });
             return;
         }
         try {
-            await deleteGoal(goal.id);
+            await deleteGoal(state.goal.id);
             if (onSuccess) {
-                onSuccess(goal);
+                onSuccess(state.goal);
             }
             close();
         } catch (error) {
             console.error('Failed to delete goal:', error);
-            setError(error instanceof Error ? error.message : 'Failed to delete goal');
+            setState({
+                ...state,
+                error: error instanceof Error ? error.message : 'Failed to delete goal'
+            });
         }
     };
 
     const handleCreateChild = () => {
-        const parentGoal = goal;
+        const parentGoal = state.goal;
         const newGoal: Goal = {} as Goal;
 
         close();
@@ -176,7 +217,10 @@ const GoalMenu: GoalMenuComponent = () => {
                     }
                 } catch (error) {
                     console.error('Failed to create child relationship:', error);
-                    setError('Failed to create child relationship');
+                    setState({
+                        ...state,
+                        error: 'Failed to create child relationship'
+                    });
                 }
             });
             setRelationshipMode({ type: 'child', parentId: parentGoal.id! });
@@ -184,7 +228,7 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     const handleCreateQueue = () => {
-        const previousGoal = goal;
+        const previousGoal = state.goal;
         const newGoal: Goal = { goal_type: 'achievement' } as Goal;
         close();
         setTimeout(() => {
@@ -196,7 +240,10 @@ const GoalMenu: GoalMenuComponent = () => {
                     }
                 } catch (error) {
                     console.error('Failed to create queue relationship:', error);
-                    setError('Failed to create queue relationship');
+                    setState({
+                        ...state,
+                        error: 'Failed to create queue relationship'
+                    });
                 }
             });
             setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
@@ -205,15 +252,15 @@ const GoalMenu: GoalMenuComponent = () => {
 
     const priorityField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Priority:</strong> {goal.priority ? goal.priority.charAt(0).toUpperCase() + goal.priority.slice(1) : 'Not set'}
+            <strong>Priority:</strong> {state.goal.priority ? state.goal.priority.charAt(0).toUpperCase() + state.goal.priority.slice(1) : 'Not set'}
         </Box>
     ) : (
         <TextField
             label="Priority"
             select
-            value={goal.priority || ''}
+            value={state.goal.priority || ''}
             onChange={(e) => handleChange({
-                ...goal,
+                ...state.goal,
                 priority: e.target.value as 'high' | 'medium' | 'low'
             })}
             fullWidth
@@ -228,7 +275,7 @@ const GoalMenu: GoalMenuComponent = () => {
     const durationField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Duration:</strong> {(() => {
-                const duration = goal.duration;
+                const duration = state.goal.duration;
                 if (!duration) return 'Not set';
                 return duration === 1440 ? 'All Day' : `${(duration / 60).toFixed(2)}h`;
             })()}
@@ -238,10 +285,10 @@ const GoalMenu: GoalMenuComponent = () => {
             <FormControlLabel
                 control={
                     <Checkbox
-                        checked={goal.duration === 1440}
+                        checked={state.goal.duration === 1440}
                         onChange={(e) => {
                             handleChange({
-                                ...goal,
+                                ...state.goal,
                                 duration: e.target.checked ? 1440 : 60 // Default to 1 hour when unchecking
                             });
                         }}
@@ -249,21 +296,21 @@ const GoalMenu: GoalMenuComponent = () => {
                 }
                 label="All Day"
             />
-            {goal.duration !== 1440 && (
+            {state.goal.duration !== 1440 && (
                 <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
                     <TextField
                         label="Hours"
                         type="number"
                         value={(() => {
-                            const hours = goal.duration ? Math.floor(goal.duration / 60) : '';
+                            const hours = state.goal.duration ? Math.floor(state.goal.duration / 60) : '';
                             return hours;
                         })()}
                         onChange={(e) => {
                             const hours = e.target.value ? parseInt(e.target.value) : 0;
-                            const minutes = goal.duration ? goal.duration % 60 : 0;
+                            const minutes = state.goal.duration ? state.goal.duration % 60 : 0;
                             const newDuration = hours * 60 + minutes;
                             handleChange({
-                                ...goal,
+                                ...state.goal,
                                 duration: newDuration
                             });
                         }}
@@ -280,15 +327,15 @@ const GoalMenu: GoalMenuComponent = () => {
                         label="Minutes"
                         type="number"
                         value={(() => {
-                            const minutes = goal.duration ? goal.duration % 60 : '';
+                            const minutes = state.goal.duration ? state.goal.duration % 60 : '';
                             return minutes;
                         })()}
                         onChange={(e) => {
                             const minutes = e.target.value ? parseInt(e.target.value) : 0;
-                            const hours = goal.duration ? Math.floor(goal.duration / 60) : 0;
+                            const hours = state.goal.duration ? Math.floor(state.goal.duration / 60) : 0;
                             const newDuration = hours * 60 + minutes;
                             handleChange({
-                                ...goal,
+                                ...state.goal,
                                 duration: newDuration
                             });
                         }}
@@ -308,16 +355,16 @@ const GoalMenu: GoalMenuComponent = () => {
     );
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Schedule Time:</strong> {timestampToDisplayString(goal.scheduled_timestamp)}
+            <strong>Schedule Time:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
         </Box>
     ) : (
         <TextField
             label="Schedule Date"
             type="datetime-local"
-            value={timestampToInputString(goal.scheduled_timestamp, 'datetime')}
+            value={timestampToInputString(state.goal.scheduled_timestamp, 'datetime')}
             onChange={(e) => {
                 handleChange({
-                    ...goal,
+                    ...state.goal,
                     scheduled_timestamp: inputStringToTimestamp(e.target.value, 'datetime')
                 });
             }}
@@ -331,10 +378,10 @@ const GoalMenu: GoalMenuComponent = () => {
     const dateFields = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
-                <strong>Start Date:</strong> {timestampToDisplayString(goal.start_timestamp, 'date')}
+                <strong>Start Date:</strong> {timestampToDisplayString(state.goal.start_timestamp, 'date')}
             </Box>
             <Box sx={{ mb: 2 }}>
-                <strong>End Date:</strong> {timestampToDisplayString(goal.end_timestamp, 'date')}
+                <strong>End Date:</strong> {timestampToDisplayString(state.goal.end_timestamp, 'date')}
             </Box>
         </>
     ) : (
@@ -342,10 +389,10 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Start Date"
                 type="date"
-                value={timestampToInputString(goal.start_timestamp, 'date')}
+                value={timestampToInputString(state.goal.start_timestamp, 'date')}
                 onChange={(e) => {
                     handleChange({
-                        ...goal,
+                        ...state.goal,
                         start_timestamp: inputStringToTimestamp(e.target.value, "date")
                     });
                 }}
@@ -357,10 +404,10 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="End Date"
                 type="date"
-                value={timestampToInputString(goal.end_timestamp, 'date')}
+                value={timestampToInputString(state.goal.end_timestamp, 'date')}
                 onChange={(e) => {
                     handleChange({
-                        ...goal,
+                        ...state.goal,
                         end_timestamp: inputStringToTimestamp(e.target.value, 'end-date')
                     });
                 }}
@@ -376,9 +423,9 @@ const GoalMenu: GoalMenuComponent = () => {
         <FormControlLabel
             control={
                 <Checkbox
-                    checked={goal.completed || false}
+                    checked={state.goal.completed || false}
                     onChange={(e) => handleChange({
-                        ...goal,
+                        ...state.goal,
                         completed: e.target.checked
                     })}
                 //disabled={isViewOnly}
@@ -390,9 +437,9 @@ const GoalMenu: GoalMenuComponent = () => {
     const frequencyField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Frequency:</strong> {(() => {
-                if (!goal.frequency) return 'Not set';
-                const match = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
-                if (!match) return goal.frequency;
+                if (!state.goal.frequency) return 'Not set';
+                const match = state.goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
+                if (!match) return state.goal.frequency;
 
                 const [_, interval, unit, days] = match;
                 let text = `Every ${interval} `;
@@ -420,22 +467,22 @@ const GoalMenu: GoalMenuComponent = () => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 1,
-                mb: goal.frequency?.includes('W') ? 2 : 0
+                mb: state.goal.frequency?.includes('W') ? 2 : 0
             }}>
                 <Typography>Repeat every</Typography>
                 <TextField
                     value={(() => {
-                        const match = goal.frequency?.match(/^(\d+)[DWMY]/);
+                        const match = state.goal.frequency?.match(/^(\d+)[DWMY]/);
                         return match ? match[1] : '1';
                     })()}
                     onChange={(e) => {
                         const value = e.target.value;
-                        const unit = goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
-                        const days = goal.frequency?.split(':')?.[1] || '';
+                        const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
+                        const days = state.goal.frequency?.split(':')?.[1] || '';
                         const newFreq = `${value}${unit}${days ? ':' + days : ''}`;
                         console.log(newFreq);
                         handleChange({
-                            ...goal,
+                            ...state.goal,
                             frequency: newFreq
                         });
                     }}
@@ -453,16 +500,16 @@ const GoalMenu: GoalMenuComponent = () => {
                 />
                 <TextField
                     select
-                    value={goal.frequency?.match(/[DWMY]/)?.[0] || 'D'}
+                    value={state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D'}
                     onChange={(e) => {
-                        const interval = goal.frequency?.match(/^\d+/)?.[0] || '1';
-                        const days = e.target.value === 'W' && goal.frequency?.includes('W')
-                            ? (goal.frequency?.split(':')?.[1] ? ':' + goal.frequency.split(':')[1] : '')
+                        const interval = state.goal.frequency?.match(/^\d+/)?.[0] || '1';
+                        const days = e.target.value === 'W' && state.goal.frequency?.includes('W')
+                            ? (state.goal.frequency?.split(':')?.[1] ? ':' + state.goal.frequency.split(':')[1] : '')
                             : '';
                         const newFreq = `${interval}${e.target.value}${days}`;
                         console.log(newFreq);
                         handleChange({
-                            ...goal,
+                            ...state.goal,
                             frequency: newFreq
                         });
                     }}
@@ -476,20 +523,20 @@ const GoalMenu: GoalMenuComponent = () => {
                 </TextField>
             </Box>
 
-            {goal.frequency?.includes('W') && (
+            {state.goal.frequency?.includes('W') && (
                 <Box>
                     <Typography sx={{ mb: 1 }}>Repeat on</Typography>
                     <Box sx={{ display: 'flex', gap: 0.5 }}>
                         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => {
-                            const days = goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
+                            const days = state.goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
                             const isSelected = days.includes(index);
 
                             return (
                                 <Box
                                     key={index}
                                     onClick={() => {
-                                        const interval = goal.frequency?.match(/^\d+/)?.[0] || '1';
-                                        let days = goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
+                                        const interval = state.goal.frequency?.match(/^\d+/)?.[0] || '1';
+                                        let days = state.goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
 
                                         if (isSelected) {
                                             days = days.filter(d => d !== index);
@@ -500,7 +547,7 @@ const GoalMenu: GoalMenuComponent = () => {
                                         const newFreq = `${interval}W${days.length ? ':' + days.sort().join(',') : ''}`;
                                         console.log(newFreq);
                                         handleChange({
-                                            ...goal,
+                                            ...state.goal,
                                             frequency: newFreq
                                         });
                                     }}
@@ -532,22 +579,22 @@ const GoalMenu: GoalMenuComponent = () => {
     const commonFields = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
-                <strong>Goal Type:</strong> {goal.goal_type ? goal.goal_type.charAt(0).toUpperCase() + goal.goal_type.slice(1) : 'Not set'}
+                <strong>Goal Type:</strong> {state.goal.goal_type ? state.goal.goal_type.charAt(0).toUpperCase() + state.goal.goal_type.slice(1) : 'Not set'}
             </Box>
             <Box sx={{ mb: 2 }}>
-                <strong>Name:</strong> {goal.name || 'Not set'}
+                <strong>Name:</strong> {state.goal.name || 'Not set'}
             </Box>
             <Box sx={{ mb: 2 }}>
-                <strong>Description:</strong> {goal.description || 'Not set'}
+                <strong>Description:</strong> {state.goal.description || 'Not set'}
             </Box>
         </>
     ) : (
         <>
             <TextField
                 label="Goal Type"
-                value={goal.goal_type || ''}
+                value={state.goal.goal_type || ''}
                 onChange={(e) => handleChange({
-                    ...goal,
+                    ...state.goal,
                     goal_type: e.target.value as GoalType
                 })}
                 select
@@ -570,8 +617,8 @@ const GoalMenu: GoalMenuComponent = () => {
             </TextField>
             <TextField
                 label="Name"
-                value={goal.name || ''}
-                onChange={(e) => handleChange({ ...goal, name: e.target.value })}
+                value={state.goal.name || ''}
+                onChange={(e) => handleChange({ ...state.goal, name: e.target.value })}
                 fullWidth
                 margin="dense"
                 required
@@ -579,8 +626,8 @@ const GoalMenu: GoalMenuComponent = () => {
             />
             <TextField
                 label="Description"
-                value={goal.description || ''}
-                onChange={(e) => handleChange({ ...goal, description: e.target.value })}
+                value={state.goal.description || ''}
+                onChange={(e) => handleChange({ ...state.goal, description: e.target.value })}
                 fullWidth
                 margin="dense"
                 multiline
@@ -592,14 +639,14 @@ const GoalMenu: GoalMenuComponent = () => {
     const routineFields = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
-                <strong>Routine Type:</strong> {goal.routine_type ? goal.routine_type.charAt(0).toUpperCase() + goal.routine_type.slice(1) : 'Not set'}
+                <strong>Routine Type:</strong> {state.goal.routine_type ? state.goal.routine_type.charAt(0).toUpperCase() + state.goal.routine_type.slice(1) : 'Not set'}
             </Box>
-            {goal.routine_type === 'task' && (
+            {state.goal.routine_type === 'task' && (
                 <>
                     {durationField}
-                    {goal.duration !== 1440 && (
+                    {state.goal.duration !== 1440 && (
                         <Box sx={{ mb: 2 }}>
-                            <strong>Scheduled Time:</strong> {timestampToDisplayString(goal.routine_time, 'time')}
+                            <strong>Scheduled Time:</strong> {timestampToDisplayString(state.goal.routine_time, 'time')}
                         </Box>
                     )}
                 </>
@@ -609,9 +656,9 @@ const GoalMenu: GoalMenuComponent = () => {
         <>
             <TextField
                 label="Routine Type"
-                value={goal.routine_type || ''}
+                value={state.goal.routine_type || ''}
                 onChange={(e) => handleChange({
-                    ...goal,
+                    ...state.goal,
                     routine_type: e.target.value as "task" | "achievement"
                 })}
                 select
@@ -622,17 +669,17 @@ const GoalMenu: GoalMenuComponent = () => {
                 <MenuItem value="task">Task</MenuItem>
                 <MenuItem value="achievement">Achievement</MenuItem>
             </TextField>
-            {goal.routine_type === 'task' && (
+            {state.goal.routine_type === 'task' && (
                 <>
                     {durationField}
-                    {goal.duration !== 1440 && (
+                    {state.goal.duration !== 1440 && (
                         <TextField
                             label="Scheduled Time"
                             type="time"
-                            value={timestampToInputString(goal.routine_time, 'time')}
+                            value={timestampToInputString(state.goal.routine_time, 'time')}
                             onChange={(e) => {
                                 handleChange({
-                                    ...goal,
+                                    ...state.goal,
                                     routine_time: inputStringToTimestamp(e.target.value, 'time')
                                 });
                             }}
@@ -649,7 +696,7 @@ const GoalMenu: GoalMenuComponent = () => {
     );
 
     const renderTypeSpecificFields = () => {
-        if (!goal.goal_type) return null;
+        if (!state.goal.goal_type) return null;
         const project_and_achievement_fields = (
             <>
                 {priorityField}
@@ -657,7 +704,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 {completedField}
             </>
         );
-        switch (goal.goal_type) {
+        switch (state.goal.goal_type) {
             case 'project':
                 return project_and_achievement_fields;
             case 'achievement':
@@ -687,27 +734,36 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     const handleEdit = () => {
-        setMode('edit');
+        setState({
+            ...state,
+            mode: 'edit'
+        });
         setTitle('Edit Goal');
     };
     const handleCompletionToggle = async (completed: boolean) => {
         try {
-            const completion = await completeGoal(goal.id!, completed);
+            const completion = await completeGoal(state.goal.id!, completed);
             // Only update the completion status
-            setGoal(prev => ({
-                ...prev,
-                completed: completion
-            }));
+            setState({
+                ...state,
+                goal: {
+                    ...state.goal,
+                    completed: completion
+                }
+            });
 
             if (onSuccess) {
                 onSuccess({
-                    ...goal,
+                    ...state.goal,
                     completed: completion
                 });
             }
         } catch (error) {
             console.error('Failed to update completion status:', error);
-            setError('Failed to update completion status');
+            setState({
+                ...state,
+                error: 'Failed to update completion status'
+            });
         }
     };
 
@@ -726,9 +782,9 @@ const GoalMenu: GoalMenuComponent = () => {
         >
             <DialogTitle>{title}</DialogTitle>
             <DialogContent>
-                {error && (
+                {state.error && (
                     <Box sx={{ color: 'error.main', mb: 2 }}>
-                        {error}
+                        {state.error}
                     </Box>
                 )}
                 {commonFields}
@@ -736,13 +792,13 @@ const GoalMenu: GoalMenuComponent = () => {
             </DialogContent>
             <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    {mode === 'view' && (
+                    {state.mode === 'view' && (
                         <>
 
                             <Button onClick={handleCreateChild} color="secondary">
                                 Create Child
                             </Button>
-                            {goal.goal_type === 'achievement' && (
+                            {state.goal.goal_type === 'achievement' && (
                                 <Button onClick={handleCreateQueue} color="secondary">
                                     Create Queue
                                 </Button>
@@ -752,7 +808,7 @@ const GoalMenu: GoalMenuComponent = () => {
                             </Button>
                         </>
                     )}
-                    {mode === 'edit' && (
+                    {state.mode === 'edit' && (
                         <Button onClick={handleDelete} color="error">
                             Delete
                         </Button>
@@ -764,10 +820,10 @@ const GoalMenu: GoalMenuComponent = () => {
                     </Button>
                     {!isViewOnly && (
                         <Button onClick={() => handleSubmit()} color="primary">
-                            {mode === 'create' ? 'Create' : 'Save'}
+                            {state.mode === 'create' ? 'Create' : 'Save'}
                         </Button>
                     )}
-                    {mode === 'create' && (
+                    {state.mode === 'create' && (
                         <Button onClick={() => handleSubmit(true)} color="primary">
                             Create Another
                         </Button>

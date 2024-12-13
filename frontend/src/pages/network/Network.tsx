@@ -10,7 +10,7 @@ import GoalMenu from '../../shared/components/GoalMenu';
 import { privateRequest, createRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import { buildHierarchy } from './buildHierarchy';
-import { goalColors } from '../../shared/styles/colors';
+import { getGoalColor } from '../../shared/styles/colors';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 
 interface NetworkData {
@@ -29,7 +29,7 @@ const formatNetworkNode = (goal: Goal, inlineUpdate: boolean = false): NetworkNo
     ...localGoal,
     label: localGoal.name,
     title: localGoal.name + ' (' + localGoal.goal_type + ')',
-    color: goalColors[localGoal.goal_type]
+    color: getGoalColor(localGoal)
   }
 }
 
