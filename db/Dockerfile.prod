@@ -1,10 +1,43 @@
-FROM neo4j:5-enterprise
+#db/Dockerfile.prod
+FROM neo4j:5-community
 
 ENV NEO4J_AUTH=neo4j/password123
-ENV NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
 
-# Install cron
-RUN apt-get update && apt-get install -y cron
+# Install cron and add neo4j user to crontab group
+RUN apt-get update && apt-get install -y cron util-linux && \
+    adduser neo4j crontab && \
+    touch /etc/cron.allow && \
+    chown root:crontab /etc/cron.allow && \
+    chmod 640 /etc/cron.allow && \
+    echo "neo4j" >> /etc/cron.allow
+
+# Set correct permissions for crontab executable and directories
+RUN chgrp crontab /usr/bin/crontab && \
+    chmod g+s /usr/bin/crontab && \
+    chmod 4774 -R /var/spool/cron && \
+    mkdir -p /var/run && \
+    touch /var/run/crond.pid && \
+    chmod 744 /var/run/crond.pid
+
+# Create necessary directories with correct permissions
+RUN mkdir -p /var/log/cron && \
+    mkdir -p /scripts && \
+    mkdir -p /var/run && \
+    mkdir -p /backups && \
+    touch /var/log/cron/backup.log && \
+    chmod 0644 /var/log/cron/backup.log && \
+    chmod 0755 /var/run && \
+    chown -R neo4j:crontab /backups && \
+    chown neo4j:crontab /var/log/cron/backup.log
+
+# Set correct permissions for crontab files
+RUN chmod 600 /var/spool/cron/crontabs/* || true
+
+RUN mkdir -p /var/run/cron && \
+    touch /var/run/crond.pid && \
+    chown root:root /var/run/cron /var/run/crond.pid && \
+    chmod 755 /var/run/cron && \
+    chmod 644 /var/run/crond.pid
 
 # Copy backup script
 COPY backup.sh /scripts/backup.sh
@@ -14,12 +47,12 @@ RUN chmod +x /scripts/backup.sh
 COPY crontab /etc/cron.d/backup-cron
 RUN chmod 0644 /etc/cron.d/backup-cron
 
-# Create the log file
-RUN touch /var/log/cron.log
-
-# Start command to run both Neo4j and cron
+# Copy and set permissions for start script
 COPY start.sh /scripts/start.sh
 RUN chmod +x /scripts/start.sh
+
+# Set user to root for cron service
+USER root
 
 EXPOSE 7474 7687
 
