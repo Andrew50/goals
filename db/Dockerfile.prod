@@ -3,57 +3,44 @@ FROM neo4j:5-community
 
 ENV NEO4J_AUTH=neo4j/password123
 
-# Install cron and add neo4j user to crontab group
-RUN apt-get update && apt-get install -y cron util-linux && \
-    adduser neo4j crontab && \
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    cron \
+    util-linux \
+    tini \
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add neo4j user to crontab group
+RUN adduser neo4j crontab && \
     touch /etc/cron.allow && \
     chown root:crontab /etc/cron.allow && \
     chmod 640 /etc/cron.allow && \
     echo "neo4j" >> /etc/cron.allow
 
-# Set correct permissions for crontab executable and directories
-RUN chgrp crontab /usr/bin/crontab && \
-    chmod g+s /usr/bin/crontab && \
-    chmod 4774 -R /var/spool/cron && \
-    mkdir -p /var/run && \
-    touch /var/run/crond.pid && \
-    chmod 744 /var/run/crond.pid
-
-# Create necessary directories with correct permissions
-RUN mkdir -p /var/log/cron && \
-    mkdir -p /scripts && \
-    mkdir -p /var/run && \
-    mkdir -p /backups && \
-    touch /var/log/cron/backup.log && \
-    chmod 0644 /var/log/cron/backup.log && \
-    chmod 0755 /var/run && \
-    chown -R neo4j:crontab /backups && \
-    chown neo4j:crontab /var/log/cron/backup.log
-
-# Set correct permissions for crontab files
-RUN chmod 600 /var/spool/cron/crontabs/* || true
-
+# Set correct permissions
 RUN mkdir -p /var/run/cron && \
+    mkdir -p /scripts && \
+    mkdir -p /backups && \
+    mkdir -p /var/log/cron && \
+    touch /var/log/cron/backup.log && \
     touch /var/run/crond.pid && \
-    chown root:root /var/run/cron /var/run/crond.pid && \
+    chown -R root:root /var/run/cron && \
     chmod 755 /var/run/cron && \
-    chmod 644 /var/run/crond.pid
+    chmod 644 /var/run/crond.pid && \
+    chown -R neo4j:neo4j /backups && \
+    chown neo4j:neo4j /var/log/cron/backup.log && \
+    chmod 0644 /var/log/cron/backup.log
 
-# Copy backup script
+# Copy scripts and set permissions
 COPY backup.sh /scripts/backup.sh
-RUN chmod +x /scripts/backup.sh
-
-# Add crontab file
-COPY crontab /etc/cron.d/backup-cron
-RUN chmod 0644 /etc/cron.d/backup-cron
-
-# Copy and set permissions for start script
 COPY start.sh /scripts/start.sh
-RUN chmod +x /scripts/start.sh
-
-# Set user to root for cron service
-USER root
+COPY crontab /etc/cron.d/backup-cron
+RUN chmod +x /scripts/backup.sh /scripts/start.sh && \
+    chmod 0644 /etc/cron.d/backup-cron
 
 EXPOSE 7474 7687
 
+# Use tini as entry point
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/scripts/start.sh"]
