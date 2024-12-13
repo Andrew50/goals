@@ -1,20 +1,37 @@
+#db/backup.sh
 #!/bin/bash
-
-# Set backup directory
 BACKUP_DIR="/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_NAME="neo4j_backup_${TIMESTAMP}"
+DUMP_NAME="neo4j_dump_${TIMESTAMP}.dump"
 
-# Create backup directory if it doesn't exist
+echo "----------------------------------------"
+echo "[$(date)] Starting backup process"
+echo "[$(date)] Backup directory: ${BACKUP_DIR}"
+echo "[$(date)] Dump name: ${DUMP_NAME}"
+
+# Ensure backup directory exists
 mkdir -p ${BACKUP_DIR}
+echo "[$(date)] Backup directory created/verified"
 
-# Use neo4j-admin backup for online backup
-neo4j-admin database backup --from-path=/data/databases --to-path=${BACKUP_DIR}/${BACKUP_NAME}
+# List current files in backup directory
+echo "[$(date)] Current files in backup directory:"
+ls -l ${BACKUP_DIR}
 
-# Compress the backup
-cd ${BACKUP_DIR}
-tar -czf ${BACKUP_NAME}.tar.gz ${BACKUP_NAME}
-rm -rf ${BACKUP_NAME}
+echo "[$(date)] Starting database dump..."
+# Use neo4j-admin dump command
+neo4j-admin database dump neo4j --to-path=${BACKUP_DIR}/${DUMP_NAME}
+if [ $? -eq 0 ]; then
+    echo "[$(date)] Database dump completed successfully"
+else
+    echo "[$(date)] Database dump failed"
+    exit 1
+fi
 
-# Keep only last 7 days of backups
-find ${BACKUP_DIR} -name "neo4j_backup_*.tar.gz" -mtime +7 -delete 
+echo "[$(date)] Cleaning up old backups..."
+# Clean up old backups (older than 7 days)
+find ${BACKUP_DIR} -name "neo4j_dump_*.dump" -mtime +7 -delete
+
+echo "[$(date)] Final backup directory contents:"
+ls -l ${BACKUP_DIR}
+echo "[$(date)] Backup process completed"
+echo "----------------------------------------" 
