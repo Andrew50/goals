@@ -1,16 +1,24 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Container, Box, Paper, Typography, TextField, Button, Alert } from "@mui/material";
 import { useAuth } from "../../shared/contexts/AuthContext";
 
 
 const Signin: React.FC = () => {
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      const destination = location.state?.from || '/';
+      navigate(destination, { replace: true });
+    }
+  }, [isAuthenticated, navigate, location]);
 
   const handleSignin = async (event: React.FormEvent) => {
     event.preventDefault();
