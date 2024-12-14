@@ -16,7 +16,7 @@ if [ $? -ne 0 ]; then
 fi
 echo "[$(date)] Cron service started successfully"
 
-# Start Neo4j
+# Start Neo4j with a small delay to ensure services are ready
 echo "[$(date)] Starting Neo4j..."
-# Switch to neo4j user and start the neo4j service
+sleep 2  # Add a small delay
 exec gosu neo4j neo4j console
