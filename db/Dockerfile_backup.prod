@@ -1,0 +1,54 @@
+#db/Dockerfile.prod
+FROM neo4j:latest
+
+ENV NEO4J_AUTH=neo4j/password123
+ENV NEO4J_server_bolt_enabled=true
+ENV NEO4J_server_bolt_advertised_address=0.0.0.0:7687
+ENV NEO4J_server_http_enabled=true
+ENV NEO4J_server_http_advertised_address=0.0.0.0:7474
+ENV NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687
+ENV NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474
+ENV NEO4J_dbms_default__listen__address=0.0.0.0
+
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    cron \
+    util-linux \
+    tini \
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add neo4j user to crontab group
+RUN adduser neo4j crontab && \
+    touch /etc/cron.allow && \
+    chown root:crontab /etc/cron.allow && \
+    chmod 640 /etc/cron.allow && \
+    echo "neo4j" >> /etc/cron.allow
+
+# Set correct permissions
+RUN mkdir -p /var/run/cron && \
+    mkdir -p /scripts && \
+    mkdir -p /backups && \
+    mkdir -p /var/log/cron && \
+    touch /var/log/cron/backup.log && \
+    touch /var/run/crond.pid && \
+    chown -R root:root /var/run/cron && \
+    chmod 755 /var/run/cron && \
+    chmod 644 /var/run/crond.pid && \
+    chown -R neo4j:neo4j /backups && \
+    chown neo4j:neo4j /var/log/cron/backup.log && \
+    chmod 0644 /var/log/cron/backup.log
+
+# Copy scripts and set permissions
+COPY backup.sh /scripts/backup.sh
+COPY start.sh /scripts/start.sh
+COPY crontab /etc/cron.d/backup-cron
+RUN chmod +x /scripts/backup.sh /scripts/start.sh && \
+    chmod 0644 /etc/cron.d/backup-cron
+
+EXPOSE 7474 7687
+
+CMD ["/scripts/start.sh"]
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1
