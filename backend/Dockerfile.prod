@@ -9,4 +9,18 @@ COPY --from=builder /usr/src/app/target/release/backend ./backend
 ENV NEO4J_URI=bolt://goals_db:7687
 ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
-CMD ["./backend"]
+ENV NEO4J_CONNECTION_TIMEOUT=120
+
+# Add a startup script to wait for Neo4j
+RUN echo '#!/bin/bash\n\
+echo "Waiting for Neo4j to be ready..."\n\
+timeout $NEO4J_CONNECTION_TIMEOUT bash -c "\
+until echo > /dev/tcp/goals_db/7687 2> /dev/null; do \
+    echo \"Waiting for Neo4j...\"; \
+    sleep 5; \
+done"\n\
+echo "Neo4j is ready, starting backend..."\n\
+exec ./backend' > /start.sh && chmod +x /start.sh
+
+EXPOSE 5057
+CMD ["/start.sh"]
