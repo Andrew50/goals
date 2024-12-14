@@ -2,7 +2,10 @@
 FROM neo4j:latest
 
 ENV NEO4J_AUTH=neo4j/password123
-
+ENV NEO4J_server_bolt_enabled=true
+ENV NEO4J_server_bolt_advertised_address=0.0.0.0:7687
+ENV NEO4J_server_http_enabled=true
+ENV NEO4J_server_http_advertised_address=0.0.0.0:7474
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
@@ -42,6 +45,6 @@ RUN chmod +x /scripts/backup.sh /scripts/start.sh && \
 
 EXPOSE 7474 7687
 
-# Use tini as entry point
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Modify the ENTRYPOINT and CMD to ensure Neo4j starts properly
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["/scripts/start.sh"]
