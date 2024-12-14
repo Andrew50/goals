@@ -1,27 +1,9 @@
-# Use the Rust official image as the base
 FROM rust:latest
-
-# Install cargo-watch for hot reloading
 RUN cargo install cargo-watch
-
-# Set the working directory
 WORKDIR /usr/src/app
-
-# Copy the project files
 COPY . .
-
-# Set environment variables for PostgreSQL and Neo4j
-ENV DATABASE_URL=postgres://postgres:pass@db:5432/postgres
 ENV NEO4J_URI=bolt://goals_db:7687
 ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
-#ENV TZ=America/New_York
-
-# Expose the port your application runs on
 EXPOSE 3000
-
-# Run cargo-watch to monitor for file changes and hot reload
 CMD ["cargo-watch", "-x", "run"]
-
-#RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
