@@ -8,6 +8,7 @@ interface SigninResponse {
 
 interface AuthContextType {
     isAuthenticated: boolean;
+    username: string | null;
     setIsAuthenticated: (value: boolean) => void;
     scheduleRoutineUpdate: () => void;
     login: (username: string, password: string) => Promise<string>;
@@ -16,6 +17,7 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType>({
     isAuthenticated: false,
+    username: null,
     setIsAuthenticated: () => { },
     scheduleRoutineUpdate: () => { },
     login: async () => '',
@@ -26,6 +28,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Initialize from localStorage first
     const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
         return !!localStorage.getItem('authToken');
+    });
+
+    // Add username state
+    const [username, setUsername] = useState<string | null>(() => {
+        return localStorage.getItem('username');
     });
 
     // Function to validate token and update auth state if invalid
@@ -45,7 +52,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.removeItem('authToken');
             localStorage.removeItem('routineUpdateTimeout');
             localStorage.removeItem('nextRoutineUpdate');
+            localStorage.removeItem('username');
             setIsAuthenticated(false);
+            setUsername(null);
         }
     }, []);
 
@@ -107,6 +116,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('authToken');
         localStorage.removeItem('routineUpdateTimeout');
         localStorage.removeItem('nextRoutineUpdate');
+        localStorage.removeItem('username');
+        setUsername(null);
         setIsAuthenticated(false);
     }, []);
 
@@ -119,6 +130,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // First store the token
         localStorage.setItem("authToken", response.token);
+        localStorage.setItem("username", username);
+        setUsername(username);
 
         // Then set auth state
         setIsAuthenticated(true);
@@ -140,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return (
         <AuthContext.Provider value={{
             isAuthenticated,
+            username,
             setIsAuthenticated,
             scheduleRoutineUpdate,
             login,
