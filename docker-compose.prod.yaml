@@ -17,9 +17,9 @@ services:
         build:
             context: ./db
             dockerfile: Dockerfile.prod
-        expose:
-          - "7474"
-          - "7687"
+        ports:
+          - "7474:7474"
+          - "7687:7687"
         volumes:
           - prod_goal_db:/data
           - ${BACKUP_PATH:-/var/lib/goals/backups}:/backups
