@@ -32,6 +32,10 @@ RUN mkdir -p /var/run/cron && \
     chown neo4j:neo4j /var/log/cron/backup.log && \
     chmod 0644 /var/log/cron/backup.log
 
+# Ensure startup directory exists and has correct permissions
+RUN mkdir -p /startup && \
+    chmod 755 /startup
+
 # Copy scripts and set permissions
 COPY backup.sh /scripts/backup.sh
 COPY start.sh /scripts/start.sh
