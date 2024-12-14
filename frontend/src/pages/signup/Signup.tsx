@@ -37,7 +37,7 @@ const Signup: React.FC = () => {
       );
 
       setSuccess(response.message);
-      setTimeout(() => navigate("/signin"), 2000); // Redirect to sign-in after 2 seconds
+      setTimeout(() => navigate("/signin"), 0); // Redirect to sign-in after 2 seconds
     } catch (err: any) {
       if (err.response?.status === 409) {
         setError("Username already exists");
