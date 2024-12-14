@@ -2,6 +2,10 @@
 FROM neo4j:5-community
 
 ENV NEO4J_AUTH=neo4j/password123
+# Configure Neo4j to listen on all interfaces
+ENV NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687
+ENV NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474
+ENV NEO4J_dbms_default__advertised__address=goals_db
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
