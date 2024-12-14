@@ -16,7 +16,7 @@ if [ $? -ne 0 ]; then
 fi
 echo "[$(date)] Cron service started successfully"
 
-# Start Neo4j with a small delay to ensure services are ready
+# Start Neo4j
 echo "[$(date)] Starting Neo4j..."
-sleep 2  # Add a small delay
-exec gosu neo4j neo4j console
+# Use the default neo4j startup command
+exec /docker-entrypoint.sh neo4j
