@@ -21,7 +21,7 @@ import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 
 const NavBar: React.FC = () => {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, username } = useAuth();
   const navigate = useNavigate();
 
   const handleSignOut = () => {
@@ -39,9 +39,12 @@ const NavBar: React.FC = () => {
           <Button color="inherit" component={Link} to="/list">List</Button>
           <Button color="inherit" component={Link} to="/day">Day</Button>
         </Box>
-        <Box sx={{ display: 'flex', gap: 2 }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {isAuthenticated ? (
-            <Button color="inherit" onClick={handleSignOut}>Sign Out</Button>
+            <>
+              <Box sx={{ typography: 'body1', color: 'inherit' }}>{username}</Box>
+              <Button color="inherit" onClick={handleSignOut}>Sign Out</Button>
+            </>
           ) : (
             <>
               <Button color="inherit" component={Link} to="/signin">Sign In</Button>
