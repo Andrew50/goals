@@ -11,11 +11,17 @@ ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
 ENV NEO4J_CONNECTION_TIMEOUT=120
 
+# Install netcat for connection testing
+RUN apt-get update && \
+    apt-get install -y netcat-traditional && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # Add a startup script to wait for Neo4j
 RUN echo '#!/bin/bash\n\
 echo "Waiting for Neo4j to be ready..."\n\
 timeout $NEO4J_CONNECTION_TIMEOUT bash -c "\
-until echo > /dev/tcp/goals_db/7687 2> /dev/null; do \
+until nc -z goals_db 7687 2>/dev/null; do \
     echo \"Waiting for Neo4j...\"; \
     sleep 5; \
 done"\n\
