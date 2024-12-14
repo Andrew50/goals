@@ -18,5 +18,5 @@ echo "[$(date)] Cron service started successfully"
 
 # Start Neo4j
 echo "[$(date)] Starting Neo4j..."
-# Use the default neo4j startup command
-exec /docker-entrypoint.sh neo4j
+# Use the correct path to neo4j entrypoint
+exec /startup/docker-entrypoint.sh neo4j
