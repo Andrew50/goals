@@ -1,5 +1,5 @@
 import { privateRequest } from '../../shared/utils/api';
-import { goalToLocal } from '../../shared/utils/time';
+import { goalToLocal, timestampToDisplayString } from '../../shared/utils/time';
 import React, { useEffect, useState } from 'react';
 import { Goal } from '../../types/goals';
 import { getGoalColor } from '../../shared/styles/colors';
@@ -26,7 +26,10 @@ const Day: React.FC = () => {
                 end: endTimestamp
             }
         }).then((tasks) => {
-            setTasks(tasks.map(goalToLocal));
+            console.log(tasks);
+            const localTasks = tasks.map(goalToLocal);
+            console.log(localTasks);
+            setTasks(localTasks);
         }).catch(error => {
             console.error('Error fetching tasks:', error);
         });
@@ -69,15 +72,6 @@ const Day: React.FC = () => {
         });
     };
 
-    const formatTime = (scheduledTimestamp: number | null | undefined): string => {
-        if (!scheduledTimestamp) return '';
-        return new Date(scheduledTimestamp).toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-        });
-    };
-
     const organizedTasks = () => {
         const todoTasks = tasks.filter(task => !task.completed);
         const completedTasks = tasks.filter(task => task.completed);
@@ -117,7 +111,7 @@ const Day: React.FC = () => {
 
     return (
         <Box className="day-container">
-            <div className="day-header">
+            <div className="day1737199800000-header">
                 <Typography variant="h4" className="day-title">Today's Tasks</Typography>
                 <Button
                     variant="contained"
@@ -139,7 +133,7 @@ const Day: React.FC = () => {
                     <div className="tasks-list">
                         {organizedTasks().todo.map(task => {
                             const goalColor = getGoalColor(task);
-                            const timeString = formatTime(task.scheduled_timestamp);
+                            const timeString = timestampToDisplayString(task.scheduled_timestamp, 'time');
                             return (
                                 <Paper
                                     key={task.id}
