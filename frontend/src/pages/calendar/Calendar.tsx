@@ -456,6 +456,7 @@ const Calendar: React.FC = () => {
                     backgroundColor,
                     borderColor: backgroundColor,
                   }}
+                  title={event?.goal ? `${event.goal.name} (${event.goal.goal_type})` : arg.event.title}
                 >
                   {arg.event.title}
                 </div>
@@ -491,7 +492,7 @@ const Calendar: React.FC = () => {
               }
             });
           }}
-          snapDuration="00:01:00"
+          snapDuration="00:05:00"
           nowIndicator={true}
           dayMaxEvents={true}
         />
