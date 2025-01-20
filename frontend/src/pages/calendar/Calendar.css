@@ -65,3 +65,11 @@
     padding: 16px;
     overflow: hidden;
 }
+
+/* Highlight the current day in month and week views */
+.fc .fc-day-today {
+    background-color: rgba(255, 0, 0, 0.1) !important;
+    /* Light red background */
+    /*border: 1px solid #ff0000;*/
+    /* Red border */
+}

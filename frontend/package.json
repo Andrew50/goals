@@ -30,7 +30,10 @@
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
     "@mui/icons-material": "^5.15.4",
-    "react-hotkeys-hook": "^4.4.1"
+    "react-hotkeys-hook": "^4.4.1",
+    "react-dnd": "^16.0.0",
+    "react-dnd-html5-backend": "^16.0.0",
+    "fuse.js": "^6.6.2"
   },
   "scripts": {
     "start": "react-scripts start",

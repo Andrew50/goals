@@ -7,6 +7,7 @@ import { fetchCalendarData } from './calendarData';
 import { useRef, useEffect } from 'react';
 import { Goal } from '../../types/goals';
 import { Draggable } from '@fullcalendar/interaction';
+import { useDrop } from 'react-dnd';
 
 interface DraggableTaskProps {
   task: CalendarTask;
@@ -83,16 +84,53 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
 
 interface TaskListProps {
   tasks: CalendarTask[];
+  events: CalendarEvent[];
   onAddTask: () => void;
   onTaskUpdate: (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => void;
-  // Removed 'ref' from props
 }
 
 const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
-  ({ tasks, onAddTask, onTaskUpdate }, ref) => {
+  ({ tasks, events, onAddTask, onTaskUpdate }, ref) => {
+    const [, drop] = useDrop({
+      accept: ['calendar-event', 'task'],
+      drop: (item: { id: string }) => {
+        console.log('Dropping item:', item);
+        const taskToUnschedule = events.find((event) => event.id === item.id);
+        if (taskToUnschedule) {
+          const updatedGoal = {
+            ...taskToUnschedule.goal,
+            scheduled_timestamp: undefined,
+          };
+          const updatedTask: CalendarTask = {
+            ...taskToUnschedule,
+            goal: updatedGoal,
+            type: 'task',
+          };
+          onTaskUpdate({
+            events: events.filter((event) => event.id !== item.id),
+            tasks: [...tasks, updatedTask],
+          });
+        }
+      },
+    });
+
+    /// Sort tasks by due date (end date) descending
+    const sortedTasks = tasks.sort((a, b) => {
+      const aDueDate = a.goal.end_timestamp ? new Date(a.goal.end_timestamp).getTime() : 0;
+      const bDueDate = b.goal.end_timestamp ? new Date(b.goal.end_timestamp).getTime() : 0;
+      return bDueDate - aDueDate; // Sort by due date descending
+    });
+
     return (
       <div
-        ref={ref}
+        ref={(node) => {
+          drop(node);
+          if (typeof ref === 'function') {
+            ref(node);
+          } else if (ref) {
+            ref.current = node;
+          }
+        }}
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -100,7 +138,6 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           padding: '16px',
         }}
       >
-        {/* Rest of your component code */}
         <h3
           style={{
             margin: '0 0 16px 0',
@@ -137,7 +174,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             paddingRight: '8px',
           }}
         >
-          {tasks.length === 0 ? (
+          {sortedTasks.length === 0 ? (
             <div
               style={{
                 textAlign: 'center',

@@ -5,6 +5,10 @@ import { Goal, GoalType } from '../../types/goals';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
+import Fuse from 'fuse.js';
+import { formatFrequency } from '../../shared/utils/frequency';
+
+const dontRender = ['id', 'description', 'next_timestamp', 'name'];
 
 const List: React.FC = () => {
     const [list, setList] = useState<Goal[]>([]);
@@ -14,6 +18,8 @@ const List: React.FC = () => {
         direction: 'asc' | 'desc';
     }>({ key: null, direction: 'asc' });
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [showFilters, setShowFilters] = useState(false);
 
     useEffect(() => {
         privateRequest<Goal[]>('list').then(goals => {
@@ -27,6 +33,7 @@ const List: React.FC = () => {
 
         list.forEach(item => {
             Object.entries(item).forEach(([key, value]) => {
+                if (dontRender.includes(key)) return; // Skip the description field
                 if (value !== undefined && value !== null) {
                     if (!options[key]) {
                         options[key] = new Set();
@@ -39,15 +46,44 @@ const List: React.FC = () => {
         return options;
     }, [list]);
 
-    // Filter the list based on selected filters
-    const filteredList = useMemo(() => {
-        return list.filter(item => {
-            return Object.entries(filters).every(([key, value]) => {
-                if (!value) return true;
-                return item[key as keyof Goal] === value;
-            });
+    const fuse = useMemo(() => {
+        return new Fuse(list, {
+            keys: ['name', 'description'],
+            threshold: 0.3, // Adjust this value to control the fuzziness
         });
-    }, [list, filters]);
+    }, [list]);
+
+    const handleFilterChange = (field: keyof Goal, value: any) => {
+        setFilters(prev => ({
+            ...prev,
+            [field]: value === '' ? undefined : value,
+        }));
+    };
+
+    const filteredList = useMemo(() => {
+        let filtered = list;
+
+        // Apply filters
+        Object.entries(filters).forEach(([key, value]) => {
+            if (value !== undefined) {
+                filtered = filtered.filter(item => {
+                    const itemValue = item[key as keyof Goal];
+                    return itemValue?.toString() === value.toString();
+                });
+            }
+        });
+
+        // Apply search query to the filtered list
+        if (searchQuery) {
+            const searchResults = fuse.search(searchQuery);
+            // Only keep items that are both in the filtered list and search results
+            filtered = filtered.filter(item =>
+                searchResults.some(result => result.item.id === item.id)
+            );
+        }
+
+        return filtered;
+    }, [list, filters, searchQuery, fuse]);
 
     // Add sorted list computation
     const sortedList = useMemo(() => {
@@ -67,13 +103,6 @@ const List: React.FC = () => {
         }
         return sorted;
     }, [filteredList, sortConfig]);
-
-    const handleFilterChange = (field: keyof Goal, value: any) => {
-        setFilters(prev => ({
-            ...prev,
-            [field]: value === '' ? undefined : value,
-        }));
-    };
 
     const handleGoalClick = (goal: Goal) => {
         GoalMenu.open(goal, 'view', (updatedGoal) => {
@@ -105,12 +134,33 @@ const List: React.FC = () => {
     };
 
     const renderFilterInput = (field: string, values: Set<any>) => {
+        if (dontRender.includes(field)) return null;
+
+        const sortedValues = Array.from(values).sort((a, b) => {
+            if (typeof a === 'number' && typeof b === 'number') {
+                return a - b; // Sort numbers low to high
+            }
+            return a.toString().localeCompare(b.toString()); // Sort strings A-Z
+        });
+
         const isDateField = field.includes('time') || field.includes('date');
+        const isTimeField = field.includes('routine_time');
 
         if (isDateField) {
             return (
                 <input
                     type="date"
+                    onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
+                    value={filters[field as keyof Goal] || ''}
+                    className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                />
+            );
+        }
+
+        if (isTimeField) {
+            return (
+                <input
+                    type="time"
                     onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
                     value={filters[field as keyof Goal] || ''}
                     className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
@@ -125,7 +175,7 @@ const List: React.FC = () => {
                 className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
             >
                 <option value="">All</option>
-                {Array.from(values).map(value => (
+                {sortedValues.map(value => (
                     <option key={value} value={value}>
                         {value.toString()}
                     </option>
@@ -150,23 +200,54 @@ const List: React.FC = () => {
                     </button>
                 </div>
 
-                <div className="filters-section">
-                    <h3 className="filters-title">Filters</h3>
-                    <div className="filters-grid">
-                        {Object.entries(filterOptions).map(([field, values]) => {
-                            if (values.size <= 1) return null;
-
-                            return (
-                                <div key={field} className="filter-control">
-                                    <label className="filter-label">
-                                        {field.replace(/_/g, ' ')}
-                                    </label>
-                                    {renderFilterInput(field, values)}
-                                </div>
-                            );
-                        })}
-                    </div>
+                <div className="search-section">
+                    <input
+                        type="text"
+                        placeholder="Search goals..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="search-input"
+                    />
+                    <button
+                        onClick={() => setShowFilters(!showFilters)}
+                        className="filter-toggle-button"
+                    >
+                        <svg className="filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707l-5.414 5.414a1 1 0 00-.293.707v4.586a1 1 0 01-.293.707l-2 2A1 1 0 0112 20v-5.586a1 1 0 00-.293-.707L6.293 7.707A1 1 0 016 7V4z" />
+                        </svg>
+                    </button>
                 </div>
+
+                {showFilters && (
+                    <div className="filters-section show">
+                        <div className="filters-header">
+                            <h3 className="filters-title">Filters</h3>
+                            <button
+                                onClick={() => {
+                                    setFilters({});
+                                    setSearchQuery('');
+                                }}
+                                className="reset-filters-button"
+                            >
+                                Reset All
+                            </button>
+                        </div>
+                        <div className="filters-grid">
+                            {Object.entries(filterOptions).map(([field, values]) => {
+                                if (values.size <= 1) return null;
+
+                                return (
+                                    <div key={field} className="filter-control">
+                                        <label className="filter-label">
+                                            {field.replace(/_/g, ' ')}
+                                        </label>
+                                        {renderFilterInput(field, values)}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
 
                 <div className="table-container">
                     <div className="table-wrapper">
@@ -256,7 +337,7 @@ const List: React.FC = () => {
                                             <td className="table-cell">
                                                 {goal.frequency && (
                                                     <span className="frequency-badge">
-                                                        {goal.frequency}
+                                                        {formatFrequency(goal.frequency)}
                                                     </span>
                                                 )}
                                             </td>

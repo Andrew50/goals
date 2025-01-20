@@ -59,6 +59,12 @@ const NetworkView: React.FC
       }
       params.event.preventDefault();
 
+      // Prevent opening GoalMenu in 'relationship' mode
+      console.log('addEdgeMode', addEdgeMode);
+      if (addEdgeMode) {
+        return;
+      }
+
       if (deleteModeRef.current) {
         if (params.nodes.length > 0) {
           console.log('Deleting node:', params.nodes[0]);
@@ -144,6 +150,13 @@ const NetworkView: React.FC
           enabled: false,
           addNode: true,
           addEdge: async function (data: any, callback: Function) {
+            // Prevent creating a relationship to itself
+            if (data.from === data.to) {
+              console.warn('Cannot create a relationship to itself.');
+              callback(null);
+              return;
+            }
+
             try {
               setPendingRelationship({
                 from: data.from,

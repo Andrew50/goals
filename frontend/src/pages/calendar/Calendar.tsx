@@ -110,6 +110,7 @@ const Calendar: React.FC = () => {
       description: '',
       priority: 'medium',
       scheduled_timestamp: dateToTimestamp(arg.date),
+      routine_time: dateToTimestamp(arg.date),
       _tz: 'user'
     };
 
@@ -136,23 +137,26 @@ const Calendar: React.FC = () => {
       info.revert();
       return;
     }
-
     const start = info.event.start;
     if (!start) {
       console.error('Event start date missing');
       info.revert();
       return;
     }
-
     const isAllDay = task.goal.duration === 1440;
     const updatedGoal = {
       ...task.goal,
       scheduled_timestamp: dateToTimestamp(start),
     };
     console.log('updatedGoal', updatedGoal);
-
     try {
-      await updateGoal(task.goal.id, updatedGoal);
+      const redoFunction = async () => {
+        await updateGoal(task.goal.id, updatedGoal);
+      };
+      const undoFunction = async () => {
+        await updateGoal(task.goal.id, task.goal);
+      };
+      await redoFunction();
       setState({
         events: [...state.events, {
           id: task.id,
@@ -166,7 +170,7 @@ const Calendar: React.FC = () => {
           allDay: isAllDay,
         }],
         tasks: state.tasks.filter((t) => t.id !== task.id)
-      });
+      }, undoFunction, redoFunction);
     } catch (error) {
       console.error('Failed to update goal:', error);
       info.revert();
@@ -276,6 +280,7 @@ const Calendar: React.FC = () => {
       }
     }
   };
+
   const handleEventResize = async (info: EventResizeStopArg) => {
     const existingEvent = state.events.find((e) => e.id === info.event.id);
     if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
@@ -382,7 +387,7 @@ const Calendar: React.FC = () => {
     });
   };
 
-  const handleTaskClick = (task: CalendarTask) => {
+  /*const handleTaskClick = (task: CalendarTask) => {
     GoalMenu.open(task.goal, 'edit', async (updatedGoal) => {
       const data = await fetchCalendarData();
       const formattedEvents = [...data.events, ...data.achievements].map(event => ({
@@ -396,11 +401,12 @@ const Calendar: React.FC = () => {
         tasks: data.unscheduledTasks
       });
     });
-  };
+  };*/
 
   const handleTaskUpdate = (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => {
     setState(data);
   };
+
 
   return (
     <div className="calendar-container">
@@ -408,6 +414,7 @@ const Calendar: React.FC = () => {
         <TaskList
           ref={taskListRef}
           tasks={state.tasks}
+          events={state.events}
           onAddTask={handleAddTask}
           onTaskUpdate={handleTaskUpdate}
         />
@@ -425,6 +432,8 @@ const Calendar: React.FC = () => {
           initialView="dayGridMonth"
           editable={true}
           droppable={true}
+          //eventStartEditable={true}
+          //eventDurationEditable={true}
           events={state.events}
           dateClick={handleDateClick}
           eventReceive={handleEventReceive}

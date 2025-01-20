@@ -16,9 +16,7 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
         const currentDate = new Date();
 
         // Convert routines to local timezone before generating events
-        console.log(response.routines);
         const localRoutines = response.routines.map(goalToLocal);
-        console.log(localRoutines);
 
         // Generate routine events with local timezone data
         const routineEvents = localRoutines.map(routine =>
@@ -43,8 +41,6 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
                     timestamp.getUTCSeconds()
                 );
 
-                console.log('Original timestamp:', item.scheduled_timestamp);
-                console.log('Constructed local date:', start);
 
                 return {
                     id: `scheduled-${item.id || Date.now()}`,
@@ -69,7 +65,10 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
                 title: item.name,
                 type: mapGoalTypeToTaskType(item.goal_type),
                 goal: item
-            } as CalendarTask));
+            } as CalendarTask))
+        unscheduledTasks.sort((a, b) => {
+            return (b.goal.end_timestamp || 0) - (a.goal.end_timestamp || 0);
+        });
 
         // Handle achievements with local timezone - all achievements are all-day events
         const achievementEvents = response.achievements

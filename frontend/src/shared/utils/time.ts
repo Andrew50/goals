@@ -15,9 +15,6 @@ export const goalToLocal = (goal: Goal): Goal => {
     if (goal._tz === 'user') {
         throw new Error('Goal is already in user timezone');
     }
-    console.trace()
-    console.log(goal.scheduled_timestamp, toLocalTimestamp(goal.scheduled_timestamp))
-    console.log(goal.routine_time, toLocalTimestamp(goal.routine_time))
 
     return {
         ...goal,
