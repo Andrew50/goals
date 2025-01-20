@@ -111,7 +111,8 @@ const NetworkView: React.FC
               background: '#2e2e2e',
               border: '#90caf9'
             }
-          }
+          },
+          fixed: false
         },
         edges: {
           arrows: {
@@ -120,30 +121,37 @@ const NetworkView: React.FC
               scaleFactor: 1
             }
           },
-          font: {
-            size: 0,
-          },
           smooth: {
             enabled: true,
-            type: 'cubicBezier',
-            roundness: 0.5
+            type: 'straightCross',
+            roundness: 0.2
           },
           width: 2,
           color: {
             color: '#666666',
-            highlight: '#90caf9'
-          }
+            highlight: '#90caf9',
+            hover: '#90caf9'
+          },
+          selectionWidth: 4,
+          hoverWidth: 4,
+          opacity: 0.6
         },
         layout: {
+          randomSeed: 2,
+          improvedLayout: true,
+          clusterThreshold: 150,
           hierarchical: {
-            enabled: true,
-            direction: 'UD',
-            sortMethod: 'directed',
-            nodeSpacing: 150,
-            levelSeparation: 150,
-            parentCentralization: true,
-            edgeMinimization: false,
-            blockShifting: true,
+            /* enabled: true,
+             direction: 'UD',
+             sortMethod: 'directed',
+             nodeSpacing: 200,
+             levelSeparation: 200,
+             treeSpacing: 200,
+             parentCentralization: true,
+             edgeMinimization: false,
+             blockShifting: true,
+             shakeTowards: 'roots',*/
+            enabled: false
           }
         },
         manipulation: {
@@ -184,11 +192,27 @@ const NetworkView: React.FC
           hoverConnectedEdges: true,
         },
         physics: {
-          enabled: false
+          enabled: false,
+          solver: 'barnesHut',
+          barnesHut: {
+            gravitationalConstant: -2000,
+            centralGravity: 0.3,
+            springLength: 95,
+            springConstant: 0.04,
+            damping: 0.09,
+            avoidOverlap: 0.1
+          },
+          stabilization: {
+            enabled: true,
+            iterations: 1000,
+            updateInterval: 50,
+            fit: true
+          },
+          maxVelocity: 30,
+          minVelocity: 0.75,
+          timestep: 0.5
         }
-      }
-
-
+      } as const;
 
       if (networkContainer.current && networkData) {
 
@@ -377,6 +401,14 @@ const NetworkView: React.FC
         }
       }, 100);
     };
+
+    useEffect(() => {
+      if (networkRef.current) {
+        networkRef.current.once('stabilizationIterationsDone', () => {
+          networkRef.current?.setOptions({ physics: { enabled: false } });
+        });
+      }
+    }, [networkRef.current]);
 
     return (
       <div style={{

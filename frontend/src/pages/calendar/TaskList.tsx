@@ -8,6 +8,7 @@ import { useRef, useEffect } from 'react';
 import { Goal } from '../../types/goals';
 import { Draggable } from '@fullcalendar/interaction';
 import { useDrop } from 'react-dnd';
+import { timestampToDisplayString } from '../../shared/utils/time';
 
 interface DraggableTaskProps {
   task: CalendarTask;
@@ -16,6 +17,10 @@ interface DraggableTaskProps {
 }
 
 const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
+  const formatDueDate = (timestamp?: number) => {
+    if (!timestamp) return '';
+    return timestampToDisplayString(timestamp, 'date');
+  };
 
   const handleClick = () => {
     if (task.goal) {
@@ -65,7 +70,7 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
         cursor: 'grab',
         display: 'flex',
         alignItems: 'center',
-        gap: '8px',
+        justifyContent: 'space-between',
         color: '#ffffff',
       }}
       onClick={handleClick}
@@ -77,7 +82,17 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
         borderRadius: '50%',
         backgroundColor: '#2196f3',
       }} />*/}
-      {task.title}
+      <span>{task.title}</span>
+      {task.goal.end_timestamp && (
+        <span style={{
+          fontSize: '0.85em',
+          opacity: 0.9,
+          marginLeft: '8px',
+          whiteSpace: 'nowrap'
+        }}>
+          Due {formatDueDate(task.goal.end_timestamp)}
+        </span>
+      )}
     </div>
   );
 };
