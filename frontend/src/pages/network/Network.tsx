@@ -171,8 +171,8 @@ const NetworkView: React.FC
           enabled: true,
           solver: 'repulsion',
           repulsion: {
-            nodeDistance: 350,     // Minimum distance between nodes
-            centralGravity: 0.1,   // Very light pull to center
+            nodeDistance: 250,     // Reduced from 350 for tighter spacing
+            centralGravity: 0.1,   // Keep light pull to center
             springLength: 0,       // No spring force
             springConstant: 0,     // No spring force
             damping: 0.9,         // High damping to reduce movement
