@@ -51,8 +51,50 @@ const NetworkView: React.FC
     const [deleteMode, setDeleteMode] = useState(false);
     const deleteModeRef = useRef(deleteMode);
 
+    const findConnectedElements = (
+      nodeId: number,
+      edges: NetworkEdge[],
+      visited: Set<number> = new Set(),
+      connectedEdges: Set<string> = new Set()
+    ): { nodes: Set<number>, edges: Set<string> } => {
+      // Helper functions for directional traversal
+      const traverseUpward = (currentId: number) => {
+        if (visited.has(currentId)) return;
+        visited.add(currentId);
+
+        // Find parent relationships (where current node is the 'to' node)
+        edges.forEach(edge => {
+          if (edge.to === currentId) {
+            connectedEdges.add(`${edge.from}-${edge.to}`);
+            traverseUpward(edge.from);
+          }
+        });
+      };
+
+      const traverseDownward = (currentId: number) => {
+        if (visited.has(currentId)) return;
+        visited.add(currentId);
+
+        // Find child relationships (where current node is the 'from' node)
+        edges.forEach(edge => {
+          if (edge.from === currentId) {
+            connectedEdges.add(`${edge.from}-${edge.to}`);
+            traverseDownward(edge.to);
+          }
+        });
+      };
+
+      // Start from the hovered node and traverse both up and down
+      visited.clear(); // Reset visited set before starting
+      traverseUpward(nodeId);
+
+      visited.clear(); // Reset visited set before downward traversal
+      traverseDownward(nodeId);
+
+      return { nodes: visited, edges: connectedEdges };
+    };
+
     const handleClick = (params: any, goalDialogMode: "edit" | "view") => {
-      console.log('Delete mode:', deleteModeRef.current);
       if (!networkRef.current) {
         console.log('No network');
         return;
@@ -60,22 +102,19 @@ const NetworkView: React.FC
       params.event.preventDefault();
 
       // Prevent opening GoalMenu in 'relationship' mode
-      console.log('addEdgeMode', addEdgeMode);
       if (addEdgeMode) {
         return;
       }
 
       if (deleteModeRef.current) {
         if (params.nodes.length > 0) {
-          console.log('Deleting node:', params.nodes[0]);
           handleDeleteNode(params.nodes[0]);
         } else if (params.edges.length > 0) {
-          console.log('Deleting edge:', params.edges[0]);
-          const edgeId = params.edges[0];
-          handleDeleteEdge(edgeId);
+          handleDeleteEdge(params.edges[0]);
         }
         return;
       }
+
       const nodeId = networkRef.current?.getNodeAt(params.pointer.DOM);
       if (nodeId && networkData) {
         const node = networkData.nodes.find(n => n.id === nodeId);
@@ -92,141 +131,117 @@ const NetworkView: React.FC
         nodes: {
           shape: 'box',
           margin: {
-            top: 10,
-            right: 10,
-            bottom: 10,
-            left: 10
+            top: 12,
+            right: 12,
+            bottom: 12,
+            left: 12
           },
           font: {
             size: 14,
-            color: '#ffffff'
+            color: '#ffffff',
+            bold: {
+              color: '#ffffff',
+              size: 14,
+              mod: 'bold'
+            }
           },
           widthConstraint: {
             maximum: 150
           },
-          color: {
-            background: '#1e1e1e',
-            border: '#333333',
-            highlight: {
-              background: '#2e2e2e',
-              border: '#90caf9'
-            }
-          },
-          fixed: false
-        },
-        edges: {
-          arrows: {
-            to: {
-              enabled: true,
-              scaleFactor: 1
-            }
-          },
-          smooth: {
-            enabled: true,
-            type: 'straightCross',
-            roundness: 0.2
-          },
-          width: 2,
-          color: {
-            color: '#666666',
-            highlight: '#90caf9',
-            hover: '#90caf9'
-          },
-          selectionWidth: 4,
-          hoverWidth: 4,
-          opacity: 0.6
-        },
-        layout: {
-          randomSeed: 2,
-          improvedLayout: true,
-          clusterThreshold: 150,
-          hierarchical: {
-            /* enabled: true,
-             direction: 'UD',
-             sortMethod: 'directed',
-             nodeSpacing: 200,
-             levelSeparation: 200,
-             treeSpacing: 200,
-             parentCentralization: true,
-             edgeMinimization: false,
-             blockShifting: true,
-             shakeTowards: 'roots',*/
-            enabled: false
+          fixed: {
+            x: false,
+            y: false
           }
         },
-        manipulation: {
-          enabled: false,
-          addNode: true,
-          addEdge: async function (data: any, callback: Function) {
-            // Prevent creating a relationship to itself
-            if (data.from === data.to) {
-              console.warn('Cannot create a relationship to itself.');
-              callback(null);
-              return;
-            }
-
-            try {
-              setPendingRelationship({
-                from: data.from,
-                to: data.to
-              });
-              setDialogMode('relationship');
-              callback(data);
-            } catch (err) {
-              console.error('Edge creation error:', err);
-              callback(null);
-            }
+        edges: {
+          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+          smooth: {
+            enabled: true,
+            type: 'curvedCW',
+            roundness: 0.2,
+            forceDirection: 'radial'
           },
-          editEdge: false,
-          deleteNode: true,
-          deleteEdge: true,
-        },
-        interaction: {
-          navigationButtons: false,
-          hover: true,
-          dragNodes: true,
-          dragView: true,
-          zoomView: true,
-          selectable: true,
-          selectConnectedEdges: true,
-          hoverConnectedEdges: true,
+          width: 1.5,
+          color: {
+            inherit: 'from',
+            opacity: 0.7
+          }
         },
         physics: {
-          enabled: false,
-          solver: 'barnesHut',
-          barnesHut: {
-            gravitationalConstant: -2000,
-            centralGravity: 0.3,
-            springLength: 95,
-            springConstant: 0.04,
-            damping: 0.09,
-            avoidOverlap: 0.1
+          enabled: true,
+          solver: 'repulsion',
+          repulsion: {
+            nodeDistance: 350,     // Minimum distance between nodes
+            centralGravity: 0.1,   // Very light pull to center
+            springLength: 0,       // No spring force
+            springConstant: 0,     // No spring force
+            damping: 0.9,         // High damping to reduce movement
+            avoidOverlap: 1.0
           },
           stabilization: {
             enabled: true,
             iterations: 1000,
-            updateInterval: 50,
+            updateInterval: 100,
             fit: true
           },
-          maxVelocity: 30,
-          minVelocity: 0.75,
-          timestep: 0.5
+          maxVelocity: 5,          // Very low max velocity
+          minVelocity: 0.1,        // When to consider system stable
+          timestep: 0.1            // Smaller timestep for more stable movement
+        },
+        interaction: {
+          dragNodes: true,
+          dragView: true,
+          zoomView: true,
+          hover: true,
+          navigationButtons: false,
+          keyboard: {
+            enabled: true,
+            bindToWindow: true
+          }
+        },
+        bounds: {
+          min: {
+            x: -1000,
+            y: -1000
+          },
+          max: {
+            x: 1000,
+            y: 1000
+          }
         }
       } as const;
 
       if (networkContainer.current && networkData) {
-
         const formattedData = buildHierarchy(networkData);
         const network = new VisNetwork(
           networkContainer.current,
           formattedData,
           options
         );
+
+        // Add hover event handlers
+        network.on('hoverNode', (params) => {
+          if (networkData) {
+            const { edges: connectedEdges } = findConnectedElements(params.node, networkData.edges);
+            network.setSelection({
+              nodes: [],
+              edges: Array.from(connectedEdges)
+            });
+          }
+        });
+
+        network.on('blurNode', () => {
+          network.setSelection({ nodes: [], edges: [] });
+        });
+
         network.on('click', (params: any) => handleClick(params, 'view'));
         network.on('oncontext', (params: any) => handleClick(params, 'edit'));
         networkRef.current = network;
-      }
 
+        network.once('stabilizationIterationsDone', () => {
+          network.setOptions({ physics: { enabled: false } });
+        });
+      }
     };
     useEffect(() => {
       const loadInitialData = async () => {
@@ -281,8 +296,6 @@ const NetworkView: React.FC
 
       setNetworkData(response);
     };
-
-
 
     useEffect(() => {
       if (networkContainer.current && networkRef.current) {
@@ -401,14 +414,6 @@ const NetworkView: React.FC
         }
       }, 100);
     };
-
-    useEffect(() => {
-      if (networkRef.current) {
-        networkRef.current.once('stabilizationIterationsDone', () => {
-          networkRef.current?.setOptions({ physics: { enabled: false } });
-        });
-      }
-    }, [networkRef.current]);
 
     return (
       <div style={{

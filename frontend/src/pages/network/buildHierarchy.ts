@@ -1,5 +1,7 @@
 // Initialize node levels
 import { NetworkNode, NetworkEdge } from '../../types/goals';
+import { getGoalColor } from '../../shared/styles/colors';
+
 const BASE_SPACING = 300;  // Base distance between nodes
 const MIN_DISTANCE = 300;  // Minimum distance between nodes (prevent overlap)
 const REPULSION_STRENGTH = 1.0;  // Increased repulsion strength
@@ -131,6 +133,30 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         return { x: repulsionX, y: repulsionY };
     };
 
+    const calculateNodeImportance = (nodeId: number): number => {
+        const childCount = outgoingChildEdges[nodeId]?.length || 0;
+        const queueCount = outgoingQueueEdges[nodeId]?.length || 0;
+        const parentCount = incomingChildEdges[nodeId]?.length || 0;
+
+        // Calculate recursive children count (depth-first search)
+        const getRecursiveChildCount = (id: number, visited = new Set<number>()): number => {
+            if (visited.has(id)) return 0;
+            visited.add(id);
+
+            let count = outgoingChildEdges[id]?.length || 0;
+            outgoingChildEdges[id]?.forEach(childId => {
+                count += getRecursiveChildCount(childId, visited);
+            });
+            return count;
+        };
+
+        const recursiveChildren = getRecursiveChildCount(nodeId);
+        const totalConnections = childCount + queueCount + parentCount;
+
+        // Weighted importance score
+        return (recursiveChildren * 2) + totalConnections;
+    };
+
     const findBestPosition = (nodeId: number): { x: number, y: number } => {
         const connectedNodes = [
             ...incomingChildEdges[nodeId] || [],
@@ -174,8 +200,9 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
                 baseY *= scaleFactor;
             }
         } else {
-            // Place disconnected nodes in a wider spiral
-            const angle = processedNodes.size * (Math.PI * 0.618033988749895);
+            // Use golden ratio for even spacing
+            const goldenRatio = 1.618033988749895;
+            const angle = processedNodes.size * (Math.PI * goldenRatio);
             const radius = BASE_SPACING * Math.sqrt(processedNodes.size) * PERIPHERAL_FACTOR;
             baseX = Math.cos(angle) * radius;
             baseY = Math.sin(angle) * radius;
@@ -183,9 +210,8 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
 
         // Apply repulsion and ensure minimum distance
         const repulsion = calculateRepulsion(baseX, baseY);
-        const jitter = BASE_SPACING * 0.1;
-        let finalX = baseX + repulsion.x + (Math.random() - 0.5) * jitter;
-        let finalY = baseY + repulsion.y + (Math.random() - 0.5) * jitter;
+        let finalX = baseX + repulsion.x;
+        let finalY = baseY + repulsion.y;
 
         // Iteratively adjust position if too close to any existing node
         let iterations = 0;
@@ -241,43 +267,122 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         }
     });
 
-    // Format nodes with calculated positions
+    // Format nodes with calculated positions and sizes
     const formattedNodes = networkData.nodes.map((node: NetworkNode) => {
         const pos = nodePositions[node.id];
+        const importance = calculateNodeImportance(node.id);
+
+        // More dramatic node size scaling
+        const baseSize = 40;    // Increased base size
+        const maxSize = 120;    // Increased max size
+        const size = Math.min(baseSize + (importance * 8), maxSize);  // More aggressive scaling
+
+        // Scale font with node size
+        const fontSize = Math.max(16, Math.min(size / 2.5, 24));  // Larger font range
+
         return {
             ...node,
-            x: pos.x,
-            y: pos.y,
-            fixed: {
-                x: true,
-                y: true
+            size,
+            font: {
+                size: fontSize,
+                color: '#ffffff',
+                bold: {
+                    color: '#ffffff',
+                    size: fontSize,
+                    mod: 'bold'
+                }
+            },
+            color: {
+                background: getGoalColor(node),
+                opacity: Math.min(0.6 + (importance * 0.15), 1)  // More dramatic opacity scaling
             }
         };
     });
 
+    // Helper to calculate edge importance
+    const calculateEdgeImportance = (fromId: number, toId: number): number => {
+        const fromImportance = calculateNodeImportance(fromId);
+        const toImportance = calculateNodeImportance(toId);
+        return (fromImportance + toImportance) / 2;
+    };
+
     const formattedData = {
         nodes: formattedNodes,
         edges: networkData.edges.map(edge => {
-            const isQueue = edge.relationship_type === 'queue';
+            const edgeImportance = calculateEdgeImportance(edge.from, edge.to);
+
+            // Scale edge width based on importance
+            const baseWidth = 1;
+            const maxWidth = 8;
+            const width = Math.max(baseWidth, Math.min(baseWidth + (edgeImportance * 0.5), maxWidth));
+
+            // Scale arrow size with edge width
+            const arrowScale = Math.max(0.5, Math.min(width * 0.3, 2));
+
             return {
                 ...edge,
                 id: `${edge.from}-${edge.to}`,
-                label: undefined,
-                color: isQueue ? '#ff9800' : '#2196F3',
+                width: width,
+                color: {
+                    color: edge.relationship_type === 'queue' ? '#ff9800' : '#2196F3',
+                    opacity: Math.min(0.4 + (edgeImportance * 0.1), 0.9)  // More visible edges
+                },
                 arrows: {
                     to: {
-                        enabled: true
+                        enabled: true,
+                        scaleFactor: arrowScale,
+                        type: edge.relationship_type === 'queue' ? 'vee' : 'arrow'
                     }
                 },
-                dashes: isQueue,
+                dashes: edge.relationship_type === 'queue',
                 smooth: {
                     enabled: true,
-                    type: edge.relationship_type === 'queue' ? 'curvedCW' : 'straightCross',
-                    roundness: edge.relationship_type === 'queue' ? 0.2 : 0.1
-                },
-                physics: true, // Enable physics for all edges
+                    type: 'curvedCW',
+                    roundness: edge.relationship_type === 'queue' ? 0.3 : 0.2,
+                    forceDirection: 'radial'
+                }
             };
         })
+    };
+
+    // Update the network options in Network.tsx to enable clustering
+    const options = {
+        // ... existing options ...
+        nodes: {
+            // ... existing node options ...
+            scaling: {
+                min: 30,
+                max: 80,
+                label: {
+                    enabled: true,
+                    min: 14,
+                    max: 20
+                }
+            }
+        },
+        physics: {
+            enabled: true,
+            barnesHut: {
+                gravitationalConstant: -3000,  // Stronger gravity for tighter clusters
+                centralGravity: 0.5,          // Stronger pull toward center
+                springLength: 200,            // Longer springs for better spacing
+                springConstant: 0.04,
+                damping: 0.09,
+                avoidOverlap: 0.5            // Increased overlap avoidance
+            },
+            stabilization: {
+                enabled: true,
+                iterations: 1000,
+                updateInterval: 50
+            }
+        },
+        layout: {
+            improvedLayout: true,
+            clusterThreshold: 150,
+            hierarchical: {
+                enabled: false
+            }
+        }
     };
 
     return formattedData;

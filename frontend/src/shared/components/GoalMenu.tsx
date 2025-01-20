@@ -364,7 +364,7 @@ const GoalMenu: GoalMenuComponent = () => {
     );
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Schedule Time:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
+            <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
         </Box>
     ) : (
         <TextField
