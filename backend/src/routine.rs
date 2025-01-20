@@ -271,4 +271,76 @@ mod tests {
             current.date() + Duration::days(30)
         );
     }
+
+    #[tokio::test]
+    async fn test_catch_up_routine_no_duplicates() {
+        let graph = Graph::new("bolt://localhost:7687", "neo4j", "password")
+            .await
+            .unwrap();
+
+        // First, let's verify our initial state
+        let initial_query =
+            "MATCH (g:Goal) WHERE g.goal_type = 'routine' AND g.user_id = 1 RETURN g LIMIT 1";
+        let mut result = graph.execute(initial_query).await.unwrap();
+        let row = result.next().await.unwrap().unwrap();
+        let routine_value = row.get("g").unwrap();
+        let routine: Goal = serde_json::from_value(routine_value).unwrap();
+
+        // Get current count of generated tasks
+        let count_before = count_generated_tasks(&graph, routine.id.unwrap()).await;
+
+        // Run catch_up_routine multiple times with the same timestamp
+        let current_time = Utc::now().timestamp_millis();
+
+        // First run
+        catch_up_routine(&graph, &routine, current_time)
+            .await
+            .unwrap();
+        let count_after_first = count_generated_tasks(&graph, routine.id.unwrap()).await;
+
+        // Second run - should not create new tasks
+        catch_up_routine(&graph, &routine, current_time)
+            .await
+            .unwrap();
+        let count_after_second = count_generated_tasks(&graph, routine.id.unwrap()).await;
+
+        assert_eq!(
+            count_after_first, count_after_second,
+            "Second run should not create additional tasks"
+        );
+
+        // Verify the tasks created
+        let tasks_query = format!(
+            "MATCH (r:Goal)-[:GENERATED]->(t:Goal) 
+             WHERE id(r) = {} 
+             RETURN t.start_timestamp as start, t.end_timestamp as end",
+            routine.id.unwrap()
+        );
+        let mut result = graph.execute(&tasks_query).await.unwrap();
+
+        // Collect and verify no duplicate timestamps
+        let mut timestamps = Vec::new();
+        while let Some(row) = result.next().await.unwrap() {
+            let start: i64 = row.get("start").unwrap();
+            timestamps.push(start);
+        }
+
+        let unique_timestamps: std::collections::HashSet<_> = timestamps.iter().cloned().collect();
+        assert_eq!(
+            timestamps.len(),
+            unique_timestamps.len(),
+            "Found duplicate start timestamps: {:?}",
+            timestamps
+        );
+    }
+
+    async fn count_generated_tasks(graph: &Graph, routine_id: i64) -> i64 {
+        let query = "MATCH (r:Goal)-[:GENERATED]->(t:Goal) WHERE id(r) = $routine_id RETURN count(t) as count";
+        let mut result = graph
+            .execute(neo4rs::query(query).param("routine_id", routine_id))
+            .await
+            .unwrap();
+        let row = result.next().await.unwrap().unwrap();
+        row.get("count").unwrap()
+    }
 }
