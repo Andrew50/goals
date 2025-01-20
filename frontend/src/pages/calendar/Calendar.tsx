@@ -449,18 +449,20 @@ const Calendar: React.FC = () => {
             const event = state.events.find((e) => e.id === arg.event.id);
             const backgroundColor = event?.goal ? getGoalColor(event.goal) : '#f5f5f5';
             return (
-              <>
-                <div
-                  className="custom-calendar-event"
-                  style={{
-                    backgroundColor,
-                    borderColor: backgroundColor,
-                  }}
-                  title={event?.goal ? `${event.goal.name} (${event.goal.goal_type})` : arg.event.title}
-                >
-                  {arg.event.title}
-                </div>
-              </>
+              <div
+                className="custom-calendar-event"
+                style={{
+                  backgroundColor,
+                  borderColor: backgroundColor,
+                  overflow: 'hidden',
+                  whiteSpace: 'nowrap',
+                  textOverflow: 'ellipsis',
+                  width: '100%'
+                }}
+                title={event?.goal ? `${event.goal.name} (${event.goal.goal_type})` : arg.event.title}
+              >
+                {arg.event.title}
+              </div>
             );
           }}
           slotDuration="00:30:00"

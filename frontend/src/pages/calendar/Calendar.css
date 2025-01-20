@@ -11,10 +11,11 @@
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 4px;
+    padding: 2px 4px;
     color: #ffffff;
     display: flex;
     align-items: center;
+    min-height: 100%;
 }
 
 /* Remove current day highlighting */
@@ -72,4 +73,9 @@
     /* Light red background */
     /*border: 1px solid #ff0000;*/
     /* Red border */
+}
+
+/* Ensure the event container takes full width */
+.fc-event-main-frame {
+    width: 100%;
 }
