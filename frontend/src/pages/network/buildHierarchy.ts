@@ -81,7 +81,8 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         roots: rootNodes,
         connectors: [],
         leaves: [],
-        others: []
+        others: [],
+        isolated: []  // New group for nodes with no connections
     };
 
     const sortedNodes = [...nodes].sort((a, b) =>
@@ -94,8 +95,11 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         const hasParents = incomingChildEdges[nodeId].length > 0;
         const hasChildren = outgoingChildEdges[nodeId].length > 0;
         const hasQueue = outgoingQueueEdges[nodeId].length > 0;
+        const hasConnections = hasParents || hasChildren || hasQueue;
 
-        if (hasParents && (hasChildren || hasQueue)) {
+        if (!hasConnections) {
+            nodeGroups.isolated.push(nodeId);
+        } else if (hasParents && (hasChildren || hasQueue)) {
             nodeGroups.connectors.push(nodeId);
         } else if (!hasChildren && !hasQueue) {
             nodeGroups.leaves.push(nodeId);
@@ -245,24 +249,34 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         return { x: finalX, y: finalY };
     };
 
-    // Place nodes in order: roots -> connectors -> others -> leaves
+    // Place nodes in order: roots -> connectors -> others -> leaves -> isolated
     const placementOrder = [
         ...nodeGroups.roots,
         ...nodeGroups.connectors,
         ...nodeGroups.others,
-        ...nodeGroups.leaves
+        ...nodeGroups.leaves,
+        ...nodeGroups.isolated
     ];
 
-    // Place first node at center
-    if (placementOrder.length > 0) {
-        nodePositions[placementOrder[0]] = { x: 0, y: 0 };
-        processedNodes.add(placementOrder[0]);
-    }
+    // For isolated nodes, place them in a circle around the periphery
+    const placeIsolatedNode = (nodeId: number, index: number) => {
+        const totalIsolated = nodeGroups.isolated.length;
+        const angle = (index / totalIsolated) * 2 * Math.PI;
+        const radius = 800; // Large radius to place them far from the center
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        return { x, y };
+    };
 
-    // Place remaining nodes
-    placementOrder.slice(1).forEach(nodeId => {
+    // Place nodes
+    placementOrder.forEach((nodeId, index) => {
         if (!processedNodes.has(nodeId)) {
-            nodePositions[nodeId] = findBestPosition(nodeId);
+            if (nodeGroups.isolated.includes(nodeId)) {
+                const isolatedIndex = nodeGroups.isolated.indexOf(nodeId);
+                nodePositions[nodeId] = placeIsolatedNode(nodeId, isolatedIndex);
+            } else {
+                nodePositions[nodeId] = findBestPosition(nodeId);
+            }
             processedNodes.add(nodeId);
         }
     });
@@ -273,12 +287,15 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         const importance = calculateNodeImportance(node.id);
 
         // More dramatic node size scaling
-        const baseSize = 40;    // Increased base size
-        const maxSize = 120;    // Increased max size
-        const size = Math.min(baseSize + (importance * 8), maxSize);  // More aggressive scaling
+        const baseSize = 30;        // Smaller base size for less important nodes
+        const maxSize = 200;        // Larger max size for important nodes
+        const scalingFactor = 12;   // Increased from 8 for more dramatic scaling
+        const size = Math.min(baseSize + (importance * scalingFactor), maxSize);
 
-        // Scale font with node size
-        const fontSize = Math.max(16, Math.min(size / 2.5, 24));  // Larger font range
+        // More dramatic font scaling
+        const minFontSize = 14;
+        const maxFontSize = 28;     // Increased max font size
+        const fontSize = Math.max(minFontSize, Math.min(size / 2.5, maxFontSize));
 
         return {
             ...node,
@@ -294,7 +311,7 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
             },
             color: {
                 background: getGoalColor(node),
-                opacity: Math.min(0.6 + (importance * 0.15), 1)  // More dramatic opacity scaling
+                opacity: Math.min(0.5 + (importance * 0.2), 1)  // More dramatic opacity scaling
             }
         };
     });
