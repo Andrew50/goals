@@ -4,6 +4,8 @@ import { useHotkeys } from 'react-hotkeys-hook';
 interface HistoryState<T> {
     data: T;
     timestamp: number;
+    undoFunction?: () => Promise<void>;
+    redoFunction?: () => Promise<void>;
 }
 
 class HistoryManager<T> {
@@ -15,7 +17,7 @@ class HistoryManager<T> {
         this.maxHistory = maxHistory;
     }
 
-    pushState(data: T) {
+    pushState(data: T, undoFunction?: () => Promise<void>, redoFunction?: () => Promise<void>) {
         // Remove any future states if we're not at the end
         if (this.currentIndex < this.history.length - 1) {
             this.history = this.history.slice(0, this.currentIndex + 1);
@@ -24,7 +26,9 @@ class HistoryManager<T> {
         // Add new state
         this.history.push({
             data: JSON.parse(JSON.stringify(data)), // Deep clone the data
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            undoFunction,
+            redoFunction
         });
 
         // Remove oldest states if we exceed maxHistory
@@ -35,18 +39,26 @@ class HistoryManager<T> {
         this.currentIndex = this.history.length - 1;
     }
 
-    undo(): T | null {
+    async undo(): Promise<T | null> {
         if (this.currentIndex > 0) {
+            const currentState = this.history[this.currentIndex];
+            if (currentState.undoFunction) {
+                await currentState.undoFunction();
+            }
             this.currentIndex--;
             return this.history[this.currentIndex].data;
         }
         return null;
     }
 
-    redo(): T | null {
+    async redo(): Promise<T | null> {
         if (this.currentIndex < this.history.length - 1) {
             this.currentIndex++;
-            return this.history[this.currentIndex].data;
+            const currentState = this.history[this.currentIndex];
+            if (currentState.redoFunction) {
+                await currentState.redoFunction();
+            }
+            return currentState.data;
         }
         return null;
     }
@@ -80,9 +92,9 @@ export function useHistoryState<T>(
     // Setup hotkeys
     useHotkeys(
         'ctrl+z, cmd+z',
-        (event) => {
+        async (event) => {
             event.preventDefault();
-            const previousState = historyManager.current.undo();
+            const previousState = await historyManager.current.undo();
             if (previousState) {
                 setState(previousState);
                 options.onUndo?.(previousState);
@@ -93,9 +105,9 @@ export function useHistoryState<T>(
 
     useHotkeys(
         'ctrl+shift+z, cmd+shift+z',
-        (event) => {
+        async (event) => {
             event.preventDefault();
-            const nextState = historyManager.current.redo();
+            const nextState = await historyManager.current.redo();
             if (nextState) {
                 setState(nextState);
                 options.onRedo?.(nextState);
@@ -104,8 +116,8 @@ export function useHistoryState<T>(
         { scopes: options.hotkeyScope ? [options.hotkeyScope] : undefined }
     );
 
-    const setStateWithHistory = useCallback((newState: T) => {
-        historyManager.current.pushState(newState);
+    const setStateWithHistory = useCallback((newState: T, undoFunction?: () => Promise<void>, redoFunction?: () => Promise<void>) => {
+        historyManager.current.pushState(newState, undoFunction, redoFunction);
         setState(newState);
     }, []);
 

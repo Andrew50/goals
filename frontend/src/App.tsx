@@ -2,7 +2,8 @@ import React from 'react';
 import { BrowserRouter as Router, Route, Routes, Link, useNavigate } from 'react-router-dom';
 import { ThemeProvider, AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
 import { theme } from './shared/styles/theme';
-
+import { DndProvider } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
 
 // Import CSS files in correct order
 import './index.css';
@@ -62,50 +63,52 @@ const App: React.FC = () => {
     <AuthProvider>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <Router>
-          <Box sx={{
-            minHeight: '100vh',
-            display: 'flex',
-            flexDirection: 'column',
-            bgcolor: 'background.default',
-            color: 'text.primary'
-          }}>
-            <NavBar />
+        <DndProvider backend={HTML5Backend}>
+          <Router>
             <Box sx={{
-              flexGrow: 1,
-              overflow: 'auto'
+              minHeight: '100vh',
+              display: 'flex',
+              flexDirection: 'column',
+              bgcolor: 'background.default',
+              color: 'text.primary'
             }}>
-              <Routes>
-                <Route path="/signup" element={<Signup />} />
-                <Route path="/signin" element={<Signin />} />
-                <Route path="/" element={<Root />} />
+              <NavBar />
+              <Box sx={{
+                flexGrow: 1,
+                overflow: 'auto'
+              }}>
+                <Routes>
+                  <Route path="/signup" element={<Signup />} />
+                  <Route path="/signin" element={<Signin />} />
+                  <Route path="/" element={<Root />} />
 
-                {/* Protected Routes */}
-                <Route path="/calendar" element={
-                  <ProtectedRoute>
-                    <Calendar />
-                  </ProtectedRoute>
-                } />
-                <Route path="/network" element={
-                  <ProtectedRoute>
-                    <Network />
-                  </ProtectedRoute>
-                } />
-                <Route path="/list" element={
-                  <ProtectedRoute>
-                    <List />
-                  </ProtectedRoute>
-                } />
-                <Route path="/day" element={
-                  <ProtectedRoute>
-                    <Day />
-                  </ProtectedRoute>
-                } />
-              </Routes>
+                  {/* Protected Routes */}
+                  <Route path="/calendar" element={
+                    <ProtectedRoute>
+                      <Calendar />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/network" element={
+                    <ProtectedRoute>
+                      <Network />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/list" element={
+                    <ProtectedRoute>
+                      <List />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/day" element={
+                    <ProtectedRoute>
+                      <Day />
+                    </ProtectedRoute>
+                  } />
+                </Routes>
+              </Box>
+              <GoalMenu />
             </Box>
-            <GoalMenu />
-          </Box>
-        </Router>
+          </Router>
+        </DndProvider>
       </ThemeProvider>
     </AuthProvider>
   );

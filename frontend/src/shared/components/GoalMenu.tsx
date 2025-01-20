@@ -23,6 +23,7 @@ import {
     timestampToDisplayString
 } from '../utils/time';
 import { validateGoal } from '../utils/goalValidation'
+import { formatFrequency } from '../utils/frequency';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
 
@@ -111,6 +112,11 @@ const GoalMenu: GoalMenuComponent = () => {
         if (state.mode === 'view' && newGoal.completed !== state.goal.completed) {
             handleCompletionToggle(newGoal.completed || false);
             return;
+        }
+
+        // Set default frequency if goal type is 'routine' and frequency is undefined
+        if (newGoal.goal_type === 'routine' && newGoal.frequency === undefined) {
+            newGoal.frequency = '1D';
         }
 
         // For all other changes, update the local state
@@ -277,7 +283,10 @@ const GoalMenu: GoalMenuComponent = () => {
             <strong>Duration:</strong> {(() => {
                 const duration = state.goal.duration;
                 if (!duration) return 'Not set';
-                return duration === 1440 ? 'All Day' : `${(duration / 60).toFixed(2)}h`;
+                if (duration === 1440) return 'All Day';
+                const hours = Math.floor(duration / 60);
+                const minutes = duration % 60;
+                return `${hours}h ${minutes}m`;
             })()}
         </Box>
     ) : (
@@ -436,30 +445,7 @@ const GoalMenu: GoalMenuComponent = () => {
     );
     const frequencyField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Frequency:</strong> {(() => {
-                if (!state.goal.frequency) return 'Not set';
-                const match = state.goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
-                if (!match) return state.goal.frequency;
-
-                const [_, interval, unit, days] = match;
-                let text = `Every ${interval} `;
-
-                switch (unit) {
-                    case 'D': text += interval === '1' ? 'day' : 'days'; break;
-                    case 'W':
-                        text += interval === '1' ? 'week' : 'weeks';
-                        if (days) {
-                            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                            const selectedDays = days.split(',').map(d => dayNames[Number(d)]);
-                            text += ` on ${selectedDays.join(', ')}`;
-                        }
-                        break;
-                    case 'M': text += interval === '1' ? 'month' : 'months'; break;
-                    case 'Y': text += interval === '1' ? 'year' : 'years'; break;
-                }
-
-                return text;
-            })()}
+            <strong>Frequency:</strong> {formatFrequency(state.goal.frequency)}
         </Box>
     ) : (
         <Box sx={{ mb: 2 }}>
@@ -579,10 +565,10 @@ const GoalMenu: GoalMenuComponent = () => {
     const commonFields = isViewOnly ? (
         <>
             <Box sx={{ mb: 2 }}>
-                <strong>Goal Type:</strong> {state.goal.goal_type ? state.goal.goal_type.charAt(0).toUpperCase() + state.goal.goal_type.slice(1) : 'Not set'}
+                <strong>Name:</strong> {state.goal.name || 'Not set'}
             </Box>
             <Box sx={{ mb: 2 }}>
-                <strong>Name:</strong> {state.goal.name || 'Not set'}
+                <strong>Goal Type:</strong> {state.goal.goal_type ? state.goal.goal_type.charAt(0).toUpperCase() + state.goal.goal_type.slice(1) : 'Not set'}
             </Box>
             <Box sx={{ mb: 2 }}>
                 <strong>Description:</strong> {state.goal.description || 'Not set'}
@@ -590,6 +576,15 @@ const GoalMenu: GoalMenuComponent = () => {
         </>
     ) : (
         <>
+            <TextField
+                label="Name"
+                value={state.goal.name || ''}
+                onChange={(e) => handleChange({ ...state.goal, name: e.target.value })}
+                fullWidth
+                margin="dense"
+                required
+                disabled={isViewOnly}
+            />
             <TextField
                 label="Goal Type"
                 value={state.goal.goal_type || ''}
@@ -615,15 +610,6 @@ const GoalMenu: GoalMenuComponent = () => {
                 {/*</>
                 )*/}
             </TextField>
-            <TextField
-                label="Name"
-                value={state.goal.name || ''}
-                onChange={(e) => handleChange({ ...state.goal, name: e.target.value })}
-                fullWidth
-                margin="dense"
-                required
-                disabled={isViewOnly}
-            />
             <TextField
                 label="Description"
                 value={state.goal.description || ''}
