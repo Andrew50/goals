@@ -1,5 +1,10 @@
 // Initialize node levels
 import { NetworkNode, NetworkEdge } from '../../types/goals';
+const BASE_SPACING = 300;  // Base distance between nodes
+const MIN_DISTANCE = 300;  // Minimum distance between nodes (prevent overlap)
+const REPULSION_STRENGTH = 1.0;  // Increased repulsion strength
+const ATTRACTION_STRENGTH = 0.8;  // How strongly connected nodes attract each other
+const PERIPHERAL_FACTOR = .5;  // How much to push out nodes with few connections
 export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: NetworkEdge[] }) {
     const nodeLevels: { [key: number]: number | null } = {};
     const nodes = networkData.nodes.map((node: NetworkNode) => node.id);
@@ -68,7 +73,6 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
     // Calculate initial positions using a force-directed approach
     const nodePositions: { [key: number]: { x: number, y: number } } = {};
     const processedNodes = new Set<number>();
-    const spacing = 300; // Increased base spacing
 
     // Group nodes by their connection patterns
     const nodeGroups: { [key: string]: number[] } = {
@@ -102,17 +106,28 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
     const calculateRepulsion = (x: number, y: number): { x: number, y: number } => {
         let repulsionX = 0;
         let repulsionY = 0;
+
         processedNodes.forEach(existingId => {
             const existing = nodePositions[existingId];
             const dx = x - existing.x;
             const dy = y - existing.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < spacing) {
-                const force = (spacing - distance) / distance;
+
+            // Strong repulsion when nodes are too close
+            if (distance < MIN_DISTANCE) {
+                // Force increases exponentially as distance approaches 0
+                const force = Math.pow(MIN_DISTANCE / Math.max(distance, 1), 2) * REPULSION_STRENGTH;
+                repulsionX += dx * force;
+                repulsionY += dy * force;
+            }
+            // Normal repulsion for nodes within spacing range
+            else if (distance < BASE_SPACING * 2) {
+                const force = (BASE_SPACING - distance) / distance * REPULSION_STRENGTH;
                 repulsionX += dx * force;
                 repulsionY += dy * force;
             }
         });
+
         return { x: repulsionX, y: repulsionY };
     };
 
@@ -126,7 +141,7 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         let baseX = 0, baseY = 0;
 
         if (connectedNodes.length > 0) {
-            // Start with the average position of connected nodes
+            // Calculate weighted center based on connected nodes
             let weightedX = 0;
             let weightedY = 0;
             let totalWeight = 0;
@@ -145,22 +160,63 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
             // Add directional bias based on relationship type
             const parentCount = incomingChildEdges[nodeId].length;
             const childCount = outgoingChildEdges[nodeId].length;
-            const verticalBias = (childCount - parentCount) * spacing * 0.3;
+
+            // Adjust vertical positioning based on hierarchy
+            const verticalBias = (childCount - parentCount) * BASE_SPACING * 0.4;
             baseY += verticalBias;
+
+            // Push peripheral nodes (those with few connections) further out
+            const totalConnections = parentCount + childCount + outgoingQueueEdges[nodeId].length;
+            if (totalConnections <= 2) {
+                const distanceFromCenter = Math.sqrt(baseX * baseX + baseY * baseY);
+                const scaleFactor = PERIPHERAL_FACTOR;
+                baseX *= scaleFactor;
+                baseY *= scaleFactor;
+            }
         } else {
-            // For disconnected nodes, place in a spiral
+            // Place disconnected nodes in a wider spiral
             const angle = processedNodes.size * (Math.PI * 0.618033988749895);
-            const radius = spacing * Math.sqrt(processedNodes.size / 2);
+            const radius = BASE_SPACING * Math.sqrt(processedNodes.size) * PERIPHERAL_FACTOR;
             baseX = Math.cos(angle) * radius;
             baseY = Math.sin(angle) * radius;
         }
 
-        // Apply repulsion from existing nodes
+        // Apply repulsion and ensure minimum distance
         const repulsion = calculateRepulsion(baseX, baseY);
-        return {
-            x: baseX + repulsion.x,
-            y: baseY + repulsion.y
-        };
+        const jitter = BASE_SPACING * 0.1;
+        let finalX = baseX + repulsion.x + (Math.random() - 0.5) * jitter;
+        let finalY = baseY + repulsion.y + (Math.random() - 0.5) * jitter;
+
+        // Iteratively adjust position if too close to any existing node
+        let iterations = 0;
+        const MAX_ITERATIONS = 10;
+
+        while (iterations < MAX_ITERATIONS) {
+            let tooClose = false;
+
+            // Convert Set to Array for iteration
+            for (const existingId of Array.from(processedNodes)) {
+                const existing = nodePositions[existingId];
+                const dx = finalX - existing.x;
+                const dy = finalY - existing.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < MIN_DISTANCE) {
+                    tooClose = true;
+                    // Move away from the too-close node
+                    const angle = Math.atan2(dy, dx);
+                    const moveDistance = MIN_DISTANCE - distance;
+                    finalX += Math.cos(angle) * moveDistance;
+                    finalY += Math.sin(angle) * moveDistance;
+                    break;
+                }
+            }
+
+            if (!tooClose) break;
+            iterations++;
+        }
+
+        return { x: finalX, y: finalY };
     };
 
     // Place nodes in order: roots -> connectors -> others -> leaves

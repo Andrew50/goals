@@ -93,19 +93,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('nextRoutineUpdate', endOfDay.getTime().toString());
     }, []);
 
-    // Check and reschedule on mount if needed
+    // Modify the useEffect to handle both initial and missed updates
     useEffect(() => {
         if (isAuthenticated) {
             const nextUpdate = localStorage.getItem('nextRoutineUpdate');
-            if (!nextUpdate || new Date().getTime() > parseInt(nextUpdate)) {
+            const now = new Date().getTime();
+
+            if (!nextUpdate || now > parseInt(nextUpdate)) {
                 const endOfDay = new Date();
                 endOfDay.setHours(23, 59, 59, 999);
-                console.log(`Catching up missed routine update for ${endOfDay.toLocaleString()}`);
-                privateRequest(
-                    `routine/${endOfDay.getTime()}`,
-                    'POST'
-                )
-                    .then(() => console.log('Catch-up routine update completed successfully'))
+                console.log(`Updating routines for ${endOfDay.toLocaleString()}`);
+
+                updateRoutines()
+                    .then(() => console.log('Routine update completed successfully'))
                     .catch(error => console.error('Failed to update routines:', error));
             }
             scheduleRoutineUpdate();
@@ -128,24 +128,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             { username, password }
         );
 
-        // First store the token
         localStorage.setItem("authToken", response.token);
         localStorage.setItem("username", username);
         setUsername(username);
-
-        // Then set auth state
         setIsAuthenticated(true);
 
-        // Wait for next tick to ensure auth state is updated
-        await new Promise(resolve => setTimeout(resolve, 0));
-
-        try {
-            await updateRoutines();
-            scheduleRoutineUpdate();
-        } catch (routineErr) {
-            console.error("Failed to update routines:", routineErr);
-            // Don't throw the error as it's not critical for login
-        }
+        scheduleRoutineUpdate();
 
         return response.message;
     }, [scheduleRoutineUpdate]);
