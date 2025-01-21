@@ -113,6 +113,15 @@ pub async fn catch_up_routine(
             .unwrap_or_else(|| Utc::now().timestamp_millis())
     });
 
+    println!(
+        "Processing routine: {} (ID: {:?})",
+        routine.name, routine.id
+    );
+    println!(
+        "Current next timestamp: {}",
+        Utc.timestamp_millis_opt(current_next_timestamp).unwrap()
+    );
+
     while current_next_timestamp < to_timestamp && current_next_timestamp <= end_of_day {
         let new_next_timestamp = calculate_next_timestamp(
             current_next_timestamp,
@@ -120,12 +129,38 @@ pub async fn catch_up_routine(
         );
 
         let scheduled_timestamp = if routine.duration == Some(1440) {
+            println!("All-day routine detected, using current_next_timestamp as scheduled time");
             Some(current_next_timestamp)
         } else {
-            routine
+            let scheduled = routine
                 .routine_time
-                .map(|routine_time| set_time_of_day(current_next_timestamp, routine_time))
+                .map(|routine_time| set_time_of_day(current_next_timestamp, routine_time));
+            println!(
+                "Regular routine, scheduled time: {}",
+                scheduled.map_or("None".to_string(), |ts| Utc
+                    .timestamp_millis_opt(ts)
+                    .unwrap()
+                    .to_string())
+            );
+            scheduled
         };
+
+        println!("Creating task for {} with:", routine.name);
+        println!(
+            "  Start timestamp: {}",
+            Utc.timestamp_millis_opt(current_next_timestamp).unwrap()
+        );
+        println!(
+            "  End timestamp: {}",
+            Utc.timestamp_millis_opt(new_next_timestamp).unwrap()
+        );
+        println!(
+            "  Scheduled timestamp: {}",
+            scheduled_timestamp.map_or("None".to_string(), |ts| Utc
+                .timestamp_millis_opt(ts)
+                .unwrap()
+                .to_string())
+        );
 
         let child_goal = Goal {
             id: None,
@@ -240,7 +275,26 @@ fn calculate_next_timestamp(current: i64, frequency: &str) -> i64 {
 fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
     let day_in_ms: i64 = 24 * 60 * 60 * 1000;
     let start_of_day = (base_timestamp / day_in_ms) * day_in_ms;
-    start_of_day + time_of_day
+
+    // Extract just the minutes since midnight from the timestamp
+    let minutes_since_midnight = (time_of_day % day_in_ms) / (60 * 1000);
+    let time_of_day_ms = minutes_since_midnight * 60 * 1000;
+
+    println!("Debug set_time_of_day:");
+    println!(
+        "  base_timestamp: {}",
+        Utc.timestamp_millis_opt(base_timestamp).unwrap()
+    );
+    println!("  original time_of_day: {}", time_of_day);
+    println!("  minutes_since_midnight: {}", minutes_since_midnight);
+    println!("  time_of_day_ms: {}", time_of_day_ms);
+    println!(
+        "  result: {}",
+        Utc.timestamp_millis_opt(start_of_day + time_of_day_ms)
+            .unwrap()
+    );
+
+    start_of_day + time_of_day_ms
 }
 
 #[cfg(test)]
