@@ -151,6 +151,19 @@ const NetworkView: React.FC
           fixed: {
             x: false,
             y: false
+          },
+          borderWidth: 0,
+          chosen: false,
+          color: {
+            border: 'transparent',
+            highlight: {
+              border: 'transparent',
+              background: undefined
+            },
+            hover: {
+              border: 'transparent',
+              background: undefined
+            }
           }
         },
         edges: {

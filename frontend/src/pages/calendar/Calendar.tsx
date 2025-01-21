@@ -66,22 +66,51 @@ const Calendar: React.FC = () => {
         eventData: (eventEl) => {
           const taskId = eventEl.getAttribute('data-task-id');
           const task = state.tasks.find(t => t.id === taskId);
-          const durationMinutes = task?.goal?.duration || 60; // Default to 60 minutes if duration not set
+          const durationMinutes = task?.goal?.duration || 60;
           const hours = Math.floor(durationMinutes / 60);
           const minutes = durationMinutes % 60;
           const duration = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
           return {
             id: task?.id,
             title: task?.title,
-            duration: duration, // Use duration from goal
+            duration: duration,
             extendedProps: {
               task: task
             }
           };
         },
       });
+
+      // Update completion for all visible days
+      const visibleDays = document.querySelectorAll('.fc-daygrid-day, .fc-timegrid-col');
+      visibleDays.forEach(dayEl => {
+        const dateAttr = dayEl.getAttribute('data-date');
+        if (!dateAttr) return;
+
+        const date = new Date(dateAttr + 'T00:00:00Z'); // Ensure UTC date
+        const completion = calculateDayCompletion(date);
+        const color = getCompletionColor(completion);
+
+        // Update background
+        let backgroundEl = dayEl.querySelector('.completion-background') as HTMLElement;
+        if (!backgroundEl) {
+          backgroundEl = document.createElement('div');
+          backgroundEl.className = 'completion-background';
+          dayEl.appendChild(backgroundEl);
+        }
+        backgroundEl.style.backgroundColor = color;
+
+        // Update percentage display
+        let percentageEl = dayEl.querySelector('.day-completion') as HTMLElement;
+        if (!percentageEl) {
+          percentageEl = document.createElement('div');
+          percentageEl.className = 'day-completion';
+          dayEl.appendChild(percentageEl);
+        }
+        percentageEl.innerHTML = completion !== null ? `${Math.round(completion)}%` : '';
+      });
     }
-  }, [state.tasks]);
+  }, [state.tasks, state.events]);
 
   const handleEventClick = (info: EventClickArg) => {
     const event = state.events.find((e) => e.id === info.event.id);
@@ -92,8 +121,10 @@ const Calendar: React.FC = () => {
           ...event,
           start: new Date(event.start),
           end: new Date(event.end),
-          allDay: false,
+          allDay: event.allDay || false,
         }));
+
+        // First update the state
         setState({
           events: formattedEvents,
           tasks: data.unscheduledTasks
@@ -147,6 +178,8 @@ const Calendar: React.FC = () => {
     const updatedGoal = {
       ...task.goal,
       scheduled_timestamp: dateToTimestamp(start),
+      // Set duration to 1440 (24 hours) if it's an all-day event
+      duration: isAllDay ? 1440 : (task.goal.duration || 60)
     };
     console.log('updatedGoal', updatedGoal);
     try {
@@ -378,7 +411,7 @@ const Calendar: React.FC = () => {
         ...event,
         start: new Date(event.start),
         end: new Date(event.end),
-        allDay: false
+        allDay: event.allDay
       }));
       setState({
         events: formattedEvents,
@@ -386,27 +419,93 @@ const Calendar: React.FC = () => {
       });
     });
   };
-
-  /*const handleTaskClick = (task: CalendarTask) => {
-    GoalMenu.open(task.goal, 'edit', async (updatedGoal) => {
-      const data = await fetchCalendarData();
-      const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-        ...event,
-        start: new Date(event.start),
-        end: new Date(event.end),
-        allDay: event.allDay || false,
-      }));
-      setState({
-        events: formattedEvents,
-        tasks: data.unscheduledTasks
-      });
-    });
-  };*/
-
   const handleTaskUpdate = (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => {
     setState(data);
   };
 
+  const calculateDayCompletion = (date: Date) => {
+    // Convert input date to start of day in UTC
+    const startOfDay = new Date(Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      0, 0, 0, 0
+    ));
+
+    const endOfDay = new Date(Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      23, 59, 59, 999
+    ));
+
+    // Return null for future dates
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (startOfDay > today) return null;
+
+    const dayEvents = state.events.filter(event => {
+      const eventDate = new Date(event.start);
+      return eventDate >= startOfDay && eventDate <= endOfDay;
+    });
+
+    if (dayEvents.length === 0) return null;
+
+    const completedEvents = dayEvents.filter(event => event.goal?.completed);
+    return (completedEvents.length / dayEvents.length) * 100;
+  };
+
+  const getCompletionColor = (percentage: number | null) => {
+    if (percentage === null) return 'transparent';
+
+    // Red (0%) -> Yellow (50%) -> Green (100%)
+    let hue;
+    if (percentage <= 50) {
+      // 0 (red) to 60 (yellow)
+      hue = (percentage * 1.2); // 0-50 maps to 0-60
+    } else {
+      // 60 (yellow) to 120 (green)
+      hue = 60 + ((percentage - 50) * 1.2); // 50-100 maps to 60-120
+    }
+
+    const color = `hsl(${hue}, 80%, 45%)`;
+
+    // Update both background and text colors
+    if (document.querySelector('.day-completion')) {
+      const elements = document.querySelectorAll('.day-completion') as NodeListOf<HTMLElement>;
+      elements.forEach(el => {
+        if (el.innerHTML === `${Math.round(percentage)}%`) {
+          el.style.color = color;
+        }
+      });
+    }
+
+    return color;
+  };
+
+  const eventDidMount = (info: any) => {
+    info.el.addEventListener('contextmenu', (e: MouseEvent) => {
+      e.preventDefault();
+      const fcEvent = info.event;
+      const event = state.events.find((e) => e.id === fcEvent.id);
+      if (event && event.goal) {
+        GoalMenu.open(event.goal, 'edit', async (updatedGoal) => {
+          const data = await fetchCalendarData();
+          const formattedEvents = [...data.events, ...data.achievements].map(event => ({
+            ...event,
+            start: new Date(event.start),
+            end: new Date(event.end),
+            allDay: event.allDay || false,
+          }));
+
+          setState({
+            events: formattedEvents,
+            tasks: data.unscheduledTasks
+          });
+        });
+      }
+    });
+  };
 
   return (
     <div className="calendar-container">
@@ -432,8 +531,8 @@ const Calendar: React.FC = () => {
           initialView="dayGridMonth"
           editable={true}
           droppable={true}
-          //eventStartEditable={true}
-          //eventDurationEditable={true}
+          allDaySlot={true}
+          dropAccept=".external-event"
           events={state.events}
           dateClick={handleDateClick}
           eventReceive={handleEventReceive}
@@ -443,7 +542,6 @@ const Calendar: React.FC = () => {
           eventResizableFromStart={true}
           slotMinTime="00:00:00"
           slotMaxTime="24:00:00"
-          allDaySlot={true}
           timeZone="local"
           eventContent={(arg) => {
             const event = state.events.find((e) => e.id === arg.event.id);
@@ -473,30 +571,47 @@ const Calendar: React.FC = () => {
             minute: '2-digit',
             meridiem: 'short'
           }}
-          eventDidMount={(info) => {
-            info.el.addEventListener('contextmenu', (e) => {
-              e.preventDefault();
-              const fcEvent = info.event;
-              const event = state.events.find((e) => e.id === fcEvent.id);
-              if (event && event.goal) {
-                GoalMenu.open(event.goal, 'edit', async (updatedGoal) => {
-                  const data = await fetchCalendarData();
-                  const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-                    ...event,
-                    start: new Date(event.start),
-                    end: new Date(event.end),
-                  }));
-                  setState({
-                    events: formattedEvents,
-                    tasks: data.unscheduledTasks
-                  });
-                });
-              }
-            });
-          }}
+          eventDidMount={eventDidMount}
           snapDuration="00:05:00"
           nowIndicator={true}
           dayMaxEvents={true}
+          dayCellDidMount={(arg) => {
+            const completion = calculateDayCompletion(arg.date);
+
+            // Create background element
+            const backgroundEl = document.createElement('div');
+            backgroundEl.className = 'completion-background';
+            backgroundEl.style.backgroundColor = getCompletionColor(completion);
+            arg.el.appendChild(backgroundEl);
+
+            // Add completion percentage display
+            if (completion !== null) {
+              const percentageEl = document.createElement('div');
+              percentageEl.className = 'day-completion';
+              percentageEl.innerHTML = `${Math.round(completion)}%`;
+              arg.el.appendChild(percentageEl);
+            }
+          }}
+          slotLabelDidMount={(arg) => {
+            // Handle time grid views (week/day)
+            const date = arg.date;
+            const completion = calculateDayCompletion(date);
+
+            if (completion !== null) {
+              const column = arg.el.closest('.fc-timegrid-col');
+              if (column && !column.querySelector('.day-completion')) {
+                const percentageEl = document.createElement('div');
+                percentageEl.className = 'day-completion';
+                percentageEl.innerHTML = `${Math.round(completion)}%`;
+                column.appendChild(percentageEl);
+
+                const backgroundEl = document.createElement('div');
+                backgroundEl.className = 'completion-background';
+                backgroundEl.style.backgroundColor = getCompletionColor(completion);
+                column.appendChild(backgroundEl);
+              }
+            }
+          }}
         />
       </div>
     </div>

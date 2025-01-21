@@ -29,8 +29,6 @@ export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
             .filter(item => item.scheduled_timestamp)
             .map(item => {
                 const isAllDay = item.duration === 1440;
-
-                // Parse the timestamp maintaining local time, as the timestamp has already been converted to client tz
                 const timestamp = new Date(item.scheduled_timestamp!);
                 const start = new Date(
                     timestamp.getUTCFullYear(),

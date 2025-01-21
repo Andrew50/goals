@@ -327,6 +327,10 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
         nodes: formattedNodes,
         edges: networkData.edges.map(edge => {
             const edgeImportance = calculateEdgeImportance(edge.from, edge.to);
+            const fromNode = networkData.nodes.find(n => n.id === edge.from);
+
+            // Get the parent node's color
+            const parentColor = fromNode ? getGoalColor(fromNode) : '#2196F3';
 
             // Scale edge width based on importance
             const baseWidth = 1;
@@ -341,7 +345,7 @@ export function buildHierarchy(networkData: { nodes: NetworkNode[], edges: Netwo
                 id: `${edge.from}-${edge.to}`,
                 width: width,
                 color: {
-                    color: edge.relationship_type === 'queue' ? '#ff9800' : '#2196F3',
+                    color: edge.relationship_type === 'queue' ? '#ff9800' : parentColor,
                     opacity: Math.min(0.4 + (edgeImportance * 0.1), 0.9)  // More visible edges
                 },
                 arrows: {

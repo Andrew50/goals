@@ -118,9 +118,14 @@ pub async fn catch_up_routine(
             current_next_timestamp,
             &routine.frequency.clone().unwrap_or_default(),
         );
-        let scheduled_timestamp = routine
-            .routine_time
-            .map(|routine_time| set_time_of_day(current_next_timestamp, routine_time));
+
+        let scheduled_timestamp = if routine.duration == Some(1440) {
+            Some(current_next_timestamp)
+        } else {
+            routine
+                .routine_time
+                .map(|routine_time| set_time_of_day(current_next_timestamp, routine_time))
+        };
 
         let child_goal = Goal {
             id: None,
