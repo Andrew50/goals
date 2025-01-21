@@ -69,13 +69,135 @@
 
 /* Highlight the current day in month and week views */
 .fc .fc-day-today {
-    background-color: rgba(255, 0, 0, 0.1) !important;
-    /* Light red background */
-    /*border: 1px solid #ff0000;*/
-    /* Red border */
+    background-color: rgba(33, 150, 243, 0.1) !important;
+    /* Light blue background */
 }
 
 /* Ensure the event container takes full width */
 .fc-event-main-frame {
     width: 100%;
+}
+
+/* All-day event styles */
+.fc .fc-daygrid-event {
+    min-height: 28px !important;
+    margin-bottom: 2px !important;
+}
+
+.fc .fc-daygrid-day-events {
+    margin-bottom: 4px !important;
+}
+
+.fc .fc-daygrid-event-harness {
+    margin-bottom: 2px !important;
+}
+
+/* Ensure all-day events have proper spacing and size */
+.fc-daygrid-event {
+    padding: 2px 0 !important;
+    margin: 1px 2px !important;
+}
+
+/* Make the all-day section taller to accommodate more events */
+.fc-timegrid-axis-cushion.fc-scrollgrid-shrink-cushion,
+.fc-timegrid-slot-label-cushion.fc-scrollgrid-shrink-cushion {
+    min-height: 28px !important;
+}
+
+.fc .fc-daygrid-day-frame {
+    min-height: 100px !important;
+}
+
+/* Adjust the "more" link styling */
+.fc-daygrid-more-link {
+    margin: 2px !important;
+    padding: 2px 4px !important;
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    border-radius: 4px !important;
+}
+
+/* Ensure custom event content fills the space */
+.custom-calendar-event {
+    /* ... existing styles ... */
+    min-height: 24px !important;
+    margin: 1px 0 !important;
+    border-radius: 4px !important;
+}
+
+/* Adjust the all-day section in week view */
+.fc .fc-timegrid-axis-cushion {
+    min-height: 28px !important;
+}
+
+.fc .fc-timegrid-slot {
+    height: 28px !important;
+}
+
+/* Day completion indicator styles */
+.day-completion {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.95);
+    padding: 1px 6px;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.25);
+    z-index: 1;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(2px);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Hide empty completion indicators AND their background */
+.day-completion:empty {
+    display: none;
+    background-color: transparent;
+    padding: 0;
+}
+
+/* Only show completion in the day grid (all-day section), hide in time grid */
+.fc-timegrid-col .day-completion {
+    display: none;
+}
+
+/* Keep the completion indicator visible in the day grid (month view and all-day section) */
+.fc-daygrid-day .day-completion {
+    display: block;
+}
+
+/* Hide background when completion is empty */
+.day-completion:empty+.completion-background {
+    display: none;
+}
+
+/* Style for completion in time grid views */
+.fc-timegrid-col-events .day-completion {
+    top: 4px;
+    right: 4px;
+}
+
+/* Ensure the cell can position the completion indicator properly */
+.fc-daygrid-day,
+.fc-timegrid-col {
+    position: relative !important;
+}
+
+/* Adjust background opacity for better readability */
+.fc-daygrid-day-frame,
+.fc-timegrid-col-frame {
+    position: relative;
+    z-index: 1;
+}
+
+.completion-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    opacity: 0.2;
+    z-index: 0;
+    transition: background-color 0.3s ease;
 }

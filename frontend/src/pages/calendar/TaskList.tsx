@@ -22,6 +22,8 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
     return timestampToDisplayString(timestamp, 'date');
   };
 
+  const isAllDay = task.goal.duration === 1440;
+
   const handleClick = () => {
     if (task.goal) {
       GoalMenu.open(task.goal, 'view', async (updatedGoal: Goal) => {
@@ -61,6 +63,7 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
     <div
       className="external-event"
       data-task-id={task.id}
+      data-all-day={isAllDay}
       style={{
         marginBottom: '8px',
         padding: '12px 16px',
