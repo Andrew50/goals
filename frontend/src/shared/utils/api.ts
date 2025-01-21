@@ -74,6 +74,16 @@ export async function publicRequest<T>(
 }
 
 export async function updateRoutines(): Promise<void> {
+    // Check if we've updated recently (within 5 minutes)
+    const lastUpdate = localStorage.getItem('lastRoutineUpdate');
+    const now = Date.now();
+    const DEBOUNCE_INTERVAL = 2 * 1000; // 2 seconds
+
+    if (lastUpdate && (now - parseInt(lastUpdate)) < DEBOUNCE_INTERVAL) {
+        console.log('Skipping routine update - too soon since last update');
+        return;
+    }
+
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
     const timestamp = endOfDay.getTime();
@@ -84,6 +94,8 @@ export async function updateRoutines(): Promise<void> {
             `routine/${timestamp}`,
             'POST'
         );
+        // Store the current timestamp after successful update
+        localStorage.setItem('lastRoutineUpdate', now.toString());
         console.log('Routine update request completed successfully');
     } catch (error) {
         console.error("Failed to update routines:", error);
