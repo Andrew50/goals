@@ -73,7 +73,7 @@ export async function publicRequest<T>(
     }
 }
 
-export async function updateRoutines(): Promise<void> {
+export async function updateRoutines(to_timestamp?: number): Promise<void> {
     // Check if we've updated recently (within 5 minutes)
     const lastUpdate = localStorage.getItem('lastRoutineUpdate');
     const now = Date.now();
@@ -84,16 +84,14 @@ export async function updateRoutines(): Promise<void> {
         return;
     }
 
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
-    const timestamp = endOfDay.getTime();
+    if (!to_timestamp) {
+        const endOfDay = new Date();
+        endOfDay.setHours(23, 59, 59, 999);
+        to_timestamp = endOfDay.getTime();
+    }
 
-    console.log(`Sending routine update request for ${endOfDay.toLocaleString()}`);
     try {
-        await privateRequest(
-            `routine/${timestamp}`,
-            'POST'
-        );
+        await privateRequest(`routine/${to_timestamp}`, 'POST');
         // Store the current timestamp after successful update
         localStorage.setItem('lastRoutineUpdate', now.toString());
         console.log('Routine update request completed successfully');

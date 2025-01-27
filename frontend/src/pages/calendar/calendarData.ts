@@ -117,13 +117,15 @@ const mapGoalTypeToTaskType = (goalType: string): 'meeting' | 'task' | 'appointm
 };
 
 const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[] => {
-    if (!routine.routine_time || !routine.start_timestamp) {
+    const isAllDay = routine.duration === 1440;
+
+    // Only check routine_time if it's not an all-day event
+    if (!isAllDay && !routine.routine_time || !routine.start_timestamp) {
         console.warn(`Routine ${routine.name} is missing required time fields`);
         return [];
     }
 
     const events: CalendarEvent[] = [];
-    const isAllDay = routine.duration === 1440;
 
     // Create start date at the beginning of tomorrow in client's timezone
     const tomorrow = new Date(currentDate);
@@ -134,10 +136,14 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
     const end = new Date(currentDate);
     end.setDate(end.getDate() + ROUTINE_GENERATION_DAYS);
 
-    // Create a date object with the routine time in local timezone
-    const routineTimeDate = new Date(routine.routine_time);
-    const routineHours = routineTimeDate.getUTCHours();
-    const routineMinutes = routineTimeDate.getUTCMinutes();
+    // Only create routineTimeDate if it's not an all-day event
+    let routineHours = 0;
+    let routineMinutes = 0;
+    if (!isAllDay) {
+        const routineTimeDate = new Date(routine.routine_time!);
+        routineHours = routineTimeDate.getUTCHours();
+        routineMinutes = routineTimeDate.getUTCMinutes();
+    }
 
     // Parse frequency pattern: {multiplier}{unit}[:days]
     const frequencyMatch = routine.frequency?.match(/^(\d+)([DWMY])(?::(.+))?$/);
