@@ -9,10 +9,11 @@ use axum::{
     routing::{delete, post, put},
     Json, Router,
 };
-use chrono::Utc;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+pub const DEBUG_PRINTS: bool = false;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Goal {
@@ -26,6 +27,7 @@ pub struct Goal {
     pub end_timestamp: Option<i64>,
     pub completion_date: Option<i64>,
     pub next_timestamp: Option<i64>,
+    //pub previous_timestamp: Option<i64>,
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub completed: Option<bool>,
@@ -147,8 +149,9 @@ pub async fn create_goal_handler(
     Extension(user_id): Extension<i64>,
     Json(goal): Json<Goal>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    // Log the entire received goal data
-    println!("Received goal creation request: {:?}", goal);
+    if DEBUG_PRINTS {
+        println!("Received goal creation request: {:?}", goal);
+    }
 
     // Deserialize the raw JSON to check for extra fields
     let raw_value: serde_json::Value = serde_json::to_value(&goal)
@@ -189,12 +192,14 @@ pub async fn create_goal_handler(
     }
 
     // Create a mutable copy of the goal with the user_id and start_timestamp
-    let mut goal = Goal {
+    let goal = Goal {
         user_id: Some(user_id),
         ..goal
     };
 
-    println!("Processed goal creation request: {:?}", goal);
+    if DEBUG_PRINTS {
+        println!("Processed goal creation request: {:?}", goal);
+    }
 
     let mut validation_errors = Vec::new();
     if goal.name.trim().is_empty() {
@@ -544,13 +549,12 @@ pub async fn toggle_completion(
 
 impl Goal {
     pub async fn create_goal(&self, graph: &Graph) -> Result<Goal, neo4rs::Error> {
-        // Log the goal creation attempt
-        println!("Attempting to create goal in database: {:?}", self);
-
-        // Add these debug prints
-        println!("Routine fields in incoming goal:");
-        println!("routine_type: {:?}", self.routine_type);
-        println!("routine_time: {:?}", self.routine_time);
+        if DEBUG_PRINTS {
+            println!("Attempting to create goal in database: {:?}", self);
+            println!("Routine fields in incoming goal:");
+            println!("routine_type: {:?}", self.routine_type);
+            println!("routine_time: {:?}", self.routine_time);
+        }
 
         // Define all possible properties and their corresponding parameter values
         let property_params: Vec<(&str, Option<neo4rs::BoltType>)> = vec![
@@ -624,9 +628,10 @@ impl Goal {
             properties.join(", ")
         );
 
-        // After building properties, add this debug print
-        println!("Final query string: {}", query_str);
-        println!("Final params: {:?}", params);
+        if DEBUG_PRINTS {
+            println!("Final query string: {}", query_str);
+            println!("Final params: {:?}", params);
+        }
 
         // Execute query with parameters
         let mut result = graph.execute(query(&query_str).params(params)).await?;
@@ -703,8 +708,10 @@ impl Goal {
                      CREATE (from)-[:{}]->(to)",
                 relationship.relationship_type.to_uppercase()
             );
-            println!("Query string: {}", query_string);
-            println!("with params: {:?}", relationship);
+            if DEBUG_PRINTS {
+                println!("Query string: {}", query_string);
+                println!("with params: {:?}", relationship);
+            }
             let create_query = neo4rs::query(&query_string)
                 .param("from_id", relationship.from_id)
                 .param("to_id", relationship.to_id);

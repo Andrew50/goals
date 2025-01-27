@@ -162,7 +162,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 goal: updatedGoal
             });
             if (state.goal.goal_type === 'routine') {
-                await updateRoutines();
+                await updateRoutines(); //update routines to make sure new one is good
             }
             if (onSuccess) {
                 onSuccess(updatedGoal);
