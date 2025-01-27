@@ -2,12 +2,12 @@ import { Goal } from "../../types/goals";
 
 export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
-    return timestamp + new Date().getTimezoneOffset() * 60 * 1000;
+    return timestamp - new Date().getTimezoneOffset() * 60 * 1000;
 };
 
 export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
-    return timestamp - new Date().getTimezoneOffset() * 60 * 1000;
+    return timestamp + new Date().getTimezoneOffset() * 60 * 1000;
 };
 
 // Goal conversion utilities
