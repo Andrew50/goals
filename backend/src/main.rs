@@ -11,10 +11,15 @@ mod traversal;
 
 use axum::{middleware::from_fn, Extension, Router};
 use dotenvy::dotenv;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::Level;
 use tracing_subscriber;
+
+type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
 #[tokio::main]
 async fn main() {
@@ -38,6 +43,8 @@ async fn main() {
         ])
         .allow_methods(Any)
         .allow_headers(Any);
+
+    let user_locks: UserLocks = Arc::new(Mutex::new(HashMap::new()));
 
     let app = Router::new()
         .nest("/auth", auth::create_routes())
@@ -67,7 +74,8 @@ async fn main() {
         )
         .nest(
             "/routine",
-            routine::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+            routine::create_routes(user_locks.clone())
+                .route_layer(from_fn(middleware::auth_middleware)),
         )
         .layer(Extension(pool))
         .layer(cors);

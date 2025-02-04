@@ -93,21 +93,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('nextRoutineUpdate', endOfDay.getTime().toString());
     }, []);
 
-    // Modify the useEffect to handle both initial and missed updates
+    // Modify this useEffect to only handle scheduling, not immediate updates
     useEffect(() => {
         if (isAuthenticated) {
-            const nextUpdate = localStorage.getItem('nextRoutineUpdate');
-            const now = new Date().getTime();
-
-            if (!nextUpdate || now > parseInt(nextUpdate)) {
-                const endOfDay = new Date();
-                endOfDay.setHours(23, 59, 59, 999);
-                console.log(`Updating routines for ${endOfDay.toLocaleString()}`);
-
-                updateRoutines()
-                    .then(() => console.log('Routine update completed successfully'))
-                    .catch(error => console.error('Failed to update routines:', error));
-            }
             scheduleRoutineUpdate();
         }
     }, [isAuthenticated, scheduleRoutineUpdate]);
@@ -128,11 +116,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             { username, password }
         );
 
-        localStorage.setItem("authToken", response.token);
-        localStorage.setItem("username", username);
+        try {
+            localStorage?.setItem("authToken", response.token);
+            localStorage?.setItem("username", username);
+        } catch (error) {
+            console.warn('Could not access localStorage during login:', error);
+        }
+
         setUsername(username);
         setIsAuthenticated(true);
 
+        // Immediately update routines on login
+        try {
+            await updateRoutines();
+            console.log('Initial routine update completed successfully');
+        } catch (error) {
+            console.error('Failed to update routines on login:', error);
+        }
+
+        // Then schedule the next update
         scheduleRoutineUpdate();
 
         return response.message;
