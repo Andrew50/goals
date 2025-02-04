@@ -8,7 +8,10 @@ use axum::{
 use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
 use neo4rs::Graph;
 use serde_json;
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::error;
 
 use crate::goal::{Goal, GoalType, GOAL_RETURN_QUERY};
@@ -21,8 +24,12 @@ pub enum RoutineError {
     Deserialization(neo4rs::DeError),
 }
 
-pub fn create_routes() -> Router {
-    Router::new().route("/:timestamp", post(process_user_routines))
+type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
+
+pub fn create_routes(user_locks: UserLocks) -> Router {
+    Router::new()
+        .route("/:timestamp", post(process_user_routines))
+        .layer(Extension(user_locks))
 }
 
 impl fmt::Display for RoutineError {
@@ -59,7 +66,16 @@ async fn process_user_routines(
     Path(user_eod_timestamp): Path<i64>, // the timestamp to update routines up to. is the end of the user timezone's day, in UTC
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
+    Extension(user_locks): Extension<UserLocks>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let mut locks = user_locks.lock().await;
+    let user_lock = locks
+        .entry(user_id)
+        .or_insert_with(|| Arc::new(Mutex::new(())));
+
+    // Acquire the lock for the user
+    let _guard = user_lock.lock().await;
+
     let query = format!(
         "MATCH (g:Goal) 
          WHERE g.goal_type = 'routine' 

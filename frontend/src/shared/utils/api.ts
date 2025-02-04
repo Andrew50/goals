@@ -74,26 +74,34 @@ export async function publicRequest<T>(
 }
 
 export async function updateRoutines(to_timestamp?: number): Promise<void> {
-    // Check if we've updated recently (within 5 minutes)
-    const lastUpdate = localStorage.getItem('lastRoutineUpdate');
-    const now = Date.now();
-    const DEBOUNCE_INTERVAL = 2 * 1000; // 2 seconds
-
-    if (lastUpdate && (now - parseInt(lastUpdate)) < DEBOUNCE_INTERVAL) {
-        console.log('Skipping routine update - too soon since last update');
-        return;
-    }
-
-    if (!to_timestamp) {
-        const endOfDay = new Date();
-        endOfDay.setHours(23, 59, 59, 999);
-        to_timestamp = endOfDay.getTime();
-    }
+    console.log('updateRoutines called')
 
     try {
+        const lastUpdate = parseInt(localStorage?.getItem('lastRoutineUpdate') || '0', 10);
+        const now = Date.now();
+        const DEBOUNCE_INTERVAL = 3 * 1000; // 3 seconds
+
+        if (now - lastUpdate < DEBOUNCE_INTERVAL) {
+            console.log('Skipping routine update - too soon since last update');
+            return;
+        }
+
+        if (!to_timestamp) {
+            const endOfDay = new Date();
+            endOfDay.setHours(23, 59, 59, 999);
+            to_timestamp = endOfDay.getTime();
+        }
+
+        console.log('updateRoutines request made')
         await privateRequest(`routine/${to_timestamp}`, 'POST');
-        // Store the current timestamp after successful update
-        localStorage.setItem('lastRoutineUpdate', now.toString());
+
+        try {
+            // Wrap localStorage access in try-catch
+            localStorage?.setItem('lastRoutineUpdate', now.toString());
+        } catch (storageError) {
+            console.warn('Could not access localStorage for lastRoutineUpdate:', storageError);
+        }
+
         console.log('Routine update request completed successfully');
     } catch (error) {
         console.error("Failed to update routines:", error);
