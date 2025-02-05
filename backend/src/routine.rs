@@ -171,6 +171,8 @@ pub async fn catch_up_routine(
             frequency: None,
             routine_type: None,
             routine_time: None,
+            position_x: None,
+            position_y: None,
         };
         let created_goal = child_goal.create_goal(graph).await?;
 

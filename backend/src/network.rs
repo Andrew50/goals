@@ -1,4 +1,10 @@
-use axum::{extract::Extension, http::StatusCode, routing::get, Json, Router};
+use axum::{
+    extract::{Extension, Json, Path},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, put},
+    Router,
+};
 
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
@@ -40,8 +46,16 @@ struct RelationshipData {
     type_: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PositionUpdate {
+    x: f64,
+    y: f64,
+}
+
 pub fn create_routes() -> Router {
-    Router::new().route("/", get(get_network_data))
+    Router::new()
+        .route("/", get(get_network_data))
+        .route("/:id/position", put(update_node_position))
 }
 
 pub async fn get_network_data(
@@ -69,7 +83,7 @@ pub async fn get_network_data(
         crate::goal::GOAL_RETURN_QUERY
     );
 
-    println!("Executing query: {}", query_str);
+    //println!("Executing query: {}", query_str);
     let query = query(&query_str).param("user_id", user_id);
 
     let mut result = graph.execute(query).await.map_err(|e| {
@@ -155,4 +169,27 @@ pub async fn get_network_data(
     //println!("  Edges: {}", edges.len());
 
     Ok(Json(NetworkData { nodes, edges }))
+}
+
+async fn update_node_position(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+    Json(position): Json<PositionUpdate>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let query_str = "MATCH (g:Goal) WHERE id(g) = $id SET g.position_x = $x, g.position_y = $y";
+    let query = query(query_str)
+        .param("id", id)
+        .param("x", position.x)
+        .param("y", position.y);
+
+    match graph.run(query).await {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(e) => {
+            eprintln!("Error updating node position: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error updating node position: {}", e),
+            ))
+        }
+    }
 }

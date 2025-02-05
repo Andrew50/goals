@@ -90,8 +90,8 @@ async fn get_day_tasks(
         GOAL_RETURN_QUERY
     );
 
-    println!("\nExecuting query:");
-    println!("{}", query_str);
+    //println!("\nExecuting query:");
+    //println!("{}", query_str);
 
     let query = query(&query_str)
         .param("user_id", user_id)

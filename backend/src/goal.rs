@@ -34,6 +34,8 @@ pub struct Goal {
     pub frequency: Option<String>,
     pub routine_type: Option<String>,
     pub routine_time: Option<i64>,
+    pub position_x: Option<f64>,
+    pub position_y: Option<f64>,
 }
 
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
@@ -51,6 +53,8 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     frequency: g.frequency,
                     routine_type: g.routine_type,
                     routine_time: g.routine_time,
+                    position_x: g.position_x,
+                    position_y: g.position_y,
                     id: id(g)
                  } as g";
 
@@ -175,6 +179,8 @@ pub async fn create_goal_handler(
             "frequency",
             "routine_type",
             "routine_time",
+            "position_x",
+            "position_y",
         ];
 
         let unknown_fields: Vec<String> = map
@@ -336,6 +342,14 @@ pub async fn update_goal_handler(
     if let Some(routine_time) = goal.routine_time {
         set_clauses.push("g.routine_time = $routine_time");
         params.push(("routine_time", routine_time.into()));
+    }
+    if let Some(x) = goal.position_x {
+        set_clauses.push("g.position_x = $position_x");
+        params.push(("position_x", x.into()));
+    }
+    if let Some(y) = goal.position_y {
+        set_clauses.push("g.position_y = $position_y");
+        params.push(("position_y", y.into()));
     }
 
     let query_str = format!(
@@ -609,6 +623,16 @@ impl Goal {
                 "routine_time",
                 self.routine_time
                     .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
+            (
+                "position_x",
+                self.position_x
+                    .map(|v| neo4rs::BoltType::Float(neo4rs::BoltFloat { value: v })),
+            ),
+            (
+                "position_y",
+                self.position_y
+                    .map(|v| neo4rs::BoltType::Float(neo4rs::BoltFloat { value: v })),
             ),
         ];
 
