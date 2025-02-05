@@ -16,22 +16,20 @@ const Day: React.FC = () => {
         today.setHours(0, 0, 0, 0);
         const todayEnd = new Date();
         todayEnd.setHours(23, 59, 59, 999);
-
-        const startTimestamp = today.getTime();
         const endTimestamp = todayEnd.getTime();
+        const startTimestamp = today.getTime();
+        console.log(startTimestamp, endTimestamp);
 
-        privateRequest<Goal[]>('day', 'GET', {
-            params: {
-                start: startTimestamp,
-                end: endTimestamp
-            }
-        }).then((tasks) => {
-            console.log(tasks);
-            const localTasks = tasks.map(goalToLocal);
-            console.log(localTasks);
-            setTasks(localTasks);
+        privateRequest<Goal[]>('day', 'GET', undefined, {
+            start: startTimestamp,
+            end: endTimestamp
+        }).then((goals) => {
+            console.log(goals);
+            const localGoals = goals.map(goalToLocal);
+            console.log(localGoals);
+            setTasks(localGoals);
         }).catch(error => {
-            console.error('Error fetching tasks:', error);
+            console.error('Error fetching goals:', error);
         });
     }, []);
 
@@ -73,8 +71,8 @@ const Day: React.FC = () => {
     };
 
     const organizedTasks = () => {
-        const todoTasks = tasks.filter(task => !task.completed);
-        const completedTasks = tasks.filter(task => task.completed);
+        const todoItems = tasks.filter(item => !item.completed);
+        const completedItems = tasks.filter(item => item.completed);
 
         const sortByScheduled = (a: Goal, b: Goal) => {
             const aTime = a.scheduled_timestamp || 0;
@@ -83,8 +81,8 @@ const Day: React.FC = () => {
         };
 
         return {
-            todo: todoTasks.sort(sortByScheduled),
-            completed: completedTasks.sort(sortByScheduled)
+            todo: todoItems.sort(sortByScheduled),
+            completed: completedItems.sort(sortByScheduled)
         };
     };
 
@@ -103,7 +101,7 @@ const Day: React.FC = () => {
             'create',
             (newGoal) => {
                 if (newGoal.id) {
-                    setTasks(prevTasks => [...prevTasks, goalToLocal(newGoal)]);
+                    setTasks(prevTasks => [...prevTasks, newGoal]);
                 }
             }
         );

@@ -3,11 +3,11 @@ import { getGoalColor } from '../../shared/styles/colors';
 import { privateRequest } from '../../shared/utils/api';
 
 // Constants used for node placement calculations
-export const BASE_SPACING = 200;        // Reduced from 300
-export const MIN_DISTANCE = 150;        // Reduced from 300
-export const REPULSION_STRENGTH = 0.5;  // Reduced from 1.0
-export const ATTRACTION_STRENGTH = 1.2; // Increased from 0.8
-export const PERIPHERAL_FACTOR = 0.3;   // Reduced from 0.5
+export const BASE_SPACING = 300;        // Base distance between nodes
+export const MIN_DISTANCE = 300;        // Minimum distance to prevent overlap
+export const REPULSION_STRENGTH = 1.0;    // Repulsion strength
+export const ATTRACTION_STRENGTH = 0.8;   // (For potential tweaks)
+export const PERIPHERAL_FACTOR = 0.5;     // Factor for pushing out peripheral nodes
 
 /**
  * buildHierarchy calculates positions (and some visual properties) for nodes.
@@ -114,7 +114,7 @@ export async function buildHierarchy(networkData: { nodes: NetworkNode[], edges:
         // Helper: repulsion calculation
         const calculateRepulsion = (x: number, y: number): { x: number, y: number } => {
             let repulsionX = 0, repulsionY = 0;
-            const MAX_FORCE = 500; // Add maximum force limit
+            const MAX_FORCE = 1000; // Add maximum force limit
 
             processedNodes.forEach(existingId => {
                 const existing = nodePositions[existingId];
@@ -140,12 +140,12 @@ export async function buildHierarchy(networkData: { nodes: NetworkNode[], edges:
             });
 
             // Add a dampening factor for large forces
-            const totalForce = Math.sqrt(repulsionX * repulsionX + repulsionY * repulsionY);
+            /*const totalForce = Math.sqrt(repulsionX * repulsionX + repulsionY * repulsionY);
             if (totalForce > MAX_FORCE) {
                 const scale = MAX_FORCE / totalForce;
                 repulsionX *= scale;
                 repulsionY *= scale;
-            }
+            }*/
 
             return { x: repulsionX, y: repulsionY };
         };

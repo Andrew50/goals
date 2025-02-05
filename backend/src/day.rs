@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
     Router,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use neo4rs::{query, Graph};
 use std::collections::HashMap;
 
@@ -22,37 +22,38 @@ async fn get_day_tasks(
     Extension(user_id): Extension<i64>,
     Query(params): Query<HashMap<String, i64>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let today_start = params.get("start").copied().unwrap_or_else(|| {
+    let start_timestamp = params.get("start").copied().unwrap_or_else(|| {
+        println!("No start timestamp provided");
+        // Default to start of current UTC day if not provided
         Utc::now()
             .date_naive()
             .and_hms_opt(0, 0, 0)
             .unwrap()
             .and_utc()
-            .timestamp()
-            * 1000
+            .timestamp_millis()
     });
 
-    let today_end = params.get("end").copied().unwrap_or_else(|| {
+    let end_timestamp = params.get("end").copied().unwrap_or_else(|| {
+        // Default to end of current UTC day if not provided
         Utc::now()
             .date_naive()
             .and_hms_opt(23, 59, 59)
             .unwrap()
             .and_utc()
-            .timestamp()
-            * 1000
+            .timestamp_millis()
     });
 
     println!("Query Parameters:");
     println!("  user_id: {}", user_id);
     println!(
-        "  today_start: {} ({})",
-        today_start,
-        DateTime::from_timestamp(today_start / 1000, 0).unwrap()
+        "  start_timestamp: {} ({})",
+        start_timestamp,
+        Utc.timestamp_millis(start_timestamp)
     );
     println!(
-        "  today_end: {} ({})",
-        today_end,
-        DateTime::from_timestamp(today_end / 1000, 0).unwrap()
+        "  end_timestamp: {} ({})",
+        end_timestamp,
+        Utc.timestamp_millis(end_timestamp)
     );
 
     // Debug query to show tasks near our range
@@ -67,8 +68,8 @@ async fn get_day_tasks(
          ORDER BY g.scheduled_timestamp",
     )
     .param("user_id", user_id)
-    .param("range_start", today_start - (86400000)) // 1 day before
-    .param("range_end", today_end + (86400000)); // 1 day after
+    .param("range_start", start_timestamp) // 1 day before
+    .param("range_end", end_timestamp); // 1 day after
 
     println!("\nTasks around the target date range:");
     if let Ok(mut result) = graph.execute(debug_query).await {
@@ -83,9 +84,9 @@ async fn get_day_tasks(
     let query_str = format!(
         "MATCH (g:Goal) 
          WHERE g.user_id = $user_id 
-         AND g.goal_type = 'task'
-         AND g.scheduled_timestamp >= $today_start 
-         AND g.scheduled_timestamp <= $today_end
+         AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
+         AND g.scheduled_timestamp >= $start_timestamp 
+         AND g.scheduled_timestamp <= $end_timestamp
          {}",
         GOAL_RETURN_QUERY
     );
@@ -95,8 +96,8 @@ async fn get_day_tasks(
 
     let query = query(&query_str)
         .param("user_id", user_id)
-        .param("today_start", today_start)
-        .param("today_end", today_end);
+        .param("start_timestamp", start_timestamp)
+        .param("end_timestamp", end_timestamp);
 
     match graph.execute(query).await {
         Ok(mut result) => {
