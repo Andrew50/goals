@@ -17,6 +17,7 @@ interface NetworkData {
   nodes: NetworkNode[];
   edges: NetworkEdge[];
 }
+//
 
 const formatNetworkNode = (goal: Goal, inlineUpdate: boolean = false): NetworkNode => {
   let localGoal: Goal
