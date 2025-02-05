@@ -60,12 +60,43 @@ export type NetworkNode = Goal & {
     label: string;
     title?: string;
     color?: string;
+    x?: number;
+    y?: number;
+    size?: number;
+    font?: {
+        size: number;
+        color: string;
+        bold: {
+            color: string;
+            size: number;
+            mod: string;
+        };
+    };
 };
 
 export interface NetworkEdge {
     from: number;
     to: number;
+    id?: string;
     label?: string;
-    arrows?: string;
     relationship_type?: RelationshipType;
+    width?: number;
+    color?: {
+        color: string;
+        opacity: number;
+    };
+    arrows?: {
+        to: {
+            enabled: boolean;
+            scaleFactor: number;
+            type: string;
+        };
+    };
+    dashes?: boolean;
+    smooth?: {
+        enabled: boolean;
+        type: string;
+        roundness: number;
+        forceDirection: string;
+    };
 }
