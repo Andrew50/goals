@@ -19,6 +19,8 @@ export interface Goal {
     scheduled_timestamp?: number;
     duration?: number; // minuites
     _tz?: 'utc' | 'user';
+    position_x?: number;
+    position_y?: number;
 }
 
 // Utility functions for timezone conversion

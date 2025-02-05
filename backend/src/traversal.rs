@@ -49,6 +49,8 @@ pub async fn query_hierarchy(graph: &Graph, goal_id: i64) -> Result<Vec<Goal>, n
             completion_date: None,
             routine_type: None,
             routine_time: None,
+            position_x: None,
+            position_y: None,
         });
     }
 

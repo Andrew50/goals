@@ -9,7 +9,7 @@ import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType } from '
 import GoalMenu from '../../shared/components/GoalMenu';
 import { privateRequest, createRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
-import { buildHierarchy } from './buildHierarchy';
+import { buildHierarchy, saveNodePosition } from './buildHierarchy';
 import { getGoalColor } from '../../shared/styles/colors';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 
@@ -50,6 +50,7 @@ const NetworkView: React.FC
     const [addEdgeMode, setAddEdgeMode] = useState(false);
     const [deleteMode, setDeleteMode] = useState(false);
     const deleteModeRef = useRef(deleteMode);
+    const draggedNodeRef = useRef<number | null>(null);
 
     const findConnectedElements = (
       nodeId: number,
@@ -158,11 +159,11 @@ const NetworkView: React.FC
             border: 'transparent',
             highlight: {
               border: 'transparent',
-              background: undefined
+              background: '#ffffff'
             },
             hover: {
               border: 'transparent',
-              background: undefined
+              background: '#f0f0f0'
             }
           }
         },
@@ -172,34 +173,18 @@ const NetworkView: React.FC
             enabled: true,
             type: 'curvedCW',
             roundness: 0.2,
-            forceDirection: 'radial'
+            forceDirection: 'none'
           },
           width: 1.5,
           color: {
             inherit: 'from',
-            opacity: 0.7
-          }
+            opacity: 0.7,
+            hover: '#2B7CE9',
+            highlight: '#2B7CE9'
+          },
         },
         physics: {
-          enabled: true,
-          solver: 'repulsion',
-          repulsion: {
-            nodeDistance: 250,     // Reduced from 350 for tighter spacing
-            centralGravity: 0.1,   // Keep light pull to center
-            springLength: 0,       // No spring force
-            springConstant: 0,     // No spring force
-            damping: 0.9,         // High damping to reduce movement
-            avoidOverlap: 1.0
-          },
-          stabilization: {
-            enabled: true,
-            iterations: 1000,
-            updateInterval: 100,
-            fit: true
-          },
-          maxVelocity: 5,          // Very low max velocity
-          minVelocity: 0.1,        // When to consider system stable
-          timestep: 0.1            // Smaller timestep for more stable movement
+          enabled: false  // Disable physics to prevent node movement after dragging
         },
         interaction: {
           dragNodes: true,
@@ -212,48 +197,124 @@ const NetworkView: React.FC
             bindToWindow: true
           }
         },
-        bounds: {
-          min: {
-            x: -1000,
-            y: -1000
+        manipulation: {
+          enabled: false,
+          addNode: true,
+          addEdge: async function (data: any, callback: Function) {
+            try {
+              setPendingRelationship({
+                from: data.from,
+                to: data.to
+              });
+              setDialogMode('relationship');
+              callback(data);
+            } catch (err) {
+              console.error('Edge creation error:', err);
+              callback(null);
+            }
           },
-          max: {
-            x: 1000,
-            y: 1000
-          }
-        }
+          initiallyActive: false,
+          editEdge: false,
+          deleteNode: true,
+          deleteEdge: true,
+        },
       } as const;
 
       if (networkContainer.current && networkData) {
-        const formattedData = buildHierarchy(networkData);
-        const network = new VisNetwork(
-          networkContainer.current,
-          formattedData,
-          options
-        );
+        const initializeNetwork = async () => {
+          try {
+            // Check if container exists
+            if (!networkContainer.current || !networkData) {
+              console.log('Network container or data not ready');
+              return;
+            }
 
-        // Add hover event handlers
-        network.on('hoverNode', (params) => {
-          if (networkData) {
-            const { edges: connectedEdges } = findConnectedElements(params.node, networkData.edges);
-            network.setSelection({
-              nodes: [],
-              edges: Array.from(connectedEdges)
+            // Await the formatted data
+            const formattedData = await buildHierarchy(networkData);
+
+            // Create network with resolved data
+            const network = new VisNetwork(
+              networkContainer.current as HTMLElement, // Type assertion here
+              formattedData,
+              options
+            );
+
+            // Add drag start event handler
+            network.on('dragStart', (params: any) => {
+              console.log('dragStart:', params);
+              if (params.nodes && params.nodes.length > 0) {
+                draggedNodeRef.current = params.nodes[0];
+              }
             });
+
+            // Modify drag end event handler
+            network.on('dragEnd', async (params: any) => {
+              console.log('dragEnd:', params);
+              const draggedNodeId = draggedNodeRef.current;
+
+              if (draggedNodeId) {
+                // Add small delay to ensure position is stable
+                setTimeout(async () => {
+                  const position = network.getPositions([draggedNodeId])[draggedNodeId];
+
+                  try {
+                    // Save the new position to the backend
+                    await saveNodePosition(draggedNodeId, position.x, position.y);
+
+                    // Update local state
+                    if (networkData) {
+                      const updatedNodes = networkData.nodes.map(node => {
+                        if (node.id === draggedNodeId) {
+                          return {
+                            ...node,
+                            position_x: position.x,
+                            position_y: position.y
+                          };
+                        }
+                        return node;
+                      });
+                      setNetworkData({
+                        ...networkData,
+                        nodes: updatedNodes
+                      });
+                    }
+                  } catch (error) {
+                    console.error('Failed to save node position:', error);
+                  }
+                  // Reset the dragged node reference
+                  draggedNodeRef.current = null;
+                }, 50);
+              }
+            });
+
+            // Add hover event handlers
+            network.on('hoverNode', (params) => {
+              if (networkData) {
+                const { edges: connectedEdges } = findConnectedElements(params.node, networkData.edges);
+                network.setSelection({
+                  nodes: [],
+                  edges: Array.from(connectedEdges)
+                });
+              }
+            });
+
+            network.on('blurNode', () => {
+              network.setSelection({ nodes: [], edges: [] });
+            });
+
+            network.on('click', (params: any) => handleClick(params, 'view'));
+            network.on('oncontext', (params: any) => handleClick(params, 'edit'));
+            networkRef.current = network;
+
+            network.once('stabilizationIterationsDone', () => {
+              network.setOptions({ physics: { enabled: false } });
+            });
+          } catch (error) {
+            console.error('Error initializing network:', error);
           }
-        });
+        };
 
-        network.on('blurNode', () => {
-          network.setSelection({ nodes: [], edges: [] });
-        });
-
-        network.on('click', (params: any) => handleClick(params, 'view'));
-        network.on('oncontext', (params: any) => handleClick(params, 'edit'));
-        networkRef.current = network;
-
-        network.once('stabilizationIterationsDone', () => {
-          network.setOptions({ physics: { enabled: false } });
-        });
+        initializeNetwork();
       }
     };
     useEffect(() => {
