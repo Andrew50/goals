@@ -174,7 +174,7 @@ const NetworkView: React.FC = () => {
       const node = nodesDataSetRef.current.get(nodeId);
       if (node) {
         GoalMenu.open(node, goalDialogMode, (goal: Goal) => {
-          // After editing/viewing, update the node's properties
+          // After editing/viewing, update the node’s properties
           const updatedNode = formatNetworkNode(goal);
           nodesDataSetRef.current?.update(updatedNode);
         });

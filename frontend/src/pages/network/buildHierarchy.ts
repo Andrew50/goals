@@ -233,7 +233,7 @@ export async function buildHierarchy(networkData: { nodes: NetworkNode[], edges:
                 networkData.nodes[nodeIndex].position_y = position.y;
             }
             // (Optionally, you could push backend save promises here)
-            // savePromises.push(saveNodePosition(nodeId, position.x, position.y));
+            savePromises.push(saveNodePosition(nodeId, position.x, position.y));
         }
         await Promise.all(savePromises);
         console.log('Final node positions:', nodePositions);
