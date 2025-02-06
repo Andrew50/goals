@@ -7,8 +7,8 @@ import { privateRequest } from '../../shared/utils/api';
 // =====================================================
 export const BASE_SPACING = 500;         // Base distance used to set ideal edge length
 const NUM_ITERATIONS = 1000;              // Number of simulation iterations
-const REPULSION_CONSTANT = 100000;        // Controls repulsive force strength
-const ATTRACTION_CONSTANT = 0.01;         // Controls attractive (spring) force strength
+const REPULSION_CONSTANT = 1000000; //100000       // Controls repulsive force strength
+const ATTRACTION_CONSTANT = 0.05;   //0.01          // Controls attractive (spring) force strength
 const GRAVITY_CONSTANT = 0.03;           // Pulls nodes toward center (radial gravity)
 const DAMPING = 0.85;                    // Damping factor to stabilize the simulation
 
