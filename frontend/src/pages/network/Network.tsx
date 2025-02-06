@@ -7,6 +7,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
 import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType } from '../../types/goals';
 import GoalMenu from '../../shared/components/GoalMenu';
@@ -14,10 +15,8 @@ import { privateRequest, createRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import {
   buildHierarchy,
-  calculateNewNodePosition,
-  BASE_SPACING,
-  PERIPHERAL_FACTOR,
-  saveNodePosition
+  saveNodePosition,
+  calculateNewNodePosition
 } from './buildHierarchy';
 import { getGoalColor } from '../../shared/styles/colors';
 import { validateRelationship } from '../../shared/utils/goalValidation';
@@ -174,7 +173,7 @@ const NetworkView: React.FC = () => {
       const node = nodesDataSetRef.current.get(nodeId);
       if (node) {
         GoalMenu.open(node, goalDialogMode, (goal: Goal) => {
-          // After editing/viewing, update the node’s properties
+          // After editing/viewing, update the node's properties
           const updatedNode = formatNetworkNode(goal);
           nodesDataSetRef.current?.update(updatedNode);
         });
@@ -395,6 +394,43 @@ const NetworkView: React.FC = () => {
     }, 100);
   };
 
+  // Add this new function inside NetworkView component:
+  const handleReorganizeNetwork = async () => {
+    if (!networkRef.current || !nodesDataSetRef.current || !edgesDataSetRef.current) return;
+
+    try {
+      const currentNodes = nodesDataSetRef.current.get();
+      const currentEdges = edgesDataSetRef.current.get();
+
+      // Reset positions to null in the DataSet first
+      const nodesWithNullPositions = currentNodes.map(node => ({
+        ...node,
+        position_x: null,
+        position_y: null,
+        x: undefined,  // Clear vis-network positions too
+        y: undefined
+      }));
+
+      // Update the network data with null positions
+      nodesDataSetRef.current.update(nodesWithNullPositions);
+
+      // Recalculate all positions with fresh data
+      const reorganizedData = await buildHierarchy({
+        nodes: nodesWithNullPositions,
+        edges: currentEdges
+      });
+
+      // Update the network with new positions
+      nodesDataSetRef.current.update(reorganizedData.nodes);
+      edgesDataSetRef.current.update(reorganizedData.edges);
+
+      // Optional: fit the view to show all nodes
+      networkRef.current.fit();
+    } catch (error) {
+      console.error('Error reorganizing network:', error);
+    }
+  };
+
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
       <div ref={networkContainer} style={{ height: '100%', width: '100%' }} />
@@ -460,6 +496,28 @@ const NetworkView: React.FC = () => {
         onClick={handleDeleteMode}
       >
         <DeleteIcon style={{ fontSize: '20px', color: deleteMode ? '#f44336' : '#666666' }} />
+      </Button>
+
+      <Button
+        variant="contained"
+        color="primary"
+        style={{
+          position: 'absolute',
+          top: '10rem',
+          left: '1rem',
+          minWidth: '32px',
+          width: '32px',
+          height: '32px',
+          padding: '0',
+          borderRadius: '4px',
+          backgroundColor: '#f3f3f3',
+          border: '1px solid #c1c1c1',
+          boxShadow: 'none'
+        }}
+        onClick={handleReorganizeNetwork}
+        title="Reorganize Network"
+      >
+        <RefreshIcon style={{ fontSize: '20px', color: '#666666' }} />
       </Button>
 
       <Dialog
