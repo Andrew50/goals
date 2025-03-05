@@ -254,7 +254,7 @@ fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<
 
         // Use set_time_of_day to apply the time components
         let next_timestamp = set_time_of_day(
-            next_date.and_hms(0, 0, 0).timestamp_millis(),
+            next_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis(),
             routine_time.unwrap_or(0),
         );
 
@@ -263,7 +263,7 @@ fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<
         // Default to daily if format is invalid
         let next_date = current_dt.date_naive() + Duration::days(1);
         set_time_of_day(
-            next_date.and_hms(0, 0, 0).timestamp_millis(),
+            next_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis(),
             routine_time.unwrap_or(0),
         )
     }

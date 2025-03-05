@@ -65,6 +65,10 @@ async fn main() {
             calendar::create_routes().route_layer(from_fn(middleware::auth_middleware)),
         )
         .nest(
+            "/calender",
+            calendar::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
             "/list",
             list::create_routes().route_layer(from_fn(middleware::auth_middleware)),
         )

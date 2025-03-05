@@ -2,12 +2,26 @@ import { Goal } from "../../types/goals";
 
 export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
-    return timestamp - new Date().getTimezoneOffset() * 60 * 1000;
+
+    // Log the conversion for debugging
+    const originalTimestamp = timestamp;
+    const offset = new Date().getTimezoneOffset() * 60 * 1000;
+    const convertedTimestamp = timestamp - offset;
+
+    console.log(`Converting UTC timestamp ${originalTimestamp} to local: ${convertedTimestamp} (offset: ${offset})`);
+    return convertedTimestamp;
 };
 
 export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
-    return timestamp + new Date().getTimezoneOffset() * 60 * 1000;
+
+    // Log the conversion for debugging
+    const originalTimestamp = timestamp;
+    const offset = new Date().getTimezoneOffset() * 60 * 1000;
+    const convertedTimestamp = timestamp + offset;
+
+    console.log(`Converting local timestamp ${originalTimestamp} to UTC: ${convertedTimestamp} (offset: ${offset})`);
+    return convertedTimestamp;
 };
 
 // Goal conversion utilities

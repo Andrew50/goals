@@ -34,7 +34,9 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         console.log(`Fetching calendar data from ${start.toISOString()} to ${actualEnd.toISOString()}`);
 
         // Add date range params to the request
-        const response = await privateRequest<CalendarResponse>(`calendar?start=${startTimestamp}&end=${endTimestamp}`);
+        console.log('Making API request to calender endpoint');
+        const response = await privateRequest<CalendarResponse>('calender');
+        console.log('Raw API response:', response);
 
         // Validate response data
         if (!response) {
@@ -123,11 +125,24 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                         console.log(`Task ${item.id} (${item.name}) has no scheduled_timestamp`);
                         return false;
                     }
+
+                    // Log the timestamp and date for debugging
                     const taskDate = new Date(item.scheduled_timestamp);
-                    const inRange = taskDate >= start && taskDate <= actualEnd;
+                    console.log(`Task ${item.id} (${item.name}) timestamp: ${item.scheduled_timestamp}, date: ${taskDate.toISOString()}`);
+
+                    // Expand the date range slightly to ensure edge cases are included
+                    const expandedStart = new Date(start);
+                    expandedStart.setDate(expandedStart.getDate() - 1);
+
+                    const expandedEnd = new Date(actualEnd);
+                    expandedEnd.setDate(expandedEnd.getDate() + 1);
+
+                    const inRange = taskDate >= expandedStart && taskDate <= expandedEnd;
+
                     if (!inRange) {
-                        console.log(`Task ${item.id} (${item.name}) is outside date range: ${taskDate.toISOString()}`);
+                        console.log(`Task ${item.id} (${item.name}) is outside date range: ${taskDate.toISOString()}, range: ${expandedStart.toISOString()} to ${expandedEnd.toISOString()}`);
                     }
+
                     return inRange;
                 })
                 .map(item => {
