@@ -48,12 +48,12 @@ async fn get_day_tasks(
     println!(
         "  start_timestamp: {} ({})",
         start_timestamp,
-        Utc.timestamp_millis(start_timestamp)
+        Utc.timestamp_millis_opt(start_timestamp).unwrap()
     );
     println!(
         "  end_timestamp: {} ({})",
         end_timestamp,
-        Utc.timestamp_millis(end_timestamp)
+        Utc.timestamp_millis_opt(end_timestamp).unwrap()
     );
 
     // Debug query to show tasks near our range
