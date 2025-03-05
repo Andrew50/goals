@@ -1,4 +1,4 @@
-use neo4rs::{Graph, Result, ConfigBuilder};
+use neo4rs::{ConfigBuilder, Graph, Result};
 use std::env;
 
 pub async fn create_pool() -> Result<Graph> {
@@ -12,7 +12,7 @@ pub async fn create_pool() -> Result<Graph> {
         .uri(&neo4j_uri)
         .user(&neo4j_username)
         .password(&neo4j_password)
-        .max_connections(5)  // Limit max connections
+        .max_connections(5) // Limit max connections
         .build()?;
 
     // Connect to the Neo4j database with configuration
