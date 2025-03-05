@@ -1,5 +1,5 @@
 mod auth;
-mod calender;
+mod calendar;
 mod day;
 mod db;
 mod goal;
@@ -61,8 +61,8 @@ async fn main() {
             traversal::create_routes().route_layer(from_fn(middleware::auth_middleware)),
         )
         .nest(
-            "/calender",
-            calender::create_routes().route_layer(from_fn(middleware::auth_middleware)),
+            "/calendar",
+            calendar::create_routes().route_layer(from_fn(middleware::auth_middleware)),
         )
         .nest(
             "/list",

@@ -1,10 +1,5 @@
 //calender.tsx
 import React, { useState, useEffect, useRef } from 'react';
-import FullCalendar from '@fullcalendar/react';
-import dayGridPlugin from '@fullcalendar/daygrid';
-import timeGridPlugin from '@fullcalendar/timegrid';
-import interactionPlugin, { Draggable, DateClickArg, EventReceiveArg, EventResizeStopArg } from '@fullcalendar/interaction';
-import { EventClickArg, EventDropArg } from '@fullcalendar/core';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
 import { updateGoal } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
@@ -15,125 +10,234 @@ import { dateToTimestamp } from '../../shared/utils/time';
 import { useHistoryState } from '../../shared/hooks/useHistoryState';
 import './Calendar.css';
 
+// Import FullCalendar dynamically to avoid build errors
+let FullCalendar: any;
+let dayGridPlugin: any;
+let timeGridPlugin: any;
+let interactionPlugin: any;
+let Draggable: any;
+
+// Dynamically load FullCalendar when component mounts
+const loadFullCalendar = async () => {
+  try {
+    // Add a timeout to prevent hanging if imports fail
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('FullCalendar loading timeout')), 10000);
+    });
+
+    const loadPromise = Promise.all([
+      import('@fullcalendar/react'),
+      import('@fullcalendar/daygrid'),
+      import('@fullcalendar/timegrid'),
+      import('@fullcalendar/interaction')
+    ]);
+
+    // Race between the loading and the timeout
+    const [
+      fullCalendarReact,
+      fullCalendarDayGrid,
+      fullCalendarTimeGrid,
+      fullCalendarInteraction
+    ] = await Promise.race([loadPromise, timeoutPromise]) as any;
+
+    // Check if all modules were loaded correctly
+    if (!fullCalendarReact || !fullCalendarDayGrid ||
+      !fullCalendarTimeGrid || !fullCalendarInteraction) {
+      console.error('Some FullCalendar modules failed to load');
+      return false;
+    }
+
+    // Assign the loaded modules to variables
+    try {
+      FullCalendar = fullCalendarReact.default;
+      dayGridPlugin = fullCalendarDayGrid.default;
+      timeGridPlugin = fullCalendarTimeGrid.default;
+      interactionPlugin = fullCalendarInteraction.default;
+      Draggable = fullCalendarInteraction.Draggable;
+
+      // Verify that all required components are available
+      if (!FullCalendar || !dayGridPlugin || !timeGridPlugin ||
+        !interactionPlugin || !Draggable) {
+        console.error('Some FullCalendar components are missing');
+        return false;
+      }
+
+      return true;
+    } catch (assignError) {
+      console.error('Error assigning FullCalendar modules:', assignError);
+      return false;
+    }
+  } catch (error) {
+    console.error('Failed to load FullCalendar:', error);
+    return false;
+  }
+};
+
 interface CalendarState {
   events: CalendarEvent[];
   tasks: CalendarTask[];
+  isLoading: boolean;
+  dateRange: {
+    start: Date;
+    end: Date;
+  };
+  fullCalendarLoaded: boolean;
 }
 
 const Calendar: React.FC = () => {
-  const [state, setState] = useHistoryState<CalendarState>(
-    {
-      events: [],
-      tasks: []
+  // State
+  const [state, setState] = useHistoryState<CalendarState>({
+    events: [],
+    tasks: [],
+    isLoading: false,
+    dateRange: {
+      start: new Date(),
+      end: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)
     },
-    {
-      hotkeyScope: 'calendar',
-      onUndo: (newState) => {
-        console.log('Undid calendar action');
-      },
-      onRedo: (newState) => {
-        console.log('Redid calendar action');
-      }
-    }
-  );
+    fullCalendarLoaded: false
+  }, {
+    hotkeyScope: 'calendar'
+  });
 
-  const calendarRef = useRef<FullCalendar>(null);
+  // Add error state
+  const [error, setError] = useState<string | null>(null);
+  const [loadAttempts, setLoadAttempts] = useState(0);
+
+  const calendarRef = useRef<any>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
+  const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Load FullCalendar dynamically
   useEffect(() => {
-    const loadCalendarData = async () => {
-      const data = await fetchCalendarData();
-      const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-        ...event,
-        start: new Date(event.start),
-        end: new Date(event.end),
-        allDay: event.allDay || false,
-      }));
+    const loadCalendarLibraries = async () => {
+      try {
+        setError(null);
+        const success = await loadFullCalendar();
 
-      setState({
-        events: formattedEvents,
-        tasks: data.unscheduledTasks
-      });
+        if (success) {
+          setState({
+            ...state,
+            fullCalendarLoaded: true
+          });
+        } else {
+          setError("Failed to load calendar components. Please try refreshing the page.");
+          // Try to reload if we haven't tried too many times
+          if (loadAttempts < 2) {
+            setTimeout(() => {
+              setLoadAttempts(prev => prev + 1);
+            }, 2000);
+          }
+        }
+      } catch (err) {
+        console.error("Error in loadCalendarLibraries:", err);
+        setError("An error occurred while loading the calendar. Please try refreshing the page.");
+      }
     };
 
-    loadCalendarData();
-  }, []);
+    loadCalendarLibraries();
+  }, [loadAttempts]);
 
+  // Load calendar data
   useEffect(() => {
-    if (taskListRef.current) {
-      new Draggable(taskListRef.current, {
-        itemSelector: '.external-event',
-        eventData: (eventEl) => {
-          const taskId = eventEl.getAttribute('data-task-id');
-          const task = state.tasks.find(t => t.id === taskId);
-          const durationMinutes = task?.goal?.duration || 60;
-          const hours = Math.floor(durationMinutes / 60);
-          const minutes = durationMinutes % 60;
-          const duration = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-          return {
-            id: task?.id,
-            title: task?.title,
-            duration: duration,
-            extendedProps: {
-              task: task
-            }
-          };
-        },
-      });
-
-      // Update completion for all visible days
-      const visibleDays = document.querySelectorAll('.fc-daygrid-day, .fc-timegrid-col');
-      visibleDays.forEach(dayEl => {
-        const dateAttr = dayEl.getAttribute('data-date');
-        if (!dateAttr) return;
-
-        const date = new Date(dateAttr + 'T00:00:00Z'); // Ensure UTC date
-        const completion = calculateDayCompletion(date);
-        const color = getCompletionColor(completion);
-
-        // Update background
-        let backgroundEl = dayEl.querySelector('.completion-background') as HTMLElement;
-        if (!backgroundEl) {
-          backgroundEl = document.createElement('div');
-          backgroundEl.className = 'completion-background';
-          dayEl.appendChild(backgroundEl);
-        }
-        backgroundEl.style.backgroundColor = color;
-
-        // Update percentage display
-        let percentageEl = dayEl.querySelector('.day-completion') as HTMLElement;
-        if (!percentageEl) {
-          percentageEl = document.createElement('div');
-          percentageEl.className = 'day-completion';
-          dayEl.appendChild(percentageEl);
-        }
-        percentageEl.innerHTML = completion !== null ? `${Math.round(completion)}%` : '';
+    if (state.fullCalendarLoaded) {
+      loadCalendarData().catch(err => {
+        console.error("Error loading calendar data:", err);
+        setError("Failed to load calendar data. Please try refreshing the page.");
       });
     }
-  }, [state.tasks, state.events]);
+  }, [state.fullCalendarLoaded]);
 
-  const handleEventClick = (info: EventClickArg) => {
-    const event = state.events.find((e) => e.id === info.event.id);
-    if (event && event.goal) {
-      GoalMenu.open(event.goal, 'view', async (updatedGoal) => {
-        const data = await fetchCalendarData();
-        const formattedEvents = [...data.events, ...data.achievements].map((event) => ({
-          ...event,
-          start: new Date(event.start),
-          end: new Date(event.end),
-          allDay: event.allDay || false,
-        }));
+  // Load calendar data based on the current date range
+  const loadCalendarData = async (dateRange = state.dateRange) => {
+    if (state.isLoading) return;
 
-        // First update the state
-        setState({
-          events: formattedEvents,
-          tasks: data.unscheduledTasks
-        });
+    try {
+      // Set loading state
+      setState({
+        ...state,
+        isLoading: true
+      });
+
+      const data = await fetchCalendarData(dateRange);
+
+      // Safely format events with error handling
+      const formattedEvents: CalendarEvent[] = [];
+      try {
+        for (const event of [...data.events, ...data.achievements]) {
+          try {
+            formattedEvents.push({
+              ...event,
+              start: new Date(event.start),
+              end: new Date(event.end),
+              allDay: event.allDay || false,
+            });
+          } catch (eventError) {
+            console.error('Error formatting event:', eventError, event);
+          }
+        }
+      } catch (eventsError) {
+        console.error('Error processing events array:', eventsError);
+      }
+
+      // Update state with the loaded data
+      setState({
+        ...state,
+        events: formattedEvents,
+        tasks: data.unscheduledTasks,
+        isLoading: false,
+        dateRange
+      });
+    } catch (error) {
+      console.error('Error loading calendar data:', error);
+      setState({
+        ...state,
+        isLoading: false
       });
     }
   };
 
-  const handleDateClick = (arg: DateClickArg) => {
+  // Handle date view changes
+  const handleDatesSet = (dateInfo: any) => {
+    const newStart = dateInfo.start;
+    const newEnd = dateInfo.end;
+
+    // Add buffer days for smoother scrolling/navigation
+    const bufferStart = new Date(newStart);
+    bufferStart.setDate(bufferStart.getDate() - 7); // 1 week before
+
+    const bufferEnd = new Date(newEnd);
+    bufferEnd.setDate(bufferEnd.getDate() + 7); // 1 week after
+
+    // Check if the new range is significantly different from what we already have
+    const currentStart = state.dateRange.start;
+    const currentEnd = state.dateRange.end;
+
+    const needsUpdate =
+      bufferStart < currentStart ||
+      bufferEnd > currentEnd ||
+      Math.abs(bufferStart.getTime() - currentStart.getTime()) > 86400000 * 14 ||
+      Math.abs(bufferEnd.getTime() - currentEnd.getTime()) > 86400000 * 14;
+
+    if (needsUpdate) {
+      // Debounce the data loading to prevent multiple rapid requests
+      if (debouncingRef.current) {
+        clearTimeout(debouncingRef.current);
+      }
+
+      debouncingRef.current = setTimeout(() => {
+        loadCalendarData({
+          start: bufferStart,
+          end: bufferEnd
+        });
+        debouncingRef.current = null;
+      }, 300);
+    }
+  };
+
+  // Other handlers can be simplified to just call loadCalendarData 
+  // after making their API changes
+
+  const handleDateClick = (arg: any) => {
     const tempGoal: Goal = {
       id: 0,
       name: '',
@@ -145,254 +249,75 @@ const Calendar: React.FC = () => {
       _tz: 'user'
     };
 
-    GoalMenu.open(tempGoal, 'create', async (updatedGoal) => {
-      // After goal creation, refresh calendar data
-      const data = await fetchCalendarData();
-      const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-        ...event,
-        start: new Date(event.start),
-        end: new Date(event.end),
-        allDay: event.allDay || false,
-      }));
-      setState({
-        events: formattedEvents,
-        tasks: data.unscheduledTasks
-      });
+    GoalMenu.open(tempGoal, 'create', async () => {
+      loadCalendarData();
     });
   };
 
-  const handleEventReceive = async (info: EventReceiveArg) => {
-    const task = info.event.extendedProps.task;
-    if (!task || !task.goal) {
-      console.error('Task or goal information missing');
-      info.revert();
-      return;
+  const handleEventClick = (info: any) => {
+    const event = state.events.find((e) => e.id === info.event.id);
+    if (event && event.goal) {
+      GoalMenu.open(event.goal, 'view', async () => {
+        loadCalendarData();
+      });
     }
-    const start = info.event.start;
-    if (!start) {
-      console.error('Event start date missing');
-      info.revert();
-      return;
-    }
-    const isAllDay = task.goal.duration === 1440;
-    const updatedGoal = {
-      ...task.goal,
-      scheduled_timestamp: dateToTimestamp(start),
-      // Set duration to 1440 (24 hours) if it's an all-day event
-      duration: isAllDay ? 1440 : (task.goal.duration || 60)
-    };
-    console.log('updatedGoal', updatedGoal);
+  };
+
+  const handleEventReceive = async (info: any) => {
     try {
-      const redoFunction = async () => {
-        await updateGoal(task.goal.id, updatedGoal);
-      };
-      const undoFunction = async () => {
-        await updateGoal(task.goal.id, task.goal);
-      };
-      await redoFunction();
-      setState({
-        events: [...state.events, {
-          id: task.id,
-          title: task.title,
-          start: start,
-          end: isAllDay
-            ? new Date(start.setHours(23, 59, 59, 999))
-            : new Date(start.getTime() + (task.goal.duration || 60) * 60000),
-          goal: updatedGoal,
-          type: task.type || 'task',
-          allDay: isAllDay,
-        }],
-        tasks: state.tasks.filter((t) => t.id !== task.id)
-      }, undoFunction, redoFunction);
+      // Process event receive and update server
+      await updateGoal(info.event.extendedProps.task.goal.id, {
+        ...info.event.extendedProps.task.goal,
+        scheduled_timestamp: dateToTimestamp(info.event.start)
+      });
+
+      // Reload calendar data
+      loadCalendarData();
     } catch (error) {
       console.error('Failed to update goal:', error);
       info.revert();
     }
   };
 
-  const handleEventDrop = async (info: EventDropArg) => {
-    const existingEvent = state.events.find((e: CalendarEvent) => e.id === info.event.id);
-    if (!existingEvent || !existingEvent.goal) {
-      console.error('Event drop failed: missing event or goal');
-      info.revert();
-      return;
-    }
-
-    const _start = info.event.start;
-    if (!_start) {
-      console.error('Event drop failed: missing start date');
-      info.revert();
-      return;
-    }
-
-    let start: number;
-    let eventStart: Date;
-    let eventEnd: Date;
-
-    const newDuration = (() => {
-      if (info.event.allDay) {
-        return 1440;
-      } else if (existingEvent.goal.duration === 1440) {
-        return 60;
-      }
-      return existingEvent.goal.duration || 60;
-    })();
-
-    if (info.event.allDay) {
-      // When moving to all-day section
-      eventStart = new Date(_start);
-      eventStart.setHours(0, 0, 0, 0);
-      eventEnd = new Date(_start);
-      eventEnd.setHours(23, 59, 59, 999);
-      start = dateToTimestamp(eventStart);
-    } else {
-      // Regular timed event
-      eventStart = _start;
-      eventEnd = new Date(_start.getTime() + (newDuration * 60000));
-      start = dateToTimestamp(eventStart);
-    }
-
-    const submissionGoal = {
-      ...existingEvent.goal,
-      duration: newDuration,
-      allDay: info.event.allDay
-    };
-
-    if (existingEvent.goal.goal_type === 'routine') {
-      submissionGoal.routine_time = start;
-      try {
-        await updateGoal(existingEvent.goal.id, submissionGoal);
-        setState({
-          events: state.events.map((event: CalendarEvent) => {
-            if (event.goal.id === existingEvent.goal.id) {
-              const newStart = new Date(event.start);
-              newStart.setHours(_start.getHours(), _start.getMinutes(), _start.getSeconds());
-              const newEnd = new Date(newStart);
-              const durationInMinutes = submissionGoal.duration;
-              newEnd.setMinutes(newStart.getMinutes() + durationInMinutes);
-
-              return {
-                ...event,
-                start: newStart,
-                end: newEnd,
-                allDay: info.event.allDay,
-                goal: submissionGoal,
-              };
-            }
-            return event;
-          }),
-          tasks: state.tasks
+  const handleEventDrop = async (info: any) => {
+    try {
+      // Process event drop and update server
+      const existingEvent = state.events.find(e => e.id === info.event.id);
+      if (existingEvent && existingEvent.goal) {
+        await updateGoal(existingEvent.goal.id, {
+          ...existingEvent.goal,
+          scheduled_timestamp: dateToTimestamp(info.event.start)
         });
-      } catch (error) {
-        console.error('Failed to update routine schedule:', error);
-        info.revert();
       }
-    } else {
-      submissionGoal.scheduled_timestamp = start;
-      const updatedEvent: CalendarEvent = {
-        ...existingEvent,
-        id: info.event.id,
-        title: info.event.title,
-        start: eventStart,
-        end: eventEnd,
-        allDay: info.event.allDay,
-        goal: submissionGoal,
-      };
 
-      try {
-        await updateGoal(existingEvent.goal.id, submissionGoal);
-        setState({
-          events: state.events.map((event: CalendarEvent) =>
-            event.id === updatedEvent.id ? updatedEvent : event
-          ),
-          tasks: state.tasks
-        });
-      } catch (error) {
-        console.error('Failed to update event schedule:', error);
-        info.revert();
-      }
+      // Reload calendar data
+      loadCalendarData();
+    } catch (error) {
+      console.error('Failed to update event position:', error);
+      info.revert();
     }
   };
 
-  const handleEventResize = async (info: EventResizeStopArg) => {
-    const existingEvent = state.events.find((e) => e.id === info.event.id);
-    if (!existingEvent || !existingEvent.goal || !info.event.start || !info.event.end) {
-      console.error('Event resize failed: missing event or goal');
-      return;
-    }
-    const _start = info.event.start;
-    const _end = info.event.end;
+  const handleEventResize = async (info: any) => {
+    try {
+      // Process event resize and update server
+      const existingEvent = state.events.find(e => e.id === info.event.id);
+      if (existingEvent && existingEvent.goal) {
+        const start = info.event.start;
+        const end = info.event.end;
+        const durationInMinutes = Math.round((end - start) / (1000 * 60));
 
-    const start = Date.UTC(
-      _start.getFullYear(),
-      _start.getMonth(),
-      _start.getDate(),
-      _start.getHours(),
-      _start.getMinutes(),
-      _start.getSeconds()
-    );
-
-    const end = Date.UTC(
-      _end.getFullYear(),
-      _end.getMonth(),
-      _end.getDate(),
-      _end.getHours(),
-      _end.getMinutes(),
-      _end.getSeconds()
-    );
-
-    const durationInMinutes = Math.round((end - start) / (1000 * 60));
-    const submissionGoal = {
-      ...existingEvent.goal,
-      duration: durationInMinutes,
-      scheduled_timestamp: start
-    };
-
-    if (existingEvent.goal.goal_type === 'routine') {
-      submissionGoal.routine_time = start;
-      try {
-        await updateGoal(submissionGoal.id, submissionGoal);
-        setState({
-          events: state.events.map((event) => {
-            if (event.goal.id === existingEvent.goal.id) {
-              const newStart = new Date(event.start);
-              newStart.setHours(_start.getHours(), _start.getMinutes(), _start.getSeconds());
-              const newEnd = new Date(newStart);
-              newEnd.setMinutes(newStart.getMinutes() + durationInMinutes);
-
-              return {
-                ...event,
-                start: newStart,
-                end: newEnd,
-                goal: submissionGoal,
-              };
-            }
-            return event;
-          }),
-          tasks: state.tasks
+        await updateGoal(existingEvent.goal.id, {
+          ...existingEvent.goal,
+          duration: durationInMinutes
         });
-      } catch (error) {
-        console.error('Failed to update routine duration:', error);
-        info.event.setStart(existingEvent.start);
-        info.event.setEnd(existingEvent.end);
       }
-    } else {
-      try {
-        await updateGoal(submissionGoal.id, submissionGoal);
-        setState({
-          events: state.events.map((event) => (event.id === existingEvent.id ? {
-            ...existingEvent,
-            start: _start,
-            end: _end,
-            goal: submissionGoal,
-          } : event)),
-          tasks: state.tasks
-        });
-      } catch (error) {
-        console.error('Failed to update event duration:', error);
-        info.event.setStart(existingEvent.start);
-        info.event.setEnd(existingEvent.end);
-      }
+
+      // Reload calendar data
+      loadCalendarData();
+    } catch (error) {
+      console.error('Failed to update event duration:', error);
+      info.revert();
     }
   };
 
@@ -405,107 +330,47 @@ const Calendar: React.FC = () => {
       priority: 'medium',
     };
 
-    GoalMenu.open(tempGoal, 'create', async (updatedGoal) => {
-      const data = await fetchCalendarData();
-      const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-        ...event,
-        start: new Date(event.start),
-        end: new Date(event.end),
-        allDay: event.allDay
-      }));
-      setState({
-        events: formattedEvents,
-        tasks: data.unscheduledTasks
-      });
+    GoalMenu.open(tempGoal, 'create', async () => {
+      loadCalendarData();
     });
   };
+
   const handleTaskUpdate = (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => {
-    setState(data);
-  };
-
-  const calculateDayCompletion = (date: Date) => {
-    // Convert input date to start of day in UTC
-    const startOfDay = new Date(Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-      0, 0, 0, 0
-    ));
-
-    const endOfDay = new Date(Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-      23, 59, 59, 999
-    ));
-
-    // Return null for future dates
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (startOfDay > today) return null;
-
-    const dayEvents = state.events.filter(event => {
-      const eventDate = new Date(event.start);
-      return eventDate >= startOfDay && eventDate <= endOfDay;
-    });
-
-    if (dayEvents.length === 0) return null;
-
-    const completedEvents = dayEvents.filter(event => event.goal?.completed);
-    return (completedEvents.length / dayEvents.length) * 100;
-  };
-
-  const getCompletionColor = (percentage: number | null) => {
-    if (percentage === null) return 'transparent';
-
-    // Red (0%) -> Yellow (50%) -> Green (100%)
-    let hue;
-    if (percentage <= 50) {
-      // 0 (red) to 60 (yellow)
-      hue = (percentage * 1.2); // 0-50 maps to 0-60
-    } else {
-      // 60 (yellow) to 120 (green)
-      hue = 60 + ((percentage - 50) * 1.2); // 50-100 maps to 60-120
-    }
-
-    const color = `hsl(${hue}, 80%, 45%)`;
-
-    // Update both background and text colors
-    if (document.querySelector('.day-completion')) {
-      const elements = document.querySelectorAll('.day-completion') as NodeListOf<HTMLElement>;
-      elements.forEach(el => {
-        if (el.innerHTML === `${Math.round(percentage)}%`) {
-          el.style.color = color;
-        }
-      });
-    }
-
-    return color;
-  };
-
-  const eventDidMount = (info: any) => {
-    info.el.addEventListener('contextmenu', (e: MouseEvent) => {
-      e.preventDefault();
-      const fcEvent = info.event;
-      const event = state.events.find((e) => e.id === fcEvent.id);
-      if (event && event.goal) {
-        GoalMenu.open(event.goal, 'edit', async (updatedGoal) => {
-          const data = await fetchCalendarData();
-          const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-            ...event,
-            start: new Date(event.start),
-            end: new Date(event.end),
-            allDay: event.allDay || false,
-          }));
-
-          setState({
-            events: formattedEvents,
-            tasks: data.unscheduledTasks
-          });
-        });
-      }
+    setState({
+      ...state,
+      events: data.events,
+      tasks: data.tasks
     });
   };
+
+  // Render fallback UI if there's an error or calendar isn't loaded
+  if (error) {
+    return (
+      <div className="calendar-error-container">
+        <h2>Calendar Error</h2>
+        <p>{error}</p>
+        <button
+          onClick={() => {
+            setError(null);
+            setLoadAttempts(prev => prev + 1);
+          }}
+          className="retry-button"
+        >
+          Retry Loading
+        </button>
+      </div>
+    );
+  }
+
+  if (!state.fullCalendarLoaded) {
+    return (
+      <div className="calendar-loading-container">
+        <h2>Loading Calendar</h2>
+        <p>Please wait while the calendar components are being loaded...</p>
+        <div className="loading-spinner"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="calendar-container">
@@ -519,6 +384,12 @@ const Calendar: React.FC = () => {
         />
       </div>
       <div className="calendar-main">
+        {state.isLoading && (
+          <div className="calendar-loading-indicator">
+            <div className="loading-spinner"></div>
+            <span>Loading calendar data...</span>
+          </div>
+        )}
         <FullCalendar
           ref={calendarRef}
           height="100%"
@@ -543,7 +414,9 @@ const Calendar: React.FC = () => {
           slotMinTime="00:00:00"
           slotMaxTime="24:00:00"
           timeZone="local"
-          eventContent={(arg) => {
+          datesSet={handleDatesSet}
+          lazyFetching={true}
+          eventContent={(arg: any) => {
             const event = state.events.find((e) => e.id === arg.event.id);
             const backgroundColor = event?.goal ? getGoalColor(event.goal) : '#f5f5f5';
             return (
@@ -571,47 +444,9 @@ const Calendar: React.FC = () => {
             minute: '2-digit',
             meridiem: 'short'
           }}
-          eventDidMount={eventDidMount}
           snapDuration="00:05:00"
           nowIndicator={true}
           dayMaxEvents={true}
-          dayCellDidMount={(arg) => {
-            const completion = calculateDayCompletion(arg.date);
-
-            // Create background element
-            const backgroundEl = document.createElement('div');
-            backgroundEl.className = 'completion-background';
-            backgroundEl.style.backgroundColor = getCompletionColor(completion);
-            arg.el.appendChild(backgroundEl);
-
-            // Add completion percentage display
-            if (completion !== null) {
-              const percentageEl = document.createElement('div');
-              percentageEl.className = 'day-completion';
-              percentageEl.innerHTML = `${Math.round(completion)}%`;
-              arg.el.appendChild(percentageEl);
-            }
-          }}
-          slotLabelDidMount={(arg) => {
-            // Handle time grid views (week/day)
-            const date = arg.date;
-            const completion = calculateDayCompletion(date);
-
-            if (completion !== null) {
-              const column = arg.el.closest('.fc-timegrid-col');
-              if (column && !column.querySelector('.day-completion')) {
-                const percentageEl = document.createElement('div');
-                percentageEl.className = 'day-completion';
-                percentageEl.innerHTML = `${Math.round(completion)}%`;
-                column.appendChild(percentageEl);
-
-                const backgroundEl = document.createElement('div');
-                backgroundEl.className = 'completion-background';
-                backgroundEl.style.backgroundColor = getCompletionColor(completion);
-                column.appendChild(backgroundEl);
-              }
-            }
-          }}
         />
       </div>
     </div>
