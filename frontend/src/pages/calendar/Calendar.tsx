@@ -84,6 +84,22 @@ interface CalendarState {
   fullCalendarLoaded: boolean;
 }
 
+// Define interfaces for FullCalendar callbacks
+interface DateInfo {
+  startStr: string;
+  endStr: string;
+  start: Date;
+  end: Date;
+}
+
+interface EventInfo {
+  event: {
+    id: string;
+    title: string;
+    extendedProps?: any;
+  };
+}
+
 const Calendar: React.FC = () => {
   // State
   const [state, setState] = useHistoryState<CalendarState>({
@@ -232,6 +248,22 @@ const Calendar: React.FC = () => {
 
       const data = await fetchCalendarData(dateRange);
 
+      // Log raw data from API
+      console.log(`Raw data from API: ${data.events.length} events, ${data.unscheduledTasks.length} tasks, ${data.achievements.length} achievements`);
+
+      // Check for scheduled tasks in the events
+      const scheduledEvents = data.events.filter(event => event.type === 'scheduled');
+      console.log(`Found ${scheduledEvents.length} scheduled events in raw data`);
+
+      if (scheduledEvents.length > 0) {
+        console.log('Sample scheduled events:', scheduledEvents.slice(0, 3).map(event => ({
+          id: event.id,
+          title: event.title,
+          start: new Date(event.start).toISOString(),
+          end: new Date(event.end).toISOString()
+        })));
+      }
+
       // Safely format events with error handling
       const formattedEvents: CalendarEvent[] = [];
       try {
@@ -261,6 +293,18 @@ const Calendar: React.FC = () => {
 
       // Log task count for debugging
       console.log(`Loaded ${formattedTasks.length} unscheduled tasks`);
+
+      // Add debug logging for events
+      console.log(`Calendar events count: ${formattedEvents.length}`);
+      console.log(`Event types breakdown:`, formattedEvents.reduce((acc: Record<string, number>, event: CalendarEvent) => {
+        acc[event.type] = (acc[event.type] || 0) + 1;
+        return acc;
+      }, {}));
+
+      // Log a few sample events for debugging
+      if (formattedEvents.length > 0) {
+        console.log(`Sample events:`, formattedEvents.slice(0, 3));
+      }
 
       // Update state with the loaded data
       setState({
@@ -453,6 +497,29 @@ const Calendar: React.FC = () => {
     });
   };
 
+  // Add a useEffect to log the events whenever they change
+  useEffect(() => {
+    console.log(`FullCalendar events updated: ${state.events.length} events`);
+
+    // Log event types breakdown
+    const eventTypes = state.events.reduce((acc: Record<string, number>, event: CalendarEvent) => {
+      acc[event.type] = (acc[event.type] || 0) + 1;
+      return acc;
+    }, {});
+    console.log('Event types in FullCalendar:', eventTypes);
+
+    // Log a few sample events
+    if (state.events.length > 0) {
+      console.log('Sample events for FullCalendar:', state.events.slice(0, 3).map((event: CalendarEvent) => ({
+        id: event.id,
+        title: event.title,
+        type: event.type,
+        start: event.start.toISOString(),
+        end: event.end.toISOString()
+      })));
+    }
+  }, [state.events]);
+
   // Render fallback UI if there's an error or calendar isn't loaded
   if (error) {
     return (
@@ -514,7 +581,29 @@ const Calendar: React.FC = () => {
           droppable={true}
           allDaySlot={true}
           dropAccept=".external-event"
-          events={state.events}
+          events={(info: DateInfo, successCallback: (events: any[]) => void, failureCallback: (error: Error) => void) => {
+            // This is a function that will be called by FullCalendar to fetch events
+            console.log(`FullCalendar requesting events for: ${info.startStr} to ${info.endStr}`);
+
+            // Use the events from state
+            if (state.events.length > 0) {
+              console.log(`Providing ${state.events.length} events to FullCalendar`);
+              successCallback(state.events.map((event: CalendarEvent) => ({
+                id: event.id,
+                title: event.title,
+                start: event.start,
+                end: event.end,
+                allDay: event.allDay,
+                extendedProps: {
+                  type: event.type,
+                  goal: event.goal
+                }
+              })));
+            } else {
+              console.log('No events to provide to FullCalendar');
+              successCallback([]);
+            }
+          }}
           dateClick={handleDateClick}
           eventReceive={handleEventReceive}
           eventClick={handleEventClick}
@@ -526,9 +615,38 @@ const Calendar: React.FC = () => {
           timeZone="local"
           datesSet={handleDatesSet}
           lazyFetching={true}
+          eventDidMount={(info: EventInfo) => {
+            console.log(`Event mounted: ${info.event.id}, title: ${info.event.title}`);
+          }}
           eventContent={(arg: any) => {
-            const event = state.events.find((e: CalendarEvent) => e.id === arg.event.id);
-            const backgroundColor = event?.goal ? getGoalColor(event.goal) : '#f5f5f5';
+            // Use extendedProps instead of looking up in state
+            const goal = arg.event.extendedProps?.goal;
+            const eventType = arg.event.extendedProps?.type;
+
+            console.log(`Event ${arg.event.id} has goal: ${!!goal}, type: ${eventType}`);
+
+            // If event is not found in state, use the default event data from FullCalendar
+            if (!goal) {
+              console.log(`Event not found in state, using default: ${arg.event.title}`);
+              return (
+                <div
+                  className="custom-calendar-event"
+                  style={{
+                    backgroundColor: '#f5f5f5',
+                    borderColor: '#f5f5f5',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    textOverflow: 'ellipsis',
+                    width: '100%'
+                  }}
+                  title={arg.event.title}
+                >
+                  {arg.event.title}
+                </div>
+              );
+            }
+
+            const backgroundColor = goal ? getGoalColor(goal) : '#f5f5f5';
             return (
               <div
                 className="custom-calendar-event"
@@ -540,7 +658,7 @@ const Calendar: React.FC = () => {
                   textOverflow: 'ellipsis',
                   width: '100%'
                 }}
-                title={event?.goal ? `${event.goal.name} (${event.goal.goal_type})` : arg.event.title}
+                title={goal ? `${goal.name} (${goal.goal_type})` : arg.event.title}
               >
                 {arg.event.title}
               </div>
