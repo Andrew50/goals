@@ -24,6 +24,14 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
 
   const isAllDay = task.goal.duration === 1440;
 
+  // Debug log for task
+  console.log(`Rendering task ${task.id}:`, {
+    title: task.title,
+    isAllDay,
+    goalId: task.goal.id,
+    goalType: task.goal.goal_type
+  });
+
   const handleClick = () => {
     if (task.goal) {
       GoalMenu.open(task.goal, 'view', async (updatedGoal: Goal) => {
@@ -63,7 +71,9 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
     <div
       className="external-event"
       data-task-id={task.id}
-      data-all-day={isAllDay}
+      data-all-day={isAllDay.toString()}
+      data-title={task.title}
+      data-goal-id={task.goal.id.toString()}
       style={{
         marginBottom: '8px',
         padding: '12px 16px',
@@ -139,6 +149,9 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       return bDueDate - aDueDate; // Sort by due date descending
     });
 
+    // Debug log for tasks
+    console.log(`TaskList rendering ${tasks.length} tasks:`, tasks);
+
     return (
       <div
         ref={(node) => {
@@ -205,8 +218,12 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           ) : (
             tasks.map((task) => (
               <DraggableTask
-                key={task.id}
-                task={task}
+                key={task.id || `task-${Date.now()}-${Math.random()}`}
+                task={{
+                  ...task,
+                  // Ensure task has a valid ID
+                  id: task.id || `task-${Date.now()}-${Math.random()}`
+                }}
                 onTaskUpdate={onTaskUpdate}
               />
             ))

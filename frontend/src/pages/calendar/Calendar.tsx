@@ -149,6 +149,46 @@ const Calendar: React.FC = () => {
     }
   }, [state.fullCalendarLoaded]);
 
+  // Initialize draggable functionality for external events
+  useEffect(() => {
+    if (state.fullCalendarLoaded && taskListRef.current && Draggable) {
+      console.log(`Initializing draggable functionality for ${state.tasks.length} tasks`);
+
+      // Clean up any previous draggable instance to prevent duplicates
+      const container = taskListRef.current;
+
+      // Initialize draggable for external events
+      const draggableInstance = new Draggable(container, {
+        itemSelector: '.external-event',
+        eventData: function (eventEl: HTMLElement) {
+          const taskId = eventEl.getAttribute('data-task-id');
+          const isAllDay = eventEl.getAttribute('data-all-day') === 'true';
+          const task = state.tasks.find((t: CalendarTask) => t.id === taskId);
+
+          if (!task) {
+            console.error(`Task with ID ${taskId} not found`);
+            return {};
+          }
+
+          console.log(`Creating drag data for task: ${task.title}`);
+
+          return {
+            title: task.title,
+            allDay: isAllDay,
+            duration: task.goal.duration ? { minutes: task.goal.duration } : undefined,
+            task: task
+          };
+        }
+      });
+
+      // Return cleanup function
+      return () => {
+        console.log("Cleaning up draggable instance");
+        draggableInstance.destroy();
+      };
+    }
+  }, [state.fullCalendarLoaded, state.tasks]);
+
   // Set a timeout for data loading
   useEffect(() => {
     if (state.isLoading) {
@@ -216,11 +256,17 @@ const Calendar: React.FC = () => {
         clearTimeout(dataLoadingTimeoutRef.current);
       }
 
+      // Ensure tasks are properly formatted
+      const formattedTasks = data.unscheduledTasks || [];
+
+      // Log task count for debugging
+      console.log(`Loaded ${formattedTasks.length} unscheduled tasks`);
+
       // Update state with the loaded data
       setState({
         ...state,
         events: formattedEvents,
-        tasks: data.unscheduledTasks,
+        tasks: formattedTasks,
         isLoading: false,
         dateRange
       });
@@ -315,12 +361,25 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventReceive = async (info: any) => {
+    console.log('Event received:', info);
     try {
+      // Check if we have the task data
+      if (!info.event.extendedProps.task) {
+        console.error('Task data is missing in the received event:', info);
+        info.revert();
+        return;
+      }
+
+      const task = info.event.extendedProps.task;
+      console.log('Scheduling task:', task);
+
       // Process event receive and update server
-      await updateGoal(info.event.extendedProps.task.goal.id, {
-        ...info.event.extendedProps.task.goal,
+      await updateGoal(task.goal.id, {
+        ...task.goal,
         scheduled_timestamp: dateToTimestamp(info.event.start)
       });
+
+      console.log('Task scheduled successfully, reloading calendar data');
 
       // Reload calendar data
       loadCalendarData();

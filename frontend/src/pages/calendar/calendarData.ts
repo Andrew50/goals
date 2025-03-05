@@ -165,11 +165,12 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                     goal: item
                 } as CalendarTask));
 
-            // Sort by end_timestamp and limit to 30 tasks for performance
+            // Sort by end_timestamp and limit to 100 tasks for performance
             unscheduledTasks.sort((a, b) => {
                 return (b.goal.end_timestamp || 0) - (a.goal.end_timestamp || 0);
             });
-            unscheduledTasks = unscheduledTasks.slice(0, 30);
+            unscheduledTasks = unscheduledTasks.slice(0, 100);
+            console.log(`Processed ${unscheduledTasks.length} unscheduled tasks`);
         } catch (error) {
             console.error('Error processing unscheduled tasks:', error);
             unscheduledTasks = [];
@@ -268,8 +269,12 @@ const generateRoutineEvents = (
 
         // Only check routine_time if it's not an all-day event
         if (!isAllDay && !routine.routine_time) {
-            console.warn(`Routine ${routine.name} is missing routine_time`);
-            return [];
+            // Use a default time (9:00 AM) for routines missing routine_time instead of skipping them
+            console.warn(`Routine ${routine.name} is missing routine_time, using default time`);
+            // Create a timestamp for 9:00 AM today
+            const defaultTime = new Date();
+            defaultTime.setHours(9, 0, 0, 0);
+            routine.routine_time = defaultTime.getTime();
         }
 
         if (!routine.start_timestamp) {
@@ -286,11 +291,7 @@ const generateRoutineEvents = (
         const events: CalendarEvent[] = [];
 
         // Use the provided range start date as the starting point
-        const initialStartDate = new Date(
-            Math.max(routine.start_timestamp, rangeStart.getTime())
-        );
-
-        // Use the provided range end date as the end point
+        const initialStartDate = new Date(Math.max(routine.start_timestamp, rangeStart.getTime()));
         const end = rangeEnd;
 
         // Only create routineTimeDate if it's not an all-day event
@@ -341,7 +342,7 @@ const generateRoutineEvents = (
         }
 
         // Limit the number of iterations to prevent infinite loops
-        const MAX_ITERATIONS = 100;
+        const MAX_ITERATIONS = 500;
         let iterations = 0;
 
         let currentDateIter = new Date(initialStartDate);
