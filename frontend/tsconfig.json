@@ -21,10 +21,7 @@
     "jsx": "react-jsx"
   },
   "include": [
-    "src"
-  ],
-  "exclude": [
-    "../Calendar copy.tsx",
+    "src",
     "../GoalView.tsx",
     "../Calendar_old.tsx"
   ]

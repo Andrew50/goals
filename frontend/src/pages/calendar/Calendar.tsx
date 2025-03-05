@@ -22,7 +22,7 @@ const loadFullCalendar = async () => {
   try {
     // Add a timeout to prevent hanging if imports fail
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('FullCalendar loading timeout')), 10000);
+      setTimeout(() => reject(new Error('FullCalendar loading timeout')), 15000);
     });
 
     const loadPromise = Promise.all([
@@ -102,10 +102,12 @@ const Calendar: React.FC = () => {
   // Add error state
   const [error, setError] = useState<string | null>(null);
   const [loadAttempts, setLoadAttempts] = useState(0);
+  const [dataLoadAttempts, setDataLoadAttempts] = useState(0);
 
   const calendarRef = useRef<any>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
   const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load FullCalendar dynamically
   useEffect(() => {
@@ -124,7 +126,7 @@ const Calendar: React.FC = () => {
           // Try to reload if we haven't tried too many times
           if (loadAttempts < 2) {
             setTimeout(() => {
-              setLoadAttempts(prev => prev + 1);
+              setLoadAttempts((prev: number) => prev + 1);
             }, 2000);
           }
         }
@@ -146,6 +148,36 @@ const Calendar: React.FC = () => {
       });
     }
   }, [state.fullCalendarLoaded]);
+
+  // Set a timeout for data loading
+  useEffect(() => {
+    if (state.isLoading) {
+      // Set a timeout to prevent infinite loading
+      dataLoadingTimeoutRef.current = setTimeout(() => {
+        if (state.isLoading) {
+          console.warn("Calendar data loading timeout");
+          setState({
+            ...state,
+            isLoading: false
+          });
+
+          // Try to reload if we haven't tried too many times
+          if (dataLoadAttempts < 2) {
+            setDataLoadAttempts((prev: number) => prev + 1);
+            loadCalendarData();
+          } else {
+            setError("Calendar data loading timed out. Please try refreshing the page.");
+          }
+        }
+      }, 20000); // 20 second timeout
+    }
+
+    return () => {
+      if (dataLoadingTimeoutRef.current) {
+        clearTimeout(dataLoadingTimeoutRef.current);
+      }
+    };
+  }, [state.isLoading, dataLoadAttempts]);
 
   // Load calendar data based on the current date range
   const loadCalendarData = async (dateRange = state.dateRange) => {
@@ -179,6 +211,11 @@ const Calendar: React.FC = () => {
         console.error('Error processing events array:', eventsError);
       }
 
+      // Clear any loading timeout
+      if (dataLoadingTimeoutRef.current) {
+        clearTimeout(dataLoadingTimeoutRef.current);
+      }
+
       // Update state with the loaded data
       setState({
         ...state,
@@ -193,6 +230,16 @@ const Calendar: React.FC = () => {
         ...state,
         isLoading: false
       });
+
+      // Try to reload if we haven't tried too many times
+      if (dataLoadAttempts < 2) {
+        setTimeout(() => {
+          setDataLoadAttempts((prev: number) => prev + 1);
+          loadCalendarData(dateRange);
+        }, 2000);
+      } else {
+        setError("Failed to load calendar data after multiple attempts. Please try refreshing the page.");
+      }
     }
   };
 
@@ -238,24 +285,28 @@ const Calendar: React.FC = () => {
   // after making their API changes
 
   const handleDateClick = (arg: any) => {
-    const tempGoal: Goal = {
-      id: 0,
-      name: '',
-      goal_type: 'task',
-      description: '',
-      priority: 'medium',
-      scheduled_timestamp: dateToTimestamp(arg.date),
-      routine_time: dateToTimestamp(arg.date),
-      _tz: 'user'
-    };
+    try {
+      const tempGoal: Goal = {
+        id: 0,
+        name: '',
+        goal_type: 'task',
+        description: '',
+        priority: 'medium',
+        scheduled_timestamp: dateToTimestamp(arg.date),
+        routine_time: dateToTimestamp(arg.date),
+        _tz: 'user'
+      };
 
-    GoalMenu.open(tempGoal, 'create', async () => {
-      loadCalendarData();
-    });
+      GoalMenu.open(tempGoal, 'create', async () => {
+        loadCalendarData();
+      });
+    } catch (error) {
+      console.error('Error handling date click:', error);
+    }
   };
 
   const handleEventClick = (info: any) => {
-    const event = state.events.find((e) => e.id === info.event.id);
+    const event = state.events.find((e: CalendarEvent) => e.id === info.event.id);
     if (event && event.goal) {
       GoalMenu.open(event.goal, 'view', async () => {
         loadCalendarData();
@@ -282,7 +333,7 @@ const Calendar: React.FC = () => {
   const handleEventDrop = async (info: any) => {
     try {
       // Process event drop and update server
-      const existingEvent = state.events.find(e => e.id === info.event.id);
+      const existingEvent = state.events.find((e: CalendarEvent) => e.id === info.event.id);
       if (existingEvent && existingEvent.goal) {
         await updateGoal(existingEvent.goal.id, {
           ...existingEvent.goal,
@@ -301,7 +352,7 @@ const Calendar: React.FC = () => {
   const handleEventResize = async (info: any) => {
     try {
       // Process event resize and update server
-      const existingEvent = state.events.find(e => e.id === info.event.id);
+      const existingEvent = state.events.find((e: CalendarEvent) => e.id === info.event.id);
       if (existingEvent && existingEvent.goal) {
         const start = info.event.start;
         const end = info.event.end;
@@ -352,7 +403,7 @@ const Calendar: React.FC = () => {
         <button
           onClick={() => {
             setError(null);
-            setLoadAttempts(prev => prev + 1);
+            setLoadAttempts((prev: number) => prev + 1);
           }}
           className="retry-button"
         >
@@ -417,7 +468,7 @@ const Calendar: React.FC = () => {
           datesSet={handleDatesSet}
           lazyFetching={true}
           eventContent={(arg: any) => {
-            const event = state.events.find((e) => e.id === arg.event.id);
+            const event = state.events.find((e: CalendarEvent) => e.id === arg.event.id);
             const backgroundColor = event?.goal ? getGoalColor(event.goal) : '#f5f5f5';
             return (
               <div
