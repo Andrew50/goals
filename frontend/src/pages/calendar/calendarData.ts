@@ -2,7 +2,8 @@ import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../../types
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 
-const ROUTINE_GENERATION_DAYS = 30; // Reduced from 90 to 30 days for performance
+// Reduced from 30 to 14 days for better performance
+const ROUTINE_GENERATION_DAYS = 14;
 export interface TransformedCalendarData {
     events: CalendarEvent[];
     unscheduledTasks: CalendarTask[];
@@ -21,16 +22,23 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         const start = dateRange?.start || new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
         const end = dateRange?.end || new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
+        // Limit the date range to prevent processing too much data
+        // Don't load more than 60 days of data at once
+        const maxRangeMs = 60 * 24 * 60 * 60 * 1000; // 60 days in milliseconds
+        const actualEnd = new Date(Math.min(end.getTime(), start.getTime() + maxRangeMs));
+
         // Convert to timestamp for API request
         const startTimestamp = start.getTime();
-        const endTimestamp = end.getTime();
+        const endTimestamp = actualEnd.getTime();
+
+        console.log(`Fetching calendar data from ${start.toISOString()} to ${actualEnd.toISOString()}`);
 
         // Add date range params to the request
         const response = await privateRequest<CalendarResponse>(`calendar?start=${startTimestamp}&end=${endTimestamp}`);
 
         // Validate response data
-        if (!response || !response.routines || !response.scheduled_tasks || !response.unscheduled_tasks || !response.achievements) {
-            console.error('Invalid calendar response format:', response);
+        if (!response) {
+            console.error('Empty calendar response');
             return {
                 events: [],
                 unscheduledTasks: [],
@@ -38,43 +46,80 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             };
         }
 
+        // Ensure all required properties exist
+        const safeResponse = {
+            routines: response.routines || [],
+            scheduled_tasks: response.scheduled_tasks || [],
+            unscheduled_tasks: response.unscheduled_tasks || [],
+            achievements: response.achievements || []
+        };
+
+        // Limit the number of items to process
+        const MAX_ITEMS = 100;
+        const limitedRoutines = safeResponse.routines.slice(0, MAX_ITEMS);
+        const limitedScheduledTasks = safeResponse.scheduled_tasks.slice(0, MAX_ITEMS);
+        const limitedUnscheduledTasks = safeResponse.unscheduled_tasks.slice(0, MAX_ITEMS);
+        const limitedAchievements = safeResponse.achievements.slice(0, MAX_ITEMS);
+
         // Convert routines to local timezone before generating events
-        const localRoutines = response.routines.map(goalToLocal);
+        const localRoutines = limitedRoutines.map(routine => {
+            try {
+                return goalToLocal(routine);
+            } catch (error) {
+                console.error('Error converting routine to local timezone:', error, routine);
+                return routine; // Return original if conversion fails
+            }
+        });
 
         // Generate routine events with local timezone data, but only within the date range
         let routineEvents: CalendarEvent[] = [];
         try {
-            routineEvents = localRoutines.map(routine =>
-                generateRoutineEvents(routine, currentDate, start, end)
-            ).flat();
+            routineEvents = localRoutines.map(routine => {
+                try {
+                    return generateRoutineEvents(routine, currentDate, start, actualEnd);
+                } catch (error) {
+                    console.error('Error generating routine events:', error, routine);
+                    return [];
+                }
+            }).flat();
+
+            // Limit the number of routine events to prevent performance issues
+            routineEvents = routineEvents.slice(0, MAX_ITEMS * 2);
         } catch (error) {
-            console.error('Error generating routine events:', error);
+            console.error('Error generating all routine events:', error);
             routineEvents = [];
         }
 
         // Handle scheduled tasks with local timezone
         let scheduledEvents: CalendarEvent[] = [];
         try {
-            scheduledEvents = response.scheduled_tasks
-                .map(goalToLocal)
+            scheduledEvents = limitedScheduledTasks
+                .map(task => {
+                    try {
+                        return goalToLocal(task);
+                    } catch (error) {
+                        console.error('Error converting scheduled task to local timezone:', error, task);
+                        return task; // Return original if conversion fails
+                    }
+                })
                 .filter(item => {
                     // Filter tasks that fall within the date range
                     if (!item.scheduled_timestamp) return false;
                     const taskDate = new Date(item.scheduled_timestamp);
-                    return taskDate >= start && taskDate <= end;
+                    return taskDate >= start && taskDate <= actualEnd;
                 })
                 .map(item => {
-                    const isAllDay = item.duration === 1440;
-                    const timestamp = new Date(item.scheduled_timestamp!);
-
                     try {
+                        const isAllDay = item.duration === 1440;
+                        const timestamp = new Date(item.scheduled_timestamp!);
+
                         const start = new Date(
-                            timestamp.getUTCFullYear(),
-                            timestamp.getUTCMonth(),
-                            timestamp.getUTCDate(),
-                            timestamp.getUTCHours(),
-                            timestamp.getUTCMinutes(),
-                            timestamp.getUTCSeconds()
+                            timestamp.getFullYear(),
+                            timestamp.getMonth(),
+                            timestamp.getDate(),
+                            timestamp.getHours(),
+                            timestamp.getMinutes(),
+                            timestamp.getSeconds()
                         );
 
                         return {
@@ -103,8 +148,15 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         // Handle unscheduled tasks with local timezone - limiting to most recent ones
         let unscheduledTasks: CalendarTask[] = [];
         try {
-            unscheduledTasks = response.unscheduled_tasks
-                .map(goalToLocal)
+            unscheduledTasks = limitedUnscheduledTasks
+                .map(task => {
+                    try {
+                        return goalToLocal(task);
+                    } catch (error) {
+                        console.error('Error converting unscheduled task to local timezone:', error, task);
+                        return task; // Return original if conversion fails
+                    }
+                })
                 .filter(item => !item.scheduled_timestamp)
                 .map(item => ({
                     id: (item.id || Date.now()).toString(),
@@ -113,11 +165,11 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                     goal: item
                 } as CalendarTask));
 
-            // Sort by end_timestamp and limit to 50 tasks for performance
+            // Sort by end_timestamp and limit to 30 tasks for performance
             unscheduledTasks.sort((a, b) => {
                 return (b.goal.end_timestamp || 0) - (a.goal.end_timestamp || 0);
             });
-            unscheduledTasks = unscheduledTasks.slice(0, 50);
+            unscheduledTasks = unscheduledTasks.slice(0, 30);
         } catch (error) {
             console.error('Error processing unscheduled tasks:', error);
             unscheduledTasks = [];
@@ -126,12 +178,19 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         // Handle achievements with local timezone - only those within date range
         let achievementEvents: CalendarEvent[] = [];
         try {
-            achievementEvents = response.achievements
-                .map(goalToLocal)
+            achievementEvents = limitedAchievements
+                .map(achievement => {
+                    try {
+                        return goalToLocal(achievement);
+                    } catch (error) {
+                        console.error('Error converting achievement to local timezone:', error, achievement);
+                        return achievement; // Return original if conversion fails
+                    }
+                })
                 .filter(achievement => {
                     if (!achievement.end_timestamp) return false;
                     const achievementDate = new Date(achievement.end_timestamp);
-                    return achievementDate >= start && achievementDate <= end;
+                    return achievementDate >= start && achievementDate <= actualEnd;
                 })
                 .map(achievement => {
                     try {
@@ -156,8 +215,14 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             achievementEvents = [];
         }
 
+        // Combine all events and limit the total number
+        const allEvents = [...routineEvents, ...scheduledEvents, ...achievementEvents];
+        const limitedEvents = allEvents.slice(0, MAX_ITEMS * 3);
+
+        console.log(`Calendar data loaded: ${limitedEvents.length} events, ${unscheduledTasks.length} tasks`);
+
         return {
-            events: [...routineEvents, ...scheduledEvents, ...achievementEvents],
+            events: limitedEvents,
             unscheduledTasks,
             achievements: achievementEvents
         };
@@ -192,119 +257,184 @@ const generateRoutineEvents = (
     rangeStart: Date,
     rangeEnd: Date
 ): CalendarEvent[] => {
-    const isAllDay = routine.duration === 1440;
+    try {
+        // Validate inputs
+        if (!routine || !routine.id) {
+            console.warn('Invalid routine provided to generateRoutineEvents');
+            return [];
+        }
 
-    // Only check routine_time if it's not an all-day event
-    if (!isAllDay && !routine.routine_time || !routine.start_timestamp) {
-        console.warn(`Routine ${routine.name} is missing required time fields`);
-        return [];
-    }
+        const isAllDay = routine.duration === 1440;
 
-    const events: CalendarEvent[] = [];
+        // Only check routine_time if it's not an all-day event
+        if (!isAllDay && !routine.routine_time) {
+            console.warn(`Routine ${routine.name} is missing routine_time`);
+            return [];
+        }
 
-    // Use the provided range start date as the starting point
-    const initialStartDate = new Date(
-        Math.max(routine.start_timestamp, rangeStart.getTime())
-    );
+        if (!routine.start_timestamp) {
+            console.warn(`Routine ${routine.name} is missing start_timestamp`);
+            return [];
+        }
 
-    // Use the provided range end date as the end point
-    const end = rangeEnd;
+        // Ensure we have valid date ranges
+        if (!rangeStart || !rangeEnd || rangeStart > rangeEnd) {
+            console.warn('Invalid date range for routine event generation');
+            return [];
+        }
 
-    // Only create routineTimeDate if it's not an all-day event
-    let routineHours = 0;
-    let routineMinutes = 0;
-    if (!isAllDay) {
-        const routineTimeDate = new Date(routine.routine_time!);
-        routineHours = routineTimeDate.getUTCHours();
-        routineMinutes = routineTimeDate.getUTCMinutes();
-    }
+        const events: CalendarEvent[] = [];
 
-    // Parse frequency pattern: {multiplier}{unit}[:days]
-    const frequencyMatch = routine.frequency?.match(/^(\d+)([DWMY])(?::(.+))?$/);
-    if (!frequencyMatch) {
-        console.warn(`Invalid frequency format for routine ${routine.name}`);
-        return [];
-    }
+        // Use the provided range start date as the starting point
+        const initialStartDate = new Date(
+            Math.max(routine.start_timestamp, rangeStart.getTime())
+        );
 
-    const [_, intervalStr, unit, daysStr] = frequencyMatch;
-    const interval = parseInt(intervalStr);
-    const selectedDays = daysStr?.split(',').map(Number) || [];
+        // Use the provided range end date as the end point
+        const end = rangeEnd;
 
-    let currentDateIter = new Date(initialStartDate);
-    while (currentDateIter <= end) {
-        let shouldCreateEvent = true;
-
-        // For weekly frequency, check if current day is in selected days
-        if (unit === 'W' && selectedDays.length > 0) {
-            const currentDay = currentDateIter.getDay(); // 0-6, Sunday-Saturday
-            if (!selectedDays.includes(currentDay)) {
-                shouldCreateEvent = false;
+        // Only create routineTimeDate if it's not an all-day event
+        let routineHours = 0;
+        let routineMinutes = 0;
+        if (!isAllDay && routine.routine_time) {
+            try {
+                const routineTimeDate = new Date(routine.routine_time);
+                routineHours = routineTimeDate.getHours();
+                routineMinutes = routineTimeDate.getMinutes();
+            } catch (error) {
+                console.error('Error parsing routine time:', error, routine);
+                return [];
             }
         }
 
-        if (shouldCreateEvent) {
-            const eventStart = new Date(currentDateIter);
-
-            if (isAllDay) {
-                eventStart.setHours(0, 0, 0, 0);
-            } else {
-                eventStart.setHours(routineHours, routineMinutes, 0, 0);
-            }
-
-            const eventEnd = new Date(eventStart);
-            if (isAllDay) {
-                eventEnd.setHours(23, 59, 59, 999);
-            } else {
-                const durationInMinutes = routine.duration || 60;
-                eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
-            }
-
-            events.push({
-                id: `routine-${routine.id}-${currentDateIter.getTime()}`,
-                title: routine.name,
-                start: eventStart,
-                end: eventEnd,
-                type: 'routine',
-                goal: routine,
-                allDay: isAllDay
-            } as CalendarEvent);
+        // Parse frequency pattern: {multiplier}{unit}[:days]
+        if (!routine.frequency) {
+            console.warn(`Routine ${routine.name} is missing frequency`);
+            return [];
         }
 
-        // Move to next day
-        currentDateIter.setDate(currentDateIter.getDate() + 1);
+        const frequencyMatch = routine.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
+        if (!frequencyMatch) {
+            console.warn(`Invalid frequency format for routine ${routine.name}: ${routine.frequency}`);
+            return [];
+        }
 
-        // If we've moved past the interval, adjust to the next interval start
-        if (unit !== 'W' || !selectedDays.length) {
-            const daysSinceStart = Math.floor(
-                (currentDateIter.getTime() - initialStartDate.getTime()) / (1000 * 60 * 60 * 24)
-            );
+        const [_, intervalStr, unit, daysStr] = frequencyMatch;
+        const interval = parseInt(intervalStr);
 
-            let intervalDays;
-            switch (unit) {
-                case 'D':
-                    intervalDays = interval;
-                    break;
-                case 'W':
-                    intervalDays = interval * 7;
-                    break;
-                case 'M':
-                    intervalDays = interval * 30;
-                    break;
-                case 'Y':
-                    intervalDays = interval * 365;
-                    break;
-                default:
-                    intervalDays = interval;
+        if (isNaN(interval) || interval <= 0) {
+            console.warn(`Invalid interval for routine ${routine.name}: ${intervalStr}`);
+            return [];
+        }
+
+        // Parse selected days for weekly routines
+        let selectedDays: number[] = [];
+        if (unit === 'W' && daysStr) {
+            try {
+                selectedDays = daysStr.split(',').map(Number);
+                // Validate day numbers (0-6)
+                selectedDays = selectedDays.filter(day => !isNaN(day) && day >= 0 && day <= 6);
+            } catch (error) {
+                console.error('Error parsing selected days:', error, daysStr);
+                // Continue with empty selectedDays
+            }
+        }
+
+        // Limit the number of iterations to prevent infinite loops
+        const MAX_ITERATIONS = 100;
+        let iterations = 0;
+
+        let currentDateIter = new Date(initialStartDate);
+        while (currentDateIter <= end && iterations < MAX_ITERATIONS) {
+            iterations++;
+
+            let shouldCreateEvent = true;
+
+            // For weekly frequency, check if current day is in selected days
+            if (unit === 'W' && selectedDays.length > 0) {
+                const currentDay = currentDateIter.getDay(); // 0-6, Sunday-Saturday
+                if (!selectedDays.includes(currentDay)) {
+                    shouldCreateEvent = false;
+                }
             }
 
-            if (daysSinceStart % intervalDays === 0) {
-                // Skip to the start of the next interval
-                currentDateIter.setDate(
-                    initialStartDate.getDate() + Math.floor(daysSinceStart / intervalDays) * intervalDays
+            if (shouldCreateEvent) {
+                try {
+                    const eventStart = new Date(currentDateIter);
+
+                    if (isAllDay) {
+                        eventStart.setHours(0, 0, 0, 0);
+                    } else {
+                        eventStart.setHours(routineHours, routineMinutes, 0, 0);
+                    }
+
+                    const eventEnd = new Date(eventStart);
+                    if (isAllDay) {
+                        eventEnd.setHours(23, 59, 59, 999);
+                    } else {
+                        const durationInMinutes = routine.duration || 60;
+                        eventEnd.setMinutes(eventStart.getMinutes() + durationInMinutes);
+                    }
+
+                    events.push({
+                        id: `routine-${routine.id}-${currentDateIter.getTime()}`,
+                        title: routine.name,
+                        start: eventStart,
+                        end: eventEnd,
+                        type: 'routine',
+                        goal: routine,
+                        allDay: isAllDay
+                    } as CalendarEvent);
+                } catch (error) {
+                    console.error('Error creating routine event:', error, routine);
+                    // Continue to next iteration
+                }
+            }
+
+            // Move to next day
+            currentDateIter.setDate(currentDateIter.getDate() + 1);
+
+            // If we've moved past the interval, adjust to the next interval start
+            if (unit !== 'W' || !selectedDays.length) {
+                const daysSinceStart = Math.floor(
+                    (currentDateIter.getTime() - initialStartDate.getTime()) / (1000 * 60 * 60 * 24)
                 );
+
+                let intervalDays;
+                switch (unit) {
+                    case 'D':
+                        intervalDays = interval;
+                        break;
+                    case 'W':
+                        intervalDays = interval * 7;
+                        break;
+                    case 'M':
+                        intervalDays = interval * 30;
+                        break;
+                    case 'Y':
+                        intervalDays = interval * 365;
+                        break;
+                    default:
+                        intervalDays = interval;
+                }
+
+                if (daysSinceStart % intervalDays === 0) {
+                    // Skip to the start of the next interval
+                    currentDateIter.setDate(
+                        initialStartDate.getDate() + Math.floor(daysSinceStart / intervalDays) * intervalDays
+                    );
+                }
             }
         }
-    }
 
-    return events;
+        if (iterations >= MAX_ITERATIONS) {
+            console.warn(`Reached maximum iterations for routine ${routine.name}`);
+        }
+
+        // Limit the number of events to return
+        return events.slice(0, 50);
+    } catch (error) {
+        console.error('Unexpected error in generateRoutineEvents:', error, routine);
+        return [];
+    }
 }; 
