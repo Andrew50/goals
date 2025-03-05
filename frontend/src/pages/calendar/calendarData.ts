@@ -2,94 +2,164 @@ import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../../types
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 
-const ROUTINE_GENERATION_DAYS = 90;
+const ROUTINE_GENERATION_DAYS = 30; // Reduced from 90 to 30 days for performance
 export interface TransformedCalendarData {
     events: CalendarEvent[];
     unscheduledTasks: CalendarTask[];
     achievements: CalendarEvent[];
 }
 
+interface DateRange {
+    start: Date;
+    end: Date;
+}
 
-export const fetchCalendarData = async (): Promise<TransformedCalendarData> => {
+export const fetchCalendarData = async (dateRange?: DateRange): Promise<TransformedCalendarData> => {
     try {
-        const response = await privateRequest<CalendarResponse>('calender');
+        // If no date range is provided, use current date and load one month
         const currentDate = new Date();
+        const start = dateRange?.start || new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        const end = dateRange?.end || new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+
+        // Convert to timestamp for API request
+        const startTimestamp = start.getTime();
+        const endTimestamp = end.getTime();
+
+        // Add date range params to the request
+        const response = await privateRequest<CalendarResponse>(`calendar?start=${startTimestamp}&end=${endTimestamp}`);
+
+        // Validate response data
+        if (!response || !response.routines || !response.scheduled_tasks || !response.unscheduled_tasks || !response.achievements) {
+            console.error('Invalid calendar response format:', response);
+            return {
+                events: [],
+                unscheduledTasks: [],
+                achievements: []
+            };
+        }
 
         // Convert routines to local timezone before generating events
         const localRoutines = response.routines.map(goalToLocal);
 
-        // Generate routine events with local timezone data
-        const routineEvents = localRoutines.map(routine =>
-            generateRoutineEvents(routine, currentDate)
-        ).flat();
+        // Generate routine events with local timezone data, but only within the date range
+        let routineEvents: CalendarEvent[] = [];
+        try {
+            routineEvents = localRoutines.map(routine =>
+                generateRoutineEvents(routine, currentDate, start, end)
+            ).flat();
+        } catch (error) {
+            console.error('Error generating routine events:', error);
+            routineEvents = [];
+        }
 
         // Handle scheduled tasks with local timezone
-        const scheduledEvents = response.scheduled_tasks
-            .map(goalToLocal)
-            .filter(item => item.scheduled_timestamp)
-            .map(item => {
-                const isAllDay = item.duration === 1440;
-                const timestamp = new Date(item.scheduled_timestamp!);
-                const start = new Date(
-                    timestamp.getUTCFullYear(),
-                    timestamp.getUTCMonth(),
-                    timestamp.getUTCDate(),
-                    timestamp.getUTCHours(),
-                    timestamp.getUTCMinutes(),
-                    timestamp.getUTCSeconds()
-                );
+        let scheduledEvents: CalendarEvent[] = [];
+        try {
+            scheduledEvents = response.scheduled_tasks
+                .map(goalToLocal)
+                .filter(item => {
+                    // Filter tasks that fall within the date range
+                    if (!item.scheduled_timestamp) return false;
+                    const taskDate = new Date(item.scheduled_timestamp);
+                    return taskDate >= start && taskDate <= end;
+                })
+                .map(item => {
+                    const isAllDay = item.duration === 1440;
+                    const timestamp = new Date(item.scheduled_timestamp!);
 
+                    try {
+                        const start = new Date(
+                            timestamp.getUTCFullYear(),
+                            timestamp.getUTCMonth(),
+                            timestamp.getUTCDate(),
+                            timestamp.getUTCHours(),
+                            timestamp.getUTCMinutes(),
+                            timestamp.getUTCSeconds()
+                        );
 
-                return {
-                    id: `scheduled-${item.id || Date.now()}`,
+                        return {
+                            id: `scheduled-${item.id || Date.now()}`,
+                            title: item.name,
+                            start: isAllDay ? new Date(start.setHours(0, 0, 0, 0)) : start,
+                            end: isAllDay
+                                ? new Date(start.setHours(23, 59, 59, 999))
+                                : new Date(start.getTime() + (item.duration || 60) * 60 * 1000),
+                            type: 'scheduled',
+                            goal: item,
+                            allDay: isAllDay,
+                            timezone: 'local'
+                        } as CalendarEvent;
+                    } catch (error) {
+                        console.error('Error processing scheduled event:', error, item);
+                        return null;
+                    }
+                })
+                .filter(Boolean) as CalendarEvent[];
+        } catch (error) {
+            console.error('Error processing scheduled events:', error);
+            scheduledEvents = [];
+        }
+
+        // Handle unscheduled tasks with local timezone - limiting to most recent ones
+        let unscheduledTasks: CalendarTask[] = [];
+        try {
+            unscheduledTasks = response.unscheduled_tasks
+                .map(goalToLocal)
+                .filter(item => !item.scheduled_timestamp)
+                .map(item => ({
+                    id: (item.id || Date.now()).toString(),
                     title: item.name,
-                    start: isAllDay ? new Date(start.setHours(0, 0, 0, 0)) : start,
-                    end: isAllDay
-                        ? new Date(start.setHours(23, 59, 59, 999))
-                        : new Date(start.getTime() + (item.duration || 60) * 60 * 1000),
-                    type: 'scheduled',
-                    goal: item,
-                    allDay: isAllDay,
-                    timezone: 'local'
-                } as CalendarEvent;
+                    type: mapGoalTypeToTaskType(item.goal_type),
+                    goal: item
+                } as CalendarTask));
+
+            // Sort by end_timestamp and limit to 50 tasks for performance
+            unscheduledTasks.sort((a, b) => {
+                return (b.goal.end_timestamp || 0) - (a.goal.end_timestamp || 0);
             });
+            unscheduledTasks = unscheduledTasks.slice(0, 50);
+        } catch (error) {
+            console.error('Error processing unscheduled tasks:', error);
+            unscheduledTasks = [];
+        }
 
-        // Handle unscheduled tasks with local timezone
-        const unscheduledTasks = response.unscheduled_tasks
-            .map(goalToLocal)  // Convert to local timezone first
-            .filter(item => !item.scheduled_timestamp)
-            .map(item => ({
-                id: (item.id || Date.now()).toString(),
-                title: item.name,
-                type: mapGoalTypeToTaskType(item.goal_type),
-                goal: item
-            } as CalendarTask))
-        unscheduledTasks.sort((a, b) => {
-            return (b.goal.end_timestamp || 0) - (a.goal.end_timestamp || 0);
-        });
-
-        // Handle achievements with local timezone - all achievements are all-day events
-        const achievementEvents = response.achievements
-            .map(goalToLocal)
-            .filter(achievement => achievement.end_timestamp)
-            .map(achievement => {
-                const end = new Date(achievement.end_timestamp!);
-                return {
-                    id: `achievement-${achievement.id || Date.now()}`,
-                    title: achievement.name,
-                    start: new Date(end.setHours(0, 0, 0, 0)), // Set to start of day
-                    end: new Date(end.setHours(23, 59, 59, 999)), // Set to end of day
-                    type: 'achievement',
-                    goal: achievement,
-                    allDay: true // Always true for achievements
-                } as CalendarEvent;
-            });
-
+        // Handle achievements with local timezone - only those within date range
+        let achievementEvents: CalendarEvent[] = [];
+        try {
+            achievementEvents = response.achievements
+                .map(goalToLocal)
+                .filter(achievement => {
+                    if (!achievement.end_timestamp) return false;
+                    const achievementDate = new Date(achievement.end_timestamp);
+                    return achievementDate >= start && achievementDate <= end;
+                })
+                .map(achievement => {
+                    try {
+                        const end = new Date(achievement.end_timestamp!);
+                        return {
+                            id: `achievement-${achievement.id || Date.now()}`,
+                            title: achievement.name,
+                            start: new Date(end.setHours(0, 0, 0, 0)), // Set to start of day
+                            end: new Date(end.setHours(23, 59, 59, 999)), // Set to end of day
+                            type: 'achievement',
+                            goal: achievement,
+                            allDay: true // Always true for achievements
+                        } as CalendarEvent;
+                    } catch (error) {
+                        console.error('Error processing achievement event:', error, achievement);
+                        return null;
+                    }
+                })
+                .filter(Boolean) as CalendarEvent[];
+        } catch (error) {
+            console.error('Error processing achievement events:', error);
+            achievementEvents = [];
+        }
 
         return {
-            events: [...routineEvents, ...scheduledEvents, ...achievementEvents] as CalendarEvent[],
-            unscheduledTasks: unscheduledTasks as CalendarTask[],
-            achievements: achievementEvents as CalendarEvent[]
+            events: [...routineEvents, ...scheduledEvents, ...achievementEvents],
+            unscheduledTasks,
+            achievements: achievementEvents
         };
     } catch (error) {
         console.error('Failed to fetch calendar data:', error);
@@ -116,7 +186,12 @@ const mapGoalTypeToTaskType = (goalType: string): 'meeting' | 'task' | 'appointm
     }
 };
 
-const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[] => {
+const generateRoutineEvents = (
+    routine: Goal,
+    currentDate: Date,
+    rangeStart: Date,
+    rangeEnd: Date
+): CalendarEvent[] => {
     const isAllDay = routine.duration === 1440;
 
     // Only check routine_time if it's not an all-day event
@@ -127,14 +202,13 @@ const generateRoutineEvents = (routine: Goal, currentDate: Date): CalendarEvent[
 
     const events: CalendarEvent[] = [];
 
-    // Create start date at the beginning of tomorrow in client's timezone
-    const tomorrow = new Date(currentDate);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+    // Use the provided range start date as the starting point
+    const initialStartDate = new Date(
+        Math.max(routine.start_timestamp, rangeStart.getTime())
+    );
 
-    const initialStartDate = new Date(Math.max(routine.start_timestamp, tomorrow.getTime()));
-    const end = new Date(currentDate);
-    end.setDate(end.getDate() + ROUTINE_GENERATION_DAYS);
+    // Use the provided range end date as the end point
+    const end = rangeEnd;
 
     // Only create routineTimeDate if it's not an all-day event
     let routineHours = 0;

@@ -1,13 +1,8 @@
-use axum::{
-    extract::{Extension, Query},
-    http::StatusCode,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::Extension, http::StatusCode, routing::get, Json, Router};
+
 use chrono::{DateTime, Utc};
 use neo4rs::{query, Graph};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::Serialize;
 
 use crate::goal::{Goal, GOAL_RETURN_QUERY};
 
@@ -38,12 +33,6 @@ pub struct UnscheduledTask {
     description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CalendarParams {
-    start: Option<i64>,
-    end: Option<i64>,
-}
-
 pub fn create_routes() -> Router {
     Router::new().route("/", get(get_calendar_data))
 }
@@ -54,25 +43,15 @@ async fn execute_query<T>(
     transform: impl Fn(Goal) -> T,
     user_id: i64,
     current_time: i64,
-    start_time: Option<i64>,
-    end_time: Option<i64>,
 ) -> Result<Vec<T>, (StatusCode, String)> {
     query = query
         .param("user_id", user_id)
         .param("current_time", current_time);
 
-    // Add date range params if available
-    if let Some(start) = start_time {
-        query = query.param("start_time", start);
-    }
-    if let Some(end) = end_time {
-        query = query.param("end_time", end);
-    }
-
     // Only print parameters
     println!(
-        "With parameters: user_id={}, current_time={}, start_time={:?}, end_time={:?}",
-        user_id, current_time, start_time, end_time
+        "With parameters: user_id={}, current_time={}",
+        user_id, current_time
     );
 
     let mut result = graph.execute(query).await.map_err(|e| {
@@ -109,38 +88,10 @@ async fn execute_query<T>(
 pub async fn get_calendar_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<CalendarData>, (StatusCode, String)> {
     let current_timestamp = Utc::now().timestamp() * 1000;
 
-    // Parse date range parameters
-    let start_timestamp = params.get("start").map(|s| s.parse::<i64>().unwrap_or(0));
-    let end_timestamp = params.get("end").map(|s| s.parse::<i64>().unwrap_or(0));
-
-    println!(
-        "Calendar request with date range: {:?} - {:?}",
-        start_timestamp, end_timestamp
-    );
-
-    // Base query conditions
-    let scheduled_task_condition = if start_timestamp.is_some() && end_timestamp.is_some() {
-        " AND g.scheduled_timestamp IS NOT NULL 
-          AND g.scheduled_timestamp >= $start_time 
-          AND g.scheduled_timestamp <= $end_time"
-            .to_string()
-    } else {
-        " AND g.scheduled_timestamp IS NOT NULL".to_string()
-    };
-
-    let achievement_condition = if start_timestamp.is_some() && end_timestamp.is_some() {
-        " AND g.end_timestamp >= $start_time 
-          AND g.end_timestamp <= $end_time"
-            .to_string()
-    } else {
-        " AND (g.end_timestamp IS NULL OR g.end_timestamp >= $current_time)".to_string()
-    };
-
-    // Define all queries with date filtering
+    // Define all queries
     let queries = vec![
         (
             query(
@@ -148,9 +99,9 @@ pub async fn get_calendar_data(
                     "MATCH (g:Goal) 
                  WHERE g.user_id = $user_id 
                  AND g.goal_type = 'task'
-                 {}
+                 AND g.scheduled_timestamp IS NOT NULL
                  {}",
-                    scheduled_task_condition, GOAL_RETURN_QUERY
+                    GOAL_RETURN_QUERY
                 )
                 .as_str(),
             ),
@@ -192,9 +143,9 @@ pub async fn get_calendar_data(
                     "MATCH (g:Goal) 
                  WHERE g.user_id = $user_id 
                  AND g.goal_type = 'achievement'
-                 {}
+                 AND (g.end_timestamp IS NULL OR g.end_timestamp >= $current_time)
                  {}",
-                    achievement_condition, GOAL_RETURN_QUERY
+                    GOAL_RETURN_QUERY
                 )
                 .as_str(),
             ),
@@ -211,8 +162,6 @@ pub async fn get_calendar_data(
             |goal| goal, // Simply return the Goal as is
             user_id,
             current_timestamp,
-            start_timestamp,
-            end_timestamp,
         )
         .await?;
         results.push(goals);
