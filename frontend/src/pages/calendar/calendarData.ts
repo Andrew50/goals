@@ -93,6 +93,21 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         // Handle scheduled tasks with local timezone
         let scheduledEvents: CalendarEvent[] = [];
         try {
+            console.log(`Processing ${limitedScheduledTasks.length} scheduled tasks`);
+
+            const tasksWithTimestamp = limitedScheduledTasks.filter(task => !!task.scheduled_timestamp);
+            console.log(`Found ${tasksWithTimestamp.length} tasks with scheduled_timestamp`);
+
+            // Log the first few scheduled tasks for debugging
+            if (tasksWithTimestamp.length > 0) {
+                console.log('Sample scheduled tasks:', tasksWithTimestamp.slice(0, 3).map(task => ({
+                    id: task.id,
+                    name: task.name,
+                    scheduled_timestamp: task.scheduled_timestamp,
+                    timestamp_date: new Date(task.scheduled_timestamp!).toISOString()
+                })));
+            }
+
             scheduledEvents = limitedScheduledTasks
                 .map(task => {
                     try {
@@ -104,9 +119,16 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 })
                 .filter(item => {
                     // Filter tasks that fall within the date range
-                    if (!item.scheduled_timestamp) return false;
+                    if (!item.scheduled_timestamp) {
+                        console.log(`Task ${item.id} (${item.name}) has no scheduled_timestamp`);
+                        return false;
+                    }
                     const taskDate = new Date(item.scheduled_timestamp);
-                    return taskDate >= start && taskDate <= actualEnd;
+                    const inRange = taskDate >= start && taskDate <= actualEnd;
+                    if (!inRange) {
+                        console.log(`Task ${item.id} (${item.name}) is outside date range: ${taskDate.toISOString()}`);
+                    }
+                    return inRange;
                 })
                 .map(item => {
                     try {
@@ -221,6 +243,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         const limitedEvents = allEvents.slice(0, MAX_ITEMS * 3);
 
         console.log(`Calendar data loaded: ${limitedEvents.length} events, ${unscheduledTasks.length} tasks`);
+        console.log(`Events breakdown: ${routineEvents.length} routines, ${scheduledEvents.length} scheduled tasks, ${achievementEvents.length} achievements`);
 
         return {
             events: limitedEvents,
