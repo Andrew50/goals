@@ -187,7 +187,8 @@ async fn validate_token(
         auth_header,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
         &Validation::default(),
-    ).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    )
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     // Token is valid, return success
     Ok(StatusCode::OK)
