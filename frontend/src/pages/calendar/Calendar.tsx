@@ -293,6 +293,14 @@ const Calendar: React.FC = () => {
 
       // Log task count for debugging
       console.log(`Loaded ${formattedTasks.length} unscheduled tasks`);
+      // Add more detailed logging for unscheduled tasks
+      console.log('===== TASK PROCESSING IN CALENDAR =====');
+      if (formattedTasks.length > 0) {
+        console.log('Sample unscheduled tasks:', formattedTasks.slice(0, 3));
+      } else {
+        console.log('No unscheduled tasks found in the data');
+        console.log('Original unscheduledTasks array:', data.unscheduledTasks);
+      }
 
       // Add debug logging for events
       console.log(`Calendar events count: ${formattedEvents.length}`);
@@ -305,6 +313,11 @@ const Calendar: React.FC = () => {
       if (formattedEvents.length > 0) {
         console.log(`Sample events:`, formattedEvents.slice(0, 3));
       }
+
+      // Add detailed task logging
+      console.log(`===== DETAILED TASK LOGGING =====`);
+      console.log(`Tasks count: ${formattedTasks.length}`);
+      console.log(`Tasks that were loaded: ${formattedTasks.map(t => t.title).join(', ').substring(0, 100)}${formattedTasks.length > 5 ? '...' : ''}`);
 
       // Update state with the loaded data
       setState({
@@ -587,20 +600,90 @@ const Calendar: React.FC = () => {
 
             // Use the events from state
             if (state.events.length > 0) {
-              console.log(`Providing ${state.events.length} events to FullCalendar`);
-              successCallback(state.events.map((event: CalendarEvent) => ({
-                id: event.id,
-                title: event.title,
-                start: event.start,
-                end: event.end,
-                allDay: event.allDay,
-                extendedProps: {
-                  type: event.type,
-                  goal: event.goal
+              // Filter events to only include those in the current view (with some buffer)
+              const viewStart = new Date(info.start);
+              const viewEnd = new Date(info.end);
+
+              // Add a small buffer to avoid edge case issues
+              viewStart.setDate(viewStart.getDate() - 1);
+              viewEnd.setDate(viewEnd.getDate() + 1);
+
+              const filteredEvents = state.events.filter(event => {
+                const eventStart = new Date(event.start);
+                const eventEnd = new Date(event.end || event.start); // Use start as fallback if end is missing
+
+                // Check if the event overlaps with the current view range
+                return (eventStart <= viewEnd && eventEnd >= viewStart);
+              });
+
+              // Debug the types of events being passed to FullCalendar
+              const eventTypes = filteredEvents.reduce((acc: Record<string, number>, event: CalendarEvent) => {
+                acc[event.type] = (acc[event.type] || 0) + 1;
+                return acc;
+              }, {});
+
+              console.log(`Providing ${filteredEvents.length} events to FullCalendar with types:`, eventTypes);
+
+              // If we have scheduled tasks, log them
+              const scheduledTasks = filteredEvents.filter((event: CalendarEvent) => event.type === 'scheduled');
+              if (scheduledTasks.length > 0) {
+                console.log(`Found ${scheduledTasks.length} scheduled tasks to display, first 3:`,
+                  scheduledTasks.slice(0, 3).map((e: CalendarEvent) => ({ id: e.id, title: e.title, start: e.start.toISOString() }))
+                );
+
+                // Add more detailed debugging for scheduled tasks
+                console.log(`===== SCHEDULED TASKS DETAILS =====`);
+                console.log(`Total scheduled tasks: ${scheduledTasks.length}`);
+
+                // Check if there's any scheduled task with problematic properties
+                const potentialIssues = scheduledTasks.filter((e: CalendarEvent) =>
+                  !e.goal ||
+                  !e.goal.goal_type ||
+                  !e.start ||
+                  !e.end
+                );
+
+                if (potentialIssues.length > 0) {
+                  console.log(`Found ${potentialIssues.length} scheduled tasks with potential issues:`,
+                    potentialIssues.slice(0, 3)
+                  );
                 }
-              })));
+
+                // Check if dates are in the future
+                const now = new Date();
+                const pastTasks = scheduledTasks.filter((e: CalendarEvent) =>
+                  e.start < now
+                );
+
+                console.log(`${pastTasks.length} scheduled tasks are in the past (might be filtered out of view)`);
+
+                // Verify the scheduled tasks are within the requested range
+                const rangeStart = new Date(info.start);
+                const rangeEnd = new Date(info.end);
+                const tasksInRange = scheduledTasks.filter((e: CalendarEvent) =>
+                  e.start >= rangeStart && e.start <= rangeEnd
+                );
+
+                console.log(`${tasksInRange.length} scheduled tasks are within the current view range (${rangeStart.toISOString()} to ${rangeEnd.toISOString()})`);
+
+                if (tasksInRange.length > 0) {
+                  console.log(`First 3 tasks in range:`,
+                    tasksInRange.slice(0, 3).map((e: CalendarEvent) => ({
+                      id: e.id,
+                      title: e.title,
+                      start: e.start.toISOString(),
+                      goal_type: e.goal?.goal_type
+                    }))
+                  );
+                }
+              } else {
+                console.log('No scheduled tasks found in state.events!');
+              }
+
+              // Send the filtered events to the calendar
+              successCallback(filteredEvents);
             } else {
-              console.log('No events to provide to FullCalendar');
+              console.warn('No events available in state');
               successCallback([]);
             }
           }}
@@ -623,7 +706,43 @@ const Calendar: React.FC = () => {
             const goal = arg.event.extendedProps?.goal;
             const eventType = arg.event.extendedProps?.type;
 
-            console.log(`Event ${arg.event.id} has goal: ${!!goal}, type: ${eventType}`);
+            // Add more detailed logging for debugging event rendering
+            console.log(`Rendering event ${arg.event.id}, title: ${arg.event.title}, type: ${eventType}, has goal: ${!!goal}`);
+            if (goal) {
+              console.log(`Event goal details - goal_type: ${goal.goal_type}, name: ${goal.name}`);
+            }
+
+            // Detect if this is a scheduled task event
+            const isScheduledTask = eventType === 'scheduled';
+            if (isScheduledTask) {
+              console.log(`RENDERING SCHEDULED TASK: ${arg.event.title}, id: ${arg.event.id}`);
+
+              // For scheduled tasks, we should override the goal_type to ensure they render as task color
+              if (goal && (!goal.goal_type || goal.goal_type !== 'task')) {
+                goal.goal_type = 'task';
+                console.log(`Forcing goal_type='task' for scheduled event: ${arg.event.title}`);
+              }
+
+              // Force the background color to green for scheduled tasks
+              const taskColor = '#81c784'; // Green color for tasks
+              console.log(`Rendering scheduled task with color: ${taskColor}`);
+              return (
+                <div
+                  className="custom-calendar-event"
+                  style={{
+                    backgroundColor: taskColor,
+                    borderColor: taskColor,
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    textOverflow: 'ellipsis',
+                    width: '100%'
+                  }}
+                  title={`${arg.event.title} (scheduled task)`}
+                >
+                  {arg.event.title}
+                </div>
+              );
+            }
 
             // If event is not found in state, use the default event data from FullCalendar
             if (!goal) {
@@ -646,7 +765,20 @@ const Calendar: React.FC = () => {
               );
             }
 
+            // Set a default goal_type if missing to ensure correct color
+            if (!goal.goal_type) {
+              if (eventType === 'scheduled') {
+                goal.goal_type = 'task';
+                console.log(`Force setting goal_type to 'task' for scheduled event: ${goal.name}`);
+              } else if (eventType === 'routine') {
+                goal.goal_type = 'routine';
+                console.log(`Force setting goal_type to 'routine' for routine event: ${goal.name}`);
+              }
+            }
+
             const backgroundColor = goal ? getGoalColor(goal) : '#f5f5f5';
+            console.log(`Event ${arg.event.id} background color: ${backgroundColor}`);
+
             return (
               <div
                 className="custom-calendar-event"
@@ -658,7 +790,7 @@ const Calendar: React.FC = () => {
                   textOverflow: 'ellipsis',
                   width: '100%'
                 }}
-                title={goal ? `${goal.name} (${goal.goal_type})` : arg.event.title}
+                title={goal ? `${goal.name} (${goal.goal_type || eventType})` : arg.event.title}
               >
                 {arg.event.title}
               </div>

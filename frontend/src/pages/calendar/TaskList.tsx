@@ -1,10 +1,10 @@
 //tasklist.tsx
 import { CalendarTask, CalendarEvent } from '../../types/goals';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
-import { useRef, useEffect } from 'react';
+import { useRef } from 'react';
 import { Goal } from '../../types/goals';
 import { Draggable } from '@fullcalendar/interaction';
 import { useDrop } from 'react-dnd';
@@ -119,6 +119,17 @@ interface TaskListProps {
 
 const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
   ({ tasks, events, onAddTask, onTaskUpdate }, ref) => {
+    // Add debug logging on mount and when tasks change
+    useEffect(() => {
+      console.log('===== TASK LIST MOUNTED/UPDATED =====');
+      console.log(`TaskList received ${tasks.length} tasks`);
+      if (tasks.length > 0) {
+        console.log('First few tasks:', tasks.slice(0, 3));
+      } else {
+        console.log('No tasks received in TaskList component');
+      }
+    }, [tasks]);
+
     const [, drop] = useDrop({
       accept: ['calendar-event', 'task'],
       drop: (item: { id: string }) => {
