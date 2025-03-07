@@ -16,6 +16,9 @@ interface DateRange {
 }
 
 export const fetchCalendarData = async (dateRange?: DateRange): Promise<TransformedCalendarData> => {
+    console.log('===== CALENDAR DATA FETCH STARTED =====');
+    console.log('Date range:', dateRange);
+
     try {
         // If no date range is provided, use current date and load one month
         const currentDate = new Date();
@@ -34,9 +37,24 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         console.log(`Fetching calendar data from ${start.toISOString()} to ${actualEnd.toISOString()}`);
 
         // Add date range params to the request
-        console.log('Making API request to calender endpoint');
-        const response = await privateRequest<CalendarResponse>('calender');
-        console.log('Raw API response:', response);
+        console.log('Making API request to calendar endpoint');
+        const response = await privateRequest<CalendarResponse>('calendar');
+        console.log('Raw API response structure:', {
+            hasRoutines: !!response?.routines,
+            routinesCount: response?.routines?.length || 0,
+            hasScheduledTasks: !!response?.scheduled_tasks,
+            scheduledTasksCount: response?.scheduled_tasks?.length || 0,
+            hasUnscheduledTasks: !!response?.unscheduled_tasks,
+            unscheduledTasksCount: response?.unscheduled_tasks?.length || 0,
+            hasAchievements: !!response?.achievements,
+            achievementsCount: response?.achievements?.length || 0
+        });
+
+        if (!response?.unscheduled_tasks || response.unscheduled_tasks.length === 0) {
+            console.warn('No unscheduled tasks found in API response');
+        } else {
+            console.log('Sample unscheduled task:', response.unscheduled_tasks[0]);
+        }
 
         // Validate response data
         if (!response) {
@@ -56,15 +74,15 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             achievements: response.achievements || []
         };
 
-        // Limit the number of items to process
-        const MAX_ITEMS = 100;
-        const limitedRoutines = safeResponse.routines.slice(0, MAX_ITEMS);
-        const limitedScheduledTasks = safeResponse.scheduled_tasks.slice(0, MAX_ITEMS);
-        const limitedUnscheduledTasks = safeResponse.unscheduled_tasks.slice(0, MAX_ITEMS);
-        const limitedAchievements = safeResponse.achievements.slice(0, MAX_ITEMS);
+        // Log the counts before any filtering
+        console.log(`Pre-filtering counts: 
+            Routines: ${safeResponse.routines.length}, 
+            Scheduled tasks: ${safeResponse.scheduled_tasks.length}, 
+            Unscheduled tasks: ${safeResponse.unscheduled_tasks.length}, 
+            Achievements: ${safeResponse.achievements.length}`);
 
         // Convert routines to local timezone before generating events
-        const localRoutines = limitedRoutines.map(routine => {
+        const localRoutines = safeResponse.routines.map(routine => {
             try {
                 return goalToLocal(routine);
             } catch (error) {
@@ -85,32 +103,36 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 }
             }).flat();
 
-            // Limit the number of routine events to prevent performance issues
-            routineEvents = routineEvents.slice(0, MAX_ITEMS * 2);
+            // No hard limit on routine events - they're already date filtered by generateRoutineEvents
         } catch (error) {
             console.error('Error generating all routine events:', error);
             routineEvents = [];
         }
 
+        console.log(`Generated ${routineEvents.length} routine events within date range`);
+
         // Handle scheduled tasks with local timezone
         let scheduledEvents: CalendarEvent[] = [];
         try {
-            console.log(`Processing ${limitedScheduledTasks.length} scheduled tasks`);
+            console.log(`Processing ${safeResponse.scheduled_tasks.length} scheduled tasks`);
 
-            const tasksWithTimestamp = limitedScheduledTasks.filter(task => !!task.scheduled_timestamp);
+            const tasksWithTimestamp = safeResponse.scheduled_tasks.filter(task => !!task.scheduled_timestamp);
             console.log(`Found ${tasksWithTimestamp.length} tasks with scheduled_timestamp`);
 
-            // Log the first few scheduled tasks for debugging
+            // Log the first few scheduled tasks for debugging with more detail
             if (tasksWithTimestamp.length > 0) {
-                console.log('Sample scheduled tasks:', tasksWithTimestamp.slice(0, 3).map(task => ({
-                    id: task.id,
-                    name: task.name,
-                    scheduled_timestamp: task.scheduled_timestamp,
-                    timestamp_date: new Date(task.scheduled_timestamp!).toISOString()
-                })));
+                console.log('Sample scheduled tasks with full details:', tasksWithTimestamp.slice(0, 3));
+
+                // Log the goal_type of the tasks
+                const goalTypes = tasksWithTimestamp.reduce((acc, task) => {
+                    acc[task.goal_type || 'undefined'] = (acc[task.goal_type || 'undefined'] || 0) + 1;
+                    return acc;
+                }, {} as Record<string, number>);
+
+                console.log('Goal types of scheduled tasks:', goalTypes);
             }
 
-            scheduledEvents = limitedScheduledTasks
+            scheduledEvents = tasksWithTimestamp
                 .map(task => {
                     try {
                         return goalToLocal(task);
@@ -128,27 +150,22 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
 
                     // Log the timestamp and date for debugging
                     const taskDate = new Date(item.scheduled_timestamp);
-                    console.log(`Task ${item.id} (${item.name}) timestamp: ${item.scheduled_timestamp}, date: ${taskDate.toISOString()}`);
 
-                    // Expand the date range slightly to ensure edge cases are included
-                    const expandedStart = new Date(start);
-                    expandedStart.setDate(expandedStart.getDate() - 1);
+                    // Filter based on date range
+                    const isInRange = taskDate >= start && taskDate <= actualEnd;
 
-                    const expandedEnd = new Date(actualEnd);
-                    expandedEnd.setDate(expandedEnd.getDate() + 1);
-
-                    const inRange = taskDate >= expandedStart && taskDate <= expandedEnd;
-
-                    if (!inRange) {
-                        console.log(`Task ${item.id} (${item.name}) is outside date range: ${taskDate.toISOString()}, range: ${expandedStart.toISOString()} to ${expandedEnd.toISOString()}`);
+                    if (!isInRange) {
+                        console.log(`Task ${item.id} (${item.name}) excluded: outside date range (${taskDate.toISOString()})`);
                     }
 
-                    return inRange;
+                    return isInRange;
                 })
                 .map(item => {
                     try {
                         const isAllDay = item.duration === 1440;
                         const timestamp = new Date(item.scheduled_timestamp!);
+
+                        console.log(`Creating calendar event for task: ${item.name}, timestamp: ${timestamp.toISOString()}, goal_type: ${item.goal_type || 'undefined'}`);
 
                         const start = new Date(
                             timestamp.getFullYear(),
@@ -159,7 +176,13 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                             timestamp.getSeconds()
                         );
 
-                        return {
+                        // Ensure the goal_type is properly set to 'task' to get the correct color
+                        if (!item.goal_type) {
+                            item.goal_type = 'task';
+                            console.log(`Setting goal_type to 'task' for ${item.name}`);
+                        }
+
+                        const calendarEvent = {
                             id: `scheduled-${item.id || Date.now()}`,
                             title: item.name,
                             start: isAllDay ? new Date(start.setHours(0, 0, 0, 0)) : start,
@@ -171,6 +194,10 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                             allDay: isAllDay,
                             timezone: 'local'
                         } as CalendarEvent;
+
+                        console.log(`Created calendar event: ${calendarEvent.id}, ${calendarEvent.title}, start: ${calendarEvent.start.toISOString()}`);
+
+                        return calendarEvent;
                     } catch (error) {
                         console.error('Error processing scheduled event:', error, item);
                         return null;
@@ -185,7 +212,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         // Handle unscheduled tasks with local timezone - limiting to most recent ones
         let unscheduledTasks: CalendarTask[] = [];
         try {
-            unscheduledTasks = limitedUnscheduledTasks
+            unscheduledTasks = safeResponse.unscheduled_tasks
                 .map(task => {
                     try {
                         return goalToLocal(task);
@@ -216,7 +243,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         // Handle achievements with local timezone - only those within date range
         let achievementEvents: CalendarEvent[] = [];
         try {
-            achievementEvents = limitedAchievements
+            achievementEvents = safeResponse.achievements
                 .map(achievement => {
                     try {
                         return goalToLocal(achievement);
@@ -253,15 +280,13 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             achievementEvents = [];
         }
 
-        // Combine all events and limit the total number
-        const allEvents = [...routineEvents, ...scheduledEvents, ...achievementEvents];
-        const limitedEvents = allEvents.slice(0, MAX_ITEMS * 3);
+        // Combine all events with proper date filtering
+        const allEvents = [...scheduledEvents, ...routineEvents, ...achievementEvents];
+        console.log(`Combined ${allEvents.length} total events after date range filtering`);
 
-        console.log(`Calendar data loaded: ${limitedEvents.length} events, ${unscheduledTasks.length} tasks`);
-        console.log(`Events breakdown: ${routineEvents.length} routines, ${scheduledEvents.length} scheduled tasks, ${achievementEvents.length} achievements`);
-
+        // No artificial limits - all events within date range should be included
         return {
-            events: limitedEvents,
+            events: allEvents,
             unscheduledTasks,
             achievements: achievementEvents
         };
@@ -471,7 +496,7 @@ const generateRoutineEvents = (
         }
 
         // Limit the number of events to return
-        return events.slice(0, 50);
+        return events.slice(0, 100);
     } catch (error) {
         console.error('Unexpected error in generateRoutineEvents:', error, routine);
         return [];
