@@ -5,7 +5,7 @@ use axum::{
     routing::post,
     Router,
 };
-use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Duration, TimeZone, Utc};
 use neo4rs::Graph;
 use serde_json;
 use std::collections::HashMap;
@@ -177,11 +177,10 @@ pub async fn catch_up_routine(
         let created_goal = child_goal.create_goal(graph).await?;
 
         // Create relationship between routine and child goal
-        let relationship = format!(
-            "MATCH (r:Goal), (c:Goal) 
+        let relationship = "MATCH (r:Goal), (c:Goal) 
              WHERE id(r) = $routine_id AND id(c) = $child_id 
              CREATE (r)-[:GENERATED]->(c)"
-        );
+            .to_string();
         let _ = graph
             .execute(
                 neo4rs::query(&relationship)
@@ -254,7 +253,11 @@ fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<
 
         // Use set_time_of_day to apply the time components
         let next_timestamp = set_time_of_day(
-            next_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis(),
+            next_date
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis(),
             routine_time.unwrap_or(0),
         );
 
@@ -263,7 +266,11 @@ fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<
         // Default to daily if format is invalid
         let next_date = current_dt.date_naive() + Duration::days(1);
         set_time_of_day(
-            next_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis(),
+            next_date
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis(),
             routine_time.unwrap_or(0),
         )
     }

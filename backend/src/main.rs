@@ -84,7 +84,7 @@ async fn main() {
         .layer(Extension(pool))
         .layer(cors);
     let listener = TcpListener::bind("0.0.0.0:5057").await.unwrap();
-    println!("Listening on {}", "0.0.0.0:5057");
+    println!("Listening on 0.0.0.0:5057");
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
