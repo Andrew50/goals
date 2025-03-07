@@ -2,11 +2,11 @@ use axum::{
     extract::{Extension, Json},
     http::StatusCode,
     response::IntoResponse,
-    routing::{post, get},
+    routing::{get, post},
     Router,
 };
 use bcrypt::{hash, verify, DEFAULT_COST};
-use jsonwebtoken::{encode, EncodingKey, Header, DecodingKey, Validation};
+use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header, Validation};
 use neo4rs::{Graph, Query};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -181,7 +181,7 @@ async fn validate_token(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
-    
+
     // Validate the token
     jsonwebtoken::decode::<Claims>(
         auth_header,
