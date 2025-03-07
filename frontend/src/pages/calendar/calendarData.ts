@@ -351,10 +351,17 @@ const generateRoutineEvents = (
             return [];
         }
 
+        // Get today's date at midnight for comparison
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Make sure we don't generate events for days before today
+        const effectiveRangeStart = new Date(Math.max(today.getTime(), rangeStart.getTime()));
+
         const events: CalendarEvent[] = [];
 
-        // Use the provided range start date as the starting point
-        const initialStartDate = new Date(Math.max(routine.start_timestamp, rangeStart.getTime()));
+        // Use the effective range start date as the starting point
+        const initialStartDate = new Date(Math.max(routine.start_timestamp, effectiveRangeStart.getTime()));
         const end = rangeEnd;
 
         // Only create routineTimeDate if it's not an all-day event
