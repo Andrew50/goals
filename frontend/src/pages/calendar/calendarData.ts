@@ -35,6 +35,11 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         const endTimestamp = actualEnd.getTime();
 
         console.log(`Fetching calendar data from ${start.toISOString()} to ${actualEnd.toISOString()}`);
+        console.log(`Local timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}, offset: ${new Date().getTimezoneOffset()} minutes`);
+
+        // Cache to prevent duplicate task processing
+        const processedGoalIds = new Set<number>();
+        const processedEventIds = new Set<string>();
 
         // Add date range params to the request
         console.log('Making API request to calendar endpoint');
@@ -81,27 +86,58 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             Unscheduled tasks: ${safeResponse.unscheduled_tasks.length}, 
             Achievements: ${safeResponse.achievements.length}`);
 
+        // Create a map to track potential duplicates
+        const eventTracker = new Map<string, number>();
+
+        // Helper function to track event creations by key (date + name)
+        const trackEvent = (date: Date, name: string, type: string) => {
+            const key = `${date.toISOString().split('T')[0]}-${name}`;
+            const count = eventTracker.get(key) || 0;
+            eventTracker.set(key, count + 1);
+
+            if (count > 0) {
+                console.warn(`⚠️ POTENTIAL DUPLICATE: ${type} "${name}" on ${date.toISOString().split('T')[0]} (occurrence #${count + 1})`);
+            }
+            return key;
+        };
+
         // Convert routines to local timezone before generating events
+        console.log('===== CONVERTING ROUTINES TO LOCAL TIMEZONE =====');
         const localRoutines = safeResponse.routines.map(routine => {
             try {
-                return goalToLocal(routine);
+                // Force _tz to be undefined to prevent error if object structure is incomplete
+                const normalizedRoutine = { ...routine, _tz: routine._tz || undefined };
+                return goalToLocal(normalizedRoutine);
             } catch (error) {
                 console.error('Error converting routine to local timezone:', error, routine);
-                return routine; // Return original if conversion fails
+                // Mark the goal so we know it's still in UTC format
+                return { ...routine, _failed_conversion: true };
             }
         });
 
         // Generate routine events with local timezone data, but only within the date range
         let routineEvents: CalendarEvent[] = [];
         try {
-            routineEvents = localRoutines.map(routine => {
-                try {
-                    return generateRoutineEvents(routine, currentDate, start, actualEnd);
-                } catch (error) {
-                    console.error('Error generating routine events:', error, routine);
-                    return [];
-                }
-            }).flat();
+            routineEvents = localRoutines
+                .filter(routine => !routine._failed_conversion) // Only process properly converted routines
+                .map(routine => {
+                    try {
+                        const events = generateRoutineEvents(routine, currentDate, start, actualEnd);
+
+                        // Deduplicate routine events by checking against processed event IDs
+                        return events.filter(event => {
+                            if (processedEventIds.has(event.id)) {
+                                console.log(`Skipping duplicate routine event: ${event.id}`);
+                                return false;
+                            }
+                            processedEventIds.add(event.id);
+                            return true;
+                        });
+                    } catch (error) {
+                        console.error('Error generating routine events:', error, routine);
+                        return [];
+                    }
+                }).flat();
 
             // No hard limit on routine events - they're already date filtered by generateRoutineEvents
         } catch (error) {
@@ -134,14 +170,42 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
 
             scheduledEvents = tasksWithTimestamp
                 .map(task => {
+                    // Skip if we've already processed this goal ID
+                    if (processedGoalIds.has(task.id)) {
+                        console.log(`Skipping duplicate task: ${task.id} (${task.name})`);
+                        return null;
+                    }
+                    processedGoalIds.add(task.id);
+
                     try {
-                        return goalToLocal(task);
+                        // Log before conversion
+                        console.log(`Converting task [${task.id}] "${task.name}" with timestamp ${task.scheduled_timestamp} (${task.scheduled_timestamp ? new Date(task.scheduled_timestamp).toISOString() : 'undefined'})`);
+                        console.log(`Task timezone flag before conversion: _tz=${task._tz || 'undefined'}`);
+
+                        // Force _tz to be undefined to prevent error if object structure is incomplete
+                        const normalizedTask = { ...task, _tz: task._tz || undefined };
+                        const localTask = goalToLocal(normalizedTask);
+
+                        // Log after conversion
+                        console.log(`Task [${localTask.id}] "${localTask.name}" after conversion: ${localTask.scheduled_timestamp} (${localTask.scheduled_timestamp ? new Date(localTask.scheduled_timestamp).toISOString() : 'undefined'})`);
+                        console.log(`Task timezone flag after conversion: _tz=${localTask._tz || 'undefined'}`);
+
+                        return localTask;
                     } catch (error) {
                         console.error('Error converting scheduled task to local timezone:', error, task);
-                        return task; // Return original if conversion fails
+                        // Mark the goal so we know it's still in UTC format
+                        return { ...task, _failed_conversion: true };
                     }
                 })
                 .filter(item => {
+                    if (!item) return false;
+
+                    // Skip goals that failed conversion
+                    if (item._failed_conversion) {
+                        console.log(`Task ${item.id} (${item.name}) skipped due to failed timezone conversion`);
+                        return false;
+                    }
+
                     // Filter tasks that fall within the date range
                     if (!item.scheduled_timestamp) {
                         console.log(`Task ${item.id} (${item.name}) has no scheduled_timestamp`);
@@ -162,40 +226,60 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 })
                 .map(item => {
                     try {
-                        const isAllDay = item.duration === 1440;
-                        const timestamp = new Date(item.scheduled_timestamp!);
+                        // Use non-null assertion to tell TypeScript that item is not null at this point
+                        const nonNullItem = item!;
+                        const isAllDay = nonNullItem.duration === 1440;
+                        const timestamp = new Date(nonNullItem.scheduled_timestamp!);
 
-                        console.log(`Creating calendar event for task: ${item.name}, timestamp: ${timestamp.toISOString()}, goal_type: ${item.goal_type || 'undefined'}`);
+                        console.log(`Creating calendar event for task: [${nonNullItem.id}] "${nonNullItem.name}"`);
+                        console.log(`Timestamp before: ${nonNullItem.scheduled_timestamp}, ISO: ${timestamp.toISOString()}`);
+                        console.log(`Task _tz flag: ${nonNullItem._tz || 'undefined'}, _failed_conversion: ${nonNullItem._failed_conversion ? 'true' : 'false'}`);
 
-                        const start = new Date(
-                            timestamp.getFullYear(),
-                            timestamp.getMonth(),
-                            timestamp.getDate(),
-                            timestamp.getHours(),
-                            timestamp.getMinutes(),
-                            timestamp.getSeconds()
-                        );
+                        // Instead of manually constructing a new Date object from components,
+                        // which can cause timezone issues, use the timestamp directly
+                        const start = new Date(nonNullItem.scheduled_timestamp!);
+
+                        // Log timezone information
+                        console.log(`Start date: ${start.toISOString()}, local string: ${start.toLocaleString()}, timezone offset: ${start.getTimezoneOffset()}`);
 
                         // Ensure the goal_type is properly set to 'task' to get the correct color
-                        if (!item.goal_type) {
-                            item.goal_type = 'task';
-                            console.log(`Setting goal_type to 'task' for ${item.name}`);
+                        if (!nonNullItem.goal_type) {
+                            nonNullItem.goal_type = 'task';
+                            console.log(`Setting goal_type to 'task' for ${nonNullItem.name}`);
                         }
 
+                        // Create end date based on duration
+                        const endDate = isAllDay
+                            ? new Date(start.getFullYear(), start.getMonth(), start.getDate(), 23, 59, 59, 999)
+                            : new Date(start.getTime() + (nonNullItem.duration || 60) * 60 * 1000);
+
+                        // Generate a unique ID for this event
+                        const eventId = `scheduled-${nonNullItem.id}`;
+
+                        // Skip if we've already created an event with this ID
+                        if (processedEventIds.has(eventId)) {
+                            console.log(`Skipping duplicate event ID: ${eventId}`);
+                            return null;
+                        }
+                        processedEventIds.add(eventId);
+
+                        // Track this event creation to detect duplicates
+                        const eventKey = trackEvent(start, nonNullItem.name, 'scheduled');
+
                         const calendarEvent = {
-                            id: `scheduled-${item.id || Date.now()}`,
-                            title: item.name,
-                            start: isAllDay ? new Date(start.setHours(0, 0, 0, 0)) : start,
-                            end: isAllDay
-                                ? new Date(start.setHours(23, 59, 59, 999))
-                                : new Date(start.getTime() + (item.duration || 60) * 60 * 1000),
+                            id: eventId,
+                            title: nonNullItem.name,
+                            start: isAllDay ? new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0) : start,
+                            end: endDate,
                             type: 'scheduled',
-                            goal: item,
+                            goal: nonNullItem,
                             allDay: isAllDay,
-                            timezone: 'local'
+                            timezone: 'local',
+                            _debug_key: eventKey // Add a debug key to track duplicates
                         } as CalendarEvent;
 
-                        console.log(`Created calendar event: ${calendarEvent.id}, ${calendarEvent.title}, start: ${calendarEvent.start.toISOString()}`);
+                        console.log(`Created calendar event: ${calendarEvent.id}, ${calendarEvent.title}`);
+                        console.log(`Event start: ${calendarEvent.start.toISOString()}, end: ${calendarEvent.end.toISOString()}`);
 
                         return calendarEvent;
                     } catch (error) {
@@ -203,7 +287,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                         return null;
                     }
                 })
-                .filter(Boolean) as CalendarEvent[];
+                .filter(Boolean) as CalendarEvent[]; // This final filter ensures we only have non-null values
         } catch (error) {
             console.error('Error processing scheduled events:', error);
             scheduledEvents = [];
@@ -214,20 +298,35 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         try {
             unscheduledTasks = safeResponse.unscheduled_tasks
                 .map(task => {
+                    // Skip if we've already processed this goal ID
+                    if (processedGoalIds.has(task.id)) {
+                        console.log(`Skipping duplicate task: ${task.id} (${task.name})`);
+                        return null;
+                    }
+                    processedGoalIds.add(task.id);
+
                     try {
-                        return goalToLocal(task);
+                        // Force _tz to be undefined to prevent error if object structure is incomplete
+                        const normalizedTask = { ...task, _tz: task._tz || undefined };
+                        const localTask = goalToLocal(normalizedTask);
+
+                        return localTask;
                     } catch (error) {
-                        console.error('Error converting unscheduled task to local timezone:', error, task);
-                        return task; // Return original if conversion fails
+                        console.error('Error processing unscheduled task:', error, task);
+                        return null;
                     }
                 })
-                .filter(item => !item.scheduled_timestamp)
-                .map(item => ({
-                    id: (item.id || Date.now()).toString(),
-                    title: item.name,
-                    type: mapGoalTypeToTaskType(item.goal_type),
-                    goal: item
-                } as CalendarTask));
+                .filter(Boolean) // This filter removes null values but TypeScript still thinks items could be null
+                .map(item => {
+                    // Use non-null assertion to tell TypeScript that item is not null at this point
+                    const nonNullItem = item!;
+                    return {
+                        id: (nonNullItem.id || Date.now()).toString(),
+                        title: nonNullItem.name,
+                        type: mapGoalTypeToTaskType(nonNullItem.goal_type),
+                        goal: nonNullItem
+                    } as CalendarTask;
+                });
 
             // Sort by end_timestamp and limit to 100 tasks for performance
             unscheduledTasks.sort((a, b) => {
@@ -245,28 +344,35 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         try {
             achievementEvents = safeResponse.achievements
                 .map(achievement => {
+                    // Skip if we've already processed this goal ID
+                    if (processedGoalIds.has(achievement.id)) {
+                        console.log(`Skipping duplicate achievement: ${achievement.id} (${achievement.name})`);
+                        return null;
+                    }
+                    processedGoalIds.add(achievement.id);
+
                     try {
-                        return goalToLocal(achievement);
+                        // Force _tz to be undefined to prevent error if object structure is incomplete
+                        const normalizedAchievement = { ...achievement, _tz: achievement._tz || undefined };
+                        return goalToLocal(normalizedAchievement);
                     } catch (error) {
-                        console.error('Error converting achievement to local timezone:', error, achievement);
-                        return achievement; // Return original if conversion fails
+                        console.error('Error processing achievement event:', error, achievement);
+                        return null;
                     }
                 })
-                .filter(achievement => {
-                    if (!achievement.end_timestamp) return false;
-                    const achievementDate = new Date(achievement.end_timestamp);
-                    return achievementDate >= start && achievementDate <= actualEnd;
-                })
+                .filter(Boolean) // This filter removes null values but TypeScript still thinks items could be null
                 .map(achievement => {
                     try {
-                        const end = new Date(achievement.end_timestamp!);
+                        // Use non-null assertion to tell TypeScript that achievement is not null at this point
+                        const nonNullAchievement = achievement!;
+                        const end = new Date(nonNullAchievement.end_timestamp!);
                         return {
-                            id: `achievement-${achievement.id || Date.now()}`,
-                            title: achievement.name,
-                            start: new Date(end.setHours(0, 0, 0, 0)), // Set to start of day
-                            end: new Date(end.setHours(23, 59, 59, 999)), // Set to end of day
+                            id: `achievement-${nonNullAchievement.id || Date.now()}`,
+                            title: nonNullAchievement.name,
+                            start: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 0, 0, 0), // Set to start of day
+                            end: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999), // Set to end of day
                             type: 'achievement',
-                            goal: achievement,
+                            goal: nonNullAchievement,
                             allDay: true // Always true for achievements
                         } as CalendarEvent;
                     } catch (error) {
@@ -274,11 +380,22 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                         return null;
                     }
                 })
-                .filter(Boolean) as CalendarEvent[];
+                .filter(Boolean) as CalendarEvent[]; // This final filter ensures we only have non-null values
         } catch (error) {
             console.error('Error processing achievement events:', error);
             achievementEvents = [];
         }
+
+        // Log the duplicate count at the end
+        console.log('===== EVENT DUPLICATION REPORT =====');
+        let duplicatesCount = 0;
+        eventTracker.forEach((count, key) => {
+            if (count > 1) {
+                console.warn(`Duplicate detected: ${key} appears ${count} times`);
+                duplicatesCount++;
+            }
+        });
+        console.log(`Found ${duplicatesCount} potential duplicate event keys out of ${eventTracker.size} total`);
 
         // Combine all events with proper date filtering
         const allEvents = [...scheduledEvents, ...routineEvents, ...achievementEvents];

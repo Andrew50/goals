@@ -38,8 +38,9 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
         const data = await fetchCalendarData();
         const formattedEvents = [...data.events, ...data.achievements].map(event => ({
           ...event,
-          start: new Date(event.start),
-          end: new Date(event.end),
+          // Preserve Date objects instead of recreating them to avoid timezone issues
+          start: event.start instanceof Date ? event.start : new Date(event.start),
+          end: event.end instanceof Date ? event.end : new Date(event.end),
         }));
         onTaskUpdate({
           events: formattedEvents,
@@ -56,8 +57,9 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
         const data = await fetchCalendarData();
         const formattedEvents = [...data.events, ...data.achievements].map(event => ({
           ...event,
-          start: new Date(event.start),
-          end: new Date(event.end),
+          // Preserve Date objects instead of recreating them to avoid timezone issues
+          start: event.start instanceof Date ? event.start : new Date(event.start),
+          end: event.end instanceof Date ? event.end : new Date(event.end),
         }));
         onTaskUpdate({
           events: formattedEvents,

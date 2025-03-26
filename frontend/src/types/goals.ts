@@ -21,6 +21,7 @@ export interface Goal {
     _tz?: 'utc' | 'user';
     position_x?: number;
     position_y?: number;
+    _failed_conversion?: boolean; // Flag to track failed timezone conversions
 }
 
 // Utility functions for timezone conversion

@@ -240,6 +240,12 @@ const Calendar: React.FC = () => {
     if (state.isLoading) return;
 
     try {
+      // Log the date range being requested
+      console.log('===== LOADING CALENDAR DATA =====');
+      console.log(`Date range: ${dateRange.start.toISOString()} to ${dateRange.end.toISOString()}`);
+      console.log(`Local date range: ${dateRange.start.toLocaleString()} to ${dateRange.end.toLocaleString()}`);
+      console.log(`Timezone offset: ${new Date().getTimezoneOffset()} minutes`);
+
       // Set loading state
       setState({
         ...state,
@@ -251,36 +257,46 @@ const Calendar: React.FC = () => {
       // Log raw data from API
       console.log(`Raw data from API: ${data.events.length} events, ${data.unscheduledTasks.length} tasks, ${data.achievements.length} achievements`);
 
-      // Check for scheduled tasks in the events
-      const scheduledEvents = data.events.filter(event => event.type === 'scheduled');
-      console.log(`Found ${scheduledEvents.length} scheduled events in raw data`);
+      // Create a map to deduplicate events by ID
+      const deduplicatedEvents = new Map<string, CalendarEvent>();
 
-      if (scheduledEvents.length > 0) {
-        console.log('Sample scheduled events:', scheduledEvents.slice(0, 3).map(event => ({
-          id: event.id,
-          title: event.title,
-          start: new Date(event.start).toISOString(),
-          end: new Date(event.end).toISOString()
-        })));
-      }
-
-      // Safely format events with error handling
-      const formattedEvents: CalendarEvent[] = [];
-      try {
-        for (const event of [...data.events, ...data.achievements]) {
+      // Process all events and deduplicate by ID
+      [...data.events, ...data.achievements].forEach(event => {
+        if (!deduplicatedEvents.has(event.id)) {
           try {
-            formattedEvents.push({
+            // Fix timezone issues by preserving the existing Date objects
+            // instead of creating new ones which causes the 5-hour offset
+            deduplicatedEvents.set(event.id, {
               ...event,
-              start: new Date(event.start),
-              end: new Date(event.end),
+              // Don't recreate Date objects if they're already Date objects
+              start: event.start instanceof Date ? event.start : new Date(event.start),
+              end: event.end instanceof Date ? event.end : new Date(event.end),
               allDay: event.allDay || false,
             });
           } catch (eventError) {
-            console.error('Error formatting event:', eventError, event);
+            console.error('Error processing event:', eventError, event);
           }
+        } else {
+          console.warn(`Skipping duplicate event ID: ${event.id}, title: ${event.title}`);
         }
-      } catch (eventsError) {
-        console.error('Error processing events array:', eventsError);
+      });
+
+      // Convert map back to array
+      const formattedEvents = Array.from(deduplicatedEvents.values());
+      console.log(`After deduplication: ${formattedEvents.length} events (removed ${data.events.length + data.achievements.length - formattedEvents.length} duplicates)`);
+
+      // Check for scheduled tasks in the events
+      const scheduledEvents = formattedEvents.filter(event => event.type === 'scheduled');
+      console.log(`Found ${scheduledEvents.length} scheduled events after deduplication`);
+
+      if (scheduledEvents.length > 0) {
+        console.log('Sample scheduled events:');
+        scheduledEvents.slice(0, 3).forEach(event => {
+          console.log(`- ID: ${event.id}, Title: ${event.title}`);
+          console.log(`  Start: ${event.start.toISOString()} (${event.start.toLocaleString()})`);
+          console.log(`  End: ${event.end.toISOString()} (${event.end.toLocaleString()})`);
+          console.log(`  Goal timezone flag: ${event.goal._tz || 'undefined'}`);
+        });
       }
 
       // Clear any loading timeout
@@ -293,14 +309,13 @@ const Calendar: React.FC = () => {
 
       // Log task count for debugging
       console.log(`Loaded ${formattedTasks.length} unscheduled tasks`);
-      // Add more detailed logging for unscheduled tasks
-      console.log('===== TASK PROCESSING IN CALENDAR =====');
-      if (formattedTasks.length > 0) {
-        console.log('Sample unscheduled tasks:', formattedTasks.slice(0, 3));
-      } else {
-        console.log('No unscheduled tasks found in the data');
-        console.log('Original unscheduledTasks array:', data.unscheduledTasks);
-      }
+
+      // Log unique event types and counts
+      const eventTypeCounts: Record<string, number> = {};
+      formattedEvents.forEach(event => {
+        eventTypeCounts[event.type] = (eventTypeCounts[event.type] || 0) + 1;
+      });
+      console.log('Event types in data:', eventTypeCounts);
 
       // Add debug logging for events
       console.log(`Calendar events count: ${formattedEvents.length}`);
@@ -348,40 +363,57 @@ const Calendar: React.FC = () => {
 
   // Handle date view changes
   const handleDatesSet = (dateInfo: any) => {
-    const newStart = dateInfo.start;
-    const newEnd = dateInfo.end;
+    const event = dateInfo as any; // Use type assertion for TypeScript
 
-    // Add buffer days for smoother scrolling/navigation
-    const bufferStart = new Date(newStart);
-    bufferStart.setDate(bufferStart.getDate() - 7); // 1 week before
+    // Ensure we preserve the date objects properly
+    const start = event.start instanceof Date ? event.start : new Date(event.start);
+    const end = event.end instanceof Date ? event.end : new Date(event.end);
 
-    const bufferEnd = new Date(newEnd);
-    bufferEnd.setDate(bufferEnd.getDate() + 7); // 1 week after
+    console.log(`Calendar dates set: ${start.toISOString()} to ${end.toISOString()}`);
 
-    // Check if the new range is significantly different from what we already have
+    // Check if the date range is significantly different from the current one
     const currentStart = state.dateRange.start;
     const currentEnd = state.dateRange.end;
 
-    const needsUpdate =
-      bufferStart < currentStart ||
-      bufferEnd > currentEnd ||
-      Math.abs(bufferStart.getTime() - currentStart.getTime()) > 86400000 * 14 ||
-      Math.abs(bufferEnd.getTime() - currentEnd.getTime()) > 86400000 * 14;
+    // Check if the date range is already covered by current data (with some buffer)
+    // Use instanceof check to avoid unnecessary Date creation
+    const isStartCovered = start >= (
+      currentStart instanceof Date
+        ? new Date(currentStart.getTime() - 86400000)
+        : new Date(new Date(currentStart).getTime() - 86400000)
+    ); // 1 day buffer
+    const isEndCovered = end <= (
+      currentEnd instanceof Date
+        ? new Date(currentEnd.getTime() + 86400000)
+        : new Date(new Date(currentEnd).getTime() + 86400000)
+    );   // 1 day buffer
 
-    if (needsUpdate) {
-      // Debounce the data loading to prevent multiple rapid requests
-      if (debouncingRef.current) {
-        clearTimeout(debouncingRef.current);
-      }
-
-      debouncingRef.current = setTimeout(() => {
-        loadCalendarData({
-          start: bufferStart,
-          end: bufferEnd
-        });
-        debouncingRef.current = null;
-      }, 300);
+    if (isStartCovered && isEndCovered) {
+      console.log('New date range is already covered by current data, skipping reload');
+      return;
     }
+
+    // Clear any existing debounce timer
+    if (debouncingRef.current) {
+      clearTimeout(debouncingRef.current);
+    }
+
+    // Set a debounce timer to prevent rapid reloading during navigation
+    debouncingRef.current = setTimeout(() => {
+      console.log('Loading calendar data due to date range change');
+
+      // Update state with the new date range
+      setState({
+        ...state,
+        dateRange: { start, end }
+      });
+
+      // Load data for the new date range
+      loadCalendarData({ start, end });
+
+      // Clear the timer reference
+      debouncingRef.current = null;
+    }, 300); // 300ms debounce time
   };
 
   // Other handlers can be simplified to just call loadCalendarData 
@@ -609,8 +641,9 @@ const Calendar: React.FC = () => {
               viewEnd.setDate(viewEnd.getDate() + 1);
 
               const filteredEvents = state.events.filter(event => {
-                const eventStart = new Date(event.start);
-                const eventEnd = new Date(event.end || event.start); // Use start as fallback if end is missing
+                // Preserve Date objects to avoid timezone conversion issues
+                const eventStart = event.start instanceof Date ? event.start : new Date(event.start);
+                const eventEnd = (event.end instanceof Date ? event.end : new Date(event.end || event.start)); // Use start as fallback if end is missing
 
                 // Check if the event overlaps with the current view range
                 return (eventStart <= viewEnd && eventEnd >= viewStart);
@@ -699,28 +732,61 @@ const Calendar: React.FC = () => {
           datesSet={handleDatesSet}
           lazyFetching={true}
           eventDidMount={(info: EventInfo) => {
-            console.log(`Event mounted: ${info.event.id}, title: ${info.event.title}`);
+            const event = info.event as any; // Use type assertion
+            const startDate = event.start;
+            const eventDateFormatted = startDate ?
+              `${startDate.toISOString()} (local: ${startDate.toLocaleString()})` :
+              'No date';
+
+            console.log(`Event mounted: ${event.id}, title: ${event.title}, date: ${eventDateFormatted}`);
+
+            // Check for debug key that indicates potential duplicate
+            const debugKey = event.extendedProps?._debug_key;
+            if (debugKey) {
+              console.log(`Event ${event.id} has debug key: ${debugKey}`);
+            }
           }}
           eventContent={(arg: any) => {
             // Use extendedProps instead of looking up in state
-            const goal = arg.event.extendedProps?.goal;
-            const eventType = arg.event.extendedProps?.type;
+            const event = arg.event as any; // Use type assertion
+            const goal = event.extendedProps?.goal;
+            const eventType = event.extendedProps?.type;
+
+            // Get start and end dates for debugging
+            const startDate = event.start;
+            const endDate = event.end;
+
+            // Format start/end for logging
+            const startFormatted = startDate ?
+              `${startDate.toISOString()} (${startDate.toLocaleString()})` : 'undefined';
+            const endFormatted = endDate ?
+              `${endDate.toISOString()} (${endDate.toLocaleString()})` : 'undefined';
 
             // Add more detailed logging for debugging event rendering
-            console.log(`Rendering event ${arg.event.id}, title: ${arg.event.title}, type: ${eventType}, has goal: ${!!goal}`);
+            console.log(`Rendering event ${event.id}, title: ${event.title}, type: ${eventType}`);
+            console.log(`Event dates - start: ${startFormatted}, end: ${endFormatted}`);
+            console.log(`Event has goal: ${!!goal}, allDay: ${!!event.allDay}`);
+
             if (goal) {
-              console.log(`Event goal details - goal_type: ${goal.goal_type}, name: ${goal.name}`);
+              console.log(`Event goal details - goal_type: ${goal.goal_type}, name: ${goal.name}, id: ${goal.id}`);
+              console.log(`Goal _tz flag: ${goal._tz || 'undefined'}`);
+
+              // Log timestamp information from goal
+              if (goal.scheduled_timestamp) {
+                const goalDate = new Date(goal.scheduled_timestamp);
+                console.log(`Goal scheduled_timestamp: ${goal.scheduled_timestamp} → ${goalDate.toISOString()} (${goalDate.toLocaleString()})`);
+              }
             }
 
             // Detect if this is a scheduled task event
             const isScheduledTask = eventType === 'scheduled';
             if (isScheduledTask) {
-              console.log(`RENDERING SCHEDULED TASK: ${arg.event.title}, id: ${arg.event.id}`);
+              console.log(`RENDERING SCHEDULED TASK: ${event.title}, id: ${event.id}`);
 
               // For scheduled tasks, we should override the goal_type to ensure they render as task color
               if (goal && (!goal.goal_type || goal.goal_type !== 'task')) {
                 goal.goal_type = 'task';
-                console.log(`Forcing goal_type='task' for scheduled event: ${arg.event.title}`);
+                console.log(`Forcing goal_type='task' for scheduled event: ${event.title}`);
               }
 
               // Force the background color to green for scheduled tasks
@@ -737,16 +803,16 @@ const Calendar: React.FC = () => {
                     textOverflow: 'ellipsis',
                     width: '100%'
                   }}
-                  title={`${arg.event.title} (scheduled task)`}
+                  title={`${event.title} (scheduled task)`}
                 >
-                  {arg.event.title}
+                  {event.title}
                 </div>
               );
             }
 
             // If event is not found in state, use the default event data from FullCalendar
             if (!goal) {
-              console.log(`Event not found in state, using default: ${arg.event.title}`);
+              console.log(`Event not found in state, using default: ${event.title}`);
               return (
                 <div
                   className="custom-calendar-event"
@@ -758,9 +824,9 @@ const Calendar: React.FC = () => {
                     textOverflow: 'ellipsis',
                     width: '100%'
                   }}
-                  title={arg.event.title}
+                  title={event.title}
                 >
-                  {arg.event.title}
+                  {event.title}
                 </div>
               );
             }
@@ -777,7 +843,7 @@ const Calendar: React.FC = () => {
             }
 
             const backgroundColor = goal ? getGoalColor(goal) : '#f5f5f5';
-            console.log(`Event ${arg.event.id} background color: ${backgroundColor}`);
+            console.log(`Event ${event.id} background color: ${backgroundColor}`);
 
             return (
               <div
@@ -790,9 +856,9 @@ const Calendar: React.FC = () => {
                   textOverflow: 'ellipsis',
                   width: '100%'
                 }}
-                title={goal ? `${goal.name} (${goal.goal_type || eventType})` : arg.event.title}
+                title={goal ? `${goal.name} (${goal.goal_type || eventType})` : event.title}
               >
-                {arg.event.title}
+                {event.title}
               </div>
             );
           }}
