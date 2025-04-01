@@ -9,13 +9,16 @@ import {
     Avatar,
     CircularProgress,
     Divider,
-    IconButton
+    IconButton,
+    Alert,
+    Link
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import PersonIcon from '@mui/icons-material/Person';
 import { useAuth } from '../../shared/contexts/AuthContext';
+import { privateRequest } from '../../shared/utils/api';
 
 interface Message {
     role: string;
@@ -25,6 +28,12 @@ interface Message {
 interface Conversation {
     id: string;
     messages: Message[];
+}
+
+interface QueryResponse {
+    response: string;
+    conversation_id: string;
+    message_history: Message[];
 }
 
 const Query: React.FC = () => {
@@ -51,24 +60,11 @@ const Query: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const response = await fetch('/api/query', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    query: input,
-                    conversation_id: conversation?.id,
-                    message_history: conversation?.messages
-                })
+            const data = await privateRequest<QueryResponse>('query', 'POST', {
+                query: input,
+                conversation_id: conversation?.id,
+                message_history: conversation?.messages
             });
-
-            if (!response.ok) {
-                throw new Error('Failed to get response from server');
-            }
-
-            const data = await response.json();
 
             setConversation({
                 id: data.conversation_id,

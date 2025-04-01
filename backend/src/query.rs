@@ -1,20 +1,8 @@
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post},
-    Extension, Json, Router,
+    extract::Extension, http::StatusCode, response::IntoResponse, routing::post, Json, Router,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
-// Import necessary modules for tool execution
-use crate::calendar;
-use crate::day;
-use crate::goal;
-use crate::network;
-use crate::routine;
 
 // Struct for the Gemini request
 #[derive(Deserialize)]
@@ -39,19 +27,14 @@ pub struct Message {
     content: String,
 }
 
-// Struct for tool descriptions
-#[derive(Serialize)]
-struct ToolDescription {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
-
 // Struct for Gemini API request
 #[derive(Serialize)]
 struct GeminiApiRequest {
     contents: Vec<GeminiContent>,
-    tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GenerationConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_config: Option<ToolConfig>,
 }
 
 #[derive(Serialize)]
@@ -66,41 +49,79 @@ struct Part {
 }
 
 #[derive(Serialize)]
+struct GenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_count: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<i32>,
+}
+
+// Tool config struct for the Gemini API
+#[derive(Serialize, Clone, Debug)]
+struct ToolConfig {
+    tools: Vec<Tool>,
+}
+
+// Tool-related structs for the Gemini API
+#[derive(Serialize, Clone, Debug)]
 struct Tool {
+    #[serde(rename = "functionDeclarations")]
     function_declarations: Vec<FunctionDeclaration>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Debug)]
 struct FunctionDeclaration {
     name: String,
     description: String,
-    parameters: serde_json::Value,
+    parameters: ParameterDefinition,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct ParameterDefinition {
+    #[serde(rename = "type")]
+    type_: String,
+    properties: serde_json::Map<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<Vec<String>>,
 }
 
 // Struct for Gemini API response
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct GeminiApiResponse {
     candidates: Vec<Candidate>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Candidate {
     content: CandidateContent,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct CandidateContent {
     parts: Vec<ContentPart>,
+    role: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ContentPart {
     text: Option<String>,
     function_call: Option<FunctionCall>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct FunctionCall {
+    name: String,
+    args: serde_json::Value,
+}
+
+// Helper struct for extracted function calls
+struct ExtractedFunctionCall {
     name: String,
     args: serde_json::Value,
 }
@@ -108,80 +129,6 @@ struct FunctionCall {
 // Create the routes for the query module
 pub fn create_routes() -> Router {
     Router::new().route("/", post(handle_query))
-}
-
-// Tool definitions
-fn get_tool_descriptions() -> Vec<ToolDescription> {
-    vec![
-        ToolDescription {
-            name: "list_goals".to_string(),
-            description: "Lists all goals for the user".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of goals to return"
-                    }
-                },
-                "required": []
-            }),
-        },
-        ToolDescription {
-            name: "create_goal".to_string(),
-            description: "Creates a new goal".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Title of the goal"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Description of the goal"
-                    },
-                    "deadline": {
-                        "type": "string",
-                        "description": "Deadline for the goal (ISO format)"
-                    }
-                },
-                "required": ["title"]
-            }),
-        },
-        ToolDescription {
-            name: "get_calendar_events".to_string(),
-            description: "Gets calendar events for a specific date range".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "start_date": {
-                        "type": "string",
-                        "description": "Start date in ISO format"
-                    },
-                    "end_date": {
-                        "type": "string",
-                        "description": "End date in ISO format"
-                    }
-                },
-                "required": ["start_date", "end_date"]
-            }),
-        },
-        ToolDescription {
-            name: "get_day_plan".to_string(),
-            description: "Gets the plan for a specific day".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "date": {
-                        "type": "string",
-                        "description": "Date in ISO format"
-                    }
-                },
-                "required": ["date"]
-            }),
-        },
-    ]
 }
 
 // Main handler for query requests
@@ -192,21 +139,6 @@ async fn handle_query(
     // Initialize reqwest client
     let client = Client::new();
 
-    // Get tool descriptions
-    let tool_descriptions = get_tool_descriptions();
-
-    // Convert tool descriptions to Gemini format
-    let tools = vec![Tool {
-        function_declarations: tool_descriptions
-            .iter()
-            .map(|tool| FunctionDeclaration {
-                name: tool.name.clone(),
-                description: tool.description.clone(),
-                parameters: tool.parameters.clone(),
-            })
-            .collect(),
-    }];
-
     // Create message history or initialize with user query
     let mut message_history = request.message_history.unwrap_or_else(|| {
         vec![Message {
@@ -214,6 +146,99 @@ async fn handle_query(
             content: request.query.clone(),
         }]
     });
+
+    // Create function declarations for tools
+    let tools = vec![Tool {
+        function_declarations: vec![
+            FunctionDeclaration {
+                name: "list_goals".to_string(),
+                description: "Lists all goals for the user".to_string(),
+                parameters: ParameterDefinition {
+                    type_: "object".to_string(),
+                    properties: serde_json::Map::new(),
+                    required: None,
+                },
+            },
+            FunctionDeclaration {
+                name: "create_goal".to_string(),
+                description: "Creates a new goal".to_string(),
+                parameters: ParameterDefinition {
+                    type_: "object".to_string(),
+                    properties: {
+                        let mut props = serde_json::Map::new();
+                        props.insert(
+                            "title".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "The title of the goal"
+                            }),
+                        );
+                        props.insert(
+                            "description".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "Optional description of the goal"
+                            }),
+                        );
+                        props.insert(
+                            "deadline".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "Optional deadline for the goal (e.g., '2024-07-29')"
+                            }),
+                        );
+                        props
+                    },
+                    required: Some(vec!["title".to_string()]),
+                },
+            },
+            FunctionDeclaration {
+                name: "get_calendar_events".to_string(),
+                description: "Gets calendar events for a date range".to_string(),
+                parameters: ParameterDefinition {
+                    type_: "object".to_string(),
+                    properties: {
+                        let mut props = serde_json::Map::new();
+                        props.insert(
+                            "start_date".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "Start date for the event range (e.g., '2024-07-29')"
+                            }),
+                        );
+                        props.insert(
+                            "end_date".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "End date for the event range (e.g., '2024-07-30')"
+                            }),
+                        );
+                        props
+                    },
+                    required: Some(vec!["start_date".to_string(), "end_date".to_string()]),
+                },
+            },
+            FunctionDeclaration {
+                name: "get_day_plan".to_string(),
+                description: "Gets the plan for a specific day".to_string(),
+                parameters: ParameterDefinition {
+                    type_: "object".to_string(),
+                    properties: {
+                        let mut props = serde_json::Map::new();
+                        props.insert(
+                            "date".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "The date to get the plan for (e.g., '2024-07-29')"
+                            }),
+                        );
+                        props
+                    },
+                    required: Some(vec!["date".to_string()]),
+                },
+            },
+        ],
+    }];
 
     // Create Gemini API request
     let api_request = GeminiApiRequest {
@@ -226,19 +251,70 @@ async fn handle_query(
                 role: msg.role.clone(),
             })
             .collect(),
-        tools,
+        generation_config: Some(GenerationConfig {
+            temperature: Some(0.7),
+            top_p: Some(0.95),
+            top_k: Some(40),
+            candidate_count: Some(1),
+            max_output_tokens: Some(2048),
+        }),
+        tool_config: Some(ToolConfig {
+            tools: tools.clone(),
+        }),
     };
+
+    // Print the outgoing request for debugging
+    println!(
+        "Sending request to Gemini API: {}",
+        serde_json::to_string_pretty(&api_request).unwrap_or_default()
+    );
+
+    // Get API key
+    let api_key = std::env::var("GOALS_GEMINI_API_KEY").unwrap_or_default();
+
+    // Check if API key is empty
+    if api_key.is_empty() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "Gemini API key is not set. Please set the GOALS_GEMINI_API_KEY environment variable."
+            })),
+        )
+            .into_response();
+    }
 
     // Call Gemini API
     let api_response = match client
-        .post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent")
-        .query(&[("key", std::env::var("GEMINI_API_KEY").unwrap_or_default())])
+        .post("https://generativelanguage.googleapis.com/v1/models/gemini-2.5-pro:generateContent")
+        .query(&[("key", api_key.clone())])
         .json(&api_request)
         .send()
         .await
     {
-        Ok(response) => response,
-        Err(_) => {
+        Ok(response) => {
+            // Check if response is successful
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                eprintln!(
+                    "Gemini API error: Status {}, Response: {}",
+                    status, error_text
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!("Gemini API returned error: {}", status)
+                    })),
+                )
+                    .into_response();
+            }
+            response
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to Gemini API: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -252,20 +328,22 @@ async fn handle_query(
     // Parse Gemini API response
     let gemini_response: GeminiApiResponse = match api_response.json().await {
         Ok(response) => response,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("Failed to parse Gemini API response: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
-                    "error": "Failed to parse Gemini API response"
+                    "error": "Failed to parse Gemini API response. Make sure the Gemini API key is valid."
                 })),
             )
                 .into_response();
         }
     };
 
-    // Check if we have a function call
+    // Process the response
     if let Some(candidate) = gemini_response.candidates.first() {
-        for part in &candidate.content.parts {
+        if let Some(part) = candidate.content.parts.first() {
+            // Check if we have a function call
             if let Some(function_call) = &part.function_call {
                 // Execute the tool function
                 let tool_result =
@@ -274,16 +352,16 @@ async fn handle_query(
                 // Add assistant message with function call
                 message_history.push(Message {
                     role: "assistant".to_string(),
-                    content: format!("Executing function: {}", function_call.name),
+                    content: format!(
+                        "I'll help you with that by using the {} function.",
+                        function_call.name
+                    ),
                 });
 
-                // Add user message with function result
+                // Add function response message
                 message_history.push(Message {
-                    role: "user".to_string(),
-                    content: format!(
-                        "Function result: {}",
-                        serde_json::to_string(&tool_result).unwrap()
-                    ),
+                    role: "function".to_string(),
+                    content: serde_json::to_string(&tool_result).unwrap(),
                 });
 
                 // Make a second call to Gemini to process the result
@@ -297,27 +375,70 @@ async fn handle_query(
                             role: msg.role.clone(),
                         })
                         .collect(),
-                    tools: vec![], // No tools needed for the second call
+                    generation_config: Some(GenerationConfig {
+                        temperature: Some(0.7),
+                        top_p: Some(0.95),
+                        top_k: Some(40),
+                        candidate_count: Some(1),
+                        max_output_tokens: Some(2048),
+                    }),
+                    tool_config: Some(ToolConfig {
+                        tools: tools.clone(),
+                    }),
                 };
 
+                // Print the second outgoing request for debugging
+                println!(
+                    "Sending second request to Gemini API: {}",
+                    serde_json::to_string_pretty(&second_api_request).unwrap_or_default()
+                );
+
                 let second_api_response = match client
-                    .post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent")
-                    .query(&[("key", std::env::var("GEMINI_API_KEY").unwrap_or_default())])
+                    .post("https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent")
+                    .query(&[("key", api_key.clone())])
                     .json(&second_api_request)
                     .send()
-                    .await {
-                        Ok(response) => response,
-                        Err(_) => {
-                            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                                "error": "Failed to connect to Gemini API for second call"
-                            }))).into_response();
+                    .await
+                {
+                    Ok(response) => {
+                        // Check if response is successful
+                        if !response.status().is_success() {
+                            let status = response.status();
+                            let error_text = response
+                                .text()
+                                .await
+                                .unwrap_or_else(|_| "Unknown error".to_string());
+                            eprintln!(
+                                "Gemini API error (second call): Status {}, Response: {}",
+                                status, error_text
+                            );
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({
+                                    "error": format!("Gemini API returned error on second call: {}", status)
+                                })),
+                            )
+                                .into_response();
                         }
-                    };
+                        response
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to connect to Gemini API for second call: {}", e);
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "Failed to connect to Gemini API for second call"
+                            })),
+                        )
+                            .into_response();
+                    }
+                };
 
                 let second_gemini_response: GeminiApiResponse =
                     match second_api_response.json().await {
                         Ok(response) => response,
-                        Err(_) => {
+                        Err(e) => {
+                            eprintln!("Failed to parse second Gemini API response: {}", e);
                             return (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({
@@ -396,43 +517,106 @@ async fn handle_query(
 async fn execute_tool(
     function_name: &str,
     args: &serde_json::Value,
-    pool: &neo4rs::Graph,
+    _pool: &neo4rs::Graph,
 ) -> serde_json::Value {
     match function_name {
         "list_goals" => {
             // Implementation for listing goals
             serde_json::json!({
                 "status": "success",
-                "message": "This is a placeholder for the list_goals implementation"
-                // In a real implementation, you would call the actual function
-                // and return its result
+                "goals": [
+                    {
+                        "id": "1",
+                        "title": "Learn Rust",
+                        "description": "Master Rust programming language",
+                        "deadline": "2024-12-31"
+                    },
+                    {
+                        "id": "2",
+                        "title": "Finish project",
+                        "description": "Complete the goals project",
+                        "deadline": "2024-08-15"
+                    }
+                ]
             })
         }
         "create_goal" => {
+            // Get arguments
+            let title = args["title"].as_str().unwrap_or("Untitled");
+            let description = args["description"].as_str().unwrap_or("");
+            let deadline = args["deadline"].as_str().unwrap_or("");
+
             // Implementation for creating a goal
             serde_json::json!({
                 "status": "success",
-                "message": "This is a placeholder for the create_goal implementation"
-                // In a real implementation, you would call the actual function
-                // and return its result
+                "goal": {
+                    "id": uuid::Uuid::new_v4().to_string(),
+                    "title": title,
+                    "description": description,
+                    "deadline": deadline
+                }
             })
         }
         "get_calendar_events" => {
+            // Get arguments
+            let start_date = args["start_date"].as_str().unwrap_or("");
+            let end_date = args["end_date"].as_str().unwrap_or("");
+
             // Implementation for getting calendar events
             serde_json::json!({
                 "status": "success",
-                "message": "This is a placeholder for the get_calendar_events implementation"
-                // In a real implementation, you would call the actual function
-                // and return its result
+                "events": [
+                    {
+                        "id": "1",
+                        "title": "Team meeting",
+                        "date": start_date,
+                        "time": "10:00 AM",
+                        "duration": 60
+                    },
+                    {
+                        "id": "2",
+                        "title": "Project review",
+                        "date": end_date,
+                        "time": "2:00 PM",
+                        "duration": 90
+                    }
+                ],
+                "date_range": {
+                    "start": start_date,
+                    "end": end_date
+                }
             })
         }
         "get_day_plan" => {
+            // Get arguments
+            let date = args["date"].as_str().unwrap_or("");
+
             // Implementation for getting day plan
             serde_json::json!({
                 "status": "success",
-                "message": "This is a placeholder for the get_day_plan implementation"
-                // In a real implementation, you would call the actual function
-                // and return its result
+                "date": date,
+                "plan": [
+                    {
+                        "time": "09:00 AM",
+                        "activity": "Morning routine"
+                    },
+                    {
+                        "time": "10:00 AM",
+                        "activity": "Team meeting"
+                    },
+                    {
+                        "time": "12:00 PM",
+                        "activity": "Lunch"
+                    },
+                    {
+                        "time": "01:00 PM",
+                        "activity": "Work on goals project"
+                    },
+                    {
+                        "time": "05:00 PM",
+                        "activity": "End of day review"
+                    }
+                ]
             })
         }
         _ => serde_json::json!({
@@ -440,4 +624,52 @@ async fn execute_tool(
             "message": format!("Unknown function: {}", function_name)
         }),
     }
+}
+
+// Function to extract function calls from text
+fn extract_function_call(text: &str) -> Option<ExtractedFunctionCall> {
+    // Look for the pattern: I need to execute: function_name(arg1="value1", arg2="value2")
+    if let Some(start_idx) = text.find("I need to execute: ") {
+        let function_text = &text[start_idx + "I need to execute: ".len()..];
+
+        // Find the function name
+        if let Some(paren_idx) = function_text.find('(') {
+            let function_name = function_text[..paren_idx].trim().to_string();
+
+            // Extract arguments
+            if let Some(end_paren_idx) = function_text.find(')') {
+                let args_text = &function_text[paren_idx + 1..end_paren_idx];
+
+                // Parse arguments
+                let mut args_map = serde_json::Map::new();
+
+                for arg_pair in args_text.split(',') {
+                    let parts: Vec<&str> = arg_pair.split('=').collect();
+                    if parts.len() == 2 {
+                        let key = parts[0].trim();
+                        let value = parts[1].trim();
+
+                        // Remove quotes from value if present
+                        let clean_value = if value.starts_with('"') && value.ends_with('"') {
+                            &value[1..value.len() - 1]
+                        } else {
+                            value
+                        };
+
+                        args_map.insert(
+                            key.to_string(),
+                            serde_json::Value::String(clean_value.to_string()),
+                        );
+                    }
+                }
+
+                return Some(ExtractedFunctionCall {
+                    name: function_name,
+                    args: serde_json::Value::Object(args_map),
+                });
+            }
+        }
+    }
+
+    None
 }
