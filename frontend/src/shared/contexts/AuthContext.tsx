@@ -9,6 +9,7 @@ interface SigninResponse {
 interface AuthContextType {
     isAuthenticated: boolean;
     username: string | null;
+    token: string | null;
     setIsAuthenticated: (value: boolean) => void;
     scheduleRoutineUpdate: () => void;
     login: (username: string, password: string) => Promise<string>;
@@ -18,6 +19,7 @@ interface AuthContextType {
 export const AuthContext = createContext<AuthContextType>({
     isAuthenticated: false,
     username: null,
+    token: null,
     setIsAuthenticated: () => { },
     scheduleRoutineUpdate: () => { },
     login: async () => '',
@@ -34,6 +36,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [username, setUsername] = useState<string | null>(() => {
         return localStorage.getItem('username');
     });
+
+    // Add token getter function
+    const getToken = (): string | null => {
+        return localStorage.getItem('authToken');
+    };
 
     // Function to validate token and update auth state if invalid
     const validateAndUpdateAuthState = useCallback(async () => {
@@ -76,7 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         endOfDay.setHours(23, 59, 59, 999);
         const msUntilEndOfDay = endOfDay.getTime() - now.getTime();
 
-        console.log(`Scheduling next routine update for ${endOfDay.toLocaleString()}`);
+        //console.log(`Scheduling next routine update for ${endOfDay.toLocaleString()}`);
 
         const timeoutId = window.setTimeout(async () => {
             try {
@@ -129,7 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Immediately update routines on login
         try {
             await updateRoutines();
-            console.log('Initial routine update completed successfully');
+            //console.log('Initial routine update completed successfully');
         } catch (error) {
             console.error('Failed to update routines on login:', error);
         }
@@ -144,6 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         <AuthContext.Provider value={{
             isAuthenticated,
             username,
+            token: getToken(),
             setIsAuthenticated,
             scheduleRoutineUpdate,
             login,

@@ -24,13 +24,15 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
 
   const isAllDay = task.goal.duration === 1440;
 
+  /*
   // Debug log for task
-  console.log(`Rendering task ${task.id}:`, {
-    title: task.title,
-    isAllDay,
-    goalId: task.goal.id,
-    goalType: task.goal.goal_type
-  });
+  //console.log(`Rendering task ${task.id}:`, {
+  //  title: task.title,
+  //  isAllDay,
+  //  goalId: task.goal.id,
+  //  goalType: task.goal.goal_type
+  //  //});
+    */
 
   const handleClick = () => {
     if (task.goal) {
@@ -123,19 +125,19 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
   ({ tasks, events, onAddTask, onTaskUpdate }, ref) => {
     // Add debug logging on mount and when tasks change
     useEffect(() => {
-      console.log('===== TASK LIST MOUNTED/UPDATED =====');
-      console.log(`TaskList received ${tasks.length} tasks`);
+      //console.log('===== TASK LIST MOUNTED/UPDATED =====');
+      //console.log(`TaskList received ${tasks.length} tasks`);
       if (tasks.length > 0) {
-        console.log('First few tasks:', tasks.slice(0, 3));
+        //console.log('First few tasks:', tasks.slice(0, 3));
       } else {
-        console.log('No tasks received in TaskList component');
+        //console.log('No tasks received in TaskList component');
       }
     }, [tasks]);
 
     const [, drop] = useDrop({
       accept: ['calendar-event', 'task'],
       drop: (item: { id: string }) => {
-        console.log('Dropping item:', item);
+        //console.log('Dropping item:', item);
         const taskToUnschedule = events.find((event) => event.id === item.id);
         if (taskToUnschedule) {
           const updatedGoal = {
@@ -163,7 +165,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
     });
 
     // Debug log for tasks
-    console.log(`TaskList rendering ${tasks.length} tasks:`, tasks);
+    //console.log(`TaskList rendering ${tasks.length} tasks:`, tasks);
 
     return (
       <div

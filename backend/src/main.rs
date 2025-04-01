@@ -6,6 +6,7 @@ mod goal;
 mod list;
 mod middleware;
 mod network;
+mod query;
 mod routine;
 mod traversal;
 
@@ -80,6 +81,10 @@ async fn main() {
             "/routine",
             routine::create_routes(user_locks.clone())
                 .route_layer(from_fn(middleware::auth_middleware)),
+        )
+        .nest(
+            "/query",
+            query::create_routes().route_layer(from_fn(middleware::auth_middleware)),
         )
         .layer(Extension(pool))
         .layer(cors);

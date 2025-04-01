@@ -49,10 +49,10 @@ const GoalMenu: GoalMenuComponent = () => {
         {
             hotkeyScope: 'goalMenu',
             onUndo: (newState) => {
-                console.log('Undid goal menu change');
+                //console.log('Undid goal menu change');
             },
             onRedo: (newState) => {
-                console.log('Redid goal menu change');
+                //console.log('Redid goal menu change');
             }
         }
     );
@@ -60,21 +60,27 @@ const GoalMenu: GoalMenuComponent = () => {
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
-        if (goal._tz === undefined) {
-            goal._tz = 'user';
+        // Create a deep copy of the goal to prevent accidental modification of the original
+        const goalCopy = JSON.parse(JSON.stringify(goal));
+
+        if (goalCopy._tz === undefined) {
+            goalCopy._tz = 'user';
         }
-        console.log('open', goal);
-        if (initialMode === 'create' && !goal.start_timestamp) {
-            goal.start_timestamp = Date.now();
+        //console.log('GoalMenu opening with goal:', JSON.stringify(goalCopy));
+        //console.log('Initial scheduled_timestamp:', goalCopy.scheduled_timestamp,
+        //  'formatted:', timestampToDisplayString(goalCopy.scheduled_timestamp));
+
+        if (initialMode === 'create' && !goalCopy.start_timestamp) {
+            goalCopy.start_timestamp = Date.now();
         }
 
         //queue relationships can only between achievements, default to achievement and force achievemnt in ui
         if (relationshipMode?.type === 'queue') {
-            goal.goal_type = 'achievement';
+            goalCopy.goal_type = 'achievement';
         }
 
         setState({
-            goal,
+            goal: goalCopy,
             mode: initialMode,
             error: ''
         });
@@ -117,6 +123,13 @@ const GoalMenu: GoalMenuComponent = () => {
         // Set default frequency if goal type is 'routine' and frequency is undefined
         if (newGoal.goal_type === 'routine' && newGoal.frequency === undefined) {
             newGoal.frequency = '1D';
+        }
+
+        // For timestamp debugging
+        if (newGoal.scheduled_timestamp !== state.goal.scheduled_timestamp) {
+            //console.log('Scheduled timestamp changed:',
+            //  'Old:', state.goal.scheduled_timestamp,
+            //  'New:', newGoal.scheduled_timestamp);
         }
 
         // For all other changes, update the local state
@@ -370,11 +383,22 @@ const GoalMenu: GoalMenuComponent = () => {
         <TextField
             label="Schedule Date"
             type="datetime-local"
-            value={timestampToInputString(state.goal.scheduled_timestamp, 'datetime')}
+            value={(() => {
+                const converted = timestampToInputString(state.goal.scheduled_timestamp, 'datetime');
+                //console.log('Rendering scheduled field:',
+                //  'Raw timestamp:', state.goal.scheduled_timestamp,
+                //  'Converted to input:', converted);
+                return converted;
+            })()}
             onChange={(e) => {
+                const inputValue = e.target.value;
+                const newTimestamp = inputStringToTimestamp(inputValue, 'datetime');
+                //console.log('Schedule date changed:',
+                //  'Input value:', inputValue,
+                //  'Converted timestamp:', newTimestamp);
                 handleChange({
                     ...state.goal,
-                    scheduled_timestamp: inputStringToTimestamp(e.target.value, 'datetime')
+                    scheduled_timestamp: newTimestamp
                 });
             }}
             fullWidth
@@ -466,7 +490,7 @@ const GoalMenu: GoalMenuComponent = () => {
                         const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
                         const days = state.goal.frequency?.split(':')?.[1] || '';
                         const newFreq = `${value}${unit}${days ? ':' + days : ''}`;
-                        console.log(newFreq);
+                        //console.log(newFreq);
                         handleChange({
                             ...state.goal,
                             frequency: newFreq
@@ -493,7 +517,7 @@ const GoalMenu: GoalMenuComponent = () => {
                             ? (state.goal.frequency?.split(':')?.[1] ? ':' + state.goal.frequency.split(':')[1] : '')
                             : '';
                         const newFreq = `${interval}${e.target.value}${days}`;
-                        console.log(newFreq);
+                        //console.log(newFreq);
                         handleChange({
                             ...state.goal,
                             frequency: newFreq
@@ -531,7 +555,7 @@ const GoalMenu: GoalMenuComponent = () => {
                                         }
 
                                         const newFreq = `${interval}W${days.length ? ':' + days.sort().join(',') : ''}`;
-                                        console.log(newFreq);
+                                        //console.log(newFreq);
                                         handleChange({
                                             ...state.goal,
                                             frequency: newFreq

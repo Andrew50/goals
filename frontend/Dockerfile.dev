@@ -1,5 +1,5 @@
-# Use Node.js as the base
-FROM node:18
+# Use Node.js as the base - specify exact version for better reproducibility
+FROM node:18.19-alpine
 ENV REACT_APP_API_URL=http://localhost:5057
 
 # Set the working directory inside the container
@@ -7,9 +7,14 @@ WORKDIR /app
 
 # Copy the package.json and package-lock.json to the container
 COPY package.json ./
+COPY package-lock.json* ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies with retry mechanism and using npmjs registry explicitly
+RUN npm config set registry https://registry.npmjs.org/ && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retries 5 && \
+    npm install || (sleep 5 && npm install) || (sleep 10 && npm install --no-package-lock)
 
 # Copy the rest of the application code
 #COPY . .
@@ -17,6 +22,6 @@ RUN npm install
 # Expose the port the app will run on
 EXPOSE 3000
 
-# Start the app
-CMD ["sh", "-c", "npm install && npm start"]
+# Start the app - using a simpler start command since we've already installed dependencies
+CMD ["npm", "start"]
 

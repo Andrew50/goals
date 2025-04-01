@@ -74,7 +74,7 @@ export async function publicRequest<T>(
 }
 
 export async function updateRoutines(to_timestamp?: number): Promise<void> {
-    console.log('updateRoutines called')
+    //console.log('updateRoutines called')
 
     try {
         const lastUpdate = parseInt(localStorage?.getItem('lastRoutineUpdate') || '0', 10);
@@ -82,7 +82,7 @@ export async function updateRoutines(to_timestamp?: number): Promise<void> {
         const DEBOUNCE_INTERVAL = 3 * 1000; // 3 seconds
 
         if (now - lastUpdate < DEBOUNCE_INTERVAL) {
-            console.log('Skipping routine update - too soon since last update');
+            //console.log('Skipping routine update - too soon since last update');
             return;
         }
 
@@ -92,7 +92,7 @@ export async function updateRoutines(to_timestamp?: number): Promise<void> {
             to_timestamp = endOfDay.getTime();
         }
 
-        console.log('updateRoutines request made')
+        //console.log('updateRoutines request made')
         await privateRequest(`routine/${to_timestamp}`, 'POST');
 
         try {
@@ -102,7 +102,7 @@ export async function updateRoutines(to_timestamp?: number): Promise<void> {
             console.warn('Could not access localStorage for lastRoutineUpdate:', storageError);
         }
 
-        console.log('Routine update request completed successfully');
+        //console.log('Routine update request completed successfully');
     } catch (error) {
         console.error("Failed to update routines:", error);
         throw error;
@@ -110,17 +110,17 @@ export async function updateRoutines(to_timestamp?: number): Promise<void> {
 }
 // Goal CRUD operations
 export async function createGoal(goal: Goal): Promise<Goal> {
-    console.log(goal)
+    //console.log(goal)
     const preparedGoal = prepareGoalForAPI(goal);
-    console.log(preparedGoal)
+    //console.log(preparedGoal)
     const response = await privateRequest<Goal>('goals/create', 'POST', preparedGoal);
     return processGoalFromAPI(response);
 }
 
 export async function updateGoal(goalId: number, goal: Goal): Promise<Goal> {
-    console.log(goal)
+    //console.log(goal)
     const preparedGoal = prepareGoalForAPI(goal);
-    console.log(preparedGoal)
+    //console.log(preparedGoal)
     const response = await privateRequest<Goal>(`goals/${goalId}`, 'PUT', preparedGoal);
     return processGoalFromAPI(response);
 }

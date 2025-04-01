@@ -19,6 +19,7 @@ import Network from './pages/network/Network';
 import GoalMenu from './shared/components/GoalMenu';
 import List from './pages/list/List';
 import Day from './pages/day/Day';
+import Query from './pages/query/Query';
 import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 
@@ -40,6 +41,7 @@ const NavBar: React.FC = () => {
           <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
           <Button color="inherit" component={Link} to="/list">List</Button>
           <Button color="inherit" component={Link} to="/day">Day</Button>
+          <Button color="inherit" component={Link} to="/query">AI Assistant</Button>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {isAuthenticated ? (
@@ -103,6 +105,11 @@ const App: React.FC = () => {
                     <Route path="/day" element={
                       <ProtectedRoute>
                         <Day />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/query" element={
+                      <ProtectedRoute>
+                        <Query />
                       </ProtectedRoute>
                     } />
                   </Routes>

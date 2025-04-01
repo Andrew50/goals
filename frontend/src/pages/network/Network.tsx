@@ -290,7 +290,7 @@ const NetworkView: React.FC = () => {
       setAddNodeMode(false);
       setAddEdgeMode(false);
     } else {
-      console.log('No network');
+      //console.log('No network');
     }
   };
 
@@ -303,7 +303,7 @@ const NetworkView: React.FC = () => {
       deleteModeRef.current = false;
       networkRef.current.addEdgeMode();
     } else {
-      console.log('No network');
+      //console.log('No network');
     }
   };
 
