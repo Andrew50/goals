@@ -2,13 +2,7 @@
 manage operations on goals and relationships between goals
 doesnt include fetching of all goals as that is handled by endpoints specific to that frontend view
 */
-use axum::{
-    extract::{Extension, Path},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{delete, post, put},
-    Json, Router,
-};
+use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -111,23 +105,11 @@ pub struct GoalUpdate {
     pub completed: bool,
 }
 
-pub fn create_routes() -> Router {
-    Router::new()
-        .route("/create", post(create_goal_handler))
-        .route("/:id", put(update_goal_handler))
-        .route("/:id", delete(delete_goal_handler))
-        .route("/relationship", post(create_relationship_handler))
-        .route(
-            "/relationship/:from_id/:to_id",
-            delete(delete_relationship_handler),
-        )
-        .route("/:id/complete", put(toggle_completion))
-}
-
 pub async fn delete_relationship_handler(
-    Extension(graph): Extension<Graph>,
-    Path((from_id, to_id)): Path<(i64, i64)>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    from_id: i64,
+    to_id: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
     let query = query(
         "MATCH (from:Goal)-[r]->(to:Goal) 
          WHERE id(from) = $from_id AND id(to) = $to_id 
@@ -149,10 +131,10 @@ pub async fn delete_relationship_handler(
 }
 
 pub async fn create_goal_handler(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Json(goal): Json<Goal>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    user_id: i64,
+    goal: Goal,
+) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
     if DEBUG_PRINTS {
         println!("Received goal creation request: {:?}", goal);
     }
@@ -267,9 +249,9 @@ pub async fn create_goal_handler(
 }
 
 pub async fn create_relationship_handler(
-    Extension(graph): Extension<Graph>,
-    Json(relationship): Json<Relationship>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    relationship: Relationship,
+) -> Result<(StatusCode, &'static str), (StatusCode, String)> {
     match Goal::create_relationship(&graph, &relationship).await {
         Ok(_) => Ok((StatusCode::CREATED, "Relationship created")),
         Err(e) => {
@@ -283,10 +265,10 @@ pub async fn create_relationship_handler(
 }
 
 pub async fn update_goal_handler(
-    Extension(graph): Extension<Graph>,
-    Path(id): Path<i64>,
-    Json(goal): Json<Goal>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    id: i64,
+    goal: Goal,
+) -> Result<StatusCode, (StatusCode, String)> {
     // Build the SET clause dynamically based on provided fields
     let mut set_clauses = vec!["g.name = $name", "g.goal_type = $goal_type"];
     let mut params = vec![
@@ -375,9 +357,9 @@ pub async fn update_goal_handler(
 }
 
 pub async fn delete_goal_handler(
-    Extension(graph): Extension<Graph>,
-    Path(id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    id: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
     let query = query(
         "MATCH (g:Goal) WHERE id(g) = $id 
          DETACH DELETE g",
@@ -397,9 +379,9 @@ pub async fn delete_goal_handler(
 }
 
 pub async fn toggle_completion(
-    Extension(graph): Extension<Graph>,
-    Json(update): Json<GoalUpdate>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    update: GoalUpdate,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     println!(
         "Toggling completion for goal {}: {}",
         update.id, update.completed

@@ -1,19 +1,13 @@
-use axum::{
-    extract::Extension, http::StatusCode, response::IntoResponse, routing::get, Json, Router,
-};
+use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde_json::Value;
 
 use crate::goal::GOAL_RETURN_QUERY;
 
-pub fn create_routes() -> Router {
-    Router::new().route("/", get(get_list_data))
-}
-
 pub async fn get_list_data(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    graph: Graph,
+    user_id: i64,
+) -> Result<Json<Vec<Value>>, (StatusCode, String)> {
     let query_str = format!(
         "MATCH (g:Goal) 
          WHERE g.user_id = $user_id

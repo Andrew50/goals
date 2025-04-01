@@ -1,8 +1,10 @@
-use axum::{
-    extract::Extension, http::StatusCode, response::IntoResponse, routing::post, Json, Router,
-};
+use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
+use chrono::{NaiveDate, Utc};
+use neo4rs::query;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+
+use crate::goal::GOAL_RETURN_QUERY;
 
 // Struct for the Gemini request
 #[derive(Deserialize)]
@@ -34,7 +36,7 @@ struct GeminiApiRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     generation_config: Option<GenerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_config: Option<ToolConfig>,
+    tools: Option<Vec<Tool>>,
 }
 
 #[derive(Serialize)]
@@ -60,12 +62,6 @@ struct GenerationConfig {
     candidate_count: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<i32>,
-}
-
-// Tool config struct for the Gemini API
-#[derive(Serialize, Clone, Debug)]
-struct ToolConfig {
-    tools: Vec<Tool>,
 }
 
 // Tool-related structs for the Gemini API
@@ -120,19 +116,8 @@ struct FunctionCall {
     args: serde_json::Value,
 }
 
-// Helper struct for extracted function calls
-struct ExtractedFunctionCall {
-    name: String,
-    args: serde_json::Value,
-}
-
-// Create the routes for the query module
-pub fn create_routes() -> Router {
-    Router::new().route("/", post(handle_query))
-}
-
 // Main handler for query requests
-async fn handle_query(
+pub async fn handle_query(
     Extension(pool): Extension<neo4rs::Graph>,
     Json(request): Json<GeminiRequest>,
 ) -> impl IntoResponse {
@@ -140,12 +125,42 @@ async fn handle_query(
     let client = Client::new();
 
     // Create message history or initialize with user query
-    let mut message_history = request.message_history.unwrap_or_else(|| {
-        vec![Message {
-            role: "user".to_string(),
-            content: request.query.clone(),
-        }]
+    let mut message_history = request.message_history.unwrap_or_else(|| vec![]);
+
+    // Always add the current query to the message history
+    message_history.push(Message {
+        role: "user".to_string(),
+        content: request.query.clone(),
     });
+
+    // Clean up message history - limit size and filter out repeated error messages
+    if message_history.len() > 10 {
+        // Keep only the last 10 messages to prevent history from getting too large
+        let skip_count = message_history.len() - 10;
+        message_history = message_history.into_iter().skip(skip_count).collect();
+    }
+
+    // Remove consecutive duplicate error messages from the assistant
+    let mut i = 1;
+    while i < message_history.len() {
+        if message_history[i].role == "assistant"
+            && message_history[i]
+                .content
+                .contains("error processing your request")
+            && i > 0
+            && message_history[i].content == message_history[i - 1].content
+        {
+            message_history.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+
+    // Filter out messages with empty content
+    message_history = message_history
+        .into_iter()
+        .filter(|msg| !msg.content.trim().is_empty())
+        .collect();
 
     // Create function declarations for tools
     let tools = vec![Tool {
@@ -155,7 +170,17 @@ async fn handle_query(
                 description: "Lists all goals for the user".to_string(),
                 parameters: ParameterDefinition {
                     type_: "object".to_string(),
-                    properties: serde_json::Map::new(),
+                    properties: {
+                        let mut props = serde_json::Map::new();
+                        props.insert(
+                            "filter".to_string(),
+                            serde_json::json!({
+                                "type": "string",
+                                "description": "Optional filter for goals (e.g., 'active', 'completed')",
+                            }),
+                        );
+                        props
+                    },
                     required: None,
                 },
             },
@@ -258,9 +283,7 @@ async fn handle_query(
             candidate_count: Some(1),
             max_output_tokens: Some(2048),
         }),
-        tool_config: Some(ToolConfig {
-            tools: tools.clone(),
-        }),
+        tools: Some(tools.clone()),
     };
 
     // Print the outgoing request for debugging
@@ -285,7 +308,7 @@ async fn handle_query(
 
     // Call Gemini API
     let api_response = match client
-        .post("https://generativelanguage.googleapis.com/v1/models/gemini-2.5-pro:generateContent")
+        .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")
         .query(&[("key", api_key.clone())])
         .json(&api_request)
         .send()
@@ -300,7 +323,7 @@ async fn handle_query(
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
                 eprintln!(
-                    "Gemini API error: Status {}, Response: {}",
+                    "Gemini API error: Status {}, Raw Response: {}",
                     status, error_text
                 );
                 return (
@@ -382,9 +405,7 @@ async fn handle_query(
                         candidate_count: Some(1),
                         max_output_tokens: Some(2048),
                     }),
-                    tool_config: Some(ToolConfig {
-                        tools: tools.clone(),
-                    }),
+                    tools: Some(tools.clone()),
                 };
 
                 // Print the second outgoing request for debugging
@@ -394,7 +415,7 @@ async fn handle_query(
                 );
 
                 let second_api_response = match client
-                    .post("https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent")
+                    .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")
                     .query(&[("key", api_key.clone())])
                     .json(&second_api_request)
                     .send()
@@ -409,7 +430,7 @@ async fn handle_query(
                                 .await
                                 .unwrap_or_else(|_| "Unknown error".to_string());
                             eprintln!(
-                                "Gemini API error (second call): Status {}, Response: {}",
+                                "Gemini API error (second call): Status {}, Raw Response: {}",
                                 status, error_text
                             );
                             return (
@@ -517,70 +538,175 @@ async fn handle_query(
 async fn execute_tool(
     function_name: &str,
     args: &serde_json::Value,
-    _pool: &neo4rs::Graph,
+    pool: &neo4rs::Graph,
 ) -> serde_json::Value {
     match function_name {
         "list_goals" => {
-            // Implementation for listing goals
+            // Get filter parameter if provided
+            let filter = args["filter"].as_str().unwrap_or("all");
+
+            // Construct query based on filter
+            let filter_clause = match filter {
+                "active" => "WHERE g.completed = false",
+                "completed" => "WHERE g.completed = true",
+                _ => "",
+            };
+
+            let query_str = format!("MATCH (g:Goal) {} {}", filter_clause, GOAL_RETURN_QUERY);
+            let query = query(&query_str);
+
+            // Execute query and collect results
+            let mut goals = Vec::new();
+            if let Ok(mut result) = pool.execute(query).await {
+                while let Ok(Some(row)) = result.next().await {
+                    if let Ok(goal) = row.get::<serde_json::Value>("g") {
+                        goals.push(goal);
+                    }
+                }
+            }
+
             serde_json::json!({
                 "status": "success",
-                "goals": [
-                    {
-                        "id": "1",
-                        "title": "Learn Rust",
-                        "description": "Master Rust programming language",
-                        "deadline": "2024-12-31"
-                    },
-                    {
-                        "id": "2",
-                        "title": "Finish project",
-                        "description": "Complete the goals project",
-                        "deadline": "2024-08-15"
-                    }
-                ]
+                "goals": goals
             })
         }
         "create_goal" => {
-            // Get arguments
-            let title = args["title"].as_str().unwrap_or("Untitled");
-            let description = args["description"].as_str().unwrap_or("");
+            use crate::goal::{Goal, GoalType};
+
+            // Get parameters
+            let title = args["title"].as_str().unwrap_or("Untitled").to_string();
+            let description = args["description"].as_str().map(|s| s.to_string());
             let deadline = args["deadline"].as_str().unwrap_or("");
 
-            // Implementation for creating a goal
-            serde_json::json!({
-                "status": "success",
-                "goal": {
-                    "id": uuid::Uuid::new_v4().to_string(),
-                    "title": title,
-                    "description": description,
-                    "deadline": deadline
+            // Convert deadline to timestamp if provided
+            let end_timestamp = if !deadline.is_empty() {
+                if let Ok(date) = NaiveDate::parse_from_str(deadline, "%Y-%m-%d") {
+                    Some(
+                        date.and_hms_opt(23, 59, 59)
+                            .unwrap()
+                            .and_utc()
+                            .timestamp_millis(),
+                    )
+                } else {
+                    None
                 }
-            })
+            } else {
+                None
+            };
+
+            // Create a Goal object
+            let goal = Goal {
+                id: None,
+                name: title,
+                goal_type: GoalType::Task,
+                description,
+                user_id: Some(1), // Default user ID
+                priority: None,
+                start_timestamp: None,
+                end_timestamp,
+                completion_date: None,
+                next_timestamp: None,
+                scheduled_timestamp: None,
+                duration: None,
+                completed: Some(false),
+                frequency: None,
+                routine_type: None,
+                routine_time: None,
+                position_x: None,
+                position_y: None,
+            };
+
+            // Use the existing create_goal method
+            match goal.create_goal(pool).await {
+                Ok(created_goal) => {
+                    serde_json::json!({
+                        "status": "success",
+                        "goal": {
+                            "id": created_goal.id,
+                            "title": created_goal.name,
+                            "description": created_goal.description,
+                            "deadline": deadline
+                        }
+                    })
+                }
+                Err(e) => {
+                    serde_json::json!({
+                        "status": "error",
+                        "message": format!("Failed to create goal: {}", e)
+                    })
+                }
+            }
         }
         "get_calendar_events" => {
-            // Get arguments
+            // Get required parameters
             let start_date = args["start_date"].as_str().unwrap_or("");
             let end_date = args["end_date"].as_str().unwrap_or("");
 
-            // Implementation for getting calendar events
+            // Parse dates
+            let start_timestamp = if !start_date.is_empty() {
+                if let Ok(date) = NaiveDate::parse_from_str(start_date, "%Y-%m-%d") {
+                    date.and_hms_opt(0, 0, 0)
+                        .unwrap()
+                        .and_utc()
+                        .timestamp_millis()
+                } else {
+                    return serde_json::json!({
+                        "status": "error",
+                        "message": "Invalid start_date format"
+                    });
+                }
+            } else {
+                return serde_json::json!({
+                    "status": "error",
+                    "message": "start_date is required"
+                });
+            };
+
+            let end_timestamp = if !end_date.is_empty() {
+                if let Ok(date) = NaiveDate::parse_from_str(end_date, "%Y-%m-%d") {
+                    date.and_hms_opt(23, 59, 59)
+                        .unwrap()
+                        .and_utc()
+                        .timestamp_millis()
+                } else {
+                    return serde_json::json!({
+                        "status": "error",
+                        "message": "Invalid end_date format"
+                    });
+                }
+            } else {
+                return serde_json::json!({
+                    "status": "error",
+                    "message": "end_date is required"
+                });
+            };
+
+            // Use similar query as in day.rs's get_day_tasks
+            let query_str = format!(
+                "MATCH (g:Goal) 
+                WHERE g.user_id = 1
+                AND g.scheduled_timestamp >= $start_timestamp 
+                AND g.scheduled_timestamp <= $end_timestamp
+                {}",
+                GOAL_RETURN_QUERY
+            );
+
+            let query = query(&query_str)
+                .param("start_timestamp", start_timestamp)
+                .param("end_timestamp", end_timestamp);
+
+            let mut events = Vec::new();
+            if let Ok(mut result) = pool.execute(query).await {
+                while let Ok(Some(row)) = result.next().await {
+                    if let Ok(event) = row.get::<serde_json::Value>("g") {
+                        events.push(event);
+                    }
+                }
+            }
+
             serde_json::json!({
                 "status": "success",
-                "events": [
-                    {
-                        "id": "1",
-                        "title": "Team meeting",
-                        "date": start_date,
-                        "time": "10:00 AM",
-                        "duration": 60
-                    },
-                    {
-                        "id": "2",
-                        "title": "Project review",
-                        "date": end_date,
-                        "time": "2:00 PM",
-                        "duration": 90
-                    }
-                ],
+                "events": events,
                 "date_range": {
                     "start": start_date,
                     "end": end_date
@@ -588,35 +714,74 @@ async fn execute_tool(
             })
         }
         "get_day_plan" => {
-            // Get arguments
+            // Get required parameter
             let date = args["date"].as_str().unwrap_or("");
 
-            // Implementation for getting day plan
+            // Parse date
+            let start_timestamp = if !date.is_empty() {
+                if let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                    date.and_hms_opt(0, 0, 0)
+                        .unwrap()
+                        .and_utc()
+                        .timestamp_millis()
+                } else {
+                    return serde_json::json!({
+                        "status": "error",
+                        "message": "Invalid date format"
+                    });
+                }
+            } else {
+                return serde_json::json!({
+                    "status": "error",
+                    "message": "date is required"
+                });
+            };
+
+            let end_timestamp = if !date.is_empty() {
+                if let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                    date.and_hms_opt(23, 59, 59)
+                        .unwrap()
+                        .and_utc()
+                        .timestamp_millis()
+                } else {
+                    return serde_json::json!({
+                        "status": "error",
+                        "message": "Invalid date format"
+                    });
+                }
+            } else {
+                Utc::now().timestamp_millis()
+            };
+
+            // Use query similar to day.rs get_day_tasks
+            let query_str = format!(
+                "MATCH (g:Goal) 
+                WHERE g.user_id = 1
+                AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
+                AND g.scheduled_timestamp >= $start_timestamp 
+                AND g.scheduled_timestamp <= $end_timestamp
+                {}
+                ORDER BY g.scheduled_timestamp",
+                GOAL_RETURN_QUERY
+            );
+
+            let query = query(&query_str)
+                .param("start_timestamp", start_timestamp)
+                .param("end_timestamp", end_timestamp);
+
+            let mut plan_items = Vec::new();
+            if let Ok(mut result) = pool.execute(query).await {
+                while let Ok(Some(row)) = result.next().await {
+                    if let Ok(task) = row.get::<serde_json::Value>("g") {
+                        plan_items.push(task);
+                    }
+                }
+            }
+
             serde_json::json!({
                 "status": "success",
                 "date": date,
-                "plan": [
-                    {
-                        "time": "09:00 AM",
-                        "activity": "Morning routine"
-                    },
-                    {
-                        "time": "10:00 AM",
-                        "activity": "Team meeting"
-                    },
-                    {
-                        "time": "12:00 PM",
-                        "activity": "Lunch"
-                    },
-                    {
-                        "time": "01:00 PM",
-                        "activity": "Work on goals project"
-                    },
-                    {
-                        "time": "05:00 PM",
-                        "activity": "End of day review"
-                    }
-                ]
+                "plan": plan_items
             })
         }
         _ => serde_json::json!({
@@ -624,52 +789,4 @@ async fn execute_tool(
             "message": format!("Unknown function: {}", function_name)
         }),
     }
-}
-
-// Function to extract function calls from text
-fn extract_function_call(text: &str) -> Option<ExtractedFunctionCall> {
-    // Look for the pattern: I need to execute: function_name(arg1="value1", arg2="value2")
-    if let Some(start_idx) = text.find("I need to execute: ") {
-        let function_text = &text[start_idx + "I need to execute: ".len()..];
-
-        // Find the function name
-        if let Some(paren_idx) = function_text.find('(') {
-            let function_name = function_text[..paren_idx].trim().to_string();
-
-            // Extract arguments
-            if let Some(end_paren_idx) = function_text.find(')') {
-                let args_text = &function_text[paren_idx + 1..end_paren_idx];
-
-                // Parse arguments
-                let mut args_map = serde_json::Map::new();
-
-                for arg_pair in args_text.split(',') {
-                    let parts: Vec<&str> = arg_pair.split('=').collect();
-                    if parts.len() == 2 {
-                        let key = parts[0].trim();
-                        let value = parts[1].trim();
-
-                        // Remove quotes from value if present
-                        let clean_value = if value.starts_with('"') && value.ends_with('"') {
-                            &value[1..value.len() - 1]
-                        } else {
-                            value
-                        };
-
-                        args_map.insert(
-                            key.to_string(),
-                            serde_json::Value::String(clean_value.to_string()),
-                        );
-                    }
-                }
-
-                return Some(ExtractedFunctionCall {
-                    name: function_name,
-                    args: serde_json::Value::Object(args_map),
-                });
-            }
-        }
-    }
-
-    None
 }

@@ -41,7 +41,7 @@ const NavBar: React.FC = () => {
           <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
           <Button color="inherit" component={Link} to="/list">List</Button>
           <Button color="inherit" component={Link} to="/day">Day</Button>
-          <Button color="inherit" component={Link} to="/query">AI Assistant</Button>
+          <Button color="inherit" component={Link} to="/query">Query</Button>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {isAuthenticated ? (

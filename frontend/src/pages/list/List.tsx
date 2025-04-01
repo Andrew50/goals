@@ -153,6 +153,8 @@ const List: React.FC = () => {
                     onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
                     value={filters[field as keyof Goal] || ''}
                     className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                    spellCheck="false"
+                    autoComplete="off"
                 />
             );
         }
@@ -164,6 +166,8 @@ const List: React.FC = () => {
                     onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
                     value={filters[field as keyof Goal] || ''}
                     className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                    spellCheck="false"
+                    autoComplete="off"
                 />
             );
         }
@@ -207,6 +211,8 @@ const List: React.FC = () => {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="search-input"
+                        spellCheck="false"
+                        autoComplete="off"
                     />
                     <button
                         onClick={() => setShowFilters(!showFilters)}

@@ -1,16 +1,9 @@
 use crate::goal::Goal;
 use crate::goal::GoalType;
-use axum::extract::Path;
-use axum::{
-    extract::Extension, http::StatusCode, response::IntoResponse, routing::get, Json, Router,
-};
+use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 
-pub fn create_routes() -> Router {
-    Router::new().route("/:goal_id", get(query_hierarchy_handler))
-}
-
-pub async fn query_hierarchy(graph: &Graph, goal_id: i64) -> Result<Vec<Goal>, neo4rs::Error> {
+pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, neo4rs::Error> {
     let query = query(
         "MATCH (g:Goal)-[*]-(related:Goal) \
          WHERE id(g) = $goal_id \
@@ -58,10 +51,10 @@ pub async fn query_hierarchy(graph: &Graph, goal_id: i64) -> Result<Vec<Goal>, n
 }
 
 pub async fn query_hierarchy_handler(
-    Path(goal_id): Path<i64>,
-    Extension(graph): Extension<Graph>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    match query_hierarchy(&graph, goal_id).await {
+    graph: Graph,
+    goal_id: i64,
+) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
+    match query_hierarchy(graph, goal_id).await {
         Ok(hierarchy) => Ok(Json(hierarchy)),
         Err(e) => {
             eprintln!("Error querying hierarchy: {}", e);

@@ -1,10 +1,4 @@
-use axum::{
-    extract::{Extension, Json, Path},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, put},
-    Router,
-};
+use axum::{http::StatusCode, Json};
 
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
@@ -19,10 +13,6 @@ pub struct NetworkData {
 
 #[derive(Debug, Serialize)]
 pub struct NetworkNode {
-    //id: i64,
-    //label: String,
-    //title: String,
-    //color: String,
     #[serde(flatten)]
     goal_data: Goal,
 }
@@ -31,10 +21,8 @@ pub struct NetworkNode {
 pub struct NetworkEdge {
     from: i64,
     to: i64,
-    //label: String,
     #[serde(rename = "relationship_type")]
     relationship_type: String,
-    //arrows: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,20 +35,14 @@ struct RelationshipData {
 }
 
 #[derive(Debug, Deserialize)]
-struct PositionUpdate {
-    x: f64,
-    y: f64,
-}
-
-pub fn create_routes() -> Router {
-    Router::new()
-        .route("/", get(get_network_data))
-        .route("/:id/position", put(update_node_position))
+pub struct PositionUpdate {
+    pub x: f64,
+    pub y: f64,
 }
 
 pub async fn get_network_data(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
+    graph: Graph,
+    user_id: i64,
 ) -> Result<Json<NetworkData>, (StatusCode, String)> {
     println!("Fetching network data for user: {}", user_id);
 
@@ -83,7 +65,6 @@ pub async fn get_network_data(
         crate::goal::GOAL_RETURN_QUERY
     );
 
-    //println!("Executing query: {}", query_str);
     let query = query(&query_str).param("user_id", user_id);
 
     let mut result = graph.execute(query).await.map_err(|e| {
@@ -104,9 +85,6 @@ pub async fn get_network_data(
             format!("Error fetching row: {}", e),
         )
     })? {
-        // Debug print the raw row data
-        //println!("Raw row data: {:?}", row);
-
         let goal: Goal = row.get("g").map_err(|e| {
             eprintln!("Error deserializing goal: {:?}", e);
             eprintln!("Row data: {:?}", row);
@@ -122,10 +100,6 @@ pub async fn get_network_data(
         });
 
         nodes.push(NetworkNode {
-            //id: goal_id,
-            //label: goal.name.clone(),
-            //           title: format_node_title(&goal.name, &goal.goal_type),
-            //          color: get_node_color(&goal.goal_type),
             goal_data: goal.clone(),
         });
 
@@ -138,49 +112,30 @@ pub async fn get_network_data(
             )
         })?;
 
-        // Debug print the relationships
-        //println!("Deserialized relationships: {:?}", relationships);
-
         for rel in relationships {
             if let Some(to_id) = rel.to {
                 if to_id != 0 {
-                    // Debug print each relationship before creating NetworkEdge
-                    /*println!(
-                        "Creating edge - from: {}, to: {}, type: '{}'",
-                        goal_id, to_id, rel.type_
-                    );*/
-
                     edges.push(NetworkEdge {
                         from: goal_id,
                         to: to_id,
                         relationship_type: rel.type_.to_lowercase(),
-                        //arrows: "to".to_string(),
                     });
                 }
             }
         }
     }
 
-    // Debug print final edges
-    //println!("Final edges: {:?}", edges);
-
-    //println!("Successfully fetched network data:");
-    //println!("  Nodes: {}", nodes.len());
-    //println!("  Edges: {}", edges.len());
-
     Ok(Json(NetworkData { nodes, edges }))
 }
 
-async fn update_node_position(
-    Extension(graph): Extension<Graph>,
-    Path(id): Path<i64>,
-    Json(position): Json<PositionUpdate>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn update_node_position(
+    graph: Graph,
+    id: i64,
+    x: f64,
+    y: f64,
+) -> Result<StatusCode, (StatusCode, String)> {
     let query_str = "MATCH (g:Goal) WHERE id(g) = $id SET g.position_x = $x, g.position_y = $y";
-    let query = query(query_str)
-        .param("id", id)
-        .param("x", position.x)
-        .param("y", position.y);
+    let query = query(query_str).param("id", id).param("x", x).param("y", y);
 
     match graph.run(query).await {
         Ok(_) => Ok(StatusCode::OK),
