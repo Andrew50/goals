@@ -2,27 +2,22 @@ use axum::{
     extract::{Extension, Json, Path, Query},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, put},
-    Router,
 };
 use chrono::{TimeZone, Utc};
 use neo4rs::{query, Graph};
+use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::goal::GOAL_RETURN_QUERY;
 
-pub fn create_routes() -> Router {
-    Router::new()
-        .route("/", get(get_day_tasks))
-        .route("/complete/:id", put(toggle_complete_task))
-}
-
-async fn get_day_tasks(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i64>>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let start_timestamp = params.get("start").copied().unwrap_or_else(|| {
+// Business logic functions with regular parameters
+pub async fn get_day_tasks(
+    graph: Graph,
+    user_id: i64,
+    start_timestamp: Option<i64>,
+    end_timestamp: Option<i64>,
+) -> Result<Json<Vec<Value>>, (StatusCode, String)> {
+    let start_timestamp = start_timestamp.unwrap_or_else(|| {
         println!("No start timestamp provided");
         // Default to start of current UTC day if not provided
         Utc::now()
@@ -33,7 +28,7 @@ async fn get_day_tasks(
             .timestamp_millis()
     });
 
-    let end_timestamp = params.get("end").copied().unwrap_or_else(|| {
+    let end_timestamp = end_timestamp.unwrap_or_else(|| {
         // Default to end of current UTC day if not provided
         Utc::now()
             .date_naive()
@@ -68,8 +63,8 @@ async fn get_day_tasks(
          ORDER BY g.scheduled_timestamp",
     )
     .param("user_id", user_id)
-    .param("range_start", start_timestamp) // 1 day before
-    .param("range_end", end_timestamp); // 1 day after
+    .param("range_start", start_timestamp)
+    .param("range_end", end_timestamp);
 
     println!("\nTasks around the target date range:");
     if let Ok(mut result) = graph.execute(debug_query).await {
@@ -90,9 +85,6 @@ async fn get_day_tasks(
          {}",
         GOAL_RETURN_QUERY
     );
-
-    //println!("\nExecuting query:");
-    //println!("{}", query_str);
 
     let query = query(&query_str)
         .param("user_id", user_id)
@@ -120,10 +112,10 @@ async fn get_day_tasks(
     }
 }
 
-async fn toggle_complete_task(
-    Extension(graph): Extension<Graph>,
-    Path(id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn toggle_complete_task(
+    graph: Graph,
+    id: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
     let now = Utc::now().timestamp();
 
     let query = query(

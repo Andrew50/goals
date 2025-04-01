@@ -46,5 +46,31 @@ export const theme = createTheme({
         },
       },
     },
+    MuiTextField: {
+      defaultProps: {
+        InputProps: {
+          inputProps: {
+            // Ensure no pattern restrictions for text fields
+            pattern: undefined,
+          }
+        }
+      },
+      styleOverrides: {
+        root: {
+          '& .MuiInputBase-input': {
+            // Adding custom styles to ensure all characters are properly handled
+            fontFamily: 'inherit',
+          }
+        }
+      }
+    },
+    MuiInput: {
+      styleOverrides: {
+        input: {
+          // Ensure special characters are properly handled
+          fontFamily: 'inherit',
+        }
+      }
+    }
   },
 }); 

@@ -1,10 +1,4 @@
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::{
-    extract::{Extension, Path},
-    routing::post,
-    Router,
-};
 use chrono::{Datelike, Duration, TimeZone, Utc};
 use neo4rs::Graph;
 use serde_json;
@@ -24,13 +18,7 @@ pub enum RoutineError {
     Deserialization(neo4rs::DeError),
 }
 
-type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
-
-pub fn create_routes(user_locks: UserLocks) -> Router {
-    Router::new()
-        .route("/:timestamp", post(process_user_routines))
-        .layer(Extension(user_locks))
-}
+pub type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
 impl fmt::Display for RoutineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -62,12 +50,13 @@ impl From<RoutineError> for (StatusCode, String) {
         (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
     }
 }
-async fn process_user_routines(
-    Path(user_eod_timestamp): Path<i64>, // the timestamp to update routines up to. is the end of the user timezone's day, in UTC
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Extension(user_locks): Extension<UserLocks>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+
+pub async fn process_user_routines(
+    user_eod_timestamp: i64, // the timestamp to update routines up to. is the end of the user timezone's day, in UTC
+    graph: Graph,
+    user_id: i64,
+    user_locks: UserLocks,
+) -> Result<(), (StatusCode, String)> {
     let mut locks = user_locks.lock().await;
     let user_lock = locks
         .entry(user_id)
@@ -96,7 +85,7 @@ async fn process_user_routines(
         .map_err(RoutineError::from)?;
 
     while let Some(row) = result.next().await.map_err(RoutineError::from)? {
-        //iteraite over all reoutines
+        //iterate over all routines
         let row_value = row.get("g").map_err(RoutineError::from)?;
         let routine: Goal = serde_json::from_value(row_value).map_err(RoutineError::from)?;
 
@@ -283,21 +272,6 @@ fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
     // Extract just the minutes since midnight from the timestamp
     let minutes_since_midnight = (time_of_day % day_in_ms) / (60 * 1000);
     let time_of_day_ms = minutes_since_midnight * 60 * 1000;
-
-    /*    println!("Debug set_time_of_day:");
-        println!(
-            "  base_timestamp: {}",
-            Utc.timestamp_millis_opt(base_timestamp).unwrap()
-        );
-        println!("  original time_of_day: {}", time_of_day);
-        println!("  minutes_since_midnight: {}", minutes_since_midnight);
-        println!("  time_of_day_ms: {}", time_of_day_ms);
-        println!(
-            "  result: {}",
-            Utc.timestamp_millis_opt(start_of_day + time_of_day_ms)
-                .unwrap()
-        );
-    */
 
     start_of_day + time_of_day_ms
 }

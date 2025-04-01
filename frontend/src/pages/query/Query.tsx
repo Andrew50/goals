@@ -57,13 +57,22 @@ const Query: React.FC = () => {
 
         if (!input.trim()) return;
 
+        // Add user message to conversation immediately
+        const userMessage: Message = { role: 'user', content: input };
+        const currentMessages = conversation?.messages || [];
+        const updatedConversation = {
+            id: conversation?.id || 'temp-id',
+            messages: [...currentMessages, userMessage]
+        };
+
+        setConversation(updatedConversation);
         setIsLoading(true);
 
         try {
             const data = await privateRequest<QueryResponse>('query', 'POST', {
                 query: input,
                 conversation_id: conversation?.id,
-                message_history: conversation?.messages
+                message_history: currentMessages // Send previous messages
             });
 
             setConversation({
@@ -84,10 +93,7 @@ const Query: React.FC = () => {
                 if (!prev) {
                     return {
                         id: 'temp-id',
-                        messages: [
-                            { role: 'user', content: input },
-                            errorMessage
-                        ]
+                        messages: [userMessage, errorMessage]
                     };
                 }
 
@@ -235,7 +241,11 @@ const Query: React.FC = () => {
                     variant="outlined"
                     sx={{ mr: 1 }}
                     InputProps={{
-                        sx: { borderRadius: 2 }
+                        sx: { borderRadius: 2 },
+                        inputProps: {
+                            spellCheck: 'false',
+                            autoComplete: 'off'
+                        }
                     }}
                 />
                 <Button

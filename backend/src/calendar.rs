@@ -1,4 +1,4 @@
-use axum::{extract::Extension, http::StatusCode, routing::get, Json, Router};
+use axum::{http::StatusCode, Json};
 
 use chrono::{DateTime, Utc};
 use neo4rs::{query, Graph};
@@ -31,10 +31,6 @@ pub struct UnscheduledTask {
     title: String,
     end_timestamp: i64,
     description: Option<String>,
-}
-
-pub fn create_routes() -> Router {
-    Router::new().route("/", get(get_calendar_data))
 }
 
 async fn execute_query<T>(
@@ -86,8 +82,8 @@ async fn execute_query<T>(
 }
 
 pub async fn get_calendar_data(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
+    graph: Graph,
+    user_id: i64,
 ) -> Result<Json<CalendarData>, (StatusCode, String)> {
     let current_timestamp = Utc::now().timestamp() * 1000;
 

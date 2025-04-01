@@ -608,6 +608,11 @@ const GoalMenu: GoalMenuComponent = () => {
                 margin="dense"
                 required
                 disabled={isViewOnly}
+                inputProps={{
+                    spellCheck: 'false',
+                    // Explicitly allow all characters
+                    autoComplete: 'off'
+                }}
             />
             <TextField
                 label="Goal Type"
@@ -642,6 +647,11 @@ const GoalMenu: GoalMenuComponent = () => {
                 margin="dense"
                 multiline
                 disabled={isViewOnly}
+                inputProps={{
+                    spellCheck: 'false',
+                    // Explicitly allow all characters
+                    autoComplete: 'off'
+                }}
             />
         </>
     );
