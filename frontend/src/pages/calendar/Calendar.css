@@ -16,6 +16,7 @@
     display: flex;
     align-items: center;
     min-height: 100%;
+    pointer-events: none;
 }
 
 /* Remove current day highlighting */
@@ -363,4 +364,16 @@
     to {
         transform: rotate(360deg);
     }
+}
+
+/* Ensure the FC event elements are properly clickable */
+.fc-event {
+    cursor: pointer;
+    z-index: 1;
+}
+
+.fc-event-main,
+.fc-event-main-frame {
+    pointer-events: auto;
+    z-index: 2;
 }

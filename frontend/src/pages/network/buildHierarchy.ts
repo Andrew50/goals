@@ -122,7 +122,7 @@ export async function buildHierarchy(networkData: {
     nodes: NetworkNode[];
     edges: NetworkEdge[];
 }) {
-    console.log('Initial nodes:', networkData.nodes);
+    //console.log('Initial nodes:', networkData.nodes);
 
     // 1. Determine the root and compute initial data.
     const rootId = findRootNode(networkData.nodes, networkData.edges);
@@ -290,7 +290,7 @@ export async function buildHierarchy(networkData: {
         };
     });
 
-    console.log('Final node positions:', positions);
+    //console.log('Final node positions:', positions);
     return { nodes: formattedNodes, edges: formattedEdges };
 }
 

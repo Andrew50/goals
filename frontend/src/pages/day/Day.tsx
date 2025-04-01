@@ -18,15 +18,15 @@ const Day: React.FC = () => {
         todayEnd.setHours(23, 59, 59, 999);
         const endTimestamp = todayEnd.getTime();
         const startTimestamp = today.getTime();
-        console.log(startTimestamp, endTimestamp);
+        //console.log(startTimestamp, endTimestamp);
 
         privateRequest<Goal[]>('day', 'GET', undefined, {
             start: startTimestamp,
             end: endTimestamp
         }).then((goals) => {
-            console.log(goals);
+            //console.log(goals);
             const localGoals = goals.map(goalToLocal);
-            console.log(localGoals);
+            //console.log(localGoals);
             setTasks(localGoals);
         }).catch(error => {
             console.error('Error fetching goals:', error);

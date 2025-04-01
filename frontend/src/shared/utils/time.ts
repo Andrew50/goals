@@ -8,7 +8,7 @@ export const toLocalTimestamp = (timestamp?: number | null): number | undefined 
     const offset = new Date().getTimezoneOffset() * 60 * 1000;
     const convertedTimestamp = timestamp - offset;
 
-    console.log(`Converting UTC timestamp ${originalTimestamp} to local: ${convertedTimestamp} (offset: ${offset})`);
+    //console.log(`Converting UTC timestamp ${originalTimestamp} to local: ${convertedTimestamp} (offset: ${offset})`);
     return convertedTimestamp;
 };
 
@@ -20,7 +20,7 @@ export const toUTCTimestamp = (timestamp?: number | null): number | undefined =>
     const offset = new Date().getTimezoneOffset() * 60 * 1000;
     const convertedTimestamp = timestamp + offset;
 
-    console.log(`Converting local timestamp ${originalTimestamp} to UTC: ${convertedTimestamp} (offset: ${offset})`);
+    //console.log(`Converting local timestamp ${originalTimestamp} to UTC: ${convertedTimestamp} (offset: ${offset})`);
     return convertedTimestamp;
 };
 
@@ -76,43 +76,85 @@ export const timestampToDate = (timestamp: number): Date => {
 
 // Format a timestamp for datetime-local input (YYYY-MM-DDTHH:mm)
 export const timestampToInputString = (
-    timestamp: number | undefined,
+    timestamp: number | undefined | null,
     format: 'date' | 'datetime' | 'time'
 ): string => {
     if (!timestamp) return '';
-    const isoString = new Date(timestamp).toISOString();
+
+    // Create a date from the timestamp (which should already be in the correct timezone based on _tz)
+    // Note: We don't adjust for timezone here since that should already be handled
+    const date = new Date(timestamp);
+
+    // Log for debugging
+    //console.log(`timestampToInputString: input timestamp=${timestamp}, format=${format}, date=${date.toString()}`);
+
+    // Format the date according to the required format
+    let result = '';
 
     switch (format) {
         case 'date':
-            return isoString.slice(0, 10);
+            result = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+            break;
         case 'time':
-            return isoString.slice(11, 16);
+            result = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+            break;
         default: // datetime
-            return isoString.slice(0, 16);
+            result = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
+
+    //console.log(`timestampToInputString: output=${result}`);
+    return result;
 };
 
-// Parse a datetime-local input string to UTC timestamp
+// Parse a datetime-local input string to timestamp
 export const inputStringToTimestamp = (
     dateString: string,
     format: 'date' | 'datetime' | 'time' | 'end-date'
 ): number => {
-    let fullDateString = dateString;
+    if (!dateString) return 0;
+
+    //console.log(`inputStringToTimestamp: input dateString=${dateString}, format=${format}`);
+
+    const date = new Date();
 
     switch (format) {
         case 'date':
-            fullDateString = `${dateString}T00:00:00`;
+            // Set just the date part, keep time at 00:00:00
+            const [dateYear, dateMonth, dateDay] = dateString.split('-').map(Number);
+            date.setFullYear(dateYear, dateMonth - 1, dateDay);
+            date.setHours(0, 0, 0, 0);
             break;
+
         case 'end-date':
-            fullDateString = `${dateString}T23:59:59.999`;
+            // Set date to end of day (23:59:59.999)
+            const [endYear, endMonth, endDay] = dateString.split('-').map(Number);
+            date.setFullYear(endYear, endMonth - 1, endDay);
+            date.setHours(23, 59, 59, 999);
             break;
+
         case 'time':
-            fullDateString = `1970-01-01T${dateString}`;
+            // Set just the time part, keep date as is
+            const [hours, minutes] = dateString.split(':').map(Number);
+            date.setHours(hours, minutes, 0, 0);
             break;
-        // datetime case uses the full string as-is
+
+        case 'datetime':
+            // Parse the full datetime string
+            const [datePart, timePart] = dateString.split('T');
+            const [dtYear, dtMonth, dtDay] = datePart.split('-').map(Number);
+            const [dtHours, dtMinutes] = timePart.split(':').map(Number);
+
+            date.setFullYear(dtYear, dtMonth - 1, dtDay);
+            date.setHours(dtHours, dtMinutes, 0, 0);
+            break;
     }
 
-    return dateToTimestamp(new Date(fullDateString));
+    // Get timestamp directly from the date without any timezone adjustments
+    // since we're already working in the local timezone
+    const timestamp = date.getTime();
+
+    //console.log(`inputStringToTimestamp: output timestamp=${timestamp}, date=${date.toString()}`);
+    return timestamp;
 };
 
 // Format timestamp for display (using UTC)
