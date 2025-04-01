@@ -49,6 +49,9 @@ const Calendar: React.FC = () => {
   const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Add a debug flag for more verbose output
+  const [debugMode] = useState(true);
+
   // Load calendar data
   useEffect(() => {
     loadCalendarData().catch(err => {
@@ -228,17 +231,108 @@ const Calendar: React.FC = () => {
     }
   };
 
+  // Log click events for debugging purposes
+  useEffect(() => {
+    if (!debugMode) return;
+
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const path = getElementPath(target);
+      console.log('Click detected:', {
+        target: target.tagName,
+        classes: target.className,
+        id: target.id,
+        path: path,
+        coordinates: { x: e.clientX, y: e.clientY }
+      });
+    };
+
+    // Helper function to get DOM path for better debugging
+    const getElementPath = (element: HTMLElement): string => {
+      let path = '';
+      let currentElement: HTMLElement | null = element;
+
+      while (currentElement) {
+        const tag = currentElement.tagName.toLowerCase();
+        const id = currentElement.id ? `#${currentElement.id}` : '';
+        const classes = Array.from(currentElement.classList).map(c => `.${c}`).join('');
+
+        path = `${tag}${id}${classes}${path ? ' > ' + path : ''}`;
+        currentElement = currentElement.parentElement;
+      }
+
+      return path;
+    };
+
+    // Add the click listener
+    document.addEventListener('click', handleGlobalClick);
+
+    // Clean up the listener when component unmounts
+    return () => {
+      document.removeEventListener('click', handleGlobalClick);
+    };
+  }, [debugMode]);
+
+  // Add right-click (context menu) support
+  useEffect(() => {
+    if (!debugMode) return;
+
+    const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      console.log('Right-click detected:', {
+        target: target.tagName,
+        classes: target.className,
+        coordinates: { x: e.clientX, y: e.clientY }
+      });
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu);
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, [debugMode]);
+
   const handleEventClick = (info: any) => {
-    // Prevent default if any
+    if (debugMode) {
+      console.log('handleEventClick triggered:', {
+        eventId: info.event.id,
+        eventTitle: info.event.title,
+        target: info.jsEvent?.target,
+        targetElement: info.jsEvent?.target ? {
+          tagName: info.jsEvent.target.tagName,
+          className: info.jsEvent.target.className
+        } : 'No target',
+        eventElement: info.el ? {
+          tagName: info.el.tagName,
+          className: info.el.className
+        } : 'No element',
+        event: info.event,
+        jsEvent: info.jsEvent ? {
+          type: info.jsEvent.type,
+          clientX: info.jsEvent.clientX,
+          clientY: info.jsEvent.clientY,
+          defaultPrevented: info.jsEvent.defaultPrevented
+        } : 'No jsEvent'
+      });
+    }
+
+    // Always prevent default browser behavior
     if (info.jsEvent) {
       info.jsEvent.preventDefault();
+      // This is important to stop any parent handlers from firing
+      info.jsEvent.stopImmediatePropagation();
+      if (debugMode) console.log('Default prevented for event click');
     }
 
     // First try to get the goal from extendedProps (direct from FullCalendar)
     const goal = info.event.extendedProps?.goal;
+    if (debugMode) console.log('Goal from extendedProps:', goal);
 
     if (goal) {
+      if (debugMode) console.log('Opening GoalMenu with goal:', goal);
       GoalMenu.open(goal, 'view', async () => {
+        if (debugMode) console.log('GoalMenu closed, reloading calendar data');
         loadCalendarData();
       });
       return;
@@ -246,12 +340,37 @@ const Calendar: React.FC = () => {
 
     // Fallback to searching in state (the old method)
     const event = state.events.find((e: CalendarEvent) => e.id === info.event.id);
+    if (debugMode) console.log('Event from state search:', event);
+
     if (event && event.goal) {
+      if (debugMode) console.log('Opening GoalMenu with event goal from state:', event.goal);
       GoalMenu.open(event.goal, 'view', async () => {
+        if (debugMode) console.log('GoalMenu closed, reloading calendar data');
         loadCalendarData();
       });
     } else {
       console.warn('Could not find goal for clicked event:', info.event.id, info.event.title);
+    }
+  };
+
+  // Handle right-click on events
+  const handleEventRightClick = (info: any) => {
+    if (debugMode) console.log('Event right-clicked:', info.event.title);
+
+    // Prevent the default context menu
+    if (info.jsEvent) {
+      info.jsEvent.preventDefault();
+      info.jsEvent.stopImmediatePropagation();
+    }
+
+    // Get the goal from extendedProps
+    const goal = info.event.extendedProps?.goal;
+
+    if (goal) {
+      // Open GoalMenu in edit mode on right-click
+      GoalMenu.open(goal, 'edit', async () => {
+        loadCalendarData();
+      });
     }
   };
 
@@ -402,7 +521,7 @@ const Calendar: React.FC = () => {
   });
 
   return (
-    <div className="calendar-container">
+    <div className="calendar-container" onClick={(e) => console.log('Calendar container clicked', e.target)}>
       <div className="calendar-sidebar">
         <TaskList
           ref={taskListRef}
@@ -412,7 +531,7 @@ const Calendar: React.FC = () => {
           onTaskUpdate={handleTaskUpdate}
         />
       </div>
-      <div className="calendar-main">
+      <div className="calendar-main" onClick={(e) => console.log('Calendar main clicked', e.target)}>
         {state.isLoading && (
           <div className="calendar-loading-indicator">
             <div className="loading-spinner"></div>
@@ -462,6 +581,17 @@ const Calendar: React.FC = () => {
             const backgroundColor = info.event.backgroundColor;
             const textColor = info.event.textColor || '#ffffff';
 
+            if (debugMode) {
+              console.log('Event mounted:', {
+                id: info.event.id,
+                title: info.event.title,
+                el: info.el ? {
+                  tagName: info.el.tagName,
+                  className: info.el.className
+                } : 'No element'
+              });
+            }
+
             // Apply colors to the main event element
             if (info.el) {
               // For better visibility, set a proper background color
@@ -469,19 +599,96 @@ const Calendar: React.FC = () => {
               info.el.style.borderColor = backgroundColor;
               info.el.style.color = textColor;
 
+              // Explicitly ensure event has pointer-events enabled
+              info.el.style.pointerEvents = 'auto';
+              info.el.style.cursor = 'pointer';
+              info.el.style.zIndex = '5';
+
+              // Add explicit click handler directly to event elements as a fallback
+              info.el.addEventListener('click', (e) => {
+                if (debugMode) {
+                  console.log('Direct event element click detected:', {
+                    eventId: info.event.id,
+                    eventTitle: info.event.title,
+                    target: e.target,
+                    currentTarget: e.currentTarget
+                  });
+                }
+
+                // Prevent the default action and stop propagation
+                e.preventDefault();
+                e.stopImmediatePropagation();
+
+                // Call the eventClick handler directly in case the FullCalendar binding isn't working
+                handleEventClick({
+                  event: info.event,
+                  el: info.el,
+                  jsEvent: e,
+                  view: calendarRef.current?.getApi().view
+                });
+              });
+
+              // Add right-click (context menu) handler
+              info.el.addEventListener('contextmenu', (e) => {
+                if (debugMode) {
+                  console.log('Direct event element right-click detected:', {
+                    eventId: info.event.id,
+                    eventTitle: info.event.title
+                  });
+                }
+
+                // Prevent the default context menu
+                e.preventDefault();
+                e.stopImmediatePropagation();
+
+                // Handle right-click
+                handleEventRightClick({
+                  event: info.event,
+                  el: info.el,
+                  jsEvent: e,
+                  view: calendarRef.current?.getApi().view
+                });
+              });
+
               // Find and style the inner elements - cast to HTMLElement to access style property
               const eventMain = info.el.querySelector('.fc-event-main') as HTMLElement;
               if (eventMain) {
                 eventMain.style.backgroundColor = backgroundColor;
                 eventMain.style.color = textColor;
+                eventMain.style.pointerEvents = 'auto';
+                eventMain.style.cursor = 'pointer';
+                eventMain.style.zIndex = '5';
+
+                // Add click handlers to the main event element too (extra redundancy)
+                eventMain.addEventListener('click', (e) => {
+                  e.preventDefault();
+                  e.stopImmediatePropagation();
+
+                  handleEventClick({
+                    event: info.event,
+                    el: info.el,
+                    jsEvent: e,
+                    view: calendarRef.current?.getApi().view
+                  });
+                });
               }
 
-              // Style title and time elements for better visibility
+              // Style title and time elements for better visibility and interactions
               const titleEl = info.el.querySelector('.fc-event-title') as HTMLElement;
               const timeEl = info.el.querySelector('.fc-event-time') as HTMLElement;
 
-              if (titleEl) titleEl.style.color = textColor;
-              if (timeEl) timeEl.style.color = textColor;
+              if (titleEl) {
+                titleEl.style.color = textColor;
+                titleEl.style.pointerEvents = 'auto';
+                titleEl.style.cursor = 'pointer';
+                titleEl.style.zIndex = '6';
+              }
+              if (timeEl) {
+                timeEl.style.color = textColor;
+                timeEl.style.pointerEvents = 'auto';
+                timeEl.style.cursor = 'pointer';
+                timeEl.style.zIndex = '6';
+              }
 
               // Add a slight shadow for better text readability on any background color
               info.el.style.boxShadow = '0 1px 2px rgba(0,0,0,0.2)';

@@ -58,7 +58,8 @@
 .fc-custom-event {
     padding: 2px 4px;
     border-radius: 4px;
-    cursor: pointer;
+    cursor: pointer !important;
+    pointer-events: all !important;
 }
 
 /* Loading indicator */
