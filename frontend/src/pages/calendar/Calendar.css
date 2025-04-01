@@ -1,40 +1,25 @@
-.fc-event,
-.fc-event-main,
-.fc-event-main-frame {
-    background-color: transparent !important;
-    border: none !important;
-}
+/* Define custom properties for FullCalendar according to documentation */
+:root {
+    /* Basic calendar colors */
+    --fc-border-color: rgba(255, 255, 255, 0.15);
+    --fc-button-text-color: #fff;
+    --fc-button-bg-color: #2C3E50;
+    --fc-button-border-color: #2C3E50;
+    --fc-button-hover-bg-color: #1e2b37;
+    --fc-button-hover-border-color: #1a252f;
+    --fc-button-active-bg-color: #1a252f;
+    --fc-button-active-border-color: #151e27;
 
-.custom-calendar-event {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 2px 4px;
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    min-height: 100%;
-    pointer-events: none;
-}
+    /* Today highlight */
+    --fc-today-bg-color: rgba(33, 150, 243, 0.1);
 
-/* Remove current day highlighting */
-.fc .fc-day-today {
-    background-color: transparent !important;
-}
+    /* Event styling */
+    --fc-event-border-color: #3788d8;
+    --fc-event-bg-color: #3788d8;
+    --fc-event-text-color: #fff;
 
-/* Style the current time indicator */
-.fc .fc-timegrid-now-indicator-line {
-    border-color: #ff0000;
-    /* Change color as needed */
-    border-width: 2px;
-    /* Make the line thicker if desired */
-}
-
-.fc .fc-timegrid-now-indicator-arrow {
-    border-color: #ff0000;
-    /* Match the line color */
+    /* Now indicator */
+    --fc-now-indicator-color: #ff0000;
 }
 
 /* Container styles */
@@ -66,55 +51,178 @@
     border-radius: 12px;
     padding: 16px;
     overflow: hidden;
+    position: relative;
 }
 
-/* Highlight the current day in month and week views */
-.fc .fc-day-today {
-    background-color: rgba(33, 150, 243, 0.1) !important;
-    /* Light blue background */
+/* Custom FullCalendar classes */
+.fc-custom-event {
+    padding: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
 }
 
-/* Ensure the event container takes full width */
-.fc-event-main-frame {
-    width: 100%;
+/* Loading indicator */
+.calendar-loading-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(255, 255, 255, 0.8);
+    padding: 20px;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 1000;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* All-day event styles */
-.fc .fc-daygrid-event {
-    min-height: 28px !important;
-    margin-bottom: 2px !important;
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 10px;
 }
 
-.fc .fc-daygrid-day-events {
-    margin-bottom: 4px !important;
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
-.fc .fc-daygrid-event-harness {
-    margin-bottom: 2px !important;
+/* Calendar error and loading states */
+.calendar-error-container,
+.calendar-loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+    padding: 2rem;
+    text-align: center;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    margin: 1rem 0;
 }
 
-/* Ensure all-day events have proper spacing and size */
-.fc-daygrid-event {
-    padding: 2px 0 !important;
-    margin: 1px 2px !important;
+.calendar-error-container h2,
+.calendar-loading-container h2 {
+    margin-bottom: 1rem;
+    color: #333;
 }
 
-/* Make the all-day section taller to accommodate more events */
-.fc-timegrid-axis-cushion.fc-scrollgrid-shrink-cushion,
-.fc-timegrid-slot-label-cushion.fc-scrollgrid-shrink-cushion {
-    min-height: 28px !important;
+.calendar-error-container p,
+.calendar-loading-container p {
+    margin-bottom: 1.5rem;
+    color: #666;
+    max-width: 500px;
 }
 
-.fc .fc-daygrid-day-frame {
-    min-height: 100px !important;
+.retry-button {
+    padding: 0.5rem 1.5rem;
+    background-color: #4a6cf7;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.2s;
 }
 
-/* Adjust the "more" link styling */
+.retry-button:hover {
+    background-color: #3a5ce5;
+}
+
+/* More link styling */
 .fc-daygrid-more-link {
     margin: 2px !important;
     padding: 2px 4px !important;
     background-color: rgba(255, 255, 255, 0.1) !important;
     border-radius: 4px !important;
+}
+
+/* Fix the problematic styles that make events transparent */
+/* Remove these conflicting rules that make backgrounds transparent */
+.fc-event,
+.fc-event-main,
+.fc-event-main-frame {
+    /* Remove the transparent background */
+    /* background-color: transparent !important; */
+    border: none !important;
+    pointer-events: all !important;
+}
+
+/* Update custom event styling to properly show colors */
+.custom-calendar-event {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 2px 4px;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    min-height: 100%;
+    z-index: 5 !important;
+    pointer-events: all !important;
+    cursor: pointer;
+    /* Don't set background-color here, let the FullCalendar properties take effect */
+}
+
+/* Ensure FullCalendar events display correctly */
+.fc-event {
+    margin: 1px 0;
+    border-radius: 4px !important;
+    border-left-width: 4px !important;
+    overflow: hidden;
+}
+
+/* Override any transparent styles */
+.fc-h-event .fc-event-main {
+    color: var(--fc-event-text-color) !important;
+}
+
+/* Ensure that time grid events show their colors correctly */
+.fc-timegrid-event {
+    z-index: 4 !important;
+    position: relative !important;
+    pointer-events: all !important;
+    /* Let the coloring be handled by FullCalendar */
+}
+
+/* Ensure events in day grid mode also show their colors */
+.fc-daygrid-event {
+    border-radius: 4px !important;
+    padding: 2px 4px !important;
+    margin: 1px 2px !important;
+    /* Let the coloring be handled by FullCalendar */
+}
+
+/* Remove or adjust styles that might be hiding event backgrounds */
+.fc-event-main-frame {
+    width: 100%;
+    pointer-events: all !important;
+    /* Don't override background here */
+}
+
+/* Make sure the event content is visible */
+.fc-event-title,
+.fc-event-time {
+    color: #ffffff !important;
+    font-weight: 500;
+    font-size: 0.85em;
+    z-index: 6 !important;
+    position: relative;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
 }
 
 /* Ensure custom event content fills the space */
@@ -123,6 +231,7 @@
     min-height: 24px !important;
     margin: 1px 0 !important;
     border-radius: 4px !important;
+    /* Don't set background-color: transparent here */
 }
 
 /* Adjust the all-day section in week view */
@@ -203,58 +312,6 @@
     transition: background-color 0.3s ease;
 }
 
-/* Add these styles to the existing CSS file, preserving any existing styles */
-
-.calendar-loading-indicator {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: rgba(255, 255, 255, 0.8);
-    padding: 20px;
-    border-radius: 10px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    z-index: 1000;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-}
-
-.loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #3498db;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-bottom: 10px;
-}
-
-@keyframes spin {
-    0% {
-        transform: rotate(0deg);
-    }
-
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
-.completion-pending {
-    position: relative;
-}
-
-.completion-pending::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(245, 245, 245, 0.7);
-    z-index: 1;
-}
-
 /* Optimize rendering performance */
 .fc-daygrid-day,
 .fc-timegrid-col {
@@ -304,76 +361,4 @@
 .calendar-loading-container p {
     font-size: 18px;
     color: #333;
-}
-
-/* Calendar error and loading states */
-.calendar-error-container,
-.calendar-loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 400px;
-    padding: 2rem;
-    text-align: center;
-    background-color: #f9f9f9;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    margin: 1rem 0;
-}
-
-.calendar-error-container h2,
-.calendar-loading-container h2 {
-    margin-bottom: 1rem;
-    color: #333;
-}
-
-.calendar-error-container p,
-.calendar-loading-container p {
-    margin-bottom: 1.5rem;
-    color: #666;
-    max-width: 500px;
-}
-
-.retry-button {
-    padding: 0.5rem 1.5rem;
-    background-color: #4a6cf7;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: background-color 0.2s;
-}
-
-.retry-button:hover {
-    background-color: #3a5ce5;
-}
-
-.loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid rgba(0, 0, 0, 0.1);
-    border-radius: 50%;
-    border-top-color: #4a6cf7;
-    animation: spin 1s ease-in-out infinite;
-    margin-bottom: 1rem;
-}
-
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-/* Ensure the FC event elements are properly clickable */
-.fc-event {
-    cursor: pointer;
-    z-index: 1;
-}
-
-.fc-event-main,
-.fc-event-main-frame {
-    pointer-events: auto;
-    z-index: 2;
 }
