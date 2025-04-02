@@ -703,138 +703,14 @@ pub async fn handle_query(
                     }),
                 )
                     .into_response();
-            }
-        }
-        Err(e) => {
-            let error_msg = format!("Failed to parse Gemini API response: {}", e);
-            eprintln!("{}", error_msg);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": error_msg
-                })),
-            )
-                .into_response();
-        }
-    }
+            } else if let Some(text_response) = content.parts.get(0).and_then(|part| part.text.as_ref()) {
+                // Handle plain text response directly
+                println!("Detected text response: {}", text_response);
 
-    // We've processed all cases including function calls, so we should only get here 
-    // if there was an actual empty response or an unprocessed edge case - log and provide a fallback
-    println!("Detected empty response from Gemini, attempting to infer user intent");
-
-    // Extract the original user query (without any instructions)
-    let original_query = request.query.to_lowercase();
-    println!("Processing fallback for query: {}", original_query);
-
-    // Try to handle common queries directly
-    if original_query.contains("create goal")
-        || original_query.contains("add goal")
-        || original_query.contains("new goal")
-    {
-        // Extract goal title from the query
-        let title = original_query
-            .replace("create goal", "")
-            .replace("add goal", "")
-            .replace("new goal", "")
-            .trim()
-            .to_string();
-
-        if !title.is_empty() {
-            println!("Inferring create_goal intent with title: {}", title);
-
-            // Create a goal directly
-            use crate::goal::{Goal, GoalType};
-
-            let goal = Goal {
-                id: None,
-                name: title,
-                goal_type: GoalType::Task,
-                description: None,
-                user_id: Some(1), // Default user ID
-                priority: None,
-                start_timestamp: None,
-                end_timestamp: None,
-                completion_date: None,
-                next_timestamp: None,
-                scheduled_timestamp: None,
-                duration: None,
-                completed: Some(false),
-                frequency: None,
-                routine_type: None,
-                routine_time: None,
-                position_x: None,
-                position_y: None,
-            };
-
-            match goal.create_goal(&pool).await {
-                Ok(created_goal) => {
-                    println!(
-                        "Successfully created goal via fallback with ID: {:?}",
-                        created_goal.id
-                    );
-
-                    // Add successful response to message history
-                    message_history.push(Message {
-                        role: "assistant".to_string(),
-                        content: format!(
-                            "I've created a new goal '{}' for you.",
-                            created_goal.name
-                        ),
-                    });
-
-                    // Generate conversation ID if not provided
-                    let conversation_id = request
-                        .conversation_id
-                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-                    // Create tool execution info for direct goal creation
-                    let tool_execution = ToolExecution {
-                        name: "create_goal".to_string(),
-                        args: Some(serde_json::json!({
-                            "title": created_goal.name,
-                            "description": created_goal.description
-                        })),
-                        write_operation: true,
-                    };
-
-                    return (
-                        StatusCode::OK,
-                        Json(GeminiResponse {
-                            response: format!(
-                                "I've created a new goal '{}' for you.",
-                                created_goal.name
-                            ),
-                            conversation_id,
-                            message_history,
-                            tool_execution: Some(tool_execution),
-                        }),
-                    )
-                        .into_response();
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to create goal via fallback: {}", e);
-                    eprintln!("{}", error_msg);
-                }
-            }
-        }
-    } else if original_query.contains("list goals")
-        || original_query.contains("show goals")
-        || original_query.contains("my goals")
-    {
-        println!("Inferring list_goals intent");
-
-        // Execute list_goals directly
-        match execute_tool("list_goals", &serde_json::json!({}), &pool).await {
-            Ok(goals_result) => {
-                let response_text = format!(
-                    "Here are your goals: {}",
-                    serde_json::to_string_pretty(&goals_result).unwrap_or_default()
-                );
-
-                // Add response to message history
+                // Add the assistant's text response to the history
                 message_history.push(Message {
-                    role: "assistant".to_string(),
-                    content: response_text.clone(),
+                    role: "assistant".to_string(), // Gemini's role is 'model', map to 'assistant'
+                    content: text_response.clone(),
                 });
 
                 // Generate conversation ID if not provided
@@ -842,53 +718,71 @@ pub async fn handle_query(
                     .conversation_id
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                // Create tool execution info for direct goal listing
-                let tool_execution = ToolExecution {
-                    name: "list_goals".to_string(),
-                    args: Some(serde_json::json!({})),
-                    write_operation: false,
-                };
-
+                // Return the response directly
                 return (
                     StatusCode::OK,
                     Json(GeminiResponse {
-                        response: response_text,
+                        response: text_response.clone(),
                         conversation_id,
                         message_history,
-                        tool_execution: Some(tool_execution),
+                        tool_execution: None, // No tool was executed
                     }),
                 )
                     .into_response();
+
+            } else {
+                // This case should theoretically not be reached if is_empty_response check is correct
+                // but handle it just in case parts[0] exists but has neither text nor function_call
+                println!("Detected part with neither text nor function call, attempting fallback.");
+                let fallback_response = handle_empty_response(&request.query, &message_history, &pool).await;
+                return fallback_response;
             }
-            Err(e) => {
-                let error_msg = format!("Failed to list goals via fallback: {}", e);
-                eprintln!("{}", error_msg);
-            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to parse Gemini API response: {}", e);
+            eprintln!("{}", error_msg);
+            // Add error message to conversation history before returning
+            message_history.push(Message {
+                role: "assistant".to_string(),
+                content: format!("Sorry, there was an error processing the response: {}", e),
+            });
+            let conversation_id = request
+                .conversation_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR, // Keep 500 for parsing errors
+                Json(GeminiResponse {
+                    response: format!("Sorry, there was an error processing the response: {}", e),
+                    conversation_id,
+                    message_history,
+                    tool_execution: None,
+                }),
+            )
+                .into_response();
         }
     }
 
-    // Fallback response if we couldn't get a proper response from Gemini
+    // This part should now be unreachable if the match block handles all valid cases (function_call, text, or empty)
+    // and the Err case handles parsing failures. We can keep it as a final safety net.
     eprintln!(
-        "Error: Failed to get a valid response from Gemini. Response: {:?}",
+        "Reached unexpected end of handle_query after Gemini response processing. Raw text: {:?}",
         text
     );
 
-    // Add a generic error message to the conversation
+    // Fallback response if we somehow get here
     message_history.push(Message {
         role: "assistant".to_string(),
-        content: "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.".to_string(),
+        content: "I encountered an unexpected issue while processing the response. Please try again.".to_string(),
     });
 
-    // Generate conversation ID if not provided
     let conversation_id = request
         .conversation_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // Return 200 to let the user see the error message
     (
-        StatusCode::OK, 
+        StatusCode::INTERNAL_SERVER_ERROR, // Indicate an internal issue
         Json(GeminiResponse {
-            response: "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.".to_string(),
+            response: "I encountered an unexpected issue while processing the response. Please try again.".to_string(),
             conversation_id,
             message_history,
             tool_execution: None,
