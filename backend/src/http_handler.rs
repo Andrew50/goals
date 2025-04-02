@@ -58,7 +58,9 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let routine_routes = Router::new().route("/:timestamp", post(handle_process_user_routines));
 
-    let query_routes = Router::new().route("/", post(handle_query));
+    let query_routes = Router::new()
+        .route("/", post(handle_query))
+        .route("/tool-execute", post(handle_tool_execute));
 
     // Auth routes don't need the auth middleware
     let api_routes = Router::new()
@@ -232,4 +234,11 @@ async fn handle_query(
     Json(request): Json<query::GeminiRequest>,
 ) -> impl IntoResponse {
     query::handle_query(Extension(graph), Json(request)).await
+}
+
+async fn handle_tool_execute(
+    Extension(graph): Extension<Graph>,
+    Json(request): Json<query::ToolExecuteRequest>,
+) -> impl IntoResponse {
+    query::handle_tool_execute(Extension(graph), Json(request)).await
 }
