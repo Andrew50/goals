@@ -54,6 +54,45 @@ const Calendar: React.FC = () => {
   const [debugMode] = useState(true);
 
   // -----------------------------
+  // Data Loading
+  // -----------------------------
+  const loadCalendarData = async (dateRange = state.dateRange) => {
+    if (state.isLoading) return;
+
+    try {
+      setState({ ...state, isLoading: true });
+      const data = await fetchCalendarData(dateRange);
+
+      // Clear any data-loading timeouts
+      if (dataLoadingTimeoutRef.current) {
+        clearTimeout(dataLoadingTimeoutRef.current);
+      }
+
+      setState({
+        ...state,
+        events: data.events,
+        tasks: data.unscheduledTasks,
+        isLoading: false,
+        dateRange
+      });
+    } catch (error) {
+      console.error('Error loading calendar data:', error);
+      setState({ ...state, isLoading: false });
+
+      if (dataLoadAttempts < 2) {
+        setTimeout(() => {
+          setDataLoadAttempts((prev) => prev + 1);
+          loadCalendarData(dateRange);
+        }, 2000);
+      } else {
+        setError(
+          'Failed to load calendar data after multiple attempts. Please try refreshing.'
+        );
+      }
+    }
+  };
+
+  // -----------------------------
   // Effects
   // -----------------------------
   // Initial data load
@@ -62,7 +101,7 @@ const Calendar: React.FC = () => {
       console.error('Error loading calendar data:', err);
       setError('Failed to load calendar data. Please try refreshing the page.');
     });
-  }, []);
+  }, [loadCalendarData]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {
@@ -116,7 +155,7 @@ const Calendar: React.FC = () => {
         clearTimeout(dataLoadingTimeoutRef.current);
       }
     };
-  }, [state.isLoading, dataLoadAttempts]);
+  }, [state.isLoading, dataLoadAttempts, loadCalendarData, setState, state]);
 
   // Optional debug: global click logging
   useEffect(() => {
@@ -147,45 +186,6 @@ const Calendar: React.FC = () => {
       document.removeEventListener('contextmenu', handleContextMenu);
     };
   }, [debugMode]);
-
-  // -----------------------------
-  // Data Loading
-  // -----------------------------
-  const loadCalendarData = async (dateRange = state.dateRange) => {
-    if (state.isLoading) return;
-
-    try {
-      setState({ ...state, isLoading: true });
-      const data = await fetchCalendarData(dateRange);
-
-      // Clear any data-loading timeouts
-      if (dataLoadingTimeoutRef.current) {
-        clearTimeout(dataLoadingTimeoutRef.current);
-      }
-
-      setState({
-        ...state,
-        events: data.events,
-        tasks: data.unscheduledTasks,
-        isLoading: false,
-        dateRange
-      });
-    } catch (error) {
-      console.error('Error loading calendar data:', error);
-      setState({ ...state, isLoading: false });
-
-      if (dataLoadAttempts < 2) {
-        setTimeout(() => {
-          setDataLoadAttempts((prev) => prev + 1);
-          loadCalendarData(dateRange);
-        }, 2000);
-      } else {
-        setError(
-          'Failed to load calendar data after multiple attempts. Please try refreshing.'
-        );
-      }
-    }
-  };
 
   // -----------------------------
   // Handlers

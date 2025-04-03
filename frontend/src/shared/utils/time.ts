@@ -1,5 +1,11 @@
 import { Goal } from "../../types/goals";
 
+/**
+ * Converts a UTC timestamp to the user's local timezone.
+ * 
+ * @param timestamp A UTC timestamp in milliseconds since epoch, or null/undefined
+ * @returns The equivalent local timestamp in milliseconds, or undefined if input was null/undefined
+ */
 export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
 
@@ -11,6 +17,12 @@ export const toLocalTimestamp = (timestamp?: number | null): number | undefined 
     return convertedTimestamp;
 };
 
+/**
+ * Converts a local timestamp to UTC.
+ * 
+ * @param timestamp A local timestamp in milliseconds since epoch, or null/undefined
+ * @returns The equivalent UTC timestamp in milliseconds, or undefined if input was null/undefined
+ */
 export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
 
@@ -22,7 +34,14 @@ export const toUTCTimestamp = (timestamp?: number | null): number | undefined =>
     return convertedTimestamp;
 };
 
-// Goal conversion utilities
+/**
+ * Converts all timestamp fields in a Goal from UTC to the user's local timezone.
+ * Goal must have _tz='utc' to be converted.
+ * 
+ * @param goal A Goal object with UTC timestamps and _tz='utc'
+ * @returns A new Goal object with local timestamps and _tz='user'
+ * @throws Error if goal is already in user timezone
+ */
 export const goalToLocal = (goal: Goal): Goal => {
     if (goal._tz === 'user') {
         throw new Error('Goal is already in user timezone');
@@ -39,6 +58,14 @@ export const goalToLocal = (goal: Goal): Goal => {
     };
 };
 
+/**
+ * Converts all timestamp fields in a Goal from local timezone to UTC.
+ * Goal must have _tz='user' to be converted.
+ * 
+ * @param goal A Goal object with local timestamps and _tz='user'
+ * @returns A new Goal object with UTC timestamps and _tz='utc'
+ * @throws Error if goal is already in UTC timezone
+ */
 export const goalToUTC = (goal: Goal): Goal => {
     if (goal._tz === undefined || goal._tz === 'utc') {
         throw new Error('Goal is already in UTC timezone');
@@ -55,7 +82,14 @@ export const goalToUTC = (goal: Goal): Goal => {
     };
 };
 
-// Convert a Date object to a UTC timestamp (milliseconds)
+/**
+ * Convert a Date object to a UTC timestamp (milliseconds).
+ * This uses the Date.UTC() method which creates a timestamp representation
+ * of the provided date components treated as UTC values.
+ * 
+ * @param date A JavaScript Date object
+ * @returns UTC timestamp in milliseconds
+ */
 export const dateToTimestamp = (date: Date): number => {
     return Date.UTC(
         date.getFullYear(),
@@ -67,12 +101,25 @@ export const dateToTimestamp = (date: Date): number => {
     );
 };
 
-// Convert a timestamp to a Date object (preserving UTC)
+/**
+ * Convert a timestamp to a Date object.
+ * The timestamp is treated as-is, without timezone adjustments.
+ * 
+ * @param timestamp A timestamp in milliseconds (either UTC or local, depending on context)
+ * @returns A JavaScript Date object
+ */
 export const timestampToDate = (timestamp: number): Date => {
     return new Date(timestamp);
 };
 
-// Format a timestamp for datetime-local input (YYYY-MM-DDTHH:mm)
+/**
+ * Formats a timestamp for display in input fields.
+ * Uses the browser's local timezone settings for formatting.
+ * 
+ * @param timestamp A timestamp in milliseconds (in the timezone indicated by the goal's _tz property)
+ * @param format The desired format ('date', 'datetime', or 'time')
+ * @returns A formatted string suitable for HTML input fields, or empty string if timestamp is null/undefined
+ */
 export const timestampToInputString = (
     timestamp: number | undefined | null,
     format: 'date' | 'datetime' | 'time'
@@ -104,7 +151,14 @@ export const timestampToInputString = (
     return result;
 };
 
-// Parse a datetime-local input string to timestamp
+/**
+ * Parses an input string into a timestamp.
+ * The resulting timestamp is in the local timezone, without any UTC adjustments.
+ * 
+ * @param dateString The string from an input field ('YYYY-MM-DD', 'HH:MM', or 'YYYY-MM-DDTHH:MM')
+ * @param format The format of the input ('date', 'datetime', 'time', or 'end-date')
+ * @returns A timestamp in milliseconds in the local timezone, or 0 if the input is empty/invalid
+ */
 export const inputStringToTimestamp = (
     dateString: string,
     format: 'date' | 'datetime' | 'time' | 'end-date'
@@ -155,7 +209,14 @@ export const inputStringToTimestamp = (
     return timestamp;
 };
 
-// Format timestamp for display (using UTC)
+/**
+ * Formats a timestamp for display using a localized format.
+ * The timestamp is interpreted as a UTC value for consistent display.
+ * 
+ * @param timestamp A timestamp in milliseconds, or null/undefined
+ * @param format The desired format ('date', 'datetime', or 'time')
+ * @returns A formatted string for display, or empty string if timestamp is null/undefined
+ */
 export const timestampToDisplayString = (timestamp?: number | null, format: 'date' | 'datetime' | 'time' = 'datetime'): string => {
     if (!timestamp) return '';
     const date = new Date(timestamp);

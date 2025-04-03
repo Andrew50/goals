@@ -16,6 +16,10 @@ The frontend uses Playwright for end-to-end and API tests:
    - Tests backend API endpoints directly
    - Validates response structure and data
 
+3. **Unit and Integration Tests**: Located alongside components
+   - Component tests: `*.test.tsx` files adjacent to components
+   - Utility tests: `*.test.ts` files in the same directory as utilities
+
 ### Backend Tests
 
 The backend uses Rust's native testing framework:
@@ -24,6 +28,69 @@ The backend uses Rust's native testing framework:
    - Tests individual components in isolation
 
 2. **Integration Tests**: These can be added in the `backend/tests` directory
+
+## Timestamp and Timezone Testing
+
+The application handles timestamps in the following way:
+
+1. **Backend/Database**: ALWAYS stores times as UTC timestamps (milliseconds since epoch)
+2. **API Communication**: ALWAYS transmits times as UTC timestamps
+3. **Frontend Display**: ALWAYS displays times in the user's local timezone
+
+### Key Timestamp Conversion Points
+
+- `goalToLocal(goal)`: Converts UTC timestamps in a goal object to local timezone (sets `_tz: 'user'`)
+- `goalToUTC(goal)`: Converts local timestamps back to UTC for API submission (sets `_tz: 'utc'`)
+- `toLocalTimestamp(timestamp)`: Utility to convert individual UTC timestamp to local
+- `toUTCTimestamp(timestamp)`: Utility to convert individual local timestamp to UTC
+
+### Timezone Testing Strategy
+
+Our testing strategy ensures correct timestamp handling across different timezones and scenarios:
+
+#### 1. Unit Testing (`time.test.ts`, `timeScenarios.test.ts`)
+
+- Tests conversions in multiple timezone offsets (positive, negative, half-hour, zero)
+- Tests DST transitions (spring forward, fall back, events spanning transitions)
+- Tests date boundary conditions (midnight, month/year boundaries, leap years)
+- Verifies all timestamp fields in Goal objects are properly converted
+
+#### 2. Component Integration Testing (`GoalMenu.test.tsx`, `Calendar.test.tsx`)
+
+- Tests form input/output of timestamps in GoalMenu component
+- Tests calendar drag, resize, and click operations with proper timezone conversions
+- Tests all-day event handling
+- Mocks different timezones to verify correct behavior across zones
+
+#### 3. End-to-End Testing (`timestamp-e2e.spec.ts`)
+
+- Tests the complete user flows with real backend
+- Creates tasks with specific times and verifies persistence after reload
+- Tests drag-and-drop operations and persistence
+- Tests resize operations and duration handling
+- Simulates timezone changes with Playwright's timezone emulation
+
+### Running Timezone Tests
+
+#### Unit and Integration Tests
+
+```bash
+cd frontend
+npm test -- --testPathPattern=time
+```
+
+#### E2E Timezone Tests with Specific Browser Timezone
+
+```bash
+# Regular timezone
+cd frontend
+npx playwright test timestamp-e2e.spec.ts
+
+# With specific timezone
+npx playwright test timestamp-e2e.spec.ts --timezone="America/New_York"
+npx playwright test timestamp-e2e.spec.ts --timezone="Asia/Kolkata" 
+npx playwright test timestamp-e2e.spec.ts --timezone="Europe/London"
+```
 
 ## Continuous Integration
 

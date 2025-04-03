@@ -1,7 +1,7 @@
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState, useMemo } from 'react';
-import { Goal, GoalType } from '../../types/goals';
+import { Goal } from '../../types/goals';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';

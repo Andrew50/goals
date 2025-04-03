@@ -2,8 +2,6 @@ import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../../types
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 
-// Reduced from 30 to 14 days for better performance
-const ROUTINE_GENERATION_DAYS = 14;
 export interface TransformedCalendarData {
     events: CalendarEvent[];
     unscheduledTasks: CalendarTask[];
@@ -29,10 +27,6 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         // Don't load more than 60 days of data at once
         const maxRangeMs = 60 * 24 * 60 * 60 * 1000; // 60 days in milliseconds
         const actualEnd = new Date(Math.min(end.getTime(), start.getTime() + maxRangeMs));
-
-        // Convert to timestamp for API request
-        const startTimestamp = start.getTime();
-        const endTimestamp = actualEnd.getTime();
 
         //console.log(`Fetching calendar data from ${start.toISOString()} to ${actualEnd.toISOString()}`);
         //console.log(`Local timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}, offset: ${new Date().getTimezoneOffset()} minutes`);
@@ -160,14 +154,6 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             // Log the first few scheduled tasks for debugging with more detail
             if (tasksWithTimestamp.length > 0) {
                 //console.log('Sample scheduled tasks with full details:', tasksWithTimestamp.slice(0, 3));
-
-                // Log the goal_type of the tasks
-                const goalTypes = tasksWithTimestamp.reduce((acc, task) => {
-                    acc[task.goal_type || 'undefined'] = (acc[task.goal_type || 'undefined'] || 0) + 1;
-                    return acc;
-                }, {} as Record<string, number>);
-
-                //console.log('Goal types of scheduled tasks:', goalTypes);
             }
 
             scheduledEvents = tasksWithTimestamp
@@ -231,7 +217,6 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                         // Use non-null assertion to tell TypeScript that item is not null at this point
                         const nonNullItem = item!;
                         const isAllDay = nonNullItem.duration === 1440;
-                        const timestamp = new Date(nonNullItem.scheduled_timestamp!);
 
                         //console.log(`Creating calendar event for task: [${ nonNullItem.id }] "${nonNullItem.name}"`);
                         //console.log(`Timestamp before: ${ nonNullItem.scheduled_timestamp }, ISO: ${ timestamp.toISOString() } `);
@@ -388,16 +373,17 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             achievementEvents = [];
         }
 
-        // Log the duplicate count at the end
-        //console.log('===== EVENT DUPLICATION REPORT =====');
-        let duplicatesCount = 0;
+        // After all event creation - Find potential duplicates in the full data set for debugging
+        // Count how many events share the same date and name
+        // This won't catch all duplicates but is helpful for spotting obvious issues
+        // Remove unused duplicatesCount
         eventTracker.forEach((count, key) => {
             if (count > 1) {
-                console.warn(`Duplicate detected: ${key} appears ${count} times`);
-                duplicatesCount++;
+                // We have a potential duplicate
+                //console.log(`Potential duplicate event: ${key} (${count} occurrences)`);
             }
         });
-        //console.log(`Found ${ duplicatesCount } potential duplicate event keys out of ${ eventTracker.size } total`);
+        //console.log(`Found potential duplicate event keys out of ${ eventTracker.size } total`);
 
         // Combine all events with proper date filtering
         const allEvents = [...scheduledEvents, ...routineEvents, ...achievementEvents];
@@ -509,7 +495,8 @@ const generateRoutineEvents = (
             return [];
         }
 
-        const [_, intervalStr, unit, daysStr] = frequencyMatch;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const [_unused, intervalStr, unit, daysStr] = frequencyMatch;
         const interval = parseInt(intervalStr);
 
         if (isNaN(interval) || interval <= 0) {

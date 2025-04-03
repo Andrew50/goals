@@ -10,13 +10,6 @@ import {
     CircularProgress,
     Divider,
     IconButton,
-    Alert,
-    Link,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogContentText,
-    DialogActions,
     Chip
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
@@ -28,7 +21,6 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HelpIcon from '@mui/icons-material/Help';
-import { useAuth } from '../../shared/contexts/AuthContext';
 import { privateRequest } from '../../shared/utils/api';
 
 // Helper function to generate a random ID (replacement for uuid)
@@ -79,7 +71,6 @@ const Query: React.FC = () => {
     const [conversation, setConversation] = useState<Conversation | null>(null);
     const [executingTools, setExecutingTools] = useState<Record<string, boolean>>({});
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const { token } = useAuth();
 
     useEffect(() => {
         // Scroll to bottom whenever messages change
@@ -152,9 +143,6 @@ const Query: React.FC = () => {
                 // pending tool executions and add the new one properly
                 const updatedMessages = [...updatedConversation.messages];
 
-                // Get the user message we just added
-                const lastUserMessageIndex = updatedMessages.length - 1;
-
                 // Add a new assistant message with the tool execution
                 updatedMessages.push({
                     role: 'assistant',
@@ -176,11 +164,6 @@ const Query: React.FC = () => {
             } else {
                 // For responses without tool execution, we need to carefully preserve any pending tool executions
                 // while still updating with the new assistant response
-
-                // Get any pending tool executions from the current conversation
-                const pendingToolMessages = updatedConversation.messages.filter(
-                    msg => msg.toolExecution?.status === 'pending'
-                );
 
                 // Merge the new message history with our current conversation
                 // Start with user messages up to the latest
@@ -418,14 +401,6 @@ const Query: React.FC = () => {
 
     const clearConversation = () => {
         setConversation(null);
-    };
-
-    // Helper to format tool arguments for display - replacing with component-based rendering
-    const formatToolArgs = (args: any) => {
-        if (!args) return '';
-        return Object.entries(args)
-            .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
-            .join(', ');
     };
 
     // Render tool execution status
