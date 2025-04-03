@@ -18,7 +18,6 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::Level;
-use tracing_subscriber;
 
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 

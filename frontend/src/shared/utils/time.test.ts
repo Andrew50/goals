@@ -11,9 +11,11 @@ import {
 } from './time';
 import { Goal } from '../../types/goals';
 
-// Helper to mock timezone offset
+// Helper to mock timezone offset - disable eslint warning for Date prototype extension
+// eslint-disable-next-line no-extend-native
 const mockTimezoneOffset = (offsetMinutes: number) => {
     const original = Date.prototype.getTimezoneOffset;
+    // eslint-disable-next-line no-extend-native
     Date.prototype.getTimezoneOffset = jest.fn(() => offsetMinutes);
     return () => {
         Date.prototype.getTimezoneOffset = original;
@@ -21,17 +23,13 @@ const mockTimezoneOffset = (offsetMinutes: number) => {
 };
 
 describe('Time conversion utilities', () => {
-    // Save original //console.log
-    const originalLog = //console.log;
-
-        beforeEach(() => {
-            // Mock //console.log to avoid cluttering test output
-            //console.log = jest.fn();
-        });
+    beforeEach(() => {
+        // Mock console.log to avoid cluttering test output
+        //console.log = jest.fn();
+    });
 
     afterEach(() => {
-        // Restore //console.log
-        //console.log = originalLog;
+        // Restore console.log if needed
     });
 
     describe('toLocalTimestamp and toUTCTimestamp', () => {

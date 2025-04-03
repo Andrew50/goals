@@ -1,0 +1,14 @@
+{
+    "extends": "react-app",
+    "overrides": [
+        {
+            "files": [
+                "**/*.test.ts",
+                "**/*.test.tsx"
+            ],
+            "rules": {
+                "no-extend-native": "off"
+            }
+        }
+    ]
+}

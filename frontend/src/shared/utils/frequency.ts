@@ -3,7 +3,8 @@ export function formatFrequency(frequency: string | undefined): string {
     const match = frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
     if (!match) return frequency;
 
-    const [_, interval, unit, days] = match;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [unused, interval, unit, days] = match;
     let text = `Every ${interval} `;
 
     switch (unit) {

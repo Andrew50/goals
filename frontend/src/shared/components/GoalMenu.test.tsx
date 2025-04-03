@@ -144,13 +144,13 @@ describe('GoalMenu Component', () => {
         // Wait for the API call
         await waitFor(() => {
             expect(createGoal).toHaveBeenCalled();
-
-            // Get the goal argument passed to createGoal
-            const createdGoal = (createGoal as jest.Mock).mock.calls[0][0];
-
-            // Verify the timezone is set to 'utc' for the API call
-            expect(createdGoal._tz).toBe('utc');
         });
+
+        // Get the goal argument passed to createGoal
+        const createdGoal = (createGoal as jest.Mock).mock.calls[0][0];
+
+        // Verify the timezone is set to 'utc' for the API call
+        expect(createdGoal._tz).toBe('utc');
 
         restoreOffset();
     });
@@ -178,7 +178,6 @@ describe('GoalMenu Component', () => {
 
         // Wait for the component to update
         await waitFor(() => {
-            // In view mode, we should see the goal name
             screen.getByText('Test Goal');
         });
 
@@ -202,19 +201,19 @@ describe('GoalMenu Component', () => {
         // Wait for the API call
         await waitFor(() => {
             expect(updateGoal).toHaveBeenCalled();
-
-            // Get the goal argument passed to updateGoal
-            const updatedGoal = (updateGoal as jest.Mock).mock.calls[0][1];
-
-            // Verify the timezone is set to 'utc' for the API call
-            expect(updatedGoal._tz).toBe('utc');
-            expect(updatedGoal.name).toBe('Updated Task Name');
-
-            // Verify timestamps are in UTC
-            expect(updatedGoal.start_timestamp).toBe(goal.start_timestamp);
-            expect(updatedGoal.end_timestamp).toBe(goal.end_timestamp);
-            expect(updatedGoal.scheduled_timestamp).toBe(goal.scheduled_timestamp);
         });
+
+        // Get the goal argument passed to updateGoal
+        const updatedGoal = (updateGoal as jest.Mock).mock.calls[0][1];
+
+        // Verify the timezone is set to 'utc' for the API call
+        expect(updatedGoal._tz).toBe('utc');
+        expect(updatedGoal.name).toBe('Updated Task Name');
+
+        // Verify timestamps are in UTC
+        expect(updatedGoal.start_timestamp).toBe(goal.start_timestamp);
+        expect(updatedGoal.end_timestamp).toBe(goal.end_timestamp);
+        expect(updatedGoal.scheduled_timestamp).toBe(goal.scheduled_timestamp);
 
         restoreOffset();
     });
