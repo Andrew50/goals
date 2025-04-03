@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::goal::GOAL_RETURN_QUERY;
 
+const SIMPLE_ERROR_MESSAGE: &str = "Error.";
+
 // Struct for the Gemini request
 #[derive(Deserialize)]
 pub struct GeminiRequest {
@@ -50,13 +52,13 @@ struct GeminiApiRequest {
     tools: Option<Vec<Tool>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct GeminiContent {
     parts: Vec<Part>,
     role: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct Part {
     text: String,
 }
@@ -109,19 +111,19 @@ struct Candidate {
     content: CandidateContent,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct CandidateContent {
     parts: Vec<ContentPart>,
     role: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct ContentPart {
     text: Option<String>,
     function_call: Option<FunctionCall>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct FunctionCall {
     name: String,
     args: serde_json::Value,
@@ -155,7 +157,7 @@ pub async fn handle_query(
     let client = Client::new();
 
     // Create message history or initialize with user query
-    let mut message_history = request.message_history.unwrap_or_else(|| vec![]);
+    let mut message_history = request.message_history.unwrap_or_else(Vec::new);
 
     // Always add the current query to the message history
     message_history.push(Message {
@@ -171,20 +173,20 @@ pub async fn handle_query(
     }
 
     // Remove consecutive duplicate error messages from the assistant
-    let mut i = 1;
-    while i < message_history.len() {
-        if message_history[i].role == "assistant"
-            && message_history[i]
-                .content
-                .contains("error processing your request")
-            && i > 0
-            && message_history[i].content == message_history[i - 1].content
-        {
-            message_history.remove(i);
-        } else {
-            i += 1;
-        }
-    }
+    // let mut i = 1; // This logic might conflict with simple errors, consider removing or adjusting
+    // while i < message_history.len() {
+    //     if message_history[i].role == "assistant"
+    //         && message_history[i]
+    //             .content
+    //             .contains("error processing your request") // This specific check is removed
+    //         && i > 0
+    //         && message_history[i].content == message_history[i - 1].content
+    //     {
+    //         message_history.remove(i);
+    //     } else {
+    //         i += 1;
+    //     }
+    // }
 
     // Filter out messages with empty content
     message_history = message_history
@@ -193,17 +195,17 @@ pub async fn handle_query(
         .collect();
 
     // Create Gemini API-specific message history with instructional messages first
-    let mut gemini_contents = Vec::new();
+    let mut initial_gemini_contents = Vec::new();
 
     // Add instructional messages as the first turn
-    gemini_contents.push(GeminiContent {
+    initial_gemini_contents.push(GeminiContent {
         parts: vec![Part {
             text: "You are an AI assistant that helps users manage their goals and tasks. When users ask to create, list, or manage goals, use the appropriate function. For example, if a user says 'create a goal called X', use the create_goal function with the title parameter. If they ask to see their goals, use the list_goals function.".to_string(),
         }],
         role: "user".to_string(),
     });
 
-    gemini_contents.push(GeminiContent {
+    initial_gemini_contents.push(GeminiContent {
         parts: vec![Part {
             text: "I understand my role. I'll help manage goals and tasks using the appropriate functions when needed.".to_string(),
         }],
@@ -212,14 +214,13 @@ pub async fn handle_query(
 
     // Add actual conversation history
     for msg in &message_history {
-        // Map "assistant" role to "model" as required by Gemini API
         let role = if msg.role == "assistant" {
             "model".to_string()
         } else {
             msg.role.clone()
         };
-
-        gemini_contents.push(GeminiContent {
+        // Handle function role specifically if needed, otherwise treat as text
+        initial_gemini_contents.push(GeminiContent {
             parts: vec![Part {
                 text: msg.content.clone(),
             }],
@@ -331,8 +332,23 @@ pub async fn handle_query(
     }];
 
     // Create Gemini API request
-    let api_request = GeminiApiRequest {
-        contents: gemini_contents,
+    // --- Get API Key ---
+    let api_key = match std::env::var("GOALS_GEMINI_API_KEY") {
+        Ok(key) if !key.is_empty() => key,
+        _ => {
+            eprintln!("ERROR: GOALS_GEMINI_API_KEY environment variable is not set or empty");
+            // Return simple error message to user
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR, // Still use 500 for server config issue
+                Json(serde_json::json!({ "error": SIMPLE_ERROR_MESSAGE })),
+            )
+                .into_response();
+        }
+    };
+
+    // --- First Gemini Call ---
+    let initial_api_request = GeminiApiRequest {
+        contents: initial_gemini_contents.clone(), // Use initial contents
         generation_config: Some(GenerationConfig {
             temperature: Some(0.7),
             top_p: Some(0.95),
@@ -345,45 +361,15 @@ pub async fn handle_query(
 
     // Print the outgoing request for debugging
     println!(
-        "Sending request to Gemini API: {}",
-        serde_json::to_string_pretty(&api_request).unwrap_or_default()
+        "Sending initial request to Gemini API: {}",
+        serde_json::to_string_pretty(&initial_api_request).unwrap_or_default()
     );
 
-    // Get API key
-    let api_key = match std::env::var("GOALS_GEMINI_API_KEY") {
-        Ok(key) => {
-            if key.is_empty() {
-                eprintln!("ERROR: GOALS_GEMINI_API_KEY environment variable is empty");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": "Gemini API key is not set or is empty. Please set the GOALS_GEMINI_API_KEY environment variable."
-                    })),
-                )
-                    .into_response();
-            }
-            key
-        }
-        Err(e) => {
-            eprintln!(
-                "ERROR: Failed to get GOALS_GEMINI_API_KEY environment variable: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Gemini API key is not set. Please set the GOALS_GEMINI_API_KEY environment variable."
-                })),
-            )
-                .into_response();
-        }
-    };
-
     // Call Gemini API
-    let api_response = match client
+    let initial_api_response = match client
         .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")
         .query(&[("key", api_key.clone())])
-        .json(&api_request)
+        .json(&initial_api_request)
         .send()
         .await
     {
@@ -396,57 +382,83 @@ pub async fn handle_query(
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
                 eprintln!(
-                    "Gemini API error: Status {}, Raw Response: {}",
+                    "Gemini API error (initial call): Status {}, Raw Response: {}",
                     status, error_text
                 );
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": format!("Gemini API returned error (status {}): {}", status, error_text)
-                    })),
-                )
-                    .into_response();
+                 // Add error to history for context, but return simple message
+                 message_history.push(Message {
+                    role: "assistant".to_string(),
+                    content: format!("Gemini API Error: {}", status), // Internal log/history
+                });
+                let conversation_id = request.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                 return (
+                    StatusCode::OK, // Return OK so frontend shows the simple error
+                    Json(GeminiResponse {
+                        response: SIMPLE_ERROR_MESSAGE.to_string(),
+                        conversation_id,
+                        message_history,
+                        tool_execution: None,
+                    }),
+                ).into_response();
             }
             response
         }
         Err(e) => {
-            eprintln!("Failed to connect to Gemini API: {}", e);
+            eprintln!("Failed to connect to Gemini API (initial call): {}", e);
+             // Add error to history for context, but return simple message
+             message_history.push(Message {
+                 role: "assistant".to_string(),
+                 content: format!("API Connection Error: {}", e), // Internal log/history
+             });
+             let conversation_id = request.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to connect to Gemini API: {}", e)
-                })),
-            )
-                .into_response();
+                 StatusCode::OK, // Return OK so frontend shows the simple error
+                 Json(GeminiResponse {
+                     response: SIMPLE_ERROR_MESSAGE.to_string(),
+                     conversation_id,
+                     message_history,
+                     tool_execution: None,
+                 }),
+             ).into_response();
         }
     };
 
     // Parse Gemini API response
-    let text = match api_response.text().await {
+    let initial_text = match initial_api_response.text().await {
         Ok(text) => text,
         Err(e) => {
-            let error_msg = format!("Failed to get text from Gemini API response: {}", e);
+            let error_msg = format!("Failed to get text from initial Gemini API response: {}", e);
             eprintln!("{}", error_msg);
+            // Add error to history for context, but return simple message
+            message_history.push(Message {
+                role: "assistant".to_string(),
+                content: format!("API Response Read Error: {}", e), // Internal log/history
+            });
+            let conversation_id = request
+                .conversation_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": error_msg
-                })),
+                StatusCode::OK, // Return OK so frontend shows the simple error
+                Json(GeminiResponse {
+                    response: SIMPLE_ERROR_MESSAGE.to_string(),
+                    conversation_id,
+                    message_history,
+                    tool_execution: None,
+                }),
             )
                 .into_response();
         }
     };
 
-    println!("Raw response from Gemini: {}", text);
+    println!("Raw initial response from Gemini: {}", initial_text);
 
     // Handle empty or malformed responses
-    if text.trim().is_empty() {
-        println!("Received empty text response from Gemini");
-        
-        // Add a generic error message to the conversation
+    if initial_text.trim().is_empty() {
+        println!("Received empty text response from Gemini (initial call)");
+        // Return simple error message
         message_history.push(Message {
             role: "assistant".to_string(),
-            content: "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.".to_string(),
+            content: SIMPLE_ERROR_MESSAGE.to_string(),
         });
 
         // Generate conversation ID if not provided
@@ -456,25 +468,27 @@ pub async fn handle_query(
 
         // Return 200 to let the user see the error message
         return (
-            StatusCode::OK, 
+            StatusCode::OK,
             Json(GeminiResponse {
-                response: "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.".to_string(),
+                response: SIMPLE_ERROR_MESSAGE.to_string(),
                 conversation_id,
                 message_history,
                 tool_execution: None,
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
-    match serde_json::from_str::<GeminiApiResponse>(&text) {
+    match serde_json::from_str::<GeminiApiResponse>(&initial_text) {
         Ok(parsed_response) => {
-            if parsed_response.candidates.is_empty() {
-                eprintln!("Error: No candidates in Gemini response");
-                
-                // Add a generic error message to the conversation
+            if parsed_response.candidates.is_empty()
+                || parsed_response.candidates[0].content.parts.is_empty()
+            {
+                eprintln!("Error: No candidates or parts in Gemini response");
+                // Return simple error message
                 message_history.push(Message {
                     role: "assistant".to_string(),
-                    content: "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.".to_string(),
+                    content: SIMPLE_ERROR_MESSAGE.to_string(),
                 });
 
                 // Generate conversation ID if not provided
@@ -484,115 +498,137 @@ pub async fn handle_query(
 
                 // Return 200 to let the user see the error message
                 return (
-                    StatusCode::OK, 
+                    StatusCode::OK,
                     Json(GeminiResponse {
-                        response: "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.".to_string(),
+                        response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
                         message_history,
                         tool_execution: None,
                     }),
-                ).into_response();
+                )
+                    .into_response();
             }
 
-            let candidate = &parsed_response.candidates[0];
-            let content = &candidate.content;
+            let content = &parsed_response.candidates[0].content;
+            let mut function_calls_to_execute: Vec<FunctionCall> = Vec::new();
+            let mut initial_text_response = String::new();
 
-            // Check if the first part of the content exists and contains neither text nor a function call
-            // If it's genuinely empty, trigger fallback. Otherwise, proceed.
-            let is_empty_response = content.parts.is_empty() || 
-                (content.parts.get(0).map_or(true, |part| part.text.is_none() && part.function_call.is_none()));
-
-            if is_empty_response {
-                println!("Detected empty content parts from Gemini, attempting to infer user intent");
-                let fallback_response = handle_empty_response(&request.query, &message_history, &pool).await;
-                return fallback_response;
+            // Collect all function calls and text parts from the initial response
+            for part in &content.parts {
+                if let Some(fc) = &part.function_call {
+                    println!(
+                        "Detected function call: {} with args: {:?}",
+                        fc.name, fc.args
+                    );
+                    // Clone the function call to own it
+                    function_calls_to_execute.push(fc.clone());
+                }
+                if let Some(text) = &part.text {
+                    println!("Detected initial text part: {}", text);
+                    initial_text_response.push_str(text);
+                    initial_text_response.push(' '); // Add space between text parts if multiple
+                }
             }
+            initial_text_response = initial_text_response.trim().to_string(); // Clean up trailing space
 
-            // Check for function call FIRST
-            if let Some(function_call) = content.parts.get(0).and_then(|part| part.function_call.as_ref()) {
+            // --- Tool Execution Phase ---
+            if !function_calls_to_execute.is_empty() {
                 println!(
-                    "Detected function call: {} with args: {:?}",
-                    function_call.name, function_call.args
+                    "Executing {} function calls sequentially...",
+                    function_calls_to_execute.len()
                 );
 
-                // Execute the tool function
-                let tool_result =
+                // Add initial text response from Gemini to history if any was provided alongside tools
+                if !initial_text_response.is_empty() {
+                    message_history.push(Message {
+                        role: "assistant".to_string(),
+                        content: initial_text_response.clone(),
+                    });
+                }
+
+                for function_call in function_calls_to_execute {
+                    // Add assistant message indicating the *intent* to use the tool
+                    // The actual result/summary comes after the second Gemini call
+                    message_history.push(Message {
+                        role: "assistant".to_string(), // Represents the *intent* to call the function
+                        content: format!(
+                            "Using the {} function.", // Simple placeholder, actual result comes later
+                            function_call.name
+                        ),
+                    });
+
+                    // Execute the tool
                     match execute_tool(&function_call.name, &function_call.args, &pool).await {
-                        Ok(result) => result,
+                        Ok(result) => {
+                            println!("Tool {} executed successfully.", function_call.name);
+                            // Add function response message to history for the next Gemini call
+                            message_history.push(Message {
+                                role: "function".to_string(), // Use 'function' role for tool results
+                                content: serde_json::to_string(&result).unwrap_or_else(|e| {
+                                    eprintln!("Error serializing tool result for {}: {}", function_call.name, e);
+                                    // Provide a structured error message for the LLM
+                                    serde_json::json!({
+                                        "error": format!("Failed to serialize result for tool {}", function_call.name),
+                                        "details": e.to_string()
+                                    }).to_string()
+                                }),
+                            });
+                        }
                         Err(e) => {
                             let error_msg =
                                 format!("Error executing tool {}: {}", function_call.name, e);
                             eprintln!("{}", error_msg);
-                            return (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({
-                                    "error": error_msg
-                                })),
-                            )
-                                .into_response();
+                            // Add function error message to history
+                            message_history.push(Message {
+                                role: "function".to_string(), // Still use 'function' role, but indicate error
+                                content: serde_json::json!({
+                                    "error": error_msg,
+                                    "tool_name": function_call.name
+                                })
+                                .to_string(),
+                            });
+                            // Continue to the next tool even if one fails, let Gemini summarize the situation.
                         }
-                    };
+                    }
+                }
 
-                // Create tool execution info
-                let tool_execution = ToolExecution {
-                    name: function_call.name.clone(),
-                    args: Some(function_call.args.clone()),
-                    write_operation: is_write_operation(&function_call.name),
-                };
+                // --- Second Gemini Call for Summary ---
+                println!("Making second Gemini call for summary after tool executions.");
 
-                // Add assistant message with function call
-                message_history.push(Message {
-                    role: "assistant".to_string(),
-                    content: format!(
-                        "I'll help you with that by using the {} function.",
-                        function_call.name
-                    ),
-                });
-
-                // Add function response message
-                message_history.push(Message {
-                    role: "function".to_string(),
-                    content: serde_json::to_string(&tool_result).unwrap(),
-                });
-
-                // Make a second call to Gemini to process the result
-                // Create Gemini API-specific message history with instructional messages first
+                // Rebuild contents for the second call, including function results/errors
                 let mut second_gemini_contents = Vec::new();
-
-                // Add instructional messages as the first turn
+                // Add instructional messages again
                 second_gemini_contents.push(GeminiContent {
                     parts: vec![Part {
-                        text: "You are an AI assistant that helps users manage their goals and tasks. When users ask to create, list, or manage goals, use the appropriate function. For example, if a user says 'create a goal called X', use the create_goal function with the title parameter. If they ask to see their goals, use the list_goals function.".to_string(),
+                        text: "You are an AI assistant...".to_string(),
                     }],
                     role: "user".to_string(),
                 });
-
                 second_gemini_contents.push(GeminiContent {
                     parts: vec![Part {
-                        text: "I understand my role. I'll help manage goals and tasks using the appropriate functions when needed.".to_string(),
+                        text: "I understand my role...".to_string(),
                     }],
                     role: "model".to_string(),
                 });
 
-                // Add actual conversation history
+                // Add full updated conversation history
                 for msg in &message_history {
-                    // Map "assistant" role to "model" as required by Gemini API
-                    let role = if msg.role == "assistant" {
-                        "model".to_string()
-                    } else {
-                        msg.role.clone()
+                    let role = match msg.role.as_str() {
+                        "assistant" => "model".to_string(),
+                        "function" => "function".to_string(), // Pass function results correctly
+                        _ => "user".to_string(), // Default to user if not assistant or function
                     };
-
                     second_gemini_contents.push(GeminiContent {
                         parts: vec![Part {
                             text: msg.content.clone(),
-                        }],
+                        }], // Send content as text for now
                         role,
                     });
                 }
 
                 let second_api_request = GeminiApiRequest {
                     contents: second_gemini_contents,
+                    // Correctly initialize GenerationConfig with all fields
                     generation_config: Some(GenerationConfig {
                         temperature: Some(0.7),
                         top_p: Some(0.95),
@@ -600,27 +636,26 @@ pub async fn handle_query(
                         candidate_count: Some(1),
                         max_output_tokens: Some(2048),
                     }),
-                    tools: Some(tools.clone()),
+                    tools: None,
                 };
 
-                // Print the second outgoing request for debugging
                 println!(
                     "Sending second request to Gemini API with {} contents items",
                     second_api_request.contents.len()
                 );
 
-                let second_api_response = match client
+                let second_api_response_result = client
                     .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")
-                    .query(&[("key", api_key.clone())])
+                    .query(&[("key", api_key)]) // Reuse API key
                     .json(&second_api_request)
                     .send()
-                    .await
-                {
-                    Ok(response) => {
-                        // Check if response is successful
-                        if !response.status().is_success() {
-                            let status = response.status();
-                            let error_text = response
+                    .await;
+
+                match second_api_response_result {
+                    Ok(second_api_response) => {
+                        if !second_api_response.status().is_success() {
+                            let status = second_api_response.status();
+                            let error_text = second_api_response
                                 .text()
                                 .await
                                 .unwrap_or_else(|_| "Unknown error".to_string());
@@ -628,89 +663,120 @@ pub async fn handle_query(
                                 "Gemini API error (second call): Status {}, Raw Response: {}",
                                 status, error_text
                             );
+                            message_history.push(Message {
+                                role: "assistant".to_string(),
+                                content: format!("Gemini API Error (Summary): {}", status),
+                            });
+                            let conversation_id = request
+                                .conversation_id
+                                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                             return (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({
-                                    "error": format!("Gemini API returned error on second call (status {}): {}", status, error_text)
-                                })),
+                                StatusCode::OK, // Return OK for user
+                                Json(GeminiResponse {
+                                    response: SIMPLE_ERROR_MESSAGE.to_string(),
+                                    conversation_id,
+                                    message_history,
+                                    tool_execution: None,
+                                }),
                             )
                                 .into_response();
                         }
-                        response
+
+                        match second_api_response.json::<GeminiApiResponse>().await {
+                            Ok(second_parsed_response) => {
+                                let final_response_text = second_parsed_response
+                                     .candidates.first()
+                                     .and_then(|candidate| candidate.content.parts.first())
+                                     .and_then(|part| part.text.clone())
+                                     .unwrap_or_else(|| {
+                                         println!("Second Gemini call did not return text. Providing generic confirmation/error.");
+                                         if let Some(last_msg) = message_history.last() {
+                                             if last_msg.role == "function" && !last_msg.content.contains("\"error\":") {
+                                                  "OK.".to_string()
+                                             } else {
+                                                  SIMPLE_ERROR_MESSAGE.to_string()
+                                             }
+                                         } else {
+                                             SIMPLE_ERROR_MESSAGE.to_string()
+                                         }
+                                     });
+
+                                println!(
+                                    "Final summary response from Gemini: {}",
+                                    final_response_text
+                                );
+
+                                message_history.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: final_response_text.clone(),
+                                });
+
+                                let conversation_id = request
+                                    .conversation_id
+                                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+                                return (
+                                    StatusCode::OK,
+                                    Json(GeminiResponse {
+                                        response: final_response_text,
+                                        conversation_id,
+                                        message_history,
+                                        tool_execution: None,
+                                    }),
+                                )
+                                    .into_response();
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to parse second Gemini API response: {}", e);
+                                message_history.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: format!("API Parse Error (Summary): {}", e),
+                                });
+                                let conversation_id = request
+                                    .conversation_id
+                                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                                return (
+                                    StatusCode::OK,
+                                    Json(GeminiResponse {
+                                        response: SIMPLE_ERROR_MESSAGE.to_string(),
+                                        conversation_id,
+                                        message_history,
+                                        tool_execution: None,
+                                    }),
+                                )
+                                    .into_response();
+                            }
+                        }
                     }
                     Err(e) => {
-                        let error_msg = format!("Failed to connect to Gemini API for second call: {}", e);
-                        eprintln!("{}", error_msg);
+                        eprintln!("Failed to connect to Gemini API for second call: {}", e);
+                        message_history.push(Message {
+                            role: "assistant".to_string(),
+                            content: format!("API Connection Error (Summary): {}", e),
+                        });
+                        let conversation_id = request
+                            .conversation_id
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                         return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({
-                                "error": error_msg
-                            })),
+                            StatusCode::OK,
+                            Json(GeminiResponse {
+                                response: SIMPLE_ERROR_MESSAGE.to_string(),
+                                conversation_id,
+                                message_history,
+                                tool_execution: None,
+                            }),
                         )
                             .into_response();
                     }
-                };
-
-                let second_gemini_response: GeminiApiResponse =
-                    match second_api_response.json().await {
-                        Ok(response) => response,
-                        Err(e) => {
-                            let error_msg =
-                                format!("Failed to parse second Gemini API response: {}", e);
-                            eprintln!("{}", error_msg);
-                            return (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({
-                                    "error": error_msg
-                                })),
-                            )
-                                .into_response();
-                        }
-                    };
-
-                // Get the final response text or potential function call from the second response
-                let final_response_text = second_gemini_response
-                    .candidates
-                    .first()
-                    .and_then(|candidate| candidate.content.parts.first())
-                    .and_then(|part| part.text.clone())
-                    .unwrap_or_else(|| {
-                        // If no text, check if there's a function call (though unlikely in the second call)
-                        // If neither, provide a generic success message based on the tool executed.
-                        println!("Second Gemini call did not return text. Providing generic success message.");
-                        format!("Successfully executed the {} function.", tool_execution.name)
-                    });
-
-                // Add the final assistant response to history
-                message_history.push(Message {
-                    role: "assistant".to_string(),
-                    content: final_response_text.clone(),
-                });
-
-                // Generate conversation ID if not provided
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-                // Return the final response with tool execution info
-                return (
-                    StatusCode::OK,
-                    Json(GeminiResponse {
-                        response: final_response_text,
-                        conversation_id,
-                        message_history,
-                        tool_execution: Some(tool_execution),
-                    }),
-                )
-                    .into_response();
-            } else if let Some(text_response) = content.parts.get(0).and_then(|part| part.text.as_ref()) {
-                // Handle plain text response directly
-                println!("Detected text response: {}", text_response);
+                }
+            } else if !initial_text_response.is_empty() {
+                // --- Handle Plain Text Response (No Tools Called) ---
+                println!("Detected plain text response: {}", initial_text_response);
 
                 // Add the assistant's text response to the history
                 message_history.push(Message {
                     role: "assistant".to_string(), // Gemini's role is 'model', map to 'assistant'
-                    content: text_response.clone(),
+                    content: initial_text_response.clone(),
                 });
 
                 // Generate conversation ID if not provided
@@ -722,37 +788,55 @@ pub async fn handle_query(
                 return (
                     StatusCode::OK,
                     Json(GeminiResponse {
-                        response: text_response.clone(),
+                        response: initial_text_response.clone(),
                         conversation_id,
                         message_history,
                         tool_execution: None, // No tool was executed
                     }),
                 )
                     .into_response();
-
             } else {
-                // This case should theoretically not be reached if is_empty_response check is correct
-                // but handle it just in case parts[0] exists but has neither text nor function_call
-                println!("Detected part with neither text nor function call, attempting fallback.");
-                let fallback_response = handle_empty_response(&request.query, &message_history, &pool).await;
-                return fallback_response;
+                // --- Handle Case with Neither Text nor Function Call (Should be rare) ---
+                // This case implies the first Gemini call returned parts but none contained text or function calls.
+                println!("Detected initial response part with neither text nor function call, returning error.");
+                // Return simple error message
+                message_history.push(Message {
+                    role: "assistant".to_string(),
+                    content: SIMPLE_ERROR_MESSAGE.to_string(),
+                });
+                let conversation_id = request
+                    .conversation_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                return (
+                    StatusCode::OK, // Return OK for user
+                    Json(GeminiResponse {
+                        response: SIMPLE_ERROR_MESSAGE.to_string(),
+                        conversation_id,
+                        message_history,
+                        tool_execution: None,
+                    }),
+                )
+                    .into_response();
+                // If you prefer the fallback logic:
+                // let fallback_response = handle_empty_response(&request.query, &message_history, &pool).await;
+                // return fallback_response;
             }
         }
         Err(e) => {
-            let error_msg = format!("Failed to parse Gemini API response: {}", e);
+            let error_msg = format!("Failed to parse initial Gemini API response: {}", e);
             eprintln!("{}", error_msg);
-            // Add error message to conversation history before returning
+            // Add internal error message to conversation history before returning simple error
             message_history.push(Message {
                 role: "assistant".to_string(),
-                content: format!("Sorry, there was an error processing the response: {}", e),
+                content: format!("API Parse Error: {}", e), // Internal log/history
             });
             let conversation_id = request
                 .conversation_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
-                StatusCode::INTERNAL_SERVER_ERROR, // Keep 500 for parsing errors
+                StatusCode::OK, // Return OK so frontend shows the simple error message
                 Json(GeminiResponse {
-                    response: format!("Sorry, there was an error processing the response: {}", e),
+                    response: SIMPLE_ERROR_MESSAGE.to_string(),
                     conversation_id,
                     message_history,
                     tool_execution: None,
@@ -762,33 +846,33 @@ pub async fn handle_query(
         }
     }
 
-    // This part should now be unreachable if the match block handles all valid cases (function_call, text, or empty)
-    // and the Err case handles parsing failures. We can keep it as a final safety net.
-    eprintln!(
-        "Reached unexpected end of handle_query after Gemini response processing. Raw text: {:?}",
-        text
-    );
+    // This part should ideally be unreachable if all paths above return.
+    // Kept as a final safety net.
+    // eprintln!(
+    //     "Reached unexpected end of handle_query after Gemini response processing. Raw text: {:?}",
+    //     initial_text // Use initial_text if available, otherwise indicate unknown state
+    // );
 
-    // Fallback response if we somehow get here
-    message_history.push(Message {
-        role: "assistant".to_string(),
-        content: "I encountered an unexpected issue while processing the response. Please try again.".to_string(),
-    });
+    // // Fallback response if we somehow get here
+    // message_history.push(Message {
+    //     role: "assistant".to_string(),
+    //     content: SIMPLE_ERROR_MESSAGE.to_string(), // Use simple error
+    // });
 
-    let conversation_id = request
-        .conversation_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // let conversation_id = request
+    //     .conversation_id
+    //     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    (
-        StatusCode::INTERNAL_SERVER_ERROR, // Indicate an internal issue
-        Json(GeminiResponse {
-            response: "I encountered an unexpected issue while processing the response. Please try again.".to_string(),
-            conversation_id,
-            message_history,
-            tool_execution: None,
-        }),
-    )
-        .into_response()
+    // (
+    //     StatusCode::INTERNAL_SERVER_ERROR, // Indicate an internal issue if this point is reached
+    //     Json(GeminiResponse {
+    //         response: SIMPLE_ERROR_MESSAGE.to_string(),
+    //         conversation_id,
+    //         message_history,
+    //         tool_execution: None,
+    //     }),
+    // )
+    //     .into_response()
 }
 
 // Execute a tool based on the function name and arguments
@@ -1163,13 +1247,19 @@ pub async fn handle_tool_execute(
     Json(request): Json<ToolExecuteRequest>,
 ) -> impl IntoResponse {
     println!("Executing tool: {}", request.tool_name);
-    
+
     // Execute the tool
-    match execute_tool(&request.tool_name, &request.args.unwrap_or(serde_json::json!({})), &pool).await {
+    match execute_tool(
+        &request.tool_name,
+        &request.args.unwrap_or(serde_json::json!({})),
+        &pool,
+    )
+    .await
+    {
         Ok(result) => {
             // Convert result to a user-friendly message
             let message = format_tool_result(&request.tool_name, &result);
-            
+
             // Return success response
             (
                 StatusCode::OK,
@@ -1183,7 +1273,7 @@ pub async fn handle_tool_execute(
         }
         Err(e) => {
             eprintln!("Tool execution error: {}", e);
-            
+
             // Return error response
             (
                 StatusCode::BAD_REQUEST,
@@ -1205,9 +1295,10 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
             // Format goals list
             if let Some(goals) = result.as_array() {
                 if goals.is_empty() {
-                    return "You don't have any goals yet. Would you like to create one?".to_string();
+                    return "You don't have any goals yet. Would you like to create one?"
+                        .to_string();
                 }
-                
+
                 let mut response = "Here are your goals:\n\n".to_string();
                 for (i, goal) in goals.iter().enumerate() {
                     let title = goal["title"].as_str().unwrap_or("Untitled");
@@ -1216,21 +1307,21 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
                     } else {
                         "⏳ In progress"
                     };
-                    
+
                     response.push_str(&format!("{}. {} - {}\n", i + 1, title, status));
-                    
+
                     if let Some(description) = goal["description"].as_str() {
                         if !description.is_empty() {
                             response.push_str(&format!("   Description: {}\n", description));
                         }
                     }
-                    
+
                     if let Some(deadline) = goal["deadline"].as_str() {
                         if !deadline.is_empty() {
                             response.push_str(&format!("   Deadline: {}\n", deadline));
                         }
                     }
-                    
+
                     response.push('\n');
                 }
                 return response;
@@ -1252,10 +1343,12 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
                 if events.is_empty() {
                     return "No events found for the specified date range.".to_string();
                 }
-                
+
                 let mut response = "Here are your calendar events:\n\n".to_string();
                 for event in events {
-                    if let (Some(title), Some(date)) = (event["title"].as_str(), event["date"].as_str()) {
+                    if let (Some(title), Some(date)) =
+                        (event["title"].as_str(), event["date"].as_str())
+                    {
                         response.push_str(&format!("• {} ({})\n", title, date));
                     }
                 }
@@ -1269,7 +1362,7 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
                 if tasks.is_empty() {
                     return "No tasks planned for this day.".to_string();
                 }
-                
+
                 let mut response = "Here's your plan for the day:\n\n".to_string();
                 for task in tasks {
                     if let Some(title) = task["title"].as_str() {
@@ -1290,28 +1383,35 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
 }
 
 // Add this function to handle empty responses
-async fn handle_empty_response(query: &str, message_history: &[Message], pool: &neo4rs::Graph) -> axum::response::Response {
+async fn handle_empty_response(
+    query: &str,
+    message_history: &[Message],
+    pool: &neo4rs::Graph,
+) -> axum::response::Response {
     println!("Processing fallback for query: {}", query);
     let mut updated_history = message_history.to_vec();
-    
+
     // Try to infer intent from the query
     let query_lower = query.to_lowercase();
-    
+
     // Check for create goal intent
-    if query_lower.contains("create goal") || query_lower.contains("add goal") || query_lower.contains("new goal") {
+    if query_lower.contains("create goal")
+        || query_lower.contains("add goal")
+        || query_lower.contains("new goal")
+    {
         let title = query_lower
             .replace("create goal", "")
             .replace("add goal", "")
             .replace("new goal", "")
             .trim()
             .to_string();
-            
+
         if !title.is_empty() {
             // Try to create a goal
             let args = serde_json::json!({
                 "title": title
             });
-            
+
             match execute_tool("create_goal", &args, pool).await {
                 Ok(result) => {
                     let message = format_tool_result("create_goal", &result);
@@ -1319,11 +1419,11 @@ async fn handle_empty_response(query: &str, message_history: &[Message], pool: &
                         role: "assistant".to_string(),
                         content: message.clone(),
                     });
-                    
+
                     let conversation_id = uuid::Uuid::new_v4().to_string();
-                    
+
                     return (
-                        StatusCode::OK, 
+                        StatusCode::OK,
                         Json(GeminiResponse {
                             response: message,
                             conversation_id,
@@ -1334,28 +1434,36 @@ async fn handle_empty_response(query: &str, message_history: &[Message], pool: &
                                 write_operation: true,
                             }),
                         }),
-                    ).into_response();
-                },
-                Err(_) => {}
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    eprintln!("Fallback create_goal error: {}", e);
+                    // Fall through to default fallback error
+                }
             }
         }
     } else if !query_lower.is_empty() {
         // Check if this might be a direct response to a request for a goal title
         // Look at the last assistant message to see if it was asking for a title
-        if let Some(last_assistant_msg) = updated_history.iter().rev().find(|msg| msg.role == "assistant") {
-            if last_assistant_msg.content.contains("title for the goal") || 
-               last_assistant_msg.content.contains("call the goal") || 
-               last_assistant_msg.content.contains("name for the goal") {
-                
+        if let Some(last_assistant_msg) = updated_history
+            .iter()
+            .rev()
+            .find(|msg| msg.role == "assistant")
+        {
+            if last_assistant_msg.content.contains("title for the goal")
+                || last_assistant_msg.content.contains("call the goal")
+                || last_assistant_msg.content.contains("name for the goal")
+            {
                 // This is likely a direct response with just the title
                 let title = query.trim();
-                
+
                 if !title.is_empty() {
                     // Try to create a goal with just this title
                     let args = serde_json::json!({
                         "title": title
                     });
-                    
+
                     match execute_tool("create_goal", &args, pool).await {
                         Ok(result) => {
                             let message = format_tool_result("create_goal", &result);
@@ -1363,11 +1471,11 @@ async fn handle_empty_response(query: &str, message_history: &[Message], pool: &
                                 role: "assistant".to_string(),
                                 content: message.clone(),
                             });
-                            
+
                             let conversation_id = uuid::Uuid::new_v4().to_string();
-                            
+
                             return (
-                                StatusCode::OK, 
+                                StatusCode::OK,
                                 Json(GeminiResponse {
                                     response: message,
                                     conversation_id,
@@ -1378,17 +1486,24 @@ async fn handle_empty_response(query: &str, message_history: &[Message], pool: &
                                         write_operation: true,
                                     }),
                                 }),
-                            ).into_response();
-                        },
-                        Err(_) => {}
+                            )
+                                .into_response();
+                        }
+                        Err(e) => {
+                            eprintln!("Fallback create_goal (title only) error: {}", e);
+                            // Fall through to default fallback error
+                        }
                     }
                 }
             }
         }
     }
-    
+
     // Check for list goals intent
-    if query_lower.contains("list goals") || query_lower.contains("show goals") || query_lower.contains("my goals") {
+    if query_lower.contains("list goals")
+        || query_lower.contains("show goals")
+        || query_lower.contains("my goals")
+    {
         match execute_tool("list_goals", &serde_json::json!({}), pool).await {
             Ok(result) => {
                 let message = format_tool_result("list_goals", &result);
@@ -1396,11 +1511,11 @@ async fn handle_empty_response(query: &str, message_history: &[Message], pool: &
                     role: "assistant".to_string(),
                     content: message.clone(),
                 });
-                
+
                 let conversation_id = uuid::Uuid::new_v4().to_string();
-                
+
                 return (
-                    StatusCode::OK, 
+                    StatusCode::OK,
                     Json(GeminiResponse {
                         response: message,
                         conversation_id,
@@ -1411,28 +1526,35 @@ async fn handle_empty_response(query: &str, message_history: &[Message], pool: &
                             write_operation: false,
                         }),
                     }),
-                ).into_response();
-            },
-            Err(_) => {}
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                eprintln!("Fallback list_goals error: {}", e);
+                // Fall through to default fallback error
+            }
         }
     }
-    
+
     // Default fallback
-    let fallback_message = "I'm sorry, I couldn't process your request at the moment. Please try again with a clearer instruction, such as 'create goal [goal name]' or 'list goals'.";
+    println!("Fallback failed to infer intent or execution failed.");
+    // Use the simplified error message
+    let fallback_message = SIMPLE_ERROR_MESSAGE;
     updated_history.push(Message {
         role: "assistant".to_string(),
         content: fallback_message.to_string(),
     });
 
     let conversation_id = uuid::Uuid::new_v4().to_string();
-    
+
     (
-        StatusCode::OK, 
+        StatusCode::OK, // Return OK to show the error message
         Json(GeminiResponse {
             response: fallback_message.to_string(),
             conversation_id,
             message_history: updated_history,
             tool_execution: None,
         }),
-    ).into_response()
+    )
+        .into_response()
 }

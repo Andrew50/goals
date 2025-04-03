@@ -212,6 +212,7 @@ const Calendar: React.FC = () => {
   const handleDateClick = (arg: any) => {
     console.log('Date clicked:', arg.date);
     try {
+
       const tempGoal: Goal = {
         id: 0,
         name: '',
@@ -222,6 +223,11 @@ const Calendar: React.FC = () => {
         routine_time: dateToTimestamp(arg.date),
         _tz: 'user'
       };
+
+      // Set duration to 1440 minutes (24 hours) when clicking in the all-day section
+      if (arg.allDay) {
+        tempGoal.duration = 1440;
+      }
 
       GoalMenu.open(tempGoal, 'create', async () => {
         loadCalendarData();

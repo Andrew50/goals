@@ -602,13 +602,6 @@ const Query: React.FC = () => {
 
     return (
         <Container maxWidth="md" sx={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', py: 2 }}>
-            <Typography variant="h4" component="h1" gutterBottom>
-                AI Assistant
-            </Typography>
-            <Typography variant="body1" gutterBottom>
-                Ask anything about your goals, tasks, or get help with organizing your day.
-            </Typography>
-
             <Paper
                 elevation={3}
                 sx={{
@@ -630,9 +623,6 @@ const Query: React.FC = () => {
                     <Typography variant="h6">
                         Conversation
                     </Typography>
-                    <IconButton onClick={clearConversation} title="Clear conversation">
-                        <DeleteIcon />
-                    </IconButton>
                 </Box>
 
                 <Divider sx={{ mb: 2 }} />
@@ -776,6 +766,13 @@ const Query: React.FC = () => {
                 >
                     Send
                 </Button>
+                <IconButton
+                    onClick={clearConversation}
+                    title="Clear conversation"
+                    sx={{ ml: 1 }}
+                >
+                    <DeleteIcon />
+                </IconButton>
             </Paper>
         </Container>
     );

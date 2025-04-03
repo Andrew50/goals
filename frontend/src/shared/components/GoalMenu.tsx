@@ -59,6 +59,7 @@ const GoalMenu: GoalMenuComponent = () => {
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
+
     const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         // Create a deep copy of the goal to prevent accidental modification of the original
         const goalCopy = JSON.parse(JSON.stringify(goal));
@@ -513,6 +514,19 @@ const GoalMenu: GoalMenuComponent = () => {
                     value={state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D'}
                     onChange={(e) => {
                         const interval = state.goal.frequency?.match(/^\d+/)?.[0] || '1';
+
+                        // If changing to weekly and we have a scheduled date, use its day of week
+                        if (e.target.value === 'W' && state.goal.scheduled_timestamp) {
+                            const date = new Date(state.goal.scheduled_timestamp);
+                            const dayOfWeek = date.getDay(); // 0-6, where 0 is Sunday
+                            const newFreq = `${interval}W:${dayOfWeek}`;
+                            handleChange({
+                                ...state.goal,
+                                frequency: newFreq
+                            });
+                            return;
+                        }
+
                         const days = e.target.value === 'W' && state.goal.frequency?.includes('W')
                             ? (state.goal.frequency?.split(':')?.[1] ? ':' + state.goal.frequency.split(':')[1] : '')
                             : '';
@@ -627,17 +641,11 @@ const GoalMenu: GoalMenuComponent = () => {
                 required
                 disabled={isViewOnly}
             >
-                {/*relationshipMode?.type === 'queue' ? (
-                    <MenuItem value="achievement">Achievement</MenuItem>
-                ) : (
-                    <>*/}
                 <MenuItem value="directive">Directive</MenuItem>
                 <MenuItem value="project">Project</MenuItem>
                 <MenuItem value="achievement">Achievement</MenuItem>
                 <MenuItem value="routine">Routine</MenuItem>
                 <MenuItem value="task">Task</MenuItem>
-                {/*</>
-                )*/}
             </TextField>
             <TextField
                 label="Description"
@@ -852,7 +860,8 @@ const GoalMenu: GoalMenuComponent = () => {
             </DialogActions>
         </Dialog>
     );
-};
+}
+
 GoalMenu.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
     console.warn('GoalMenu not yet initialized');
 }
