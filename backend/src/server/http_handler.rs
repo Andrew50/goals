@@ -11,16 +11,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::auth;
-use crate::calendar;
-use crate::day;
-use crate::goal::{Goal, GoalUpdate, Relationship};
-use crate::list;
-use crate::middleware;
-use crate::network;
-use crate::query;
-use crate::routine;
-use crate::traversal;
+use crate::ai::query;
+use crate::server::auth;
+use crate::server::middleware;
+use crate::tools::calendar;
+use crate::tools::day;
+use crate::tools::goal::{Goal, GoalUpdate, Relationship};
+use crate::tools::list;
+use crate::tools::network;
+use crate::tools::routine;
+use crate::tools::traversal;
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
@@ -58,10 +58,7 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let routine_routes = Router::new().route("/:timestamp", post(handle_process_user_routines));
 
-    let query_routes = Router::new()
-        .route("/ws", get(query::handle_query_ws))
-        .route("/", post(handle_query))
-        .route("/tool-execute", post(handle_tool_execute));
+    let query_routes = Router::new().route("/ws", get(query::handle_query_ws));
 
     // Auth routes don't need the auth middleware
     let api_routes = Router::new()
@@ -123,7 +120,7 @@ async fn handle_create_goal(
         user_id: Some(user_id),
         ..goal
     };
-    crate::goal::create_goal_handler(graph, user_id, goal_with_user_id).await
+    crate::tools::goal::create_goal_handler(graph, user_id, goal_with_user_id).await
 }
 
 async fn handle_update_goal(
@@ -131,35 +128,35 @@ async fn handle_update_goal(
     Path(id): Path<i64>,
     Json(goal): Json<Goal>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::goal::update_goal_handler(graph, id, goal).await
+    crate::tools::goal::update_goal_handler(graph, id, goal).await
 }
 
 async fn handle_delete_goal(
     Extension(graph): Extension<Graph>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::goal::delete_goal_handler(graph, id).await
+    crate::tools::goal::delete_goal_handler(graph, id).await
 }
 
 async fn handle_create_relationship(
     Extension(graph): Extension<Graph>,
     Json(relationship): Json<Relationship>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::goal::create_relationship_handler(graph, relationship).await
+    crate::tools::goal::create_relationship_handler(graph, relationship).await
 }
 
 async fn handle_delete_relationship(
     Extension(graph): Extension<Graph>,
     Path((from_id, to_id)): Path<(i64, i64)>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::goal::delete_relationship_handler(graph, from_id, to_id).await
+    crate::tools::goal::delete_relationship_handler(graph, from_id, to_id).await
 }
 
 async fn handle_toggle_completion(
     Extension(graph): Extension<Graph>,
     Json(update): Json<GoalUpdate>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::goal::toggle_completion(graph, update).await
+    crate::tools::goal::toggle_completion(graph, update).await
 }
 
 // Network handlers
@@ -229,21 +226,6 @@ async fn handle_process_user_routines(
     Extension(user_locks): Extension<UserLocks>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     routine::process_user_routines(user_eod_timestamp, graph, user_id, user_locks).await
-}
-
-// Query handlers
-async fn handle_query(
-    Extension(graph): Extension<Graph>,
-    Json(request): Json<query::GeminiRequest>,
-) -> impl IntoResponse {
-    query::handle_query(Extension(graph), Json(request)).await
-}
-
-async fn handle_tool_execute(
-    Extension(graph): Extension<Graph>,
-    Json(request): Json<query::ToolExecuteRequest>,
-) -> impl IntoResponse {
-    query::handle_tool_execute(Extension(graph), Json(request)).await
 }
 
 // Add this function at the end of the file

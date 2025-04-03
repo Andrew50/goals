@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::error;
 
-use crate::goal::{Goal, GoalType, GOAL_RETURN_QUERY};
+use crate::tools::goal::{Goal, GoalType, GOAL_RETURN_QUERY};
 
 // Custom error type
 #[derive(Debug)]
