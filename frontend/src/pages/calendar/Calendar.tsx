@@ -296,7 +296,8 @@ const Calendar: React.FC = () => {
 
       await updateGoal(task.goal.id, {
         ...task.goal,
-        scheduled_timestamp: dateToTimestamp(info.event.start)
+        // Use start.getTime() directly instead of dateToTimestamp to preserve local time
+        scheduled_timestamp: info.event.start.getTime()
       });
       loadCalendarData();
     } catch (error) {
@@ -311,7 +312,8 @@ const Calendar: React.FC = () => {
       if (existingEvent?.goal) {
         await updateGoal(existingEvent.goal.id, {
           ...existingEvent.goal,
-          scheduled_timestamp: dateToTimestamp(info.event.start)
+          // Use start.getTime() directly instead of dateToTimestamp to preserve local time
+          scheduled_timestamp: info.event.start.getTime()
         });
       }
       loadCalendarData();
@@ -329,10 +331,25 @@ const Calendar: React.FC = () => {
         const end = info.event.end;
         const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
 
-        await updateGoal(existingEvent.goal.id, {
-          ...existingEvent.goal,
-          duration: durationInMinutes
-        });
+        // Check if the event was resized from the top (start time changed)
+        const oldStartTime = new Date(existingEvent.start).getTime();
+        const newStartTime = start.getTime();
+
+        if (oldStartTime !== newStartTime) {
+          // If resized from top, update both start time and duration
+          await updateGoal(existingEvent.goal.id, {
+            ...existingEvent.goal,
+            // Use start.getTime() directly instead of dateToTimestamp to preserve local time
+            scheduled_timestamp: start.getTime(),
+            duration: durationInMinutes
+          });
+        } else {
+          // If resized from bottom, just update duration
+          await updateGoal(existingEvent.goal.id, {
+            ...existingEvent.goal,
+            duration: durationInMinutes
+          });
+        }
       }
       loadCalendarData();
     } catch (error) {

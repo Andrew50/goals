@@ -1,128 +1,10 @@
-//tasklist.tsx
-import { CalendarTask, CalendarEvent } from '../../types/goals';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
+import { useDrop } from 'react-dnd';
+import { CalendarTask, CalendarEvent, Goal } from '../../types/goals';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
-import { useRef } from 'react';
-import { Goal } from '../../types/goals';
-import { Draggable } from '@fullcalendar/interaction';
-import { useDrop } from 'react-dnd';
 import { timestampToDisplayString } from '../../shared/utils/time';
-
-interface DraggableTaskProps {
-  task: CalendarTask;
-  //onTaskClick: (task: CalendarTask) => void;
-  onTaskUpdate: (data: { events: CalendarEvent[], tasks: CalendarTask[] }) => void;
-}
-
-const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
-  const formatDueDate = (timestamp?: number) => {
-    if (!timestamp) return '';
-    return timestampToDisplayString(timestamp, 'date');
-  };
-
-  const isAllDay = task.goal.duration === 1440;
-
-  /*
-  // Debug log for task
-  //console.log(`Rendering task ${task.id}:`, {
-  //  title: task.title,
-  //  isAllDay,
-  //  goalId: task.goal.id,
-  //  goalType: task.goal.goal_type
-  //  //});
-    */
-
-  const handleClick = () => {
-    if (task.goal) {
-      GoalMenu.open(task.goal, 'view', async (updatedGoal: Goal) => {
-        const data = await fetchCalendarData();
-        const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-          ...event,
-          // Preserve Date objects instead of recreating them to avoid timezone issues
-          start: event.start instanceof Date ? event.start : new Date(event.start),
-          end: event.end instanceof Date ? event.end : new Date(event.end),
-        }));
-        onTaskUpdate({
-          events: formattedEvents,
-          tasks: data.unscheduledTasks
-        });
-      });
-    }
-  };
-
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    if (task.goal) {
-      GoalMenu.open(task.goal, 'edit', async (updatedGoal: Goal) => {
-        const data = await fetchCalendarData();
-        const formattedEvents = [...data.events, ...data.achievements].map(event => ({
-          ...event,
-          // Preserve Date objects instead of recreating them to avoid timezone issues
-          start: event.start instanceof Date ? event.start : new Date(event.start),
-          end: event.end instanceof Date ? event.end : new Date(event.end),
-        }));
-        onTaskUpdate({
-          events: formattedEvents,
-          tasks: data.unscheduledTasks
-        });
-      });
-    }
-  };
-
-  return (
-    <div
-      className="external-event"
-      data-task-id={task.id}
-      data-all-day={isAllDay.toString()}
-      data-title={task.title}
-      data-goal-id={task.goal.id.toString()}
-      style={{
-        marginBottom: '8px',
-        padding: '12px 16px',
-        backgroundColor: getGoalColor(task.goal),
-        //border: '1px solid' + goalColors["task"],
-        borderRadius: '8px',
-        cursor: 'grab',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        color: '#ffffff',
-      }}
-      onClick={handleClick}
-      onContextMenu={handleContextMenu}
-    >
-      {/*<div style={{
-        width: '8px',
-        height: '8px',
-        borderRadius: '50%',
-        backgroundColor: '#2196f3',
-      }} />*/}
-      <span>{task.title}</span>
-      <div style={{
-        fontSize: '0.85em',
-        opacity: 0.9,
-        marginLeft: '8px',
-        whiteSpace: 'nowrap',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-end'
-      }}>
-        {task.goal.start_timestamp && (
-          <span>
-            Start {formatDueDate(task.goal.start_timestamp)}
-          </span>
-        )}
-        {task.goal.end_timestamp && (
-          <span>
-            Due {formatDueDate(task.goal.end_timestamp)}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-};
 
 interface TaskListProps {
   tasks: CalendarTask[];
@@ -131,59 +13,167 @@ interface TaskListProps {
   onTaskUpdate: (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => void;
 }
 
+/**
+ * Represents a single Task item that FullCalendar will see
+ * as an external event via the .external-event class.
+ */
+const DraggableTask: React.FC<{
+  task: CalendarTask;
+  onTaskUpdate: TaskListProps['onTaskUpdate'];
+}> = ({ task, onTaskUpdate }) => {
+  const { goal } = task;
+
+  const formatDate = (timestamp?: number) => {
+    if (!timestamp) return '';
+    return timestampToDisplayString(timestamp, 'date');
+  };
+
+  const isAllDay = goal?.duration === 1440; // e.g. a 24-hour event
+
+  // Left click = view
+  const handleClick = () => {
+    if (!goal) return;
+    GoalMenu.open(goal, 'view', async () => {
+      // After user closes the "view" menu, reload data
+      const data = await fetchCalendarData();
+      onTaskUpdate({
+        events: data.events,
+        tasks: data.unscheduledTasks
+      });
+    });
+  };
+
+  // Right click = edit
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!goal) return;
+    GoalMenu.open(goal, 'edit', async () => {
+      // After user closes the "edit" menu, reload data
+      const data = await fetchCalendarData();
+      onTaskUpdate({
+        events: data.events,
+        tasks: data.unscheduledTasks
+      });
+    });
+  };
+
+  return (
+    <div
+      className="external-event"
+      data-task-id={task.id}
+      data-all-day={String(isAllDay)}
+      style={{
+        marginBottom: '8px',
+        padding: '12px 16px',
+        backgroundColor: getGoalColor(goal),
+        borderRadius: '8px',
+        color: '#ffffff',
+        cursor: 'grab',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+      }}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
+    >
+      <span>{task.title}</span>
+      <div
+        style={{
+          fontSize: '0.85em',
+          opacity: 0.9,
+          marginLeft: '8px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {goal?.start_timestamp && (
+          <span>Start {formatDate(goal.start_timestamp)}</span>
+        )}
+        {goal?.end_timestamp && (
+          <span>Due {formatDate(goal.end_timestamp)}</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Main TaskList component that:
+ * - Renders the unscheduled tasks
+ * - Provides an "Add Task" button
+ * - Allows dropping scheduled events from the Calendar
+ *   back into the TaskList (i.e., "unscheduling" them)
+ */
 const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
   ({ tasks, events, onAddTask, onTaskUpdate }, ref) => {
-    // Add debug logging on mount and when tasks change
-    useEffect(() => {
-      //console.log('===== TASK LIST MOUNTED/UPDATED =====');
-      //console.log(`TaskList received ${tasks.length} tasks`);
-      if (tasks.length > 0) {
-        //console.log('First few tasks:', tasks.slice(0, 3));
-      } else {
-        //console.log('No tasks received in TaskList component');
-      }
-    }, [tasks]);
-
-    const [, drop] = useDrop({
+    /**
+     * React DnD drop hook:
+     * Accepts drops of type 'calendar-event' or 'task'—depending on how you label them.
+     * If a user drags an event from the calendar and drops it here, we "unschedule" it.
+     */
+    const [, dropRef] = useDrop({
       accept: ['calendar-event', 'task'],
       drop: (item: { id: string }) => {
-        //console.log('Dropping item:', item);
-        const taskToUnschedule = events.find((event) => event.id === item.id);
-        if (taskToUnschedule) {
-          const updatedGoal = {
-            ...taskToUnschedule.goal,
-            scheduled_timestamp: undefined,
-          };
-          const updatedTask: CalendarTask = {
-            ...taskToUnschedule,
-            goal: updatedGoal,
-            type: 'task',
-          };
-          onTaskUpdate({
-            events: events.filter((event) => event.id !== item.id),
-            tasks: [...tasks, updatedTask],
-          });
-        }
-      },
+        // Find the matching event in `events` by ID
+        const eventToUnschedule = events.find((ev) => ev.id === item.id);
+        if (!eventToUnschedule || !eventToUnschedule.goal) return;
+
+        // "Unschedule" means remove its scheduled_timestamp
+        const updatedGoal: Goal = {
+          ...eventToUnschedule.goal,
+          scheduled_timestamp: undefined
+        };
+
+        // Convert that event to a new unscheduled task
+        const newTask: CalendarTask = {
+          id: eventToUnschedule.id, // or a newly generated ID
+          title: eventToUnschedule.title,
+          goal: updatedGoal,
+          type: 'task' // or your default
+        };
+
+        // Remove the event from the calendar list
+        const updatedEvents = events.filter((ev) => ev.id !== item.id);
+        // Add the newly created unscheduled task
+        const updatedTasks = [...tasks, newTask];
+
+        onTaskUpdate({
+          events: updatedEvents,
+          tasks: updatedTasks
+        });
+      }
     });
 
-    /// Sort tasks by due date (end date) descending
-    const sortedTasks = tasks.sort((a, b) => {
-      const aDueDate = a.goal.end_timestamp ? new Date(a.goal.end_timestamp).getTime() : 0;
-      const bDueDate = b.goal.end_timestamp ? new Date(b.goal.end_timestamp).getTime() : 0;
-      return bDueDate - aDueDate; // Sort by due date descending
-    });
+    // Sort tasks by some criterion, e.g., earliest due date at the top, or descending
+    const sortedTasks = useMemo(() => {
+      return [...tasks].sort((a, b) => {
+        const aDue = a.goal?.end_timestamp || 0;
+        const bDue = b.goal?.end_timestamp || 0;
+        return aDue - bDue; // earliest due date first
+      });
+    }, [tasks]);
 
-    // Debug log for tasks
-    //console.log(`TaskList rendering ${tasks.length} tasks:`, tasks);
+    // Debug or introspection
+    useEffect(() => {
+      if (!tasks?.length) {
+        // console.log('No tasks in TaskList');
+      } else {
+        // console.log(`TaskList has ${tasks.length} tasks`, tasks);
+      }
+    }, [tasks]);
 
     return (
       <div
         ref={(node) => {
-          drop(node);
+          // Attach the react-dnd drop target
+          dropRef(node);
+          // Also forward this ref up to the parent if needed
           if (typeof ref === 'function') {
             ref(node);
           } else if (ref) {
+            // @ts-ignore
             ref.current = node;
           }
         }}
@@ -191,7 +181,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           display: 'flex',
           flexDirection: 'column',
           height: '100%',
-          padding: '16px',
+          padding: '16px'
         }}
       >
         <h3
@@ -199,7 +189,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             margin: '0 0 16px 0',
             color: '#ffffff',
             fontSize: '20px',
-            fontWeight: 600,
+            fontWeight: 600
           }}
         >
           Unscheduled Tasks
@@ -216,7 +206,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             cursor: 'pointer',
             fontSize: '14px',
             fontWeight: 500,
-            marginBottom: '16px',
+            marginBottom: '16px'
           }}
         >
           Add Task
@@ -227,7 +217,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             flex: 1,
             overflowY: 'auto',
             marginRight: '-8px',
-            paddingRight: '8px',
+            paddingRight: '8px'
           }}
         >
           {sortedTasks.length === 0 ? (
@@ -235,20 +225,16 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
               style={{
                 textAlign: 'center',
                 color: 'rgba(255, 255, 255, 0.7)',
-                fontSize: '14px',
+                fontSize: '14px'
               }}
             >
               No tasks yet
             </div>
           ) : (
-            tasks.map((task) => (
+            sortedTasks.map((task) => (
               <DraggableTask
-                key={task.id || `task-${Date.now()}-${Math.random()}`}
-                task={{
-                  ...task,
-                  // Ensure task has a valid ID
-                  id: task.id || `task-${Date.now()}-${Math.random()}`
-                }}
+                key={task.id}
+                task={task}
                 onTaskUpdate={onTaskUpdate}
               />
             ))
@@ -260,4 +246,3 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
 );
 
 export default TaskList;
-
