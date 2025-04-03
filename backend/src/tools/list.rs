@@ -2,7 +2,7 @@ use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde_json::Value;
 
-use crate::goal::GOAL_RETURN_QUERY;
+use crate::tools::goal::GOAL_RETURN_QUERY;
 
 pub async fn get_list_data(
     graph: Graph,

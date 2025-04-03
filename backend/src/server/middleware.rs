@@ -8,7 +8,7 @@ use jsonwebtoken::{decode, DecodingKey, Validation};
 use std::env;
 use tracing::{error, info};
 
-use crate::auth::Claims;
+use crate::server::auth::Claims;
 
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, Response> {
     // Get the token either from Authorization header or query parameter for WebSocket

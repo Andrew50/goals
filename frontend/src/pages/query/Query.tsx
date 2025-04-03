@@ -21,8 +21,6 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HelpIcon from '@mui/icons-material/Help';
-// Import from api instead since we don't have auth utility
-import { privateRequest } from '../../shared/utils/api';
 
 // Helper function to generate a random ID (replacement for uuid)
 const generateId = (): string => {

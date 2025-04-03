@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use neo4rs::{query, Graph};
 use serde::Serialize;
 
-use crate::goal::{Goal, GOAL_RETURN_QUERY};
+use crate::tools::goal::{Goal, GOAL_RETURN_QUERY};
 
 #[derive(Debug, Serialize)]
 pub struct CalendarData {

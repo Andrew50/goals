@@ -1,5 +1,5 @@
-use crate::goal::Goal;
-use crate::goal::GoalType;
+use crate::tools::goal::Goal;
+use crate::tools::goal::GoalType;
 use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 
