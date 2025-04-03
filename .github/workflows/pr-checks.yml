@@ -38,15 +38,37 @@ jobs:
       - name: Check for previous failures
         id: check-failures
         run: |
-          # Use GitHub API to check previous workflow runs
-          backend_status=$(gh api repos/${{ github.repository }}/actions/workflows/pr-checks.yml/runs --jq '.workflow_runs[0].jobs[] | select(.name=="Run Backend Unit Tests") | .conclusion')
-          frontend_status=$(gh api repos/${{ github.repository }}/actions/workflows/pr-checks.yml/runs --jq '.workflow_runs[0].jobs[] | select(.name=="Run Frontend Unit Tests") | .conclusion')
-          e2e_status=$(gh api repos/${{ github.repository }}/actions/workflows/e2e-tests.yml/runs --jq '.workflow_runs[0].conclusion')
+          # Initialize all outputs to false by default
+          echo "backend_failed=false" >> $GITHUB_OUTPUT
+          echo "frontend_failed=false" >> $GITHUB_OUTPUT
+          echo "e2e_failed=false" >> $GITHUB_OUTPUT
           
-          # Set outputs based on previous run status
-          echo "backend_failed=$([ "$backend_status" == "failure" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
-          echo "frontend_failed=$([ "$frontend_status" == "failure" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
-          echo "e2e_failed=$([ "$e2e_status" == "failure" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          # Get repository in owner/repo format
+          REPO="${GITHUB_REPOSITORY}"
+          
+          # Try to get workflow runs with error handling
+          echo "Checking previous runs for $REPO"
+          
+          # Check backend tests
+          backend_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          echo "Previous backend workflow status: $backend_status"
+          if [ "$backend_status" == "failure" ]; then
+            echo "backend_failed=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check frontend tests (falls back to workflow conclusion if job-specific data isn't available)
+          frontend_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          echo "Previous frontend workflow status: $frontend_status"
+          if [ "$frontend_status" == "failure" ]; then
+            echo "frontend_failed=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check E2E tests
+          e2e_status=$(gh api "/repos/${REPO}/actions/workflows/e2e-tests.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          echo "Previous E2E workflow status: $e2e_status"
+          if [ "$e2e_status" == "failure" ]; then
+            echo "e2e_failed=true" >> $GITHUB_OUTPUT
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
