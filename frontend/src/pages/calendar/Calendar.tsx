@@ -60,7 +60,12 @@ const Calendar: React.FC = () => {
     if (state.isLoading) return;
 
     try {
-      setState({ ...state, isLoading: true });
+      // Set loading state
+      setState({
+        ...state,
+        isLoading: true
+      });
+
       const data = await fetchCalendarData(dateRange);
 
       // Clear any data-loading timeouts
@@ -68,8 +73,8 @@ const Calendar: React.FC = () => {
         clearTimeout(dataLoadingTimeoutRef.current);
       }
 
+      // Update with new data
       setState({
-        ...state,
         events: data.events,
         tasks: data.unscheduledTasks,
         isLoading: false,
@@ -77,7 +82,10 @@ const Calendar: React.FC = () => {
       });
     } catch (error) {
       console.error('Error loading calendar data:', error);
-      setState({ ...state, isLoading: false });
+      setState({
+        ...state,
+        isLoading: false
+      });
 
       if (dataLoadAttempts < 2) {
         setTimeout(() => {
@@ -95,13 +103,17 @@ const Calendar: React.FC = () => {
   // -----------------------------
   // Effects
   // -----------------------------
-  // Initial data load
+  // Initial data load - with a flag to prevent duplicate calls
+  const initialLoadRef = useRef(false);
   useEffect(() => {
+    if (initialLoadRef.current) return;
+    initialLoadRef.current = true;
+
     loadCalendarData().catch((err) => {
       console.error('Error loading calendar data:', err);
       setError('Failed to load calendar data. Please try refreshing the page.');
     });
-  }, [loadCalendarData]);
+  }, [loadCalendarData, setError]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {
@@ -137,7 +149,10 @@ const Calendar: React.FC = () => {
       dataLoadingTimeoutRef.current = setTimeout(() => {
         if (state.isLoading) {
           console.warn('Calendar data loading timeout');
-          setState({ ...state, isLoading: false });
+          setState({
+            ...state,
+            isLoading: false
+          });
 
           if (dataLoadAttempts < 2) {
             setDataLoadAttempts((prev) => prev + 1);
@@ -155,7 +170,7 @@ const Calendar: React.FC = () => {
         clearTimeout(dataLoadingTimeoutRef.current);
       }
     };
-  }, [state.isLoading, dataLoadAttempts, loadCalendarData, setState, state]);
+  }, [state, dataLoadAttempts, loadCalendarData, setState, setError]);
 
   // Optional debug: global click logging
   useEffect(() => {
@@ -191,6 +206,9 @@ const Calendar: React.FC = () => {
   // Handlers
   // -----------------------------
   const handleDatesSet = (dateInfo: any) => {
+    // Skip if the calendar is already loading data
+    if (state.isLoading) return;
+
     const start = dateInfo.start instanceof Date
       ? dateInfo.start
       : new Date(dateInfo.start);
@@ -212,10 +230,25 @@ const Calendar: React.FC = () => {
       clearTimeout(debouncingRef.current);
     }
 
+    // Store the new date range to prevent duplicate requests
+    const newDateRange = { start, end };
+
     debouncingRef.current = setTimeout(() => {
-      setState({ ...state, dateRange: { start, end } });
-      loadCalendarData({ start, end });
+      // First update the state with new date range
+      setState({
+        ...state,
+        dateRange: newDateRange
+      });
+
       debouncingRef.current = null;
+
+      // Use a separate call with requestAnimationFrame to load data after state update
+      requestAnimationFrame(() => {
+        // Prevent duplicate calls by checking if we're already loading for this range
+        if (!state.isLoading) {
+          loadCalendarData(newDateRange);
+        }
+      });
     }, 300);
   };
 
@@ -233,9 +266,8 @@ const Calendar: React.FC = () => {
         _tz: 'user'
       };
 
-      // If clicked in the all-day area, default to 24 hours
       if (arg.allDay) {
-        tempGoal.duration = 1440; // 24 hours in minutes
+        tempGoal.duration = 1440;
       }
 
       GoalMenu.open(tempGoal, 'create', async () => {
@@ -251,7 +283,6 @@ const Calendar: React.FC = () => {
       console.log('[DEBUG] Event clicked:', info.event.title, info.event.id);
     }
 
-    // By default, FullCalendar calls preventDefault on the jsEvent, so no need to overdo it
     const goal = info.event.extendedProps?.goal;
     if (goal) {
       GoalMenu.open(goal, 'view', async () => {
@@ -260,7 +291,6 @@ const Calendar: React.FC = () => {
       return;
     }
 
-    // Fallback: find in state
     const foundEvent = state.events.find((e) => e.id === info.event.id);
     if (foundEvent && foundEvent.goal) {
       GoalMenu.open(foundEvent.goal, 'view', async () => {
@@ -271,11 +301,9 @@ const Calendar: React.FC = () => {
     }
   };
 
-  // If you need right-click (context menu) behavior on events:
   const handleEventDidMount = (info: any) => {
-    // Minimal example of attaching a right-click listener
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
-      e.preventDefault(); // keep custom context menu from interfering
+      e.preventDefault();
       const goal = info.event.extendedProps?.goal;
       if (goal) {
         GoalMenu.open(goal, 'edit', async () => {
@@ -298,7 +326,6 @@ const Calendar: React.FC = () => {
       const isRoutine = goal.goal_type === 'routine';
       const updates = { ...goal };
 
-      // Update the appropriate timestamp based on goal type
       if (isRoutine) {
         updates.routine_time = info.event.start.getTime();
       } else {
@@ -321,7 +348,6 @@ const Calendar: React.FC = () => {
         const isRoutine = goal.goal_type === 'routine';
         const updates = { ...goal };
 
-        // Update the appropriate timestamp based on goal type
         if (isRoutine) {
           updates.routine_time = info.event.start.getTime();
         } else {
@@ -345,20 +371,17 @@ const Calendar: React.FC = () => {
         const end = info.event.end;
         const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
 
-        // Check if the event was resized from the top (start time changed)
         const oldStartTime = new Date(existingEvent.start).getTime();
         const newStartTime = start.getTime();
         const goal = existingEvent.goal;
         const isRoutine = goal.goal_type === 'routine';
 
         if (oldStartTime !== newStartTime) {
-          // If resized from top, update both start time and duration
           const updates = {
             ...goal,
             duration: durationInMinutes
           };
 
-          // Update the appropriate timestamp based on goal type
           if (isRoutine) {
             updates.routine_time = start.getTime();
           } else {
@@ -367,7 +390,6 @@ const Calendar: React.FC = () => {
 
           await updateGoal(goal.id, updates);
         } else {
-          // If resized from bottom, just update duration
           await updateGoal(goal.id, {
             ...goal,
             duration: durationInMinutes
@@ -488,7 +510,7 @@ const Calendar: React.FC = () => {
           eventReceive={handleEventReceive}
           eventDrop={handleEventDrop}
           eventResize={handleEventResize}
-          eventDidMount={handleEventDidMount} // For optional right-click
+          eventDidMount={handleEventDidMount}
           eventResizableFromStart={true}
           slotMinTime="00:00:00"
           slotMaxTime="24:00:00"

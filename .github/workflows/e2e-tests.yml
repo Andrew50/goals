@@ -44,6 +44,15 @@ jobs:
         working-directory: ./frontend
         run: npm install --save-dev jsonwebtoken @types/jsonwebtoken
       
+      - name: Create test .env file
+        run: |
+          echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
+          echo "BACKUP_PATH=/tmp/backups" >> .env
+          echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
+          echo "REACT_APP_API_URL=http://localhost:5057" >> .env
+          echo "JWT_SECRET=test_jwt_secret" >> .env
+          echo "JWT_EXPIRATION=86400" >> .env
+      
       - name: Start test environment
         run: |
           # Start the test database and backend using docker compose
