@@ -10,8 +10,9 @@ import {
     timestampToDisplayString
 } from './time';
 import { Goal } from '../../types/goals';
+import { mockTimezone } from './testUtils';
 
-// Helper to mock timezone offset - disable eslint warning for Date prototype extension
+// Old helper to mock timezone offset - kept for backward compatibility
 // eslint-disable-next-line no-extend-native
 const mockTimezoneOffset = (offsetMinutes: number) => {
     const original = Date.prototype.getTimezoneOffset;
@@ -71,79 +72,82 @@ describe('Time conversion utilities', () => {
         });
 
         test('should handle leap year dates correctly', () => {
-            // Mock timezone for consistent testing (EST: UTC-5)
-            const restoreOffset = mockTimezoneOffset(300);
+            // Use the new robust mockTimezone with consistent offset of 5 hours
+            const restoreMock = mockTimezone(300); // EST: UTC-5
 
             // February 29, 2020 (leap year) at noon UTC
-            const leapYearUTC = new Date(Date.UTC(2020, 1, 29, 12, 0, 0, 0)).getTime();
+            const leapYearUTC = Date.UTC(2020, 1, 29, 12, 0, 0, 0);
 
             // Convert to local time
             const leapYearLocal = toLocalTimestamp(leapYearUTC);
 
-            // Verify local time is correct (noon UTC is 7am EST)
+            // Verify local time is correct by checking the offset difference
+            // UTC-to-local conversion subtracts the timezone offset in milliseconds
+            const expectedOffset = 300 * 60 * 1000; // 5 hours in milliseconds
+            expect(leapYearUTC - leapYearLocal!).toBe(expectedOffset);
+
+            // Verify day and month are preserved
             const localDate = new Date(leapYearLocal!);
             expect(localDate.getMonth()).toBe(1); // February (0-indexed)
             expect(localDate.getDate()).toBe(29);
-            // Update expected hours to match actual implementation behavior
-            expect(localDate.getHours()).toBe(2); // Actual value from test output
 
-            // Convert back to UTC
+            // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(leapYearLocal);
-
-            // Should get the original UTC time back
             expect(backToUTC).toBe(leapYearUTC);
 
-            restoreOffset();
+            restoreMock();
         });
 
         test('should handle half-hour timezone offsets correctly', () => {
-            // Mock IST (India Standard Time, UTC+5:30)
-            const restoreOffset = mockTimezoneOffset(-330);
+            // Use the new robust mockTimezone with offset of -330 minutes (UTC+5:30)
+            const restoreMock = mockTimezone(-330); // IST: UTC+5:30
 
             // Noon UTC
-            const noonUTC = new Date(Date.UTC(2023, 0, 15, 12, 0, 0, 0)).getTime();
+            const noonUTC = Date.UTC(2023, 0, 15, 12, 0, 0, 0);
 
             // Convert to local time (IST)
             const localTimestamp = toLocalTimestamp(noonUTC);
 
-            // Should be 5:30 PM IST
+            // Verify the conversion by checking the offset difference
+            // UTC-to-local conversion subtracts the timezone offset
+            const expectedOffset = -330 * 60 * 1000; // -5.5 hours in milliseconds
+            expect(noonUTC - localTimestamp!).toBe(expectedOffset);
+
+            // Verify minutes are preserved for half-hour offset
             const localDate = new Date(localTimestamp!);
-            // Update expected hours to match actual implementation behavior
-            expect(localDate.getHours()).toBe(12); // Actual value from test output
             expect(localDate.getMinutes()).toBe(30);
 
-            // Convert back to UTC
+            // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(localTimestamp);
-
-            // Should get the original UTC time back
             expect(backToUTC).toBe(noonUTC);
 
-            restoreOffset();
+            restoreMock();
         });
 
         test('should handle quarter-hour timezone offsets correctly', () => {
-            // Mock Nepal Time (UTC+5:45)
-            const restoreOffset = mockTimezoneOffset(-345);
+            // Use the new robust mockTimezone with offset of -345 minutes (UTC+5:45)
+            const restoreMock = mockTimezone(-345); // Nepal Time: UTC+5:45
 
             // Noon UTC
-            const noonUTC = new Date(Date.UTC(2023, 0, 15, 12, 0, 0, 0)).getTime();
+            const noonUTC = Date.UTC(2023, 0, 15, 12, 0, 0, 0);
 
             // Convert to local time (Nepal)
             const localTimestamp = toLocalTimestamp(noonUTC);
 
-            // Should be 5:45 PM Nepal Time
+            // Verify the conversion by checking the offset difference
+            // UTC-to-local conversion subtracts the timezone offset
+            const expectedOffset = -345 * 60 * 1000; // -5.75 hours in milliseconds
+            expect(noonUTC - localTimestamp!).toBe(expectedOffset);
+
+            // Verify minutes are preserved for quarter-hour offset
             const localDate = new Date(localTimestamp!);
-            // Update expected hours to match actual implementation behavior
-            expect(localDate.getHours()).toBe(12); // Actual value from test output
             expect(localDate.getMinutes()).toBe(45);
 
-            // Convert back to UTC
+            // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(localTimestamp);
-
-            // Should get the original UTC time back
             expect(backToUTC).toBe(noonUTC);
 
-            restoreOffset();
+            restoreMock();
         });
     });
 
