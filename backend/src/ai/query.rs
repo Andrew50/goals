@@ -575,7 +575,7 @@ async fn process_user_query(
                     match tool_registry::execute_tool(
                         &function_call.name,
                         &function_call.args,
-                        &pool,
+                        pool,
                     )
                     .await
                     {

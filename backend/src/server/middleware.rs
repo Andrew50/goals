@@ -51,8 +51,8 @@ fn get_token_from_request(request: &Request) -> Result<String, Response> {
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
     {
-        if auth_header.starts_with("Bearer ") {
-            return Ok(auth_header[7..].to_string());
+        if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            return Ok(token.to_string());
         }
     }
 
