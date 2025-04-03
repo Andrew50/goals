@@ -63,6 +63,7 @@
     ]
   },
   "devDependencies": {
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@playwright/test": "^1.51.1",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^20.17.30",

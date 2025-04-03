@@ -37,7 +37,8 @@ export function validateGoal(goal: Goal): string[] {
                     if (!frequencyMatch) {
                         validationErrors.push('Invalid frequency format');
                     } else {
-                        const [_, interval, unit, days] = frequencyMatch;
+                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                        const [unused, interval, unit, days] = frequencyMatch;
                         if (parseInt(interval) < 1) {
                             validationErrors.push('Frequency interval must be at least 1');
                         }

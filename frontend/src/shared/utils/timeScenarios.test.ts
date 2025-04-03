@@ -1,15 +1,15 @@
 import {
     toLocalTimestamp,
     toUTCTimestamp,
-    goalToLocal,
     timestampToInputString,
     inputStringToTimestamp
 } from './time';
-import { Goal } from '../../types/goals';
 
-// Helper to mock timezone offset
+// Helper to mock timezone offset - disable eslint warning for Date prototype extension
+// eslint-disable-next-line no-extend-native
 const mockTimezoneOffset = (offsetMinutes: number) => {
     const original = Date.prototype.getTimezoneOffset;
+    // eslint-disable-next-line no-extend-native
     Date.prototype.getTimezoneOffset = jest.fn(() => offsetMinutes);
     return () => {
         Date.prototype.getTimezoneOffset = original;
@@ -17,15 +17,12 @@ const mockTimezoneOffset = (offsetMinutes: number) => {
 };
 
 describe('Timezone scenario tests', () => {
-    // Mock //console.log
-    const originalLog = //console.log;
-
-        beforeEach(() => {
-            //console.log = jest.fn();
-        });
+    beforeEach(() => {
+        //console.log = jest.fn();
+    });
 
     afterEach(() => {
-        //console.log = originalLog;
+        // Restore console.log if needed
     });
 
     describe('Positive timezone offset (behind UTC)', () => {
@@ -121,11 +118,13 @@ describe('Timezone scenario tests', () => {
 
     describe('DST transition scenarios', () => {
         // Mock a function that mimics timezone offset changes during DST
+        // eslint-disable-next-line no-extend-native
         const mockDSTOffset = () => {
             const original = Date.prototype.getTimezoneOffset;
 
             // Mock getTimezoneOffset to return different values based on date
             // March 12, 2023 was DST start in the US
+            // eslint-disable-next-line no-extend-native
             Date.prototype.getTimezoneOffset = function () {
                 if (this.getMonth() === 2 && this.getDate() >= 12) { // After March 12
                     return 240; // EDT (-4 hours)
@@ -190,6 +189,7 @@ describe('Timezone scenario tests', () => {
             // Create expected timestamps (time will use today's date)
             const today = new Date();
             today.setHours(12, 0, 0, 0);
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const expectedTime = today.getTime();
 
             // Create a date with the expected day but midnight
@@ -197,6 +197,7 @@ describe('Timezone scenario tests', () => {
             expectedDate.setHours(0, 0, 0, 0);
 
             // Create the expected datetime
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const expectedDatetime = new Date(2023, 0, 15, 12, 0, 0, 0).getTime();
 
             // Verify parsed values (ignoring time for date-only)
@@ -212,6 +213,8 @@ describe('Timezone scenario tests', () => {
 
             // The same PST noon timestamp, when viewed in EST
             // would be 3 PM EST (since EST is 3 hours ahead of PST)
+            // We don't actually use this, so mark as unused
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const estEquivalent = new Date(pstNoon);
 
             // Format using the same timestamp but in EST timezone context
@@ -226,6 +229,42 @@ describe('Timezone scenario tests', () => {
             expect(estDatetimeString).toBe('2023-01-15T12:00');
 
             restoreEST();
+        });
+    });
+
+    describe('User timezone preference scenarios', () => {
+        test('Handles user timezone preference correctly', () => {
+            // Mock timezone offset to PST (-8 hours, 480 minutes)
+            const restorePST = mockTimezoneOffset(480);
+
+            // Test timestamps with PST
+            const utcDateTime = 1630425600000; // 2021-09-01T00:00:00Z
+            const localDateTime = toLocalTimestamp(utcDateTime);
+
+            // Should be 2021-08-31T16:00:00 PST
+            const pstDate = new Date(localDateTime!);
+            expect(pstDate.getDate()).toBe(31);
+            expect(pstDate.getMonth()).toBe(7); // August (0-indexed)
+            expect(pstDate.getHours()).toBe(16);
+
+            restorePST();
+
+            // Change to IST (+5:30, -330 minutes)
+            const restoreIST = mockTimezoneOffset(-330);
+
+            // Same UTC time
+            const localDateTimeIST = toLocalTimestamp(utcDateTime);
+
+            // Should be 2021-09-01T05:30:00 IST
+            const istDate = new Date(localDateTimeIST!);
+            expect(istDate.getDate()).toBe(1);
+            expect(istDate.getMonth()).toBe(8); // September (0-indexed)
+            expect(istDate.getHours()).toBe(5);
+            expect(istDate.getMinutes()).toBe(30);
+
+            restoreIST();
+
+            // No need for estEquivalent variable here
         });
     });
 }); 

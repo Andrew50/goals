@@ -114,6 +114,7 @@ struct Candidate {
 #[derive(Deserialize, Debug, Clone)]
 struct CandidateContent {
     parts: Vec<ContentPart>,
+    #[allow(dead_code)]
     role: String,
 }
 
@@ -134,6 +135,7 @@ struct FunctionCall {
 pub struct ToolExecuteRequest {
     tool_name: String,
     args: Option<serde_json::Value>,
+    #[allow(dead_code)]
     conversation_id: Option<String>,
 }
 
@@ -172,27 +174,8 @@ pub async fn handle_query(
         message_history = message_history.into_iter().skip(skip_count).collect();
     }
 
-    // Remove consecutive duplicate error messages from the assistant
-    // let mut i = 1; // This logic might conflict with simple errors, consider removing or adjusting
-    // while i < message_history.len() {
-    //     if message_history[i].role == "assistant"
-    //         && message_history[i]
-    //             .content
-    //             .contains("error processing your request") // This specific check is removed
-    //         && i > 0
-    //         && message_history[i].content == message_history[i - 1].content
-    //     {
-    //         message_history.remove(i);
-    //     } else {
-    //         i += 1;
-    //     }
-    // }
-
     // Filter out messages with empty content
-    message_history = message_history
-        .into_iter()
-        .filter(|msg| !msg.content.trim().is_empty())
-        .collect();
+    message_history.retain(|msg| !msg.content.trim().is_empty());
 
     // Create Gemini API-specific message history with instructional messages first
     let mut initial_gemini_contents = Vec::new();
@@ -715,7 +698,7 @@ pub async fn handle_query(
                                     .conversation_id
                                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                                return (
+                                (
                                     StatusCode::OK,
                                     Json(GeminiResponse {
                                         response: final_response_text,
@@ -724,7 +707,7 @@ pub async fn handle_query(
                                         tool_execution: None,
                                     }),
                                 )
-                                    .into_response();
+                                    .into_response()
                             }
                             Err(e) => {
                                 eprintln!("Failed to parse second Gemini API response: {}", e);
@@ -735,7 +718,7 @@ pub async fn handle_query(
                                 let conversation_id = request
                                     .conversation_id
                                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                                return (
+                                (
                                     StatusCode::OK,
                                     Json(GeminiResponse {
                                         response: SIMPLE_ERROR_MESSAGE.to_string(),
@@ -744,7 +727,7 @@ pub async fn handle_query(
                                         tool_execution: None,
                                     }),
                                 )
-                                    .into_response();
+                                    .into_response()
                             }
                         }
                     }
@@ -757,7 +740,7 @@ pub async fn handle_query(
                         let conversation_id = request
                             .conversation_id
                             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                        return (
+                        (
                             StatusCode::OK,
                             Json(GeminiResponse {
                                 response: SIMPLE_ERROR_MESSAGE.to_string(),
@@ -766,7 +749,7 @@ pub async fn handle_query(
                                 tool_execution: None,
                             }),
                         )
-                            .into_response();
+                            .into_response()
                     }
                 }
             } else if !initial_text_response.is_empty() {
@@ -817,9 +800,6 @@ pub async fn handle_query(
                     }),
                 )
                     .into_response();
-                // If you prefer the fallback logic:
-                // let fallback_response = handle_empty_response(&request.query, &message_history, &pool).await;
-                // return fallback_response;
             }
         }
         Err(e) => {
@@ -833,7 +813,7 @@ pub async fn handle_query(
             let conversation_id = request
                 .conversation_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            return (
+            (
                 StatusCode::OK, // Return OK so frontend shows the simple error message
                 Json(GeminiResponse {
                     response: SIMPLE_ERROR_MESSAGE.to_string(),
@@ -842,37 +822,9 @@ pub async fn handle_query(
                     tool_execution: None,
                 }),
             )
-                .into_response();
+                .into_response()
         }
     }
-
-    // This part should ideally be unreachable if all paths above return.
-    // Kept as a final safety net.
-    // eprintln!(
-    //     "Reached unexpected end of handle_query after Gemini response processing. Raw text: {:?}",
-    //     initial_text // Use initial_text if available, otherwise indicate unknown state
-    // );
-
-    // // Fallback response if we somehow get here
-    // message_history.push(Message {
-    //     role: "assistant".to_string(),
-    //     content: SIMPLE_ERROR_MESSAGE.to_string(), // Use simple error
-    // });
-
-    // let conversation_id = request
-    //     .conversation_id
-    //     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    // (
-    //     StatusCode::INTERNAL_SERVER_ERROR, // Indicate an internal issue if this point is reached
-    //     Json(GeminiResponse {
-    //         response: SIMPLE_ERROR_MESSAGE.to_string(),
-    //         conversation_id,
-    //         message_history,
-    //         tool_execution: None,
-    //     }),
-    // )
-    //     .into_response()
 }
 
 // Execute a tool based on the function name and arguments
@@ -1233,12 +1185,12 @@ async fn execute_tool(
     }
 }
 
-// Function to determine if an operation writes to the database
+#[allow(dead_code)]
 fn is_write_operation(operation_name: &str) -> bool {
-    match operation_name {
-        "create_goal" | "update_goal" | "delete_goal" | "toggle_completion" => true,
-        _ => false,
-    }
+    matches!(
+        operation_name,
+        "create_goal" | "update_goal" | "delete_goal" | "toggle_completion"
+    )
 }
 
 // Handler for tool execution
@@ -1382,7 +1334,7 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
     }
 }
 
-// Add this function to handle empty responses
+#[allow(dead_code)]
 async fn handle_empty_response(
     query: &str,
     message_history: &[Message],

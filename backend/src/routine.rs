@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use chrono::{Datelike, Duration, TimeZone, Utc};
 use neo4rs::Graph;
+#[allow(clippy::single_component_path_imports)]
 use serde_json;
 use std::collections::HashMap;
 use std::fmt;
@@ -221,12 +222,12 @@ fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<
 
                         // Find the next occurrence of any selected day
                         while !selected_days.contains(&next_dt.weekday().num_days_from_sunday()) {
-                            next_dt = next_dt + Duration::days(1);
+                            next_dt += Duration::days(1);
                         }
 
                         // If multiplier > 1, add additional weeks after finding next day
                         if multiplier > 1 {
-                            next_dt = next_dt + Duration::weeks(multiplier - 1);
+                            next_dt += Duration::weeks(multiplier - 1);
                         }
 
                         next_dt.date_naive()
@@ -241,16 +242,14 @@ fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<
         };
 
         // Use set_time_of_day to apply the time components
-        let next_timestamp = set_time_of_day(
+        set_time_of_day(
             next_date
                 .and_hms_opt(0, 0, 0)
                 .unwrap()
                 .and_utc()
                 .timestamp_millis(),
             routine_time.unwrap_or(0),
-        );
-
-        next_timestamp
+        )
     } else {
         // Default to daily if format is invalid
         let next_date = current_dt.date_naive() + Duration::days(1);
