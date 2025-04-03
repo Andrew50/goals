@@ -427,37 +427,6 @@ const NetworkView: React.FC = () => {
     }
   };
 
-  // Delete an edge: update the backend and remove it from the DataSet
-  const handleDeleteEdge = async (edgeId: string) => {
-    if (edgesDataSetRef.current) {
-      const [fromId, toId] = edgeId.split('-').map(Number);
-      try {
-        await privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE');
-        edgesDataSetRef.current.remove(edgeId);
-      } catch (error) {
-        console.error('Failed to delete edge:', error);
-      }
-    }
-  };
-
-  // Delete a node: remove the node and its related edges (and update the backend)
-  const handleDeleteNode = async (nodeId: number) => {
-    if (nodesDataSetRef.current && edgesDataSetRef.current) {
-      try {
-        await privateRequest('goals/' + nodeId, 'DELETE');
-        nodesDataSetRef.current.remove(nodeId);
-        const currentEdges = edgesDataSetRef.current.get();
-        currentEdges.forEach(edge => {
-          if (edge.from === nodeId || edge.to === nodeId) {
-            edgesDataSetRef.current?.remove(edge.id);
-          }
-        });
-      } catch (error) {
-        console.error('Failed to delete node:', error);
-      }
-    }
-  };
-
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
       <div ref={networkContainer} style={{ height: '100%', width: '100%' }} />
