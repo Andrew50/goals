@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -88,68 +88,6 @@ const Query: React.FC = () => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [wsStatus, setWsStatus] = useState<WebSocketStatus>(WebSocketStatus.CLOSED);
     const ws = useRef<WebSocket | null>(null);
-
-    // Initialize WebSocket connection on component mount
-    useEffect(() => {
-        connectWebSocket();
-
-        return () => {
-            // Clean up WebSocket connection on component unmount
-            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-                ws.current.close();
-            }
-        };
-    }, []);
-
-    // Function to establish WebSocket connection
-    const connectWebSocket = () => {
-        setWsStatus(WebSocketStatus.CONNECTING);
-
-        // Get authentication token from localStorage or wherever it's stored
-        const token = localStorage.getItem('token');
-        if (!token) {
-            console.error('No authentication token available');
-            setWsStatus(WebSocketStatus.ERROR);
-            return;
-        }
-
-        // Determine WebSocket URL based on environment
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname;
-        const port = process.env.NODE_ENV === 'development' ? ':5057' : '';
-        const wsUrl = `${protocol}//${host}${port}/api/query/ws?token=${encodeURIComponent(token)}`;
-
-        console.log(`Connecting to WebSocket at ${wsUrl}`);
-
-        // Create new WebSocket connection
-        ws.current = new WebSocket(wsUrl);
-
-        // WebSocket event handlers
-        ws.current.onopen = () => {
-            console.log('WebSocket connection established');
-            setWsStatus(WebSocketStatus.OPEN);
-        };
-
-        ws.current.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data) as WsQueryMessage;
-                handleWebSocketMessage(message);
-            } catch (error) {
-                console.error('Error parsing WebSocket message:', error);
-            }
-        };
-
-        ws.current.onclose = () => {
-            console.log('WebSocket connection closed');
-            setWsStatus(WebSocketStatus.CLOSED);
-            // Could implement reconnection logic here
-        };
-
-        ws.current.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            setWsStatus(WebSocketStatus.ERROR);
-        };
-    };
 
     // Handle incoming WebSocket messages
     const handleWebSocketMessage = (message: WsQueryMessage) => {
@@ -316,6 +254,68 @@ const Query: React.FC = () => {
                 console.warn('Unhandled WebSocket message type:', message.type);
         }
     };
+
+    // Function to establish WebSocket connection
+    const connectWebSocket = useCallback(() => {
+        setWsStatus(WebSocketStatus.CONNECTING);
+
+        // Get authentication token from localStorage or wherever it's stored
+        const token = localStorage.getItem('token');
+        if (!token) {
+            console.error('No authentication token available');
+            setWsStatus(WebSocketStatus.ERROR);
+            return;
+        }
+
+        // Determine WebSocket URL based on environment
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.hostname;
+        const port = process.env.NODE_ENV === 'development' ? ':5057' : '';
+        const wsUrl = `${protocol}//${host}${port}/api/query/ws?token=${encodeURIComponent(token)}`;
+
+        console.log(`Connecting to WebSocket at ${wsUrl}`);
+
+        // Create new WebSocket connection
+        ws.current = new WebSocket(wsUrl);
+
+        // WebSocket event handlers
+        ws.current.onopen = () => {
+            console.log('WebSocket connection established');
+            setWsStatus(WebSocketStatus.OPEN);
+        };
+
+        ws.current.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data) as WsQueryMessage;
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('Error parsing WebSocket message:', error);
+            }
+        };
+
+        ws.current.onclose = () => {
+            console.log('WebSocket connection closed');
+            setWsStatus(WebSocketStatus.CLOSED);
+            // Could implement reconnection logic here
+        };
+
+        ws.current.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            setWsStatus(WebSocketStatus.ERROR);
+        };
+    }, [handleWebSocketMessage]);  // Add handleWebSocketMessage as a dependency
+
+    // Initialize WebSocket connection on component mount
+    useEffect(() => {
+        connectWebSocket();
+
+        return () => {
+            // Clean up WebSocket connection on component unmount
+            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                ws.current.close();
+            }
+        };
+    }, [connectWebSocket]);
 
     useEffect(() => {
         // Scroll to bottom whenever messages change
