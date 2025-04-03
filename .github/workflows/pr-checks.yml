@@ -5,8 +5,55 @@ on:
     branches: [ prod ]
 
 jobs:
+  changed-files:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      any_changes: ${{ steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Check for file changes
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
+  check-previous-runs:
+    name: Check Previous Test Runs
+    runs-on: ubuntu-latest
+    outputs:
+      backend_previously_failed: ${{ steps.check-failures.outputs.backend_failed }}
+      frontend_previously_failed: ${{ steps.check-failures.outputs.frontend_failed }}
+      e2e_previously_failed: ${{ steps.check-failures.outputs.e2e_failed }}
+    steps:
+      - name: Check for previous failures
+        id: check-failures
+        run: |
+          # Use GitHub API to check previous workflow runs
+          backend_status=$(gh api repos/${{ github.repository }}/actions/workflows/pr-checks.yml/runs --jq '.workflow_runs[0].jobs[] | select(.name=="Run Backend Unit Tests") | .conclusion')
+          frontend_status=$(gh api repos/${{ github.repository }}/actions/workflows/pr-checks.yml/runs --jq '.workflow_runs[0].jobs[] | select(.name=="Run Frontend Unit Tests") | .conclusion')
+          e2e_status=$(gh api repos/${{ github.repository }}/actions/workflows/e2e-tests.yml/runs --jq '.workflow_runs[0].conclusion')
+          
+          # Set outputs based on previous run status
+          echo "backend_failed=$([ "$backend_status" == "failure" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "frontend_failed=$([ "$frontend_status" == "failure" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "e2e_failed=$([ "$e2e_status" == "failure" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   lint-backend:
     name: Lint Rust Backend
+    needs: changed-files
+    if: ${{ needs.changed-files.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -33,7 +80,8 @@ jobs:
 
   build-backend:
     name: Build Rust Backend
-    needs: [lint-backend]
+    needs: [changed-files, lint-backend]
+    if: ${{ needs.changed-files.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -56,6 +104,8 @@ jobs:
 
   lint-frontend:
     name: Lint React Frontend
+    needs: changed-files
+    if: ${{ needs.changed-files.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -81,7 +131,8 @@ jobs:
         
   build-frontend:
     name: Build React Frontend
-    needs: [lint-frontend]
+    needs: [changed-files, lint-frontend]
+    if: ${{ needs.changed-files.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -104,7 +155,8 @@ jobs:
         
   test-backend:
     name: Run Backend Unit Tests
-    needs: [build-backend]
+    needs: [changed-files, check-previous-runs, build-backend]
+    if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -124,10 +176,17 @@ jobs:
         
       - name: Run backend unit tests
         run: cargo test
+      
+      - name: Mark test success
+        if: success()
+        run: |
+          echo "Tests passed successfully"
+          # Here we could store this successful run in a persistent location if needed
 
   test-frontend:
     name: Run Frontend Unit Tests
-    needs: [build-frontend]
+    needs: [changed-files, check-previous-runs, build-frontend]
+    if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -149,26 +208,72 @@ jobs:
         run: npm run test:ci
         
       - name: Upload test coverage
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: frontend-test-coverage
           path: frontend/coverage/
           retention-days: 30
       
+      - name: Mark test success
+        if: success()
+        run: |
+          echo "Tests passed successfully"
+          # Here we could store this successful run in a persistent location if needed
+      
   e2e-tests:
     name: Run E2E Tests
-    needs: [test-backend, test-frontend]
+    needs: [changed-files, check-previous-runs]
     uses: ./.github/workflows/e2e-tests.yml
     with:
       ref: ${{ github.ref }}
+      skip_tests: ${{ needs.changed-files.outputs.any_changes != 'true' && needs.check-previous-runs.outputs.e2e_previously_failed != 'true' }}
 
   # This job is a placeholder to show the complete CI pipeline
   # The actual deployment happens in the deploy.yml workflow when code is pushed to prod
   deploy-ready:
     name: Ready for Deployment
-    needs: [e2e-tests]
+    needs: [changed-files, check-previous-runs, e2e-tests, test-backend, test-frontend]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: PR approved and ready for deployment
-        run: echo "All checks passed! This PR is ready to be merged to prod for deployment." 
+      - name: Check for skipped tests
+        id: check-skipped
+        run: |
+          BACKEND_SKIPPED="${{ needs.changed-files.outputs.backend != 'true' && needs.check-previous-runs.outputs.backend_previously_failed != 'true' }}"
+          FRONTEND_SKIPPED="${{ needs.changed-files.outputs.frontend != 'true' && needs.check-previous-runs.outputs.frontend_previously_failed != 'true' }}"
+          E2E_SKIPPED="${{ needs.changed-files.outputs.any_changes != 'true' && needs.check-previous-runs.outputs.e2e_previously_failed != 'true' }}"
+          
+          if [ "$BACKEND_SKIPPED" = "true" ]; then
+            echo "Backend tests were skipped as no backend files changed and there were no previous failures"
+          fi
+          
+          if [ "$FRONTEND_SKIPPED" = "true" ]; then
+            echo "Frontend tests were skipped as no frontend files changed and there were no previous failures"
+          fi
+          
+          if [ "$E2E_SKIPPED" = "true" ]; then
+            echo "E2E tests were skipped as no files changed and there were no previous failures"
+          fi
+        
+      - name: Check if all required tests passed
+        if: |
+          (needs.changed-files.outputs.backend != 'true' && needs.check-previous-runs.outputs.backend_previously_failed != 'true') || 
+          needs.test-backend.result == 'success' && 
+          ((needs.changed-files.outputs.frontend != 'true' && needs.check-previous-runs.outputs.frontend_previously_failed != 'true') || 
+          needs.test-frontend.result == 'success') && 
+          ((needs.changed-files.outputs.any_changes != 'true' && needs.check-previous-runs.outputs.e2e_previously_failed != 'true') || 
+          needs.e2e-tests.result == 'success')
+        run: echo "All checks passed! This PR is ready to be merged to prod for deployment."
+        
+      - name: Report failure
+        if: |
+          (needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true') && 
+          needs.test-backend.result != 'success' || 
+          (needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true') && 
+          needs.test-frontend.result != 'success' || 
+          (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true') && 
+          needs.e2e-tests.result != 'success'
+        run: |
+          echo "Some checks failed! PR is not ready for deployment."
+          exit 1 

@@ -8,11 +8,17 @@ on:
         required: false
         type: string
         default: ''
+      skip_tests:
+        description: 'Skip E2E tests completely (only when no changes and no previous failures)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   e2e-tests:
     name: Run E2E Tests
     runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_tests }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -72,4 +78,18 @@ jobs:
       
       - name: Cleanup test environment
         if: always()
-        run: docker-compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v 
+        run: docker-compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+      
+      - name: Mark test success
+        if: success()
+        run: |
+          echo "E2E tests passed successfully"
+          # Here we could store this successful run in a persistent location if needed
+
+  skipped-tests:
+    name: E2E Tests Skipped
+    runs-on: ubuntu-latest
+    if: ${{ inputs.skip_tests }}
+    steps:
+      - name: Report skipped E2E tests
+        run: echo "E2E tests were skipped as no relevant changes were detected and there were no previous failures" 
