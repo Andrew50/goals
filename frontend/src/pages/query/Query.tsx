@@ -21,6 +21,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HelpIcon from '@mui/icons-material/Help';
+// Import from api instead since we don't have auth utility
 import { privateRequest } from '../../shared/utils/api';
 
 // Helper function to generate a random ID (replacement for uuid)
@@ -28,6 +29,17 @@ const generateId = (): string => {
     return Math.random().toString(36).substring(2, 15) +
         Math.random().toString(36).substring(2, 15);
 };
+
+// WebSocket Message Types
+interface WsQueryMessage {
+    type: 'UserQuery' | 'AssistantText' | 'ToolCall' | 'ToolResult' | 'Error';
+    content?: string;
+    message?: string;
+    name?: string;
+    args?: any;
+    success?: boolean;
+    conversation_id?: string;
+}
 
 interface Message {
     role: string;
@@ -37,9 +49,8 @@ interface Message {
 
 interface ToolExecution {
     name: string;
-    requiresConfirmation: boolean;
-    status: 'pending' | 'executing' | 'completed' | 'cancelled';
     args?: any;
+    status: 'pending' | 'executing' | 'completed' | 'cancelled';
     messageId: string;
 }
 
@@ -48,29 +59,265 @@ interface Conversation {
     messages: Message[];
 }
 
-interface QueryResponse {
-    response: string;
-    conversation_id: string;
-    message_history: Message[];
-    tool_execution?: {
-        name: string;
-        args?: any;
-        write_operation: boolean;
+// Tool result content type for better typing
+interface ToolResultContent {
+    goals?: Array<{
+        name?: string;
+        description?: string;
+        [key: string]: any;
+    }>;
+    goal?: {
+        title?: string;
+        description?: string;
+        [key: string]: any;
     };
+    status?: string;
+    error?: string;
+    [key: string]: any;
 }
 
-interface ToolExecuteResponse {
-    success: boolean;
-    message?: string;
-    error?: string;
+enum WebSocketStatus {
+    CONNECTING = 'connecting',
+    OPEN = 'open',
+    CLOSED = 'closed',
+    ERROR = 'error'
 }
 
 const Query: React.FC = () => {
     const [input, setInput] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [conversation, setConversation] = useState<Conversation | null>(null);
-    const [executingTools, setExecutingTools] = useState<Record<string, boolean>>({});
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [wsStatus, setWsStatus] = useState<WebSocketStatus>(WebSocketStatus.CLOSED);
+    const ws = useRef<WebSocket | null>(null);
+
+    // Initialize WebSocket connection on component mount
+    useEffect(() => {
+        connectWebSocket();
+
+        return () => {
+            // Clean up WebSocket connection on component unmount
+            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                ws.current.close();
+            }
+        };
+    }, []);
+
+    // Function to establish WebSocket connection
+    const connectWebSocket = () => {
+        setWsStatus(WebSocketStatus.CONNECTING);
+
+        // Get authentication token from localStorage or wherever it's stored
+        const token = localStorage.getItem('token');
+        if (!token) {
+            console.error('No authentication token available');
+            setWsStatus(WebSocketStatus.ERROR);
+            return;
+        }
+
+        // Determine WebSocket URL based on environment
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.hostname;
+        const port = process.env.NODE_ENV === 'development' ? ':5057' : '';
+        const wsUrl = `${protocol}//${host}${port}/api/query/ws?token=${encodeURIComponent(token)}`;
+
+        console.log(`Connecting to WebSocket at ${wsUrl}`);
+
+        // Create new WebSocket connection
+        ws.current = new WebSocket(wsUrl);
+
+        // WebSocket event handlers
+        ws.current.onopen = () => {
+            console.log('WebSocket connection established');
+            setWsStatus(WebSocketStatus.OPEN);
+        };
+
+        ws.current.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data) as WsQueryMessage;
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('Error parsing WebSocket message:', error);
+            }
+        };
+
+        ws.current.onclose = () => {
+            console.log('WebSocket connection closed');
+            setWsStatus(WebSocketStatus.CLOSED);
+            // Could implement reconnection logic here
+        };
+
+        ws.current.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            setWsStatus(WebSocketStatus.ERROR);
+        };
+    };
+
+    // Handle incoming WebSocket messages
+    const handleWebSocketMessage = (message: WsQueryMessage) => {
+        console.log('Received WebSocket message:', message);
+
+        switch (message.type) {
+            case 'AssistantText':
+                if (message.content) {
+                    setIsLoading(false);
+
+                    setConversation(prev => {
+                        if (!prev) {
+                            // If no conversation exists, create a new one
+                            return {
+                                id: generateId(),
+                                messages: [{
+                                    role: 'assistant',
+                                    content: message.content || '' // Ensure non-null content
+                                }]
+                            };
+                        }
+
+                        // Check if the last message is already from the assistant
+                        const lastMessage = prev.messages[prev.messages.length - 1];
+                        if (lastMessage && lastMessage.role === 'assistant' && !lastMessage.toolExecution) {
+                            // Update the existing assistant message
+                            const updatedMessages = [...prev.messages];
+                            updatedMessages[updatedMessages.length - 1] = {
+                                ...lastMessage,
+                                content: message.content || '' // Ensure non-null content
+                            };
+
+                            return {
+                                ...prev,
+                                messages: updatedMessages
+                            };
+                        } else {
+                            // Add a new assistant message
+                            return {
+                                ...prev,
+                                messages: [...prev.messages, {
+                                    role: 'assistant',
+                                    content: message.content || '' // Ensure non-null content
+                                }]
+                            };
+                        }
+                    });
+                }
+                break;
+
+            case 'ToolCall':
+                if (message.name && message.args) {
+                    const messageId = generateId();
+                    const toolExecution: ToolExecution = {
+                        name: message.name,
+                        args: message.args,
+                        status: 'executing' as const,
+                        messageId
+                    };
+
+                    setConversation(prev => {
+                        if (!prev) return prev;
+
+                        // Add a new assistant message with the tool execution
+                        return {
+                            ...prev,
+                            messages: [...prev.messages, {
+                                role: 'assistant',
+                                content: `I'm executing the ${message.name} function.`,
+                                toolExecution
+                            }]
+                        };
+                    });
+                }
+                break;
+
+            case 'ToolResult':
+                if (message.name) {
+                    setConversation(prev => {
+                        if (!prev) return prev;
+
+                        const updatedMessages = prev.messages.map(msg => {
+                            if (msg.toolExecution && msg.toolExecution.name === message.name) {
+                                // Format content for display
+                                let formattedContent = msg.content;
+
+                                if (message.success) {
+                                    // Extract relevant information from the tool result
+                                    if (typeof message.content === 'object' && message.content !== null) {
+                                        const content = message.content as ToolResultContent;
+
+                                        if (message.name === 'list_goals' && Array.isArray(content.goals)) {
+                                            formattedContent += '\n\nGoals:';
+                                            content.goals.forEach((goal, index) => {
+                                                formattedContent += `\n${index + 1}. ${goal.name || 'Untitled Goal'}`;
+                                                if (goal.description) formattedContent += ` - ${goal.description}`;
+                                            });
+                                        } else if (message.name === 'create_goal' && content.goal) {
+                                            formattedContent += `\n\nCreated goal: "${content.goal.title || 'Untitled'}"`;
+                                            if (content.goal.description) {
+                                                formattedContent += `\nDescription: ${content.goal.description}`;
+                                            }
+                                        } else {
+                                            formattedContent += `\n\n${JSON.stringify(content, null, 2)}`;
+                                        }
+                                    } else {
+                                        formattedContent += '\n\nOperation completed successfully.';
+                                    }
+                                } else {
+                                    // Handle error case
+                                    if (typeof message.content === 'object' && message.content !== null) {
+                                        const errorContent = message.content as ToolResultContent;
+                                        formattedContent += `\n\nError: ${errorContent.error || 'Something went wrong'}`;
+                                    } else {
+                                        formattedContent += '\n\nOperation failed: Something went wrong';
+                                    }
+                                }
+
+                                return {
+                                    ...msg,
+                                    content: formattedContent,
+                                    toolExecution: {
+                                        ...msg.toolExecution,
+                                        status: message.success ? 'completed' as const : 'cancelled' as const
+                                    }
+                                };
+                            }
+                            return msg;
+                        });
+
+                        return {
+                            ...prev,
+                            messages: updatedMessages
+                        };
+                    });
+                }
+                break;
+
+            case 'Error':
+                setIsLoading(false);
+
+                setConversation(prev => {
+                    if (!prev) {
+                        return {
+                            id: generateId(),
+                            messages: [{
+                                role: 'assistant',
+                                content: message.message || 'An error occurred'
+                            }]
+                        };
+                    }
+
+                    return {
+                        ...prev,
+                        messages: [...prev.messages, {
+                            role: 'assistant',
+                            content: message.message || 'An error occurred'
+                        }]
+                    };
+                });
+                break;
+
+            default:
+                console.warn('Unhandled WebSocket message type:', message.type);
+        }
+    };
 
     useEffect(() => {
         // Scroll to bottom whenever messages change
@@ -86,310 +333,51 @@ const Query: React.FC = () => {
 
         if (!input.trim()) return;
 
+        // Check if WebSocket is connected
+        if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
+            console.error('WebSocket is not connected');
+            return;
+        }
+
         // Add user message to conversation immediately
         const userMessage: Message = { role: 'user', content: input };
         const currentMessages = conversation?.messages || [];
-        const updatedConversation = {
-            id: conversation?.id || 'temp-id',
-            messages: [...currentMessages, userMessage]
-        };
+        const conversationId = conversation?.id || generateId();
 
-        setConversation(updatedConversation);
+        setConversation({
+            id: conversationId,
+            messages: [...currentMessages, userMessage]
+        });
+
         setIsLoading(true);
 
         try {
-            // Create a copy of the messages but filter out any pending tool executions
-            // This prevents issues when sending a new message while a previous tool is still pending
-            const messagesToSend = currentMessages.map(msg => {
-                if (msg.toolExecution?.status === 'pending') {
-                    // Only send the message content without tool execution info to avoid confusion
-                    return {
-                        role: msg.role,
-                        content: msg.content
-                    };
-                }
-                return msg;
-            });
+            // Send message via WebSocket
+            const wsMessage: WsQueryMessage = {
+                type: 'UserQuery',
+                content: input,
+                conversation_id: conversationId
+            };
 
-            const data = await privateRequest<QueryResponse>('query', 'POST', {
-                query: input,
-                conversation_id: conversation?.id,
-                message_history: messagesToSend.length > 0 ? messagesToSend : undefined // Only send if not empty
-            });
-
-            // Handle case where response is malformed or empty
-            if (!data || (!data.response && !data.tool_execution && (!data.message_history || data.message_history.length === 0))) {
-                throw new Error('Received empty or invalid response from server');
-            }
-
-            // Process tool execution if present
-            if (data.tool_execution) {
-                // Validate the tool execution has required fields
-                if (!data.tool_execution.name) {
-                    throw new Error('Invalid tool execution: missing name');
-                }
-
-                const requiresConfirmation = data.tool_execution.write_operation;
-                const messageId = generateId();
-                const toolExecution: ToolExecution = {
-                    name: data.tool_execution.name,
-                    args: data.tool_execution.args,
-                    requiresConfirmation,
-                    status: requiresConfirmation ? 'pending' : 'executing',
-                    messageId
-                };
-
-                // Instead of modifying the received message history, we'll preserve any existing
-                // pending tool executions and add the new one properly
-                const updatedMessages = [...updatedConversation.messages];
-
-                // Add a new assistant message with the tool execution
-                updatedMessages.push({
-                    role: 'assistant',
-                    content: requiresConfirmation
-                        ? `I need to execute the ${data.tool_execution.name} function.`
-                        : `I'm executing the ${data.tool_execution.name} function.`,
-                    toolExecution
-                });
-
-                setConversation({
-                    id: data.conversation_id,
-                    messages: updatedMessages
-                });
-
-                if (!requiresConfirmation) {
-                    // For read operations, we can immediately execute the tool
-                    executeConfirmedTool(toolExecution);
-                }
-            } else {
-                // For responses without tool execution, we need to carefully preserve any pending tool executions
-                // while still updating with the new assistant response
-
-                // Merge the new message history with our current conversation
-                // Start with user messages up to the latest
-                const mergedMessages = [...updatedConversation.messages];
-
-                // Add the new assistant response
-                if (data.message_history && data.message_history.length > 0) {
-                    // Find the last assistant message in the new history
-                    const lastAssistantMessage = [...data.message_history]
-                        .reverse()
-                        .find(msg => msg.role === 'assistant');
-
-                    if (lastAssistantMessage) {
-                        mergedMessages.push(lastAssistantMessage);
-                    }
-                }
-
-                setConversation({
-                    id: data.conversation_id,
-                    messages: mergedMessages
-                });
-            }
-
+            ws.current.send(JSON.stringify(wsMessage));
             setInput('');
         } catch (error) {
-            console.error('Error sending message:', error);
-            // Extract error message if available
-            let errorContent = 'Sorry, there was an error processing your request. Please try again.';
-
-            if (error && typeof error === 'object' && 'response' in error &&
-                error.response && typeof error.response === 'object' &&
-                'data' in error.response && error.response.data &&
-                typeof error.response.data === 'object' && 'error' in error.response.data) {
-                errorContent = error.response.data.error as string;
-            } else if (error instanceof Error) {
-                errorContent = `Error: ${error.message}`;
-            }
+            console.error('Error sending message via WebSocket:', error);
+            setIsLoading(false);
 
             // Add error message to conversation
-            const errorMessage: Message = {
-                role: 'assistant',
-                content: errorContent
-            };
-
-            setConversation(prev => {
-                if (!prev) {
-                    return {
-                        id: 'temp-id',
-                        messages: [userMessage, errorMessage]
-                    };
-                }
-
-                return {
-                    ...prev,
-                    messages: [...prev.messages, errorMessage]
-                };
-            });
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const executeConfirmedTool = async (toolToExecute: ToolExecution) => {
-        if (!toolToExecute) return;
-
-        // Set tool execution loading state for this specific message
-        setExecutingTools(prev => ({
-            ...prev,
-            [toolToExecute.messageId]: true
-        }));
-
-        // Update tool status to executing
-        setConversation(prev => {
-            if (!prev) return prev;
-
-            const updatedMessages = prev.messages.map(msg => {
-                if (msg.toolExecution?.messageId === toolToExecute.messageId) {
-                    return {
-                        ...msg,
-                        toolExecution: {
-                            ...msg.toolExecution,
-                            status: 'executing' as const
-                        }
-                    } as Message;
-                }
-                return msg;
-            });
-
-            return {
-                ...prev,
-                messages: updatedMessages
-            };
-        });
-
-        try {
-            // Make an API call to execute the tool on the backend
-            const response = await privateRequest<ToolExecuteResponse>('query/tool-execute', 'POST', {
-                tool_name: toolToExecute.name,
-                args: toolToExecute.args,
-                conversation_id: conversation?.id
-            });
-
-            // Update the conversation with the tool execution result
-            if (response && response.success) {
-                setConversation(prev => {
-                    if (!prev) return prev;
-
-                    const updatedMessages = [...prev.messages];
-
-                    // Find the message with the tool execution and update its status
-                    const toolMessageIndex = updatedMessages.findIndex(
-                        msg => msg.toolExecution?.messageId === toolToExecute.messageId
-                    );
-
-                    if (toolMessageIndex !== -1) {
-                        // Append the response message to the existing content instead of creating a new message
-                        const originalContent = updatedMessages[toolMessageIndex].content;
-                        const appendedContent = response.message
-                            ? `${originalContent}\n\n${response.message}`
-                            : originalContent;
-
-                        updatedMessages[toolMessageIndex] = {
-                            ...updatedMessages[toolMessageIndex],
-                            content: appendedContent,
-                            toolExecution: {
-                                ...updatedMessages[toolMessageIndex].toolExecution!,
-                                status: 'completed' as const
-                            }
-                        } as Message;
-                    }
-
-                    return {
-                        ...prev,
-                        messages: updatedMessages
-                    };
-                });
-            } else {
-                throw new Error(response?.error || 'Tool execution failed without specific error');
-            }
-        } catch (error) {
-            console.error('Error executing tool:', error);
-
-            // Extract a user-friendly error message
-            let errorMsg = 'Failed to execute the tool due to an unknown error';
-
-            if (error instanceof Error) {
-                errorMsg = error.message;
-            } else if (typeof error === 'object' && error !== null) {
-                // Try to extract error message from axios error response
-                if ('response' in error &&
-                    error.response &&
-                    typeof error.response === 'object' &&
-                    'data' in error.response) {
-                    const responseData = error.response.data;
-                    if (typeof responseData === 'object' && responseData !== null && 'error' in responseData) {
-                        errorMsg = responseData.error as string;
-                    }
-                }
-            }
-
-            // Update the conversation with the error
             setConversation(prev => {
                 if (!prev) return prev;
 
-                const updatedMessages = [...prev.messages];
-                const toolMessageIndex = updatedMessages.findIndex(
-                    msg => msg.toolExecution?.messageId === toolToExecute.messageId
-                );
-
-                if (toolMessageIndex !== -1) {
-                    // Append the error to the existing message instead of creating a new one
-                    const originalContent = updatedMessages[toolMessageIndex].content;
-
-                    updatedMessages[toolMessageIndex] = {
-                        ...updatedMessages[toolMessageIndex],
-                        content: `${originalContent}\n\nError: ${errorMsg}`,
-                        toolExecution: {
-                            ...updatedMessages[toolMessageIndex].toolExecution!,
-                            status: 'cancelled' as const
-                        }
-                    } as Message;
-                }
-
                 return {
                     ...prev,
-                    messages: updatedMessages
+                    messages: [...prev.messages, {
+                        role: 'assistant',
+                        content: 'Failed to send message. Please try again.'
+                    }]
                 };
             });
-        } finally {
-            // Clear this specific executing tool
-            setExecutingTools(prev => {
-                const updated = { ...prev };
-                delete updated[toolToExecute.messageId];
-                return updated;
-            });
         }
-    };
-
-    const cancelToolExecution = (toolToCancel: ToolExecution) => {
-        // Update tool status to cancelled
-        setConversation(prev => {
-            if (!prev) return prev;
-
-            const updatedMessages = prev.messages.map(msg => {
-                if (msg.toolExecution?.messageId === toolToCancel.messageId) {
-                    return {
-                        ...msg,
-                        toolExecution: {
-                            ...msg.toolExecution,
-                            status: 'cancelled' as const
-                        },
-                        content: `${msg.content}\n\n(Operation cancelled by user)`
-                    } as Message;
-                }
-                return msg;
-            });
-
-            return {
-                ...prev,
-                messages: updatedMessages
-            };
-        });
-    };
-
-    const handleConfirmTool = (toolToConfirm: ToolExecution) => {
-        executeConfirmedTool(toolToConfirm);
     };
 
     const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -428,7 +416,7 @@ const Query: React.FC = () => {
                 break;
             case 'cancelled':
                 color = 'error';
-                statusText = 'Cancelled';
+                statusText = 'Failed';
                 icon = <CancelIcon fontSize="small" />;
                 break;
             default:
@@ -454,8 +442,6 @@ const Query: React.FC = () => {
         };
 
         const { bg, text } = getStatusColors();
-
-        const isExecuting = executingTools[toolExecution.messageId] === true;
 
         return (
             <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
@@ -534,44 +520,42 @@ const Query: React.FC = () => {
                         </Box>
                     </Box>
                 )}
-
-                {toolExecution.status === 'pending' && toolExecution.requiresConfirmation && (
-                    <Box sx={{ mt: 1.5, display: 'flex', gap: 1.5, pl: 2 }}>
-                        <Button
-                            size="small"
-                            variant="contained"
-                            color="error"
-                            startIcon={<CancelIcon />}
-                            onClick={() => cancelToolExecution(toolExecution)}
-                            disabled={isExecuting}
-                            sx={{
-                                px: 2,
-                                py: 0.8,
-                                minWidth: '90px',
-                                boxShadow: 2
-                            }}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            size="small"
-                            variant="contained"
-                            color="primary"
-                            startIcon={isExecuting ? <CircularProgress size={16} color="inherit" /> : <CheckCircleIcon />}
-                            onClick={() => handleConfirmTool(toolExecution)}
-                            disabled={isExecuting}
-                            sx={{
-                                px: 2,
-                                py: 0.8,
-                                minWidth: '90px',
-                                boxShadow: 2
-                            }}
-                        >
-                            {isExecuting ? 'Executing...' : 'Confirm'}
-                        </Button>
-                    </Box>
-                )}
             </Box>
+        );
+    };
+
+    // Render WebSocket connection status indicator
+    const renderConnectionStatus = () => {
+        let color: 'success' | 'error' | 'warning' | 'info';
+        let text: string;
+
+        switch (wsStatus) {
+            case WebSocketStatus.OPEN:
+                color = 'success';
+                text = 'Connected';
+                break;
+            case WebSocketStatus.CONNECTING:
+                color = 'info';
+                text = 'Connecting...';
+                break;
+            case WebSocketStatus.CLOSED:
+                color = 'warning';
+                text = 'Disconnected';
+                break;
+            case WebSocketStatus.ERROR:
+                color = 'error';
+                text = 'Connection Error';
+                break;
+        }
+
+        return (
+            <Chip
+                size="small"
+                color={color}
+                label={text}
+                sx={{ ml: 1 }}
+                onClick={wsStatus !== WebSocketStatus.OPEN ? connectWebSocket : undefined}
+            />
         );
     };
 
@@ -597,6 +581,7 @@ const Query: React.FC = () => {
                 }}>
                     <Typography variant="h6">
                         Conversation
+                        {renderConnectionStatus()}
                     </Typography>
                 </Box>
 
@@ -720,7 +705,7 @@ const Query: React.FC = () => {
                     value={input}
                     onChange={handleInputChange}
                     onKeyPress={handleKeyPress}
-                    disabled={isLoading}
+                    disabled={isLoading || wsStatus !== WebSocketStatus.OPEN}
                     variant="outlined"
                     sx={{ mr: 1 }}
                     InputProps={{
@@ -734,7 +719,7 @@ const Query: React.FC = () => {
                 <Button
                     variant="contained"
                     color="primary"
-                    disabled={!input.trim() || isLoading}
+                    disabled={!input.trim() || isLoading || wsStatus !== WebSocketStatus.OPEN}
                     type="submit"
                     endIcon={<SendIcon />}
                     sx={{ borderRadius: 2, px: 3, py: 1.5 }}

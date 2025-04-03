@@ -1,12 +1,47 @@
-use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{
+        ws::{Message as WsMessage, WebSocket},
+        Extension, WebSocketUpgrade,
+    },
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use chrono::{NaiveDate, Utc};
+use futures_util::{SinkExt, StreamExt};
 use neo4rs::query;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::goal::GOAL_RETURN_QUERY;
 
 const SIMPLE_ERROR_MESSAGE: &str = "Error.";
+
+// Define WebSocket message types
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub enum WsQueryMessage {
+    UserQuery {
+        content: String,
+        conversation_id: Option<String>,
+    },
+    AssistantText {
+        content: String,
+    },
+    ToolCall {
+        name: String,
+        args: serde_json::Value,
+    },
+    ToolResult {
+        success: bool,
+        name: String,
+        content: serde_json::Value,
+    },
+    Error {
+        message: String,
+    },
+}
 
 // Struct for the Gemini request
 #[derive(Deserialize)]
@@ -147,31 +182,31 @@ pub struct ToolExecuteResponse {
     error: Option<String>,
 }
 
-// Main handler for query requests
-pub async fn handle_query(
-    Extension(pool): Extension<neo4rs::Graph>,
-    Json(request): Json<GeminiRequest>,
-) -> impl IntoResponse {
+// Helper function to process a user query and stream responses
+async fn process_user_query(
+    _sender: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
+    message_history: &mut Vec<Message>,
+    query: String,
+    _conversation_id: Option<String>,
+    pool: &neo4rs::Graph,
+) -> axum::http::Response<axum::body::Body> {
     // Log incoming request details
-    println!("Received query request: {:?}", request.query);
+    println!("Received query request: {:?}", query);
 
     // Initialize reqwest client
     let client = Client::new();
 
-    // Create message history or initialize with user query
-    let mut message_history = request.message_history.unwrap_or_else(Vec::new);
-
     // Always add the current query to the message history
     message_history.push(Message {
         role: "user".to_string(),
-        content: request.query.clone(),
+        content: query.clone(),
     });
 
     // Clean up message history - limit size and filter out repeated error messages
     if message_history.len() > 10 {
         // Keep only the last 10 messages to prevent history from getting too large
         let skip_count = message_history.len() - 10;
-        message_history = message_history.into_iter().skip(skip_count).collect();
+        message_history.drain(0..skip_count);
     }
 
     // Filter out messages with empty content
@@ -196,7 +231,7 @@ pub async fn handle_query(
     });
 
     // Add actual conversation history
-    for msg in &message_history {
+    for msg in message_history.iter_mut() {
         let role = if msg.role == "assistant" {
             "model".to_string()
         } else {
@@ -373,13 +408,13 @@ pub async fn handle_query(
                     role: "assistant".to_string(),
                     content: format!("Gemini API Error: {}", status), // Internal log/history
                 });
-                let conversation_id = request.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id = _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                  return (
                     StatusCode::OK, // Return OK so frontend shows the simple error
                     Json(GeminiResponse {
                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None,
                     }),
                 ).into_response();
@@ -393,13 +428,13 @@ pub async fn handle_query(
                  role: "assistant".to_string(),
                  content: format!("API Connection Error: {}", e), // Internal log/history
              });
-             let conversation_id = request.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+             let conversation_id = _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
                  StatusCode::OK, // Return OK so frontend shows the simple error
                  Json(GeminiResponse {
                      response: SIMPLE_ERROR_MESSAGE.to_string(),
                      conversation_id,
-                     message_history,
+                     message_history: message_history.to_vec(),
                      tool_execution: None,
                  }),
              ).into_response();
@@ -417,15 +452,14 @@ pub async fn handle_query(
                 role: "assistant".to_string(),
                 content: format!("API Response Read Error: {}", e), // Internal log/history
             });
-            let conversation_id = request
-                .conversation_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let conversation_id =
+                _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
                 StatusCode::OK, // Return OK so frontend shows the simple error
                 Json(GeminiResponse {
                     response: SIMPLE_ERROR_MESSAGE.to_string(),
                     conversation_id,
-                    message_history,
+                    message_history: message_history.to_vec(),
                     tool_execution: None,
                 }),
             )
@@ -445,9 +479,7 @@ pub async fn handle_query(
         });
 
         // Generate conversation ID if not provided
-        let conversation_id = request
-            .conversation_id
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let conversation_id = _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // Return 200 to let the user see the error message
         return (
@@ -455,7 +487,7 @@ pub async fn handle_query(
             Json(GeminiResponse {
                 response: SIMPLE_ERROR_MESSAGE.to_string(),
                 conversation_id,
-                message_history,
+                message_history: message_history.to_vec(),
                 tool_execution: None,
             }),
         )
@@ -475,9 +507,8 @@ pub async fn handle_query(
                 });
 
                 // Generate conversation ID if not provided
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id =
+                    _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                 // Return 200 to let the user see the error message
                 return (
@@ -485,7 +516,7 @@ pub async fn handle_query(
                     Json(GeminiResponse {
                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None,
                     }),
                 )
@@ -595,7 +626,7 @@ pub async fn handle_query(
                 });
 
                 // Add full updated conversation history
-                for msg in &message_history {
+                for msg in message_history.iter_mut() {
                     let role = match msg.role.as_str() {
                         "assistant" => "model".to_string(),
                         "function" => "function".to_string(), // Pass function results correctly
@@ -650,15 +681,14 @@ pub async fn handle_query(
                                 role: "assistant".to_string(),
                                 content: format!("Gemini API Error (Summary): {}", status),
                             });
-                            let conversation_id = request
-                                .conversation_id
+                            let conversation_id = _conversation_id
                                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                             return (
                                 StatusCode::OK, // Return OK for user
                                 Json(GeminiResponse {
                                     response: SIMPLE_ERROR_MESSAGE.to_string(),
                                     conversation_id,
-                                    message_history,
+                                    message_history: message_history.to_vec(),
                                     tool_execution: None,
                                 }),
                             )
@@ -694,8 +724,7 @@ pub async fn handle_query(
                                     content: final_response_text.clone(),
                                 });
 
-                                let conversation_id = request
-                                    .conversation_id
+                                let conversation_id = _conversation_id
                                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                                 (
@@ -703,7 +732,7 @@ pub async fn handle_query(
                                     Json(GeminiResponse {
                                         response: final_response_text,
                                         conversation_id,
-                                        message_history,
+                                        message_history: message_history.to_vec(),
                                         tool_execution: None,
                                     }),
                                 )
@@ -715,15 +744,14 @@ pub async fn handle_query(
                                     role: "assistant".to_string(),
                                     content: format!("API Parse Error (Summary): {}", e),
                                 });
-                                let conversation_id = request
-                                    .conversation_id
+                                let conversation_id = _conversation_id
                                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                                 (
                                     StatusCode::OK,
                                     Json(GeminiResponse {
                                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                                         conversation_id,
-                                        message_history,
+                                        message_history: message_history.to_vec(),
                                         tool_execution: None,
                                     }),
                                 )
@@ -737,15 +765,14 @@ pub async fn handle_query(
                             role: "assistant".to_string(),
                             content: format!("API Connection Error (Summary): {}", e),
                         });
-                        let conversation_id = request
-                            .conversation_id
-                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                        let conversation_id =
+                            _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                         (
                             StatusCode::OK,
                             Json(GeminiResponse {
                                 response: SIMPLE_ERROR_MESSAGE.to_string(),
                                 conversation_id,
-                                message_history,
+                                message_history: message_history.to_vec(),
                                 tool_execution: None,
                             }),
                         )
@@ -763,9 +790,8 @@ pub async fn handle_query(
                 });
 
                 // Generate conversation ID if not provided
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id =
+                    _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                 // Return the response directly
                 return (
@@ -773,7 +799,7 @@ pub async fn handle_query(
                     Json(GeminiResponse {
                         response: initial_text_response.clone(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None, // No tool was executed
                     }),
                 )
@@ -787,15 +813,14 @@ pub async fn handle_query(
                     role: "assistant".to_string(),
                     content: SIMPLE_ERROR_MESSAGE.to_string(),
                 });
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id =
+                    _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 return (
                     StatusCode::OK, // Return OK for user
                     Json(GeminiResponse {
                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None,
                     }),
                 )
@@ -810,15 +835,14 @@ pub async fn handle_query(
                 role: "assistant".to_string(),
                 content: format!("API Parse Error: {}", e), // Internal log/history
             });
-            let conversation_id = request
-                .conversation_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let conversation_id =
+                _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             (
                 StatusCode::OK, // Return OK so frontend shows the simple error message
                 Json(GeminiResponse {
                     response: SIMPLE_ERROR_MESSAGE.to_string(),
                     conversation_id,
-                    message_history,
+                    message_history: message_history.to_vec(),
                     tool_execution: None,
                 }),
             )
@@ -1509,4 +1533,157 @@ async fn handle_empty_response(
         }),
     )
         .into_response()
+}
+
+// Helper function to send error messages over WebSocket
+async fn send_error(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
+    message: &str,
+) -> Result<(), axum::Error> {
+    let error_message = WsQueryMessage::Error {
+        message: message.to_string(),
+    };
+    let json = serde_json::to_string(&error_message)
+        .map_err(|e| axum::Error::new(format!("JSON serialization error: {}", e)))?;
+    sender.send(WsMessage::Text(json)).await
+}
+
+// Main handler for query requests
+pub async fn handle_query(
+    Extension(_pool): Extension<neo4rs::Graph>,
+    Json(request): Json<GeminiRequest>,
+) -> impl IntoResponse {
+    // Log incoming request details
+    println!("Received query request: {:?}", request.query);
+
+    // Initialize reqwest client
+    let _client = Client::new();
+
+    // Create message history or initialize with user query
+    let mut message_history = request.message_history.unwrap_or_else(Vec::new);
+
+    // Always add the current query to the message history
+    message_history.push(Message {
+        role: "user".to_string(),
+        content: request.query.clone(),
+    });
+
+    // Clean up message history - limit size and filter out repeated error messages
+    if message_history.len() > 10 {
+        // Keep only the last 10 messages to prevent history from getting too large
+        let skip_count = message_history.len() - 10;
+        message_history = message_history.iter().skip(skip_count).cloned().collect();
+    }
+
+    // Filter out messages with empty content
+    message_history.retain(|msg| !msg.content.trim().is_empty());
+
+    // Add a response message for testing
+    message_history.push(Message {
+        role: "assistant".to_string(),
+        content: "This is a placeholder response. The API endpoint is working, but now uses WebSockets instead. Please use the /query/ws endpoint for interactive conversations.".to_string(),
+    });
+
+    // Generate a conversation ID if not provided
+    let conversation_id = request
+        .conversation_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Return response
+    (
+        StatusCode::OK,
+        Json(GeminiResponse {
+            response: "This API now uses WebSockets. Please use the /query/ws endpoint."
+                .to_string(),
+            conversation_id,
+            message_history,
+            tool_execution: None,
+        }),
+    )
+        .into_response()
+}
+
+// Handler for WebSocket upgrade request
+pub async fn handle_query_ws(
+    ws: WebSocketUpgrade,
+    Extension(pool): Extension<neo4rs::Graph>,
+    Extension(user_id): Extension<i64>,
+) -> impl IntoResponse {
+    println!("WebSocket upgrade request for user {}", user_id);
+    ws.on_upgrade(move |socket| handle_websocket_connection(socket, pool, user_id))
+}
+
+// WebSocket connection handler
+async fn handle_websocket_connection(socket: WebSocket, pool: neo4rs::Graph, user_id: i64) {
+    println!("New WebSocket connection established for user: {}", user_id);
+
+    // Split the socket into sender and receiver
+    let (mut sender, mut receiver) = socket.split();
+
+    // Initialize conversation state
+    let mut message_history: Vec<Message> = Vec::new();
+
+    // Add initial system prompt to history (not sent to client)
+    let system_prompt = Message {
+        role: "system".to_string(),
+        content: "You are an AI assistant that helps users manage their goals and tasks. When users ask to create, list, or manage goals, use the appropriate function.".to_string(),
+    };
+    message_history.push(system_prompt);
+
+    // Main loop to process messages
+    while let Some(result) = receiver.next().await {
+        match result {
+            Ok(WsMessage::Text(text)) => {
+                println!("Received message: {}", text);
+
+                // Parse the incoming message
+                match serde_json::from_str::<WsQueryMessage>(&text) {
+                    Ok(WsQueryMessage::UserQuery {
+                        content,
+                        conversation_id,
+                    }) => {
+                        // Process user query
+                        process_user_query(
+                            &mut sender,
+                            &mut message_history,
+                            content,
+                            conversation_id,
+                            &pool,
+                        )
+                        .await;
+                    }
+                    Ok(_) => {
+                        // Received a different message type from client
+                        if let Err(e) =
+                            send_error(&mut sender, "Unexpected message type received").await
+                        {
+                            eprintln!("Error sending error message: {}", e);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        // Failed to parse message
+                        eprintln!("Failed to parse message: {}", e);
+                        if let Err(e) = send_error(&mut sender, "Failed to parse message").await {
+                            eprintln!("Error sending error message: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(WsMessage::Close(_)) => {
+                println!("WebSocket connection closed by client");
+                break;
+            }
+            Ok(_) => {
+                // Ignore other message types
+            }
+            Err(e) => {
+                eprintln!("WebSocket error: {}", e);
+                break;
+            }
+        }
+    }
+
+    println!("WebSocket connection terminated for user: {}", user_id);
 }
