@@ -252,4 +252,150 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         // Clean up
         await newContext.close();
     });
+});
+
+test.describe('Timezone Handling in Calendar', () => {
+    test.describe.configure({ mode: 'parallel' });
+
+    // Test with various timezones
+    for (const timezone of ['America/New_York', 'Europe/London', 'Asia/Tokyo']) {
+        test(`creating and viewing events in ${timezone}`, async ({ browser }) => {
+            // Create page with specific timezone
+            const page = await browser.newPage({
+                timezoneId: timezone,
+            });
+
+            // Setup and auth
+            await page.goto('/');
+            const testToken = generateTestToken();
+            await page.evaluate((token) => {
+                localStorage.setItem('token', token);
+                localStorage.setItem('userId', '1');
+            }, testToken);
+
+            await page.goto('/');
+            await page.waitForSelector('.calendar-container');
+
+            // Switch to day view for precise time testing
+            await page.locator('.fc-timeGridDay-button').click();
+
+            // Create event at specific local time (9:30 AM)
+            await page.locator('.fc-timegrid-slot').filter({ hasText: '9:30' }).click();
+
+            const eventName = `Timezone Test ${timezone}`;
+            await page.locator('input[placeholder="Name"]').fill(eventName);
+            await page.locator('select[name="goal_type"]').selectOption('task');
+
+            // Set time to 9:30 AM local time for this timezone
+            const timeInput = page.locator('input[type="datetime-local"]');
+            await timeInput.click();
+
+            // Get current date in YYYY-MM-DD format
+            const today = new Date();
+            const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T09:30`;
+            await timeInput.fill(dateString);
+
+            await page.locator('button:has-text("Create")').click();
+
+            // Verify event appears at 9:30 AM
+            const event = page.locator('.fc-event', { hasText: eventName });
+            await expect(event).toBeVisible();
+
+            // The event should be positioned near the 9:30 AM slot
+            const nineThirtySlot = page.locator('.fc-timegrid-slot').filter({ hasText: '9:30' });
+            const nineThirtyBounds = await nineThirtySlot.boundingBox();
+            const eventBounds = await event.boundingBox();
+
+            if (!nineThirtyBounds || !eventBounds) {
+                throw new Error('Could not get element bounds');
+            }
+
+            // Event should be positioned within reasonable proximity to 9:30 AM slot
+            expect(Math.abs(eventBounds.y - nineThirtyBounds.y)).toBeLessThan(100);
+
+            // Reload page to verify persistence
+            await page.reload();
+            await page.waitForSelector('.calendar-container');
+            await page.locator('.fc-timeGridDay-button').click();
+
+            // Event should still be at 9:30 AM
+            const eventAfterReload = page.locator('.fc-event', { hasText: eventName });
+            await expect(eventAfterReload).toBeVisible();
+
+            // Verify time is still correct
+            const reloadedEventBounds = await eventAfterReload.boundingBox();
+            const reloadedSlotBounds = await nineThirtySlot.boundingBox();
+
+            if (!reloadedEventBounds || !reloadedSlotBounds) {
+                throw new Error('Could not get reloaded element bounds');
+            }
+
+            expect(Math.abs(reloadedEventBounds.y - reloadedSlotBounds.y)).toBeLessThan(100);
+        });
+
+        test(`dragging events preserves time in ${timezone}`, async ({ browser }) => {
+            const page = await browser.newPage({
+                timezoneId: timezone,
+            });
+
+            // Setup and auth
+            await page.goto('/');
+            const testToken = generateTestToken();
+            await page.evaluate((token) => {
+                localStorage.setItem('token', token);
+                localStorage.setItem('userId', '1');
+            }, testToken);
+
+            await page.goto('/');
+            await page.waitForSelector('.calendar-container');
+
+            // Switch to week view
+            await page.locator('.fc-timeGridWeek-button').click();
+
+            // Create an event at 10:00 AM
+            await page.locator('.fc-timegrid-slot').filter({ hasText: '10:00' }).click();
+
+            const eventName = `Drag Test ${timezone}`;
+            await page.locator('input[placeholder="Name"]').fill(eventName);
+            await page.locator('select[name="goal_type"]').selectOption('task');
+            await page.locator('button:has-text("Create")').click();
+
+            // Find the created event
+            const event = page.locator('.fc-event', { hasText: eventName });
+            await expect(event).toBeVisible();
+
+            // Get initial position
+            const initialBounds = await event.boundingBox();
+            if (!initialBounds) throw new Error('Could not get event bounds');
+
+            // Find tomorrow's 10:00 AM slot
+            const tomorrow = page.locator('.fc-timegrid-col').nth(1).locator('.fc-timegrid-slot').filter({ hasText: '10:00' });
+
+            // Drag event to tomorrow
+            await event.dragTo(tomorrow);
+
+            // Wait for update
+            await page.waitForTimeout(500);
+
+            // Verify event is still at 10:00 AM but on next day
+            const eventAfterDrag = page.locator('.fc-event', { hasText: eventName });
+            const afterDragBounds = await eventAfterDrag.boundingBox();
+            if (!afterDragBounds) throw new Error('Could not get dragged event bounds');
+
+            // Y position (time) should be the same
+            expect(Math.abs(afterDragBounds.y - initialBounds.y)).toBeLessThan(10);
+
+            // Verify persistence
+            await page.reload();
+            await page.waitForSelector('.calendar-container');
+            await page.locator('.fc-timeGridWeek-button').click();
+
+            const eventAfterReload = page.locator('.fc-event', { hasText: eventName });
+            const reloadedBounds = await eventAfterReload.boundingBox();
+            if (!reloadedBounds) throw new Error('Could not get reloaded event bounds');
+
+            // Should still be at same time
+            expect(Math.abs(reloadedBounds.y - initialBounds.y)).toBeLessThan(10);
+        });
+    }
 }); 

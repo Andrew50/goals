@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
 import { updateGoal } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
@@ -56,7 +56,7 @@ const Calendar: React.FC = () => {
   // -----------------------------
   // Data Loading
   // -----------------------------
-  const loadCalendarData = async (dateRange = state.dateRange) => {
+  const loadCalendarData = useCallback(async (dateRange = state.dateRange) => {
     if (state.isLoading) return;
 
     try {
@@ -90,7 +90,7 @@ const Calendar: React.FC = () => {
         );
       }
     }
-  };
+  }, [state, setState, dataLoadAttempts, setDataLoadAttempts, setError]);
 
   // -----------------------------
   // Effects

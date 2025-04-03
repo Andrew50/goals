@@ -42,7 +42,11 @@
     "eject": "react-scripts eject",
     "dev": "react-scripts start",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:calendar": "playwright test calendar-interactions.spec.ts",
+    "test:timezone": "playwright test timestamp-e2e.spec.ts",
+    "test:calendar:debug": "playwright test calendar-interactions.spec.ts --debug",
+    "test:all-e2e": "playwright test"
   },
   "eslintConfig": {
     "extends": [
@@ -63,7 +67,7 @@
     ]
   },
   "devDependencies": {
-    "@babel/plugin-proposal-private-property-in-object": "^7.21.0-placeholder-for-preset-env.2",
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@playwright/test": "^1.51.1",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^20.17.30",
