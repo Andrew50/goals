@@ -294,11 +294,18 @@ const Calendar: React.FC = () => {
         return;
       }
 
-      await updateGoal(task.goal.id, {
-        ...task.goal,
-        // Use start.getTime() directly instead of dateToTimestamp to preserve local time
-        scheduled_timestamp: info.event.start.getTime()
-      });
+      const goal = task.goal;
+      const isRoutine = goal.goal_type === 'routine';
+      const updates = { ...goal };
+
+      // Update the appropriate timestamp based on goal type
+      if (isRoutine) {
+        updates.routine_time = info.event.start.getTime();
+      } else {
+        updates.scheduled_timestamp = info.event.start.getTime();
+      }
+
+      await updateGoal(goal.id, updates);
       loadCalendarData();
     } catch (error) {
       console.error('Failed to update goal:', error);
@@ -310,11 +317,18 @@ const Calendar: React.FC = () => {
     try {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
       if (existingEvent?.goal) {
-        await updateGoal(existingEvent.goal.id, {
-          ...existingEvent.goal,
-          // Use start.getTime() directly instead of dateToTimestamp to preserve local time
-          scheduled_timestamp: info.event.start.getTime()
-        });
+        const goal = existingEvent.goal;
+        const isRoutine = goal.goal_type === 'routine';
+        const updates = { ...goal };
+
+        // Update the appropriate timestamp based on goal type
+        if (isRoutine) {
+          updates.routine_time = info.event.start.getTime();
+        } else {
+          updates.scheduled_timestamp = info.event.start.getTime();
+        }
+
+        await updateGoal(goal.id, updates);
       }
       loadCalendarData();
     } catch (error) {
@@ -334,19 +348,28 @@ const Calendar: React.FC = () => {
         // Check if the event was resized from the top (start time changed)
         const oldStartTime = new Date(existingEvent.start).getTime();
         const newStartTime = start.getTime();
+        const goal = existingEvent.goal;
+        const isRoutine = goal.goal_type === 'routine';
 
         if (oldStartTime !== newStartTime) {
           // If resized from top, update both start time and duration
-          await updateGoal(existingEvent.goal.id, {
-            ...existingEvent.goal,
-            // Use start.getTime() directly instead of dateToTimestamp to preserve local time
-            scheduled_timestamp: start.getTime(),
+          const updates = {
+            ...goal,
             duration: durationInMinutes
-          });
+          };
+
+          // Update the appropriate timestamp based on goal type
+          if (isRoutine) {
+            updates.routine_time = start.getTime();
+          } else {
+            updates.scheduled_timestamp = start.getTime();
+          }
+
+          await updateGoal(goal.id, updates);
         } else {
           // If resized from bottom, just update duration
-          await updateGoal(existingEvent.goal.id, {
-            ...existingEvent.goal,
+          await updateGoal(goal.id, {
+            ...goal,
             duration: durationInMinutes
           });
         }
