@@ -80,6 +80,8 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
     Router::new()
         .nest("/auth", auth_routes.layer(Extension(graph)))
         .merge(api_routes)
+        // Add health check endpoint that doesn't require auth
+        .route("/health", get(handle_health_check))
 }
 
 // Auth handlers
@@ -241,4 +243,9 @@ async fn handle_tool_execute(
     Json(request): Json<query::ToolExecuteRequest>,
 ) -> impl IntoResponse {
     query::handle_tool_execute(Extension(graph), Json(request)).await
+}
+
+// Add this function at the end of the file
+async fn handle_health_check() -> impl IntoResponse {
+    StatusCode::OK
 }
