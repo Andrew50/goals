@@ -66,7 +66,7 @@ jobs:
           curl --retry 5 --retry-delay 5 --retry-connrefused http://localhost:5057/health || echo "Backend health check failed but continuing"
           
           # Seed the test database with test data
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /bin/bash -c "apt-get update && apt-get install -y cypher-shell && chmod +x /data/seed_test_db.sh && /data/seed_test_db.sh"
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /bin/bash -c "apt-get update && apt-get install -y curl && curl -L https://github.com/neo4j/cypher-shell/releases/download/4.4.0/cypher-shell_4.4.0_all.deb -o cypher-shell.deb && apt-get install -y ./cypher-shell.deb && chmod +x /data/seed_test_db.sh && /data/seed_test_db.sh"
       
       - name: Run Playwright tests
         working-directory: ./frontend
