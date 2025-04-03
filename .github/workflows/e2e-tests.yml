@@ -46,8 +46,8 @@ jobs:
       
       - name: Start test environment
         run: |
-          # Start the test database and backend using docker-compose
-          docker-compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
+          # Start the test database and backend using docker compose
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
           
           # Wait for services to start
           echo "Waiting for services to start..."
@@ -57,7 +57,7 @@ jobs:
           curl --retry 5 --retry-delay 5 --retry-connrefused http://localhost:5057/health || echo "Backend health check failed but continuing"
           
           # Seed the test database with test data
-          docker-compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /bin/bash -c "apt-get update && apt-get install -y cypher-shell && chmod +x /data/seed_test_db.sh && /data/seed_test_db.sh"
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /bin/bash -c "apt-get update && apt-get install -y cypher-shell && chmod +x /data/seed_test_db.sh && /data/seed_test_db.sh"
       
       - name: Run Playwright tests
         working-directory: ./frontend
@@ -77,7 +77,7 @@ jobs:
       
       - name: Cleanup test environment
         if: always()
-        run: docker-compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+        run: docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
       
       - name: Mark test success
         if: success()
