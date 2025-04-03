@@ -1,0 +1,174 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [ prod ]
+
+jobs:
+  lint-backend:
+    name: Lint Rust Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Check code format
+        run: cargo fmt --all -- --check
+      
+      - name: Check with clippy
+        run: cargo clippy -- -D warnings
+
+  build-backend:
+    name: Build Rust Backend
+    needs: [lint-backend]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Build
+        run: cargo build --verbose
+
+  lint-frontend:
+    name: Lint React Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Lint with ESLint
+        run: npx eslint . --ext .js,.jsx,.ts,.tsx
+      
+      - name: Type check with TypeScript
+        run: npx tsc --noEmit
+        
+  build-frontend:
+    name: Build React Frontend
+    needs: [lint-frontend]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build
+        run: npm run build
+        
+  test-backend:
+    name: Run Backend Unit Tests
+    needs: [build-backend]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        
+      - name: Run backend unit tests
+        run: cargo test
+
+  test-frontend:
+    name: Run Frontend Unit Tests
+    needs: [build-frontend]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run unit tests
+        run: npm run test:ci
+        
+      - name: Upload test coverage
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: frontend-test-coverage
+          path: frontend/coverage/
+          retention-days: 30
+      
+  e2e-tests:
+    name: Run E2E Tests
+    needs: [test-backend, test-frontend]
+    uses: ./.github/workflows/e2e-tests.yml
+    with:
+      ref: ${{ github.ref }}
+
+  # This job is a placeholder to show the complete CI pipeline
+  # The actual deployment happens in the deploy.yml workflow when code is pushed to prod
+  deploy-ready:
+    name: Ready for Deployment
+    needs: [e2e-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR approved and ready for deployment
+        run: echo "All checks passed! This PR is ready to be merged to prod for deployment." 
