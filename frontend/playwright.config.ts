@@ -29,6 +29,10 @@ export default defineConfig({
         baseURL: 'http://localhost:3000',
         /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
         trace: 'on-first-retry',
+        /* Add video recording for failed tests */
+        video: 'retain-on-failure',
+        /* Add screenshot on failure */
+        screenshot: 'only-on-failure',
     },
 
     /* Configure projects for major browsers */
@@ -36,6 +40,27 @@ export default defineConfig({
         {
             name: 'chromium',
             use: { ...devices['Desktop Chrome'] },
+        },
+        {
+            name: 'chromium-new-york',
+            use: {
+                ...devices['Desktop Chrome'],
+                timezoneId: 'America/New_York',
+            },
+        },
+        {
+            name: 'chromium-london',
+            use: {
+                ...devices['Desktop Chrome'],
+                timezoneId: 'Europe/London',
+            },
+        },
+        {
+            name: 'chromium-tokyo',
+            use: {
+                ...devices['Desktop Chrome'],
+                timezoneId: 'Asia/Tokyo',
+            },
         },
 
         // We're only using Chrome for CI to keep things faster

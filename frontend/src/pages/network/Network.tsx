@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DataSet, Network as VisNetwork } from 'vis-network/standalone';
 import {
   Button, Dialog, DialogTitle, DialogContent, DialogActions,
@@ -52,8 +52,64 @@ const NetworkView: React.FC = () => {
   const deleteModeRef = useRef(deleteMode);
   const draggedNodeRef = useRef<number | null>(null);
 
+  // Handle clicks (and context clicks) to open the GoalMenu or perform deletion
+  const handleClick = useCallback((params: any, goalDialogMode: "edit" | "view") => {
+    if (!networkRef.current) return;
+    params.event.preventDefault();
+
+    if (addEdgeMode) return; // Do not open menu in edge mode
+
+    if (deleteModeRef.current) {
+      if (params.nodes.length > 0) {
+        // We'll handle this after handleDeleteNode is defined
+        const nodeId = params.nodes[0];
+        if (networkRef.current && nodesDataSetRef.current && edgesDataSetRef.current) {
+          privateRequest('goals/' + nodeId, 'DELETE')
+            .then(() => {
+              nodesDataSetRef.current?.remove(nodeId);
+              const currentEdges = edgesDataSetRef.current?.get();
+              currentEdges?.forEach(edge => {
+                if (edge.from === nodeId || edge.to === nodeId) {
+                  edgesDataSetRef.current?.remove(edge.id);
+                }
+              });
+            })
+            .catch(error => {
+              console.error('Failed to delete node:', error);
+            });
+        }
+      } else if (params.edges.length > 0) {
+        // We'll handle this after handleDeleteEdge is defined
+        const edgeId = params.edges[0];
+        if (edgesDataSetRef.current) {
+          const [fromId, toId] = edgeId.split('-').map(Number);
+          privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE')
+            .then(() => {
+              edgesDataSetRef.current?.remove(edgeId);
+            })
+            .catch(error => {
+              console.error('Failed to delete edge:', error);
+            });
+        }
+      }
+      return;
+    }
+
+    const nodeId = networkRef.current.getNodeAt(params.pointer.DOM);
+    if (nodeId && nodesDataSetRef.current) {
+      const node = nodesDataSetRef.current.get(nodeId);
+      if (node) {
+        GoalMenu.open(node, goalDialogMode, (goal: Goal) => {
+          // After editing/viewing, update the node's properties
+          const updatedNode = formatNetworkNode(goal);
+          nodesDataSetRef.current?.update(updatedNode);
+        });
+      }
+    }
+  }, [addEdgeMode]);
+
   // vis‑network configuration options
-  const options = {
+  const options = useMemo(() => ({
     nodes: {
       shape: 'box',
       margin: { top: 12, right: 12, bottom: 12, left: 12 },
@@ -115,9 +171,9 @@ const NetworkView: React.FC = () => {
       deleteNode: true,
       deleteEdge: true
     }
-  } as const;
+  }), []);
 
-  // Helper: Given a node ID, find connected edges (for hover highlighting)
+  // Helper: Given a node ID, find connected elements (for hover highlighting)
   const findConnectedElements = (nodeId: number, edges: NetworkEdge[]): { nodes: Set<number>, edges: Set<string> } => {
     const visited = new Set<number>();
     const connectedEdges = new Set<string>();
@@ -150,35 +206,6 @@ const NetworkView: React.FC = () => {
     traverseDownward(nodeId);
 
     return { nodes: visited, edges: connectedEdges };
-  };
-
-  // Handle clicks (and context clicks) to open the GoalMenu or perform deletion
-  const handleClick = (params: any, goalDialogMode: "edit" | "view") => {
-    if (!networkRef.current) return;
-    params.event.preventDefault();
-
-    if (addEdgeMode) return; // Do not open menu in edge mode
-
-    if (deleteModeRef.current) {
-      if (params.nodes.length > 0) {
-        handleDeleteNode(params.nodes[0]);
-      } else if (params.edges.length > 0) {
-        handleDeleteEdge(params.edges[0]);
-      }
-      return;
-    }
-
-    const nodeId = networkRef.current.getNodeAt(params.pointer.DOM);
-    if (nodeId && nodesDataSetRef.current) {
-      const node = nodesDataSetRef.current.get(nodeId);
-      if (node) {
-        GoalMenu.open(node, goalDialogMode, (goal: Goal) => {
-          // After editing/viewing, update the node's properties
-          const updatedNode = formatNetworkNode(goal);
-          nodesDataSetRef.current?.update(updatedNode);
-        });
-      }
-    }
   };
 
   // Initialize the network once on mount
@@ -327,37 +354,6 @@ const NetworkView: React.FC = () => {
     }
   };
 
-  // Delete an edge: update the backend and remove it from the DataSet
-  const handleDeleteEdge = async (edgeId: string) => {
-    if (edgesDataSetRef.current) {
-      const [fromId, toId] = edgeId.split('-').map(Number);
-      try {
-        await privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE');
-        edgesDataSetRef.current.remove(edgeId);
-      } catch (error) {
-        console.error('Failed to delete edge:', error);
-      }
-    }
-  };
-
-  // Delete a node: remove the node and its related edges (and update the backend)
-  const handleDeleteNode = async (nodeId: number) => {
-    if (nodesDataSetRef.current && edgesDataSetRef.current) {
-      try {
-        await privateRequest('goals/' + nodeId, 'DELETE');
-        nodesDataSetRef.current.remove(nodeId);
-        const currentEdges = edgesDataSetRef.current.get();
-        currentEdges.forEach(edge => {
-          if (edge.from === nodeId || edge.to === nodeId) {
-            edgesDataSetRef.current?.remove(edge.id);
-          }
-        });
-      } catch (error) {
-        console.error('Failed to delete node:', error);
-      }
-    }
-  };
-
   // Create a relationship edge between two nodes
   const handleCreateRelationship = async (fromId: number, toId: number, relationshipType: RelationshipType) => {
     try {
@@ -428,6 +424,37 @@ const NetworkView: React.FC = () => {
       networkRef.current.fit();
     } catch (error) {
       console.error('Error reorganizing network:', error);
+    }
+  };
+
+  // Delete an edge: update the backend and remove it from the DataSet
+  const handleDeleteEdge = async (edgeId: string) => {
+    if (edgesDataSetRef.current) {
+      const [fromId, toId] = edgeId.split('-').map(Number);
+      try {
+        await privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE');
+        edgesDataSetRef.current.remove(edgeId);
+      } catch (error) {
+        console.error('Failed to delete edge:', error);
+      }
+    }
+  };
+
+  // Delete a node: remove the node and its related edges (and update the backend)
+  const handleDeleteNode = async (nodeId: number) => {
+    if (nodesDataSetRef.current && edgesDataSetRef.current) {
+      try {
+        await privateRequest('goals/' + nodeId, 'DELETE');
+        nodesDataSetRef.current.remove(nodeId);
+        const currentEdges = edgesDataSetRef.current.get();
+        currentEdges.forEach(edge => {
+          if (edge.from === nodeId || edge.to === nodeId) {
+            edgesDataSetRef.current?.remove(edge.id);
+          }
+        });
+      } catch (error) {
+        console.error('Failed to delete node:', error);
+      }
     }
   };
 
