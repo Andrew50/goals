@@ -100,16 +100,26 @@ const DraggableTask = ({ task, onTaskUpdate }: DraggableTaskProps) => {
         backgroundColor: '#2196f3',
       }} />*/}
       <span>{task.title}</span>
-      {task.goal.end_timestamp && (
-        <span style={{
-          fontSize: '0.85em',
-          opacity: 0.9,
-          marginLeft: '8px',
-          whiteSpace: 'nowrap'
-        }}>
-          Due {formatDueDate(task.goal.end_timestamp)}
-        </span>
-      )}
+      <div style={{
+        fontSize: '0.85em',
+        opacity: 0.9,
+        marginLeft: '8px',
+        whiteSpace: 'nowrap',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end'
+      }}>
+        {task.goal.start_timestamp && (
+          <span>
+            Start {formatDueDate(task.goal.start_timestamp)}
+          </span>
+        )}
+        {task.goal.end_timestamp && (
+          <span>
+            Due {formatDueDate(task.goal.end_timestamp)}
+          </span>
+        )}
+      </div>
     </div>
   );
 };
