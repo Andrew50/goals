@@ -1,81 +1,75 @@
-/* Define custom properties for FullCalendar according to documentation */
+/* -----------------------------
+   Root Variables (Optional)
+----------------------------- */
 :root {
-    /* Basic calendar colors */
-    --fc-border-color: rgba(255, 255, 255, 0.15);
-    --fc-button-text-color: #fff;
-    --fc-button-bg-color: #2C3E50;
-    --fc-button-border-color: #2C3E50;
+    /* Button colors, borders, etc. */
+    --fc-button-text-color: #ffffff;
+    --fc-button-bg-color: #2c3e50;
+    --fc-button-border-color: #2c3e50;
     --fc-button-hover-bg-color: #1e2b37;
     --fc-button-hover-border-color: #1a252f;
     --fc-button-active-bg-color: #1a252f;
     --fc-button-active-border-color: #151e27;
 
-    /* Today highlight */
+    /* Misc. */
+    --fc-border-color: rgba(255, 255, 255, 0.15);
     --fc-today-bg-color: rgba(33, 150, 243, 0.1);
+    --fc-now-indicator-color: #ff0000;
 
-    /* Event styling */
+    /* Default event colors if not set in code */
     --fc-event-border-color: #3788d8;
     --fc-event-bg-color: #3788d8;
     --fc-event-text-color: #fff;
-
-    /* Now indicator */
-    --fc-now-indicator-color: #ff0000;
 }
 
-/* Container styles */
+/* -----------------------------
+   Layout Containers
+----------------------------- */
 .calendar-container {
-    height: calc(100vh - 64px);
     display: flex;
-    padding: 20px;
     gap: 20px;
+    padding: 20px;
+    height: calc(100vh - 64px);
     overflow: hidden;
+    background-color: #f0f2f5;
+    /* Optional body background */
 }
 
-/* Sidebar styles */
 .calendar-sidebar {
     width: 250px;
-    height: 100%;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     background-color: #101f33;
     border-radius: 12px;
+    overflow: hidden;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
 }
 
-/* Main calendar area */
 .calendar-main {
     flex: 1;
-    height: 100%;
     background-color: #101f33;
     border-radius: 12px;
-    padding: 16px;
     overflow: hidden;
     position: relative;
+    padding: 16px;
 }
 
-/* Custom FullCalendar classes */
-.fc-custom-event {
-    padding: 2px 4px;
-    border-radius: 4px;
-    cursor: pointer !important;
-    pointer-events: all !important;
-}
-
-/* Loading indicator */
+/* -----------------------------
+   Loading Indicator
+----------------------------- */
 .calendar-loading-indicator {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(255, 255, 255, 0.8);
+    background-color: rgba(255, 255, 255, 0.9);
     padding: 20px;
     border-radius: 10px;
+    z-index: 1000;
     display: flex;
     flex-direction: column;
     align-items: center;
-    z-index: 1000;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .loading-spinner {
@@ -98,9 +92,10 @@
     }
 }
 
-/* Calendar error and loading states */
-.calendar-error-container,
-.calendar-loading-container {
+/* -----------------------------
+   Error Container
+----------------------------- */
+.calendar-error-container {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -110,18 +105,16 @@
     text-align: center;
     background-color: #f9f9f9;
     border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     margin: 1rem 0;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
-.calendar-error-container h2,
-.calendar-loading-container h2 {
+.calendar-error-container h2 {
     margin-bottom: 1rem;
     color: #333;
 }
 
-.calendar-error-container p,
-.calendar-loading-container p {
+.calendar-error-container p {
     margin-bottom: 1.5rem;
     color: #666;
     max-width: 500px;
@@ -130,7 +123,7 @@
 .retry-button {
     padding: 0.5rem 1.5rem;
     background-color: #4a6cf7;
-    color: white;
+    color: #fff;
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -142,224 +135,72 @@
     background-color: #3a5ce5;
 }
 
-/* More link styling */
+/* -----------------------------
+   FullCalendar Overrides
+----------------------------- */
+/* Let FullCalendar handle pointer events. Avoid forcing pointer-events: all !important */
+.fc .fc-button {
+    background-color: var(--fc-button-bg-color) !important;
+    border-color: var(--fc-button-border-color) !important;
+    color: var(--fc-button-text-color) !important;
+}
+
+.fc .fc-button:hover {
+    background-color: var(--fc-button-hover-bg-color) !important;
+    border-color: var(--fc-button-hover-border-color) !important;
+}
+
+.fc .fc-button:active {
+    background-color: var(--fc-button-active-bg-color) !important;
+    border-color: var(--fc-button-active-border-color) !important;
+}
+
+/* Example custom event class (optional) */
+.fc-event {
+    border-radius: 4px !important;
+    overflow: hidden !important;
+    /* rely on FullCalendar for backgroundColor, textColor, borderColor */
+}
+
+/* If you want an alternative style for events, you can use your own class:
+   .fc-event.my-custom-class { ... } */
+
+/* More link in dayGrid */
 .fc-daygrid-more-link {
     margin: 2px !important;
     padding: 2px 4px !important;
     background-color: rgba(255, 255, 255, 0.1) !important;
     border-radius: 4px !important;
-}
-
-/* Fix the problematic styles that make events transparent */
-/* Remove these conflicting rules that make backgrounds transparent */
-.fc-event,
-.fc-event-main,
-.fc-event-main-frame {
-    /* Remove the transparent background */
-    /* background-color: transparent !important; */
-    border: none !important;
-    pointer-events: all !important;
-}
-
-/* Update custom event styling to properly show colors */
-.custom-calendar-event {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 2px 4px;
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    min-height: 100%;
-    z-index: 5 !important;
-    pointer-events: all !important;
-    cursor: pointer;
-    /* Don't set background-color here, let the FullCalendar properties take effect */
-}
-
-/* Ensure FullCalendar events display correctly */
-.fc-event {
-    margin: 1px 0;
-    border-radius: 4px !important;
-    border-left-width: 4px !important;
-    overflow: hidden;
-}
-
-/* Override any transparent styles */
-.fc-h-event .fc-event-main {
-    color: var(--fc-event-text-color) !important;
-}
-
-/* Ensure that time grid events show their colors correctly */
-.fc-timegrid-event {
-    z-index: 4 !important;
-    position: relative !important;
-    pointer-events: all !important;
-    /* Let the coloring be handled by FullCalendar */
-}
-
-/* Ensure events in day grid mode also show their colors */
-.fc-daygrid-event {
-    border-radius: 4px !important;
-    padding: 2px 4px !important;
-    margin: 1px 2px !important;
-    /* Let the coloring be handled by FullCalendar */
-}
-
-/* Remove or adjust styles that might be hiding event backgrounds */
-.fc-event-main-frame {
-    width: 100%;
-    pointer-events: all !important;
-    /* Don't override background here */
-}
-
-/* Make sure the event content is visible */
-.fc-event-title,
-.fc-event-time {
     color: #ffffff !important;
     font-weight: 500;
-    font-size: 0.85em;
-    z-index: 6 !important;
-    position: relative;
-    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
 }
 
-/* Ensure custom event content fills the space */
-.custom-calendar-event {
-    /* ... existing styles ... */
-    min-height: 24px !important;
-    margin: 1px 0 !important;
-    border-radius: 4px !important;
-    /* Don't set background-color: transparent here */
-}
-
-/* Adjust the all-day section in week view */
-.fc .fc-timegrid-axis-cushion {
-    min-height: 28px !important;
-}
-
-.fc .fc-timegrid-slot {
-    height: 28px !important;
-}
-
-/* Day completion indicator styles */
-.day-completion {
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    font-size: 0.7rem;
+/* Make sure text is visible inside events */
+.fc-event-title,
+.fc-event-time {
+    color: #fff !important;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.95);
-    padding: 1px 6px;
-    border-radius: 4px;
-    background-color: rgba(0, 0, 0, 0.25);
-    z-index: 1;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(2px);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    font-size: 0.85em;
 }
 
-/* Hide empty completion indicators AND their background */
-.day-completion:empty {
-    display: none;
-    background-color: transparent;
-    padding: 0;
+/* Remove excessive transparency from event wrappers */
+.fc-daygrid-event,
+.fc-timegrid-event {
+    background: none !important;
+    /* Let FullCalendar set the color */
+    pointer-events: auto !important;
+    /* Ensure events are clickable */
 }
 
-/* Only show completion in the day grid (all-day section), hide in time grid */
-.fc-timegrid-col .day-completion {
-    display: none;
-}
-
-/* Keep the completion indicator visible in the day grid (month view and all-day section) */
-.fc-daygrid-day .day-completion {
-    display: block;
-}
-
-/* Hide background when completion is empty */
-.day-completion:empty+.completion-background {
-    display: none;
-}
-
-/* Style for completion in time grid views */
-.fc-timegrid-col-events .day-completion {
-    top: 4px;
-    right: 4px;
-}
-
-/* Ensure the cell can position the completion indicator properly */
-.fc-daygrid-day,
-.fc-timegrid-col {
-    position: relative !important;
-}
-
-/* Adjust background opacity for better readability */
-.fc-daygrid-day-frame,
-.fc-timegrid-col-frame {
-    position: relative;
-    z-index: 1;
-}
-
-.completion-background {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    opacity: 0.2;
-    z-index: 0;
-    transition: background-color 0.3s ease;
-}
-
-/* Optimize rendering performance */
-.fc-daygrid-day,
-.fc-timegrid-col {
-    will-change: transform;
-    transform: translateZ(0);
-}
-
-.custom-calendar-event {
-    will-change: transform;
-    transform: translateZ(0);
-}
-
-/* Reduce the visual complexity of the calendar when many events are showing */
-@media screen and (max-width: 768px) {
+/* If your layout is cramped, you can limit dayGrid cell height in mobile */
+@media (max-width: 768px) {
     .fc-daygrid-day-events {
         max-height: 100px;
         overflow-y: auto;
     }
-
-    .fc-daygrid-more-link {
-        font-weight: bold;
-    }
 }
 
-/* Add these styles to the file */
-
-.calendar-loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    width: 100%;
-    background-color: #f8f9fa;
-}
-
-.calendar-loading-container .loading-spinner {
-    width: 50px;
-    height: 50px;
-    border: 5px solid #f3f3f3;
-    border-top: 5px solid #3498db;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-bottom: 20px;
-}
-
-.calendar-loading-container p {
-    font-size: 18px;
-    color: #333;
+/* Add a height fix for the all-day section in timeGrid if needed */
+.fc .fc-timegrid-all-day-cushion {
+    min-height: 40px !important;
 }
