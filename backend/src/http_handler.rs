@@ -59,6 +59,7 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
     let routine_routes = Router::new().route("/:timestamp", post(handle_process_user_routines));
 
     let query_routes = Router::new()
+        .route("/ws", get(query::handle_query_ws))
         .route("/", post(handle_query))
         .route("/tool-execute", post(handle_tool_execute));
 

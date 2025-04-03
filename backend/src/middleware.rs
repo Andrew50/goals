@@ -1,52 +1,76 @@
 use axum::{
-    body::Body,
-    http::{Request, StatusCode},
+    extract::{Request, WebSocketUpgrade},
+    http::header,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
-use serde::{Deserialize, Serialize};
 use std::env;
+use tracing::{error, info};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub user_id: i64,
-    pub username: String,
-    pub exp: usize,
-}
+use crate::auth::Claims;
 
-pub async fn auth_middleware(
-    mut request: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    // Log the incoming request
-    println!("Incoming request: {} {}", request.method(), request.uri());
+pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, Response> {
+    // Get the token either from Authorization header or query parameter for WebSocket
+    let token = get_token_from_request(&request)?;
 
-    let token = request
-        .headers()
-        .get("Authorization")
-        .and_then(|auth_header| auth_header.to_str().ok())
-        .and_then(|auth_str| auth_str.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
+    // Get JWT secret from environment variables or use a default
     let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
 
-    let claims = decode::<Claims>(
-        token,
+    // Validate the JWT
+    let token_data = match decode::<Claims>(
+        &token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
         &Validation::default(),
-    )
-    .map_err(|_| StatusCode::UNAUTHORIZED)?
-    .claims;
+    ) {
+        Ok(token_data) => token_data,
+        Err(e) => {
+            error!("JWT validation error: {:?}", e);
+            return Err((axum::http::StatusCode::UNAUTHORIZED, "Invalid token").into_response());
+        }
+    };
 
-    // Add the user_id to the request extensions
-    request.extensions_mut().insert(claims.user_id);
+    // Extract the user ID from the validated token
+    let user_id = token_data.claims.user_id;
 
-    // Run the next middleware or handler
-    let response = next.run(request).await;
+    // Add the user ID to the request extensions
+    request.extensions_mut().insert(user_id);
 
-    // Log the outgoing response
-    println!("Outgoing response: {}", response.status());
+    // Log the authenticated request
+    info!("Authenticated request for user ID: {}", user_id);
 
-    Ok(response)
+    // Continue processing the request
+    Ok(next.run(request).await)
+}
+
+// Extract token from request (either from Authorization header or query parameter)
+fn get_token_from_request(request: &Request) -> Result<String, Response> {
+    // First try to get token from Authorization header
+    if let Some(auth_header) = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    {
+        if auth_header.starts_with("Bearer ") {
+            return Ok(auth_header[7..].to_string());
+        }
+    }
+
+    // If not in header, check if this is a WebSocket upgrade request
+    if request.extensions().get::<WebSocketUpgrade>().is_some() {
+        // Check for token in query parameters
+        if let Some(query) = request.uri().query() {
+            for pair in query.split('&') {
+                let mut parts = pair.split('=');
+                if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+                    if key == "token" {
+                        return Ok(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // No token found
+    Err((axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response())
 }

@@ -73,6 +73,7 @@ dependencies = [
  "async-trait",
  "axum-core",
  "axum-macros",
+ "base64 0.22.1",
  "bytes",
  "futures-util",
  "http 1.1.0",
@@ -91,8 +92,10 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
+ "sha1",
  "sync_wrapper 1.0.1",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-layer",
  "tower-service",
@@ -140,6 +143,7 @@ dependencies = [
  "chrono",
  "chrono-tz 0.10.1",
  "dotenvy",
+ "futures-util",
  "hyper 1.5.1",
  "jsonwebtoken",
  "neo4rs",
@@ -218,6 +222,15 @@ name = "bitflags"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
+
+[[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
 
 [[package]]
 name = "blowfish"
@@ -350,6 +363,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "cpufeatures"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ca741a962e1b0bff6d724a1a0958b686406e853bb14061f218562e1896f95e6"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -358,6 +380,12 @@ dependencies = [
  "generic-array",
  "typenum",
 ]
+
+[[package]]
+name = "data-encoding"
+version = "2.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 
 [[package]]
 name = "deadpool"
@@ -396,6 +424,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
+]
+
+[[package]]
+name = "digest"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+dependencies = [
+ "block-buffer",
+ "crypto-common",
 ]
 
 [[package]]
@@ -1741,6 +1779,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2027,6 +2076,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2148,6 +2209,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tungstenite"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18e5b8366ee7a95b16d32197d0b2604b43a0be89dc5fac9f8e96ccafbaedda8a"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http 1.1.0",
+ "httparse",
+ "log",
+ "rand",
+ "sha1",
+ "thiserror",
+ "utf-8",
+]
+
+[[package]]
 name = "typenum"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2175,6 +2254,12 @@ dependencies = [
  "idna",
  "percent-encoding",
 ]
+
+[[package]]
+name = "utf-8"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "utf16_iter"
