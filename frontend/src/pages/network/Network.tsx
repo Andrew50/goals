@@ -9,7 +9,7 @@ import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
-import { Relationship, NetworkNode, NetworkEdge, Goal, RelationshipType } from '../../types/goals';
+import { NetworkNode, NetworkEdge, Goal, RelationshipType } from '../../types/goals';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { privateRequest, createRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
@@ -269,7 +269,7 @@ const NetworkView: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       networkRef.current?.destroy();
     };
-  }, []);
+  }, [handleClick, options]);
 
   // Resize observer so the network always fits the container
   useEffect(() => {

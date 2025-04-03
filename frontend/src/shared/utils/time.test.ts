@@ -69,6 +69,72 @@ describe('Time conversion utilities', () => {
             expect(toUTCTimestamp(null)).toBeUndefined();
             expect(toUTCTimestamp(undefined)).toBeUndefined();
         });
+
+        test('should handle leap year dates correctly', () => {
+            // Test with February 29, 2020 (leap year)
+            const restoreOffset = mockTimezoneOffset(300); // EST timezone
+
+            // February 29, 2020 at 12:00:00 UTC
+            const leapYearUTC = new Date(Date.UTC(2020, 1, 29, 12, 0, 0)).getTime();
+
+            // Convert to local
+            const leapYearLocal = toLocalTimestamp(leapYearUTC);
+
+            // Check date is preserved (but 5 hours earlier)
+            const localDate = new Date(leapYearLocal!);
+            expect(localDate.getFullYear()).toBe(2020);
+            expect(localDate.getMonth()).toBe(1); // February (0-indexed)
+            expect(localDate.getDate()).toBe(29);
+            expect(localDate.getHours()).toBe(7); // 12:00 UTC - 5 hours = 7:00 EST
+
+            // Convert back to UTC
+            const backToUTC = toUTCTimestamp(leapYearLocal);
+            expect(backToUTC).toBe(leapYearUTC);
+
+            restoreOffset();
+        });
+
+        test('should handle half-hour timezone offsets correctly', () => {
+            // Test with India (UTC+5:30) timezone
+            const restoreOffset = mockTimezoneOffset(-330); // -330 minutes is UTC+5:30
+
+            // January 1, 2023 at 12:00:00 UTC
+            const utcTimestamp = 1672574400000;
+
+            // In India, should be 17:30
+            const localTimestamp = toLocalTimestamp(utcTimestamp);
+
+            const localDate = new Date(localTimestamp!);
+            expect(localDate.getHours()).toBe(17);
+            expect(localDate.getMinutes()).toBe(30);
+
+            // Convert back to UTC
+            const backToUTC = toUTCTimestamp(localTimestamp);
+            expect(backToUTC).toBe(utcTimestamp);
+
+            restoreOffset();
+        });
+
+        test('should handle quarter-hour timezone offsets correctly', () => {
+            // Test with Nepal (UTC+5:45) timezone
+            const restoreOffset = mockTimezoneOffset(-345); // -345 minutes is UTC+5:45
+
+            // January 1, 2023 at 12:00:00 UTC
+            const utcTimestamp = 1672574400000;
+
+            // In Nepal, should be 17:45
+            const localTimestamp = toLocalTimestamp(utcTimestamp);
+
+            const localDate = new Date(localTimestamp!);
+            expect(localDate.getHours()).toBe(17);
+            expect(localDate.getMinutes()).toBe(45);
+
+            // Convert back to UTC
+            const backToUTC = toUTCTimestamp(localTimestamp);
+            expect(backToUTC).toBe(utcTimestamp);
+
+            restoreOffset();
+        });
     });
 
     describe('goalToLocal and goalToUTC', () => {
@@ -137,6 +203,86 @@ describe('Time conversion utilities', () => {
         test('should throw error if goal is already in the target timezone', () => {
             expect(() => goalToLocal({ _tz: 'user' } as Goal)).toThrow('Goal is already in user timezone');
             expect(() => goalToUTC({ _tz: 'utc' } as Goal)).toThrow('Goal is already in UTC timezone');
+        });
+
+        test('should convert all timestamp fields including optional ones', () => {
+            const restoreOffset = mockTimezoneOffset(300); // EST timezone
+
+            // Create a goal with all possible timestamp fields set
+            const completeUTCGoal: Goal = {
+                id: 1,
+                name: 'Complete Test Goal',
+                goal_type: 'task',
+                start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z
+                end_timestamp: 1672578000000,   // 2023-01-01T13:00:00Z
+                next_timestamp: 1672581600000,  // 2023-01-01T14:00:00Z
+                scheduled_timestamp: 1672585200000, // 2023-01-01T15:00:00Z
+                routine_time: 1672588800000,    // 2023-01-01T16:00:00Z
+                duration: 60,
+                _tz: 'utc',
+                // Add any additional timestamp fields that might be used
+            };
+
+            // Convert to local
+            const localGoal = goalToLocal(completeUTCGoal);
+
+            // Verify all timestamp fields are converted
+            expect(localGoal._tz).toBe('user');
+            expect(localGoal.start_timestamp).toBe(completeUTCGoal.start_timestamp! - (300 * 60 * 1000));
+            expect(localGoal.end_timestamp).toBe(completeUTCGoal.end_timestamp! - (300 * 60 * 1000));
+            expect(localGoal.next_timestamp).toBe(completeUTCGoal.next_timestamp! - (300 * 60 * 1000));
+            expect(localGoal.scheduled_timestamp).toBe(completeUTCGoal.scheduled_timestamp! - (300 * 60 * 1000));
+            expect(localGoal.routine_time).toBe(completeUTCGoal.routine_time! - (300 * 60 * 1000));
+
+            // Convert back to UTC
+            const backToUTC = goalToUTC(localGoal);
+
+            // Verify all timestamp fields are restored to original UTC values
+            expect(backToUTC._tz).toBe('utc');
+            expect(backToUTC.start_timestamp).toBe(completeUTCGoal.start_timestamp);
+            expect(backToUTC.end_timestamp).toBe(completeUTCGoal.end_timestamp);
+            expect(backToUTC.next_timestamp).toBe(completeUTCGoal.next_timestamp);
+            expect(backToUTC.scheduled_timestamp).toBe(completeUTCGoal.scheduled_timestamp);
+            expect(backToUTC.routine_time).toBe(completeUTCGoal.routine_time);
+
+            restoreOffset();
+        });
+
+        test('should handle undefined timestamp fields gracefully', () => {
+            const restoreOffset = mockTimezoneOffset(300); // EST timezone
+
+            // Create a goal with missing timestamp fields
+            const partialUTCGoal: Goal = {
+                id: 1,
+                name: 'Partial Test Goal',
+                goal_type: 'task',
+                start_timestamp: 1672574400000, // Only this timestamp is defined
+                _tz: 'utc',
+            };
+
+            // Convert to local
+            const localGoal = goalToLocal(partialUTCGoal);
+
+            // Verify defined timestamp is converted and undefined ones remain undefined
+            expect(localGoal._tz).toBe('user');
+            expect(localGoal.start_timestamp).toBe(partialUTCGoal.start_timestamp! - (300 * 60 * 1000));
+            expect(localGoal.end_timestamp).toBeUndefined();
+            expect(localGoal.next_timestamp).toBeUndefined();
+            expect(localGoal.scheduled_timestamp).toBeUndefined();
+            expect(localGoal.routine_time).toBeUndefined();
+
+            // Convert back to UTC
+            const backToUTC = goalToUTC(localGoal);
+
+            // Verify only the defined timestamp is restored to original UTC value
+            expect(backToUTC._tz).toBe('utc');
+            expect(backToUTC.start_timestamp).toBe(partialUTCGoal.start_timestamp);
+            expect(backToUTC.end_timestamp).toBeUndefined();
+            expect(backToUTC.next_timestamp).toBeUndefined();
+            expect(backToUTC.scheduled_timestamp).toBeUndefined();
+            expect(backToUTC.routine_time).toBeUndefined();
+
+            restoreOffset();
         });
     });
 
@@ -209,6 +355,44 @@ describe('Time conversion utilities', () => {
             expect(inputStringToTimestamp('', 'date')).toBe(0);
             expect(inputStringToTimestamp('', 'time')).toBe(0);
             expect(inputStringToTimestamp('', 'datetime')).toBe(0);
+        });
+
+        test('should handle midnight boundary cases', () => {
+            // Test timestamps exactly at midnight
+            const midnightTimestamp = new Date(2023, 0, 15, 0, 0, 0, 0).getTime(); // Midnight
+
+            // Midnight should format to 00:00 for time and the correct date
+            expect(timestampToInputString(midnightTimestamp, 'date')).toBe('2023-01-15');
+            expect(timestampToInputString(midnightTimestamp, 'time')).toBe('00:00');
+            expect(timestampToInputString(midnightTimestamp, 'datetime')).toBe('2023-01-15T00:00');
+
+            // Parse back to timestamp
+            const parsedMidnight = inputStringToTimestamp('00:00', 'time');
+            const midnightDate = new Date(parsedMidnight);
+            expect(midnightDate.getHours()).toBe(0);
+            expect(midnightDate.getMinutes()).toBe(0);
+
+            // Test just before midnight
+            const beforeMidnightTimestamp = new Date(2023, 0, 15, 23, 59, 59, 999).getTime();
+            expect(timestampToInputString(beforeMidnightTimestamp, 'time')).toBe('23:59');
+
+            // Test just after midnight
+            const afterMidnightTimestamp = new Date(2023, 0, 16, 0, 0, 0, 1).getTime();
+            expect(timestampToInputString(afterMidnightTimestamp, 'date')).toBe('2023-01-16');
+        });
+
+        test('should handle invalid input strings gracefully', () => {
+            // Test with malformed date strings
+            expect(inputStringToTimestamp('not-a-date', 'date')).toBe(0);
+            expect(inputStringToTimestamp('2023-13-32', 'date')).not.toBe(0); // Parsed but may result in an unexpected date
+
+            // Test with malformed time strings
+            expect(inputStringToTimestamp('25:70', 'time')).not.toBe(0); // Parsed but may wrap around (e.g., 1:70 might become 2:10)
+            expect(inputStringToTimestamp('not-a-time', 'time')).toBe(0);
+
+            // Test with malformed datetime strings
+            expect(inputStringToTimestamp('2023-01-15Tnot-a-time', 'datetime')).not.toBe(0); // May parse just the date part
+            expect(inputStringToTimestamp('not-a-dateT12:30', 'datetime')).toBe(0);
         });
     });
 
