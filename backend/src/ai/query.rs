@@ -1,15 +1,49 @@
-use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
-use chrono::{NaiveDate, Utc};
-use neo4rs::query;
+use axum::{
+    extract::{
+        ws::{Message as WsMessage, WebSocket},
+        Extension, WebSocketUpgrade,
+    },
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
+use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::goal::GOAL_RETURN_QUERY;
+use crate::ai::tool_registry;
 
 const SIMPLE_ERROR_MESSAGE: &str = "Error.";
 
+// Define WebSocket message types
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub enum WsQueryMessage {
+    UserQuery {
+        content: String,
+        conversation_id: Option<String>,
+    },
+    AssistantText {
+        content: String,
+    },
+    ToolCall {
+        name: String,
+        args: serde_json::Value,
+    },
+    ToolResult {
+        success: bool,
+        name: String,
+        content: serde_json::Value,
+    },
+    Error {
+        message: String,
+    },
+}
+
 // Struct for the Gemini request
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct GeminiRequest {
     query: String,
     conversation_id: Option<String>,
@@ -114,6 +148,7 @@ struct Candidate {
 #[derive(Deserialize, Debug, Clone)]
 struct CandidateContent {
     parts: Vec<ContentPart>,
+    #[allow(dead_code)]
     role: String,
 }
 
@@ -131,9 +166,11 @@ struct FunctionCall {
 
 // Struct for tool execution request
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct ToolExecuteRequest {
     tool_name: String,
     args: Option<serde_json::Value>,
+    #[allow(dead_code)]
     conversation_id: Option<String>,
 }
 
@@ -145,54 +182,35 @@ pub struct ToolExecuteResponse {
     error: Option<String>,
 }
 
-// Main handler for query requests
-pub async fn handle_query(
-    Extension(pool): Extension<neo4rs::Graph>,
-    Json(request): Json<GeminiRequest>,
-) -> impl IntoResponse {
+// Helper function to process a user query and stream responses
+async fn process_user_query(
+    _sender: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
+    message_history: &mut Vec<Message>,
+    query: String,
+    _conversation_id: Option<String>,
+    pool: &neo4rs::Graph,
+) -> axum::http::Response<axum::body::Body> {
     // Log incoming request details
-    println!("Received query request: {:?}", request.query);
+    println!("Received query request: {:?}", query);
 
     // Initialize reqwest client
     let client = Client::new();
 
-    // Create message history or initialize with user query
-    let mut message_history = request.message_history.unwrap_or_else(Vec::new);
-
     // Always add the current query to the message history
     message_history.push(Message {
         role: "user".to_string(),
-        content: request.query.clone(),
+        content: query.clone(),
     });
 
     // Clean up message history - limit size and filter out repeated error messages
     if message_history.len() > 10 {
         // Keep only the last 10 messages to prevent history from getting too large
         let skip_count = message_history.len() - 10;
-        message_history = message_history.into_iter().skip(skip_count).collect();
+        message_history.drain(0..skip_count);
     }
 
-    // Remove consecutive duplicate error messages from the assistant
-    // let mut i = 1; // This logic might conflict with simple errors, consider removing or adjusting
-    // while i < message_history.len() {
-    //     if message_history[i].role == "assistant"
-    //         && message_history[i]
-    //             .content
-    //             .contains("error processing your request") // This specific check is removed
-    //         && i > 0
-    //         && message_history[i].content == message_history[i - 1].content
-    //     {
-    //         message_history.remove(i);
-    //     } else {
-    //         i += 1;
-    //     }
-    // }
-
     // Filter out messages with empty content
-    message_history = message_history
-        .into_iter()
-        .filter(|msg| !msg.content.trim().is_empty())
-        .collect();
+    message_history.retain(|msg| !msg.content.trim().is_empty());
 
     // Create Gemini API-specific message history with instructional messages first
     let mut initial_gemini_contents = Vec::new();
@@ -213,7 +231,7 @@ pub async fn handle_query(
     });
 
     // Add actual conversation history
-    for msg in &message_history {
+    for msg in message_history.iter_mut() {
         let role = if msg.role == "assistant" {
             "model".to_string()
         } else {
@@ -390,13 +408,13 @@ pub async fn handle_query(
                     role: "assistant".to_string(),
                     content: format!("Gemini API Error: {}", status), // Internal log/history
                 });
-                let conversation_id = request.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id = _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                  return (
                     StatusCode::OK, // Return OK so frontend shows the simple error
                     Json(GeminiResponse {
                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None,
                     }),
                 ).into_response();
@@ -410,13 +428,13 @@ pub async fn handle_query(
                  role: "assistant".to_string(),
                  content: format!("API Connection Error: {}", e), // Internal log/history
              });
-             let conversation_id = request.conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+             let conversation_id = _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
                  StatusCode::OK, // Return OK so frontend shows the simple error
                  Json(GeminiResponse {
                      response: SIMPLE_ERROR_MESSAGE.to_string(),
                      conversation_id,
-                     message_history,
+                     message_history: message_history.to_vec(),
                      tool_execution: None,
                  }),
              ).into_response();
@@ -434,15 +452,14 @@ pub async fn handle_query(
                 role: "assistant".to_string(),
                 content: format!("API Response Read Error: {}", e), // Internal log/history
             });
-            let conversation_id = request
-                .conversation_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let conversation_id =
+                _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             return (
                 StatusCode::OK, // Return OK so frontend shows the simple error
                 Json(GeminiResponse {
                     response: SIMPLE_ERROR_MESSAGE.to_string(),
                     conversation_id,
-                    message_history,
+                    message_history: message_history.to_vec(),
                     tool_execution: None,
                 }),
             )
@@ -462,9 +479,7 @@ pub async fn handle_query(
         });
 
         // Generate conversation ID if not provided
-        let conversation_id = request
-            .conversation_id
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let conversation_id = _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // Return 200 to let the user see the error message
         return (
@@ -472,7 +487,7 @@ pub async fn handle_query(
             Json(GeminiResponse {
                 response: SIMPLE_ERROR_MESSAGE.to_string(),
                 conversation_id,
-                message_history,
+                message_history: message_history.to_vec(),
                 tool_execution: None,
             }),
         )
@@ -492,9 +507,8 @@ pub async fn handle_query(
                 });
 
                 // Generate conversation ID if not provided
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id =
+                    _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                 // Return 200 to let the user see the error message
                 return (
@@ -502,7 +516,7 @@ pub async fn handle_query(
                     Json(GeminiResponse {
                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None,
                     }),
                 )
@@ -558,7 +572,13 @@ pub async fn handle_query(
                     });
 
                     // Execute the tool
-                    match execute_tool(&function_call.name, &function_call.args, &pool).await {
+                    match tool_registry::execute_tool(
+                        &function_call.name,
+                        &function_call.args,
+                        pool,
+                    )
+                    .await
+                    {
                         Ok(result) => {
                             println!("Tool {} executed successfully.", function_call.name);
                             // Add function response message to history for the next Gemini call
@@ -612,7 +632,7 @@ pub async fn handle_query(
                 });
 
                 // Add full updated conversation history
-                for msg in &message_history {
+                for msg in message_history.iter_mut() {
                     let role = match msg.role.as_str() {
                         "assistant" => "model".to_string(),
                         "function" => "function".to_string(), // Pass function results correctly
@@ -667,15 +687,14 @@ pub async fn handle_query(
                                 role: "assistant".to_string(),
                                 content: format!("Gemini API Error (Summary): {}", status),
                             });
-                            let conversation_id = request
-                                .conversation_id
+                            let conversation_id = _conversation_id
                                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                             return (
                                 StatusCode::OK, // Return OK for user
                                 Json(GeminiResponse {
                                     response: SIMPLE_ERROR_MESSAGE.to_string(),
                                     conversation_id,
-                                    message_history,
+                                    message_history: message_history.to_vec(),
                                     tool_execution: None,
                                 }),
                             )
@@ -711,20 +730,19 @@ pub async fn handle_query(
                                     content: final_response_text.clone(),
                                 });
 
-                                let conversation_id = request
-                                    .conversation_id
+                                let conversation_id = _conversation_id
                                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                                return (
+                                (
                                     StatusCode::OK,
                                     Json(GeminiResponse {
                                         response: final_response_text,
                                         conversation_id,
-                                        message_history,
+                                        message_history: message_history.to_vec(),
                                         tool_execution: None,
                                     }),
                                 )
-                                    .into_response();
+                                    .into_response()
                             }
                             Err(e) => {
                                 eprintln!("Failed to parse second Gemini API response: {}", e);
@@ -732,19 +750,18 @@ pub async fn handle_query(
                                     role: "assistant".to_string(),
                                     content: format!("API Parse Error (Summary): {}", e),
                                 });
-                                let conversation_id = request
-                                    .conversation_id
+                                let conversation_id = _conversation_id
                                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                                return (
+                                (
                                     StatusCode::OK,
                                     Json(GeminiResponse {
                                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                                         conversation_id,
-                                        message_history,
+                                        message_history: message_history.to_vec(),
                                         tool_execution: None,
                                     }),
                                 )
-                                    .into_response();
+                                    .into_response()
                             }
                         }
                     }
@@ -754,19 +771,18 @@ pub async fn handle_query(
                             role: "assistant".to_string(),
                             content: format!("API Connection Error (Summary): {}", e),
                         });
-                        let conversation_id = request
-                            .conversation_id
-                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                        return (
+                        let conversation_id =
+                            _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                        (
                             StatusCode::OK,
                             Json(GeminiResponse {
                                 response: SIMPLE_ERROR_MESSAGE.to_string(),
                                 conversation_id,
-                                message_history,
+                                message_history: message_history.to_vec(),
                                 tool_execution: None,
                             }),
                         )
-                            .into_response();
+                            .into_response()
                     }
                 }
             } else if !initial_text_response.is_empty() {
@@ -780,9 +796,8 @@ pub async fn handle_query(
                 });
 
                 // Generate conversation ID if not provided
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id =
+                    _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                 // Return the response directly
                 return (
@@ -790,7 +805,7 @@ pub async fn handle_query(
                     Json(GeminiResponse {
                         response: initial_text_response.clone(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None, // No tool was executed
                     }),
                 )
@@ -804,22 +819,18 @@ pub async fn handle_query(
                     role: "assistant".to_string(),
                     content: SIMPLE_ERROR_MESSAGE.to_string(),
                 });
-                let conversation_id = request
-                    .conversation_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let conversation_id =
+                    _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 return (
                     StatusCode::OK, // Return OK for user
                     Json(GeminiResponse {
                         response: SIMPLE_ERROR_MESSAGE.to_string(),
                         conversation_id,
-                        message_history,
+                        message_history: message_history.to_vec(),
                         tool_execution: None,
                     }),
                 )
                     .into_response();
-                // If you prefer the fallback logic:
-                // let fallback_response = handle_empty_response(&request.query, &message_history, &pool).await;
-                // return fallback_response;
             }
         }
         Err(e) => {
@@ -830,418 +841,34 @@ pub async fn handle_query(
                 role: "assistant".to_string(),
                 content: format!("API Parse Error: {}", e), // Internal log/history
             });
-            let conversation_id = request
-                .conversation_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            return (
+            let conversation_id =
+                _conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            (
                 StatusCode::OK, // Return OK so frontend shows the simple error message
                 Json(GeminiResponse {
                     response: SIMPLE_ERROR_MESSAGE.to_string(),
                     conversation_id,
-                    message_history,
+                    message_history: message_history.to_vec(),
                     tool_execution: None,
                 }),
             )
-                .into_response();
+                .into_response()
         }
     }
-
-    // This part should ideally be unreachable if all paths above return.
-    // Kept as a final safety net.
-    // eprintln!(
-    //     "Reached unexpected end of handle_query after Gemini response processing. Raw text: {:?}",
-    //     initial_text // Use initial_text if available, otherwise indicate unknown state
-    // );
-
-    // // Fallback response if we somehow get here
-    // message_history.push(Message {
-    //     role: "assistant".to_string(),
-    //     content: SIMPLE_ERROR_MESSAGE.to_string(), // Use simple error
-    // });
-
-    // let conversation_id = request
-    //     .conversation_id
-    //     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    // (
-    //     StatusCode::INTERNAL_SERVER_ERROR, // Indicate an internal issue if this point is reached
-    //     Json(GeminiResponse {
-    //         response: SIMPLE_ERROR_MESSAGE.to_string(),
-    //         conversation_id,
-    //         message_history,
-    //         tool_execution: None,
-    //     }),
-    // )
-    //     .into_response()
 }
 
 // Execute a tool based on the function name and arguments
-async fn execute_tool(
-    function_name: &str,
-    args: &serde_json::Value,
-    pool: &neo4rs::Graph,
-) -> Result<serde_json::Value, String> {
-    println!("Executing tool: {} with args: {:?}", function_name, args);
 
-    match function_name {
-        "list_goals" => {
-            // Get filter parameter if provided
-            let filter = args["filter"].as_str().unwrap_or("all");
-
-            // Construct query based on filter
-            let filter_clause = match filter {
-                "active" => "WHERE g.completed = false",
-                "completed" => "WHERE g.completed = true",
-                _ => "",
-            };
-
-            let query_str = format!("MATCH (g:Goal) {} {}", filter_clause, GOAL_RETURN_QUERY);
-            let query = query(&query_str);
-
-            println!("Executing Neo4j query: {}", query_str);
-
-            // Execute query and collect results
-            let mut goals = Vec::new();
-            match pool.execute(query).await {
-                Ok(mut result) => {
-                    while let Ok(Some(row)) = result.next().await {
-                        match row.get::<serde_json::Value>("g") {
-                            Ok(goal) => goals.push(goal),
-                            Err(e) => println!("Error getting goal from row: {}", e),
-                        }
-                    }
-
-                    Ok(serde_json::json!({
-                        "status": "success",
-                        "goals": goals
-                    }))
-                }
-                Err(e) => {
-                    let error_msg = format!("Neo4j query error in list_goals: {}", e);
-                    eprintln!("{}", error_msg);
-                    Err(error_msg)
-                }
-            }
-        }
-        "create_goal" => {
-            use crate::goal::{Goal, GoalType};
-
-            // Get parameters
-            let title = match args.get("title") {
-                Some(title_val) => match title_val.as_str() {
-                    Some(title_str) => title_str.to_string(),
-                    None => {
-                        let error_msg = "Title parameter is not a string".to_string();
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                },
-                None => {
-                    let error_msg = "Missing required parameter: title".to_string();
-                    eprintln!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            };
-
-            let description = args["description"].as_str().map(|s| s.to_string());
-            let deadline = args["deadline"].as_str().unwrap_or("");
-
-            println!(
-                "Creating goal with title: {}, description: {:?}, deadline: {}",
-                title, description, deadline
-            );
-
-            // Convert deadline to timestamp if provided
-            let end_timestamp = if !deadline.is_empty() {
-                match NaiveDate::parse_from_str(deadline, "%Y-%m-%d") {
-                    Ok(date) => Some(
-                        date.and_hms_opt(23, 59, 59)
-                            .unwrap()
-                            .and_utc()
-                            .timestamp_millis(),
-                    ),
-                    Err(e) => {
-                        let error_msg = format!("Invalid deadline format: {}", e);
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Create a Goal object
-            let goal = Goal {
-                id: None,
-                name: title,
-                goal_type: GoalType::Task,
-                description,
-                user_id: Some(1), // Default user ID
-                priority: None,
-                start_timestamp: None,
-                end_timestamp,
-                completion_date: None,
-                next_timestamp: None,
-                scheduled_timestamp: None,
-                duration: None,
-                completed: Some(false),
-                frequency: None,
-                routine_type: None,
-                routine_time: None,
-                position_x: None,
-                position_y: None,
-            };
-
-            // Use the existing create_goal method
-            match goal.create_goal(pool).await {
-                Ok(created_goal) => {
-                    println!("Goal created successfully with ID: {:?}", created_goal.id);
-                    Ok(serde_json::json!({
-                        "status": "success",
-                        "goal": {
-                            "id": created_goal.id,
-                            "title": created_goal.name,
-                            "description": created_goal.description,
-                            "deadline": deadline
-                        }
-                    }))
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to create goal: {}", e);
-                    eprintln!("{}", error_msg);
-                    Err(error_msg)
-                }
-            }
-        }
-        "get_calendar_events" => {
-            // Get required parameters
-            let start_date = match args.get("start_date") {
-                Some(val) => match val.as_str() {
-                    Some(s) => s,
-                    None => {
-                        let error_msg = "start_date parameter is not a string".to_string();
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                },
-                None => {
-                    let error_msg = "Missing required parameter: start_date".to_string();
-                    eprintln!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            };
-
-            let end_date = match args.get("end_date") {
-                Some(val) => match val.as_str() {
-                    Some(s) => s,
-                    None => {
-                        let error_msg = "end_date parameter is not a string".to_string();
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                },
-                None => {
-                    let error_msg = "Missing required parameter: end_date".to_string();
-                    eprintln!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            };
-
-            println!(
-                "Getting calendar events for date range: {} to {}",
-                start_date, end_date
-            );
-
-            // Parse dates
-            let start_timestamp = if !start_date.is_empty() {
-                match NaiveDate::parse_from_str(start_date, "%Y-%m-%d") {
-                    Ok(date) => date
-                        .and_hms_opt(0, 0, 0)
-                        .unwrap()
-                        .and_utc()
-                        .timestamp_millis(),
-                    Err(e) => {
-                        let error_msg = format!("Invalid start_date format: {}", e);
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                }
-            } else {
-                return Err("start_date is required".to_string());
-            };
-
-            let end_timestamp = if !end_date.is_empty() {
-                match NaiveDate::parse_from_str(end_date, "%Y-%m-%d") {
-                    Ok(date) => date
-                        .and_hms_opt(23, 59, 59)
-                        .unwrap()
-                        .and_utc()
-                        .timestamp_millis(),
-                    Err(e) => {
-                        let error_msg = format!("Invalid end_date format: {}", e);
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                }
-            } else {
-                return Err("end_date is required".to_string());
-            };
-
-            // Use similar query as in day.rs's get_day_tasks
-            let query_str = format!(
-                "MATCH (g:Goal) 
-                WHERE g.user_id = 1
-                AND g.scheduled_timestamp >= $start_timestamp 
-                AND g.scheduled_timestamp <= $end_timestamp
-                {}",
-                GOAL_RETURN_QUERY
-            );
-
-            let query = query(&query_str)
-                .param("start_timestamp", start_timestamp)
-                .param("end_timestamp", end_timestamp);
-
-            println!("Executing Neo4j query for calendar events");
-
-            let mut events = Vec::new();
-            match pool.execute(query).await {
-                Ok(mut result) => {
-                    while let Ok(Some(row)) = result.next().await {
-                        match row.get::<serde_json::Value>("g") {
-                            Ok(event) => events.push(event),
-                            Err(e) => println!("Error getting event from row: {}", e),
-                        }
-                    }
-
-                    Ok(serde_json::json!({
-                        "status": "success",
-                        "events": events,
-                        "date_range": {
-                            "start": start_date,
-                            "end": end_date
-                        }
-                    }))
-                }
-                Err(e) => {
-                    let error_msg = format!("Neo4j query error in get_calendar_events: {}", e);
-                    eprintln!("{}", error_msg);
-                    Err(error_msg)
-                }
-            }
-        }
-        "get_day_plan" => {
-            // Get required parameter
-            let date = match args.get("date") {
-                Some(val) => match val.as_str() {
-                    Some(s) => s,
-                    None => {
-                        let error_msg = "date parameter is not a string".to_string();
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                },
-                None => {
-                    let error_msg = "Missing required parameter: date".to_string();
-                    eprintln!("{}", error_msg);
-                    return Err(error_msg);
-                }
-            };
-
-            println!("Getting day plan for date: {}", date);
-
-            // Parse date
-            let start_timestamp = if !date.is_empty() {
-                match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                    Ok(date) => date
-                        .and_hms_opt(0, 0, 0)
-                        .unwrap()
-                        .and_utc()
-                        .timestamp_millis(),
-                    Err(e) => {
-                        let error_msg = format!("Invalid date format: {}", e);
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                }
-            } else {
-                return Err("date is required".to_string());
-            };
-
-            let end_timestamp = if !date.is_empty() {
-                match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                    Ok(date) => date
-                        .and_hms_opt(23, 59, 59)
-                        .unwrap()
-                        .and_utc()
-                        .timestamp_millis(),
-                    Err(e) => {
-                        let error_msg = format!("Invalid date format: {}", e);
-                        eprintln!("{}", error_msg);
-                        return Err(error_msg);
-                    }
-                }
-            } else {
-                Utc::now().timestamp_millis()
-            };
-
-            // Use query similar to day.rs get_day_tasks
-            let query_str = format!(
-                "MATCH (g:Goal) 
-                WHERE g.user_id = 1
-                AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
-                AND g.scheduled_timestamp >= $start_timestamp 
-                AND g.scheduled_timestamp <= $end_timestamp
-                {}
-                ORDER BY g.scheduled_timestamp",
-                GOAL_RETURN_QUERY
-            );
-
-            let query = query(&query_str)
-                .param("start_timestamp", start_timestamp)
-                .param("end_timestamp", end_timestamp);
-
-            println!("Executing Neo4j query for day plan");
-
-            let mut plan_items = Vec::new();
-            match pool.execute(query).await {
-                Ok(mut result) => {
-                    while let Ok(Some(row)) = result.next().await {
-                        match row.get::<serde_json::Value>("g") {
-                            Ok(task) => plan_items.push(task),
-                            Err(e) => println!("Error getting task from row: {}", e),
-                        }
-                    }
-
-                    Ok(serde_json::json!({
-                        "status": "success",
-                        "date": date,
-                        "plan": plan_items
-                    }))
-                }
-                Err(e) => {
-                    let error_msg = format!("Neo4j query error in get_day_plan: {}", e);
-                    eprintln!("{}", error_msg);
-                    Err(error_msg)
-                }
-            }
-        }
-        _ => {
-            let error_msg = format!("Unknown function: {}", function_name);
-            eprintln!("{}", error_msg);
-            Err(error_msg)
-        }
-    }
-}
-
-// Function to determine if an operation writes to the database
+#[allow(dead_code)]
 fn is_write_operation(operation_name: &str) -> bool {
-    match operation_name {
-        "create_goal" | "update_goal" | "delete_goal" | "toggle_completion" => true,
-        _ => false,
-    }
+    matches!(
+        operation_name,
+        "create_goal" | "update_goal" | "delete_goal" | "toggle_completion"
+    )
 }
 
 // Handler for tool execution
+#[allow(dead_code)]
 pub async fn handle_tool_execute(
     Extension(pool): Extension<neo4rs::Graph>,
     Json(request): Json<ToolExecuteRequest>,
@@ -1249,7 +876,7 @@ pub async fn handle_tool_execute(
     println!("Executing tool: {}", request.tool_name);
 
     // Execute the tool
-    match execute_tool(
+    match tool_registry::execute_tool(
         &request.tool_name,
         &request.args.unwrap_or(serde_json::json!({})),
         &pool,
@@ -1382,7 +1009,7 @@ fn format_tool_result(tool_name: &str, result: &serde_json::Value) -> String {
     }
 }
 
-// Add this function to handle empty responses
+#[allow(dead_code)]
 async fn handle_empty_response(
     query: &str,
     message_history: &[Message],
@@ -1412,7 +1039,7 @@ async fn handle_empty_response(
                 "title": title
             });
 
-            match execute_tool("create_goal", &args, pool).await {
+            match tool_registry::execute_tool("create_goal", &args, pool).await {
                 Ok(result) => {
                     let message = format_tool_result("create_goal", &result);
                     updated_history.push(Message {
@@ -1464,7 +1091,7 @@ async fn handle_empty_response(
                         "title": title
                     });
 
-                    match execute_tool("create_goal", &args, pool).await {
+                    match tool_registry::execute_tool("create_goal", &args, pool).await {
                         Ok(result) => {
                             let message = format_tool_result("create_goal", &result);
                             updated_history.push(Message {
@@ -1504,7 +1131,7 @@ async fn handle_empty_response(
         || query_lower.contains("show goals")
         || query_lower.contains("my goals")
     {
-        match execute_tool("list_goals", &serde_json::json!({}), pool).await {
+        match tool_registry::execute_tool("list_goals", &serde_json::json!({}), pool).await {
             Ok(result) => {
                 let message = format_tool_result("list_goals", &result);
                 updated_history.push(Message {
@@ -1557,4 +1184,158 @@ async fn handle_empty_response(
         }),
     )
         .into_response()
+}
+
+// Helper function to send error messages over WebSocket
+async fn send_error(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
+    message: &str,
+) -> Result<(), axum::Error> {
+    let error_message = WsQueryMessage::Error {
+        message: message.to_string(),
+    };
+    let json = serde_json::to_string(&error_message)
+        .map_err(|e| axum::Error::new(format!("JSON serialization error: {}", e)))?;
+    sender.send(WsMessage::Text(json)).await
+}
+
+// Main handler for query requests
+#[allow(dead_code)]
+pub async fn handle_query(
+    Extension(_pool): Extension<neo4rs::Graph>,
+    Json(request): Json<GeminiRequest>,
+) -> impl IntoResponse {
+    // Log incoming request details
+    println!("Received query request: {:?}", request.query);
+
+    // Initialize reqwest client
+    let _client = Client::new();
+
+    // Create message history or initialize with user query
+    let mut message_history = request.message_history.unwrap_or_else(Vec::new);
+
+    // Always add the current query to the message history
+    message_history.push(Message {
+        role: "user".to_string(),
+        content: request.query.clone(),
+    });
+
+    // Clean up message history - limit size and filter out repeated error messages
+    if message_history.len() > 10 {
+        // Keep only the last 10 messages to prevent history from getting too large
+        let skip_count = message_history.len() - 10;
+        message_history = message_history.iter().skip(skip_count).cloned().collect();
+    }
+
+    // Filter out messages with empty content
+    message_history.retain(|msg| !msg.content.trim().is_empty());
+
+    // Add a response message for testing
+    message_history.push(Message {
+        role: "assistant".to_string(),
+        content: "This is a placeholder response. The API endpoint is working, but now uses WebSockets instead. Please use the /query/ws endpoint for interactive conversations.".to_string(),
+    });
+
+    // Generate a conversation ID if not provided
+    let conversation_id = request
+        .conversation_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Return response
+    (
+        StatusCode::OK,
+        Json(GeminiResponse {
+            response: "This API now uses WebSockets. Please use the /query/ws endpoint."
+                .to_string(),
+            conversation_id,
+            message_history,
+            tool_execution: None,
+        }),
+    )
+        .into_response()
+}
+
+// Handler for WebSocket upgrade request
+pub async fn handle_query_ws(
+    ws: WebSocketUpgrade,
+    Extension(pool): Extension<neo4rs::Graph>,
+    Extension(user_id): Extension<i64>,
+) -> impl IntoResponse {
+    println!("WebSocket upgrade request for user {}", user_id);
+    ws.on_upgrade(move |socket| handle_websocket_connection(socket, pool, user_id))
+}
+
+// WebSocket connection handler
+async fn handle_websocket_connection(socket: WebSocket, pool: neo4rs::Graph, user_id: i64) {
+    println!("New WebSocket connection established for user: {}", user_id);
+
+    // Split the socket into sender and receiver
+    let (mut sender, mut receiver) = socket.split();
+
+    // Initialize conversation state
+    let mut message_history: Vec<Message> = Vec::new();
+
+    // Add initial system prompt to history (not sent to client)
+    let system_prompt = Message {
+        role: "system".to_string(),
+        content: "You are an AI assistant that helps users manage their goals and tasks. When users ask to create, list, or manage goals, use the appropriate function.".to_string(),
+    };
+    message_history.push(system_prompt);
+
+    // Main loop to process messages
+    while let Some(result) = receiver.next().await {
+        match result {
+            Ok(WsMessage::Text(text)) => {
+                println!("Received message: {}", text);
+
+                // Parse the incoming message
+                match serde_json::from_str::<WsQueryMessage>(&text) {
+                    Ok(WsQueryMessage::UserQuery {
+                        content,
+                        conversation_id,
+                    }) => {
+                        // Process user query
+                        process_user_query(
+                            &mut sender,
+                            &mut message_history,
+                            content,
+                            conversation_id,
+                            &pool,
+                        )
+                        .await;
+                    }
+                    Ok(_) => {
+                        // Received a different message type from client
+                        if let Err(e) =
+                            send_error(&mut sender, "Unexpected message type received").await
+                        {
+                            eprintln!("Error sending error message: {}", e);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        // Failed to parse message
+                        eprintln!("Failed to parse message: {}", e);
+                        if let Err(e) = send_error(&mut sender, "Failed to parse message").await {
+                            eprintln!("Error sending error message: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(WsMessage::Close(_)) => {
+                println!("WebSocket connection closed by client");
+                break;
+            }
+            Ok(_) => {
+                // Ignore other message types
+            }
+            Err(e) => {
+                eprintln!("WebSocket error: {}", e);
+                break;
+            }
+        }
+    }
+
+    println!("WebSocket connection terminated for user: {}", user_id);
 }
