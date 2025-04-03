@@ -9,8 +9,13 @@ import { Goal } from "../../types/goals";
 export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
 
-    // Log the conversion for debugging
-    const offset = new Date().getTimezoneOffset() * 60 * 1000;
+    // Create a date object using the UTC timestamp
+    const date = new Date(timestamp);
+
+    // Get timezone offset for this specific date (accounts for DST)
+    const offset = date.getTimezoneOffset() * 60 * 1000;
+
+    // Convert from UTC to local by subtracting the offset
     const convertedTimestamp = timestamp - offset;
 
     //console.log(`Converting UTC timestamp ${timestamp} to local: ${convertedTimestamp} (offset: ${offset})`);
@@ -26,8 +31,13 @@ export const toLocalTimestamp = (timestamp?: number | null): number | undefined 
 export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
     if (!timestamp) return undefined;
 
-    // Log the conversion for debugging
-    const offset = new Date().getTimezoneOffset() * 60 * 1000;
+    // Create a date object for the local timestamp
+    const date = new Date(timestamp);
+
+    // Get timezone offset for this specific date (accounts for DST)
+    const offset = date.getTimezoneOffset() * 60 * 1000;
+
+    // Convert from local to UTC by adding the offset
     const convertedTimestamp = timestamp + offset;
 
     //console.log(`Converting local timestamp ${timestamp} to UTC: ${convertedTimestamp} (offset: ${offset})`);
@@ -169,44 +179,57 @@ export const inputStringToTimestamp = (
 
     const date = new Date();
 
-    switch (format) {
-        case 'date':
-            // Set just the date part, keep time at 00:00:00
-            const [dateYear, dateMonth, dateDay] = dateString.split('-').map(Number);
-            date.setFullYear(dateYear, dateMonth - 1, dateDay);
-            date.setHours(0, 0, 0, 0);
-            break;
+    try {
+        switch (format) {
+            case 'date':
+                // Set just the date part, keep time at 00:00:00
+                const [dateYear, dateMonth, dateDay] = dateString.split('-').map(Number);
+                if (isNaN(dateYear) || isNaN(dateMonth) || isNaN(dateDay)) return 0;
+                date.setFullYear(dateYear, dateMonth - 1, dateDay);
+                date.setHours(0, 0, 0, 0);
+                break;
 
-        case 'end-date':
-            // Set date to end of day (23:59:59.999)
-            const [endYear, endMonth, endDay] = dateString.split('-').map(Number);
-            date.setFullYear(endYear, endMonth - 1, endDay);
-            date.setHours(23, 59, 59, 999);
-            break;
+            case 'end-date':
+                // Set date to end of day (23:59:59.999)
+                const [endYear, endMonth, endDay] = dateString.split('-').map(Number);
+                if (isNaN(endYear) || isNaN(endMonth) || isNaN(endDay)) return 0;
+                date.setFullYear(endYear, endMonth - 1, endDay);
+                date.setHours(23, 59, 59, 999);
+                break;
 
-        case 'time':
-            // Set just the time part, keep date as is
-            const [hours, minutes] = dateString.split(':').map(Number);
-            date.setHours(hours, minutes, 0, 0);
-            break;
+            case 'time':
+                // Set just the time part, keep date as is
+                const [hours, minutes] = dateString.split(':').map(Number);
+                if (isNaN(hours) || isNaN(minutes)) return 0;
+                date.setHours(hours, minutes, 0, 0);
+                break;
 
-        case 'datetime':
-            // Parse the full datetime string
-            const [datePart, timePart] = dateString.split('T');
-            const [dtYear, dtMonth, dtDay] = datePart.split('-').map(Number);
-            const [dtHours, dtMinutes] = timePart.split(':').map(Number);
+            case 'datetime':
+                // Parse the full datetime string
+                const parts = dateString.split('T');
+                if (parts.length !== 2) return 0;
 
-            date.setFullYear(dtYear, dtMonth - 1, dtDay);
-            date.setHours(dtHours, dtMinutes, 0, 0);
-            break;
+                const [datePart, timePart] = parts;
+                const [dtYear, dtMonth, dtDay] = datePart.split('-').map(Number);
+                const [dtHours, dtMinutes] = timePart.split(':').map(Number);
+
+                if (isNaN(dtYear) || isNaN(dtMonth) || isNaN(dtDay) ||
+                    isNaN(dtHours) || isNaN(dtMinutes)) return 0;
+
+                date.setFullYear(dtYear, dtMonth - 1, dtDay);
+                date.setHours(dtHours, dtMinutes, 0, 0);
+                break;
+        }
+
+        // Get timestamp directly from the date without any timezone adjustments
+        // since we're already working in the local timezone
+        const timestamp = date.getTime();
+
+        //console.log(`inputStringToTimestamp: output timestamp=${timestamp}, date=${date.toString()}`);
+        return timestamp;
+    } catch (error) {
+        return 0; // Return 0 for any parsing errors
     }
-
-    // Get timestamp directly from the date without any timezone adjustments
-    // since we're already working in the local timezone
-    const timestamp = date.getTime();
-
-    //console.log(`inputStringToTimestamp: output timestamp=${timestamp}, date=${date.toString()}`);
-    return timestamp;
 };
 
 /**
