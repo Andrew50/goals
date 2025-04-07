@@ -6,7 +6,8 @@ use axum::{
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use std::env;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use urlencoding;
 
 use crate::server::auth::Claims;
 
@@ -52,25 +53,36 @@ fn get_token_from_request(request: &Request) -> Result<String, Response> {
         .and_then(|value| value.to_str().ok())
     {
         if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            info!("Extracted token from Authorization header");
             return Ok(token.to_string());
         }
     }
 
-    // If not in header, check if this is a WebSocket upgrade request
-    if request.extensions().get::<WebSocketUpgrade>().is_some() {
-        // Check for token in query parameters
-        if let Some(query) = request.uri().query() {
-            for pair in query.split('&') {
-                let mut parts = pair.split('=');
-                if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
-                    if key == "token" {
-                        return Ok(value.to_string());
+    // If not found in header, *always* check query parameters as a fallback
+    if let Some(query) = request.uri().query() {
+        info!(query = %query, "Checking query parameters for token");
+        for pair in query.split('&') {
+            let mut parts = pair.split('=');
+            if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+                if key == "token" {
+                    info!("Extracted token from query parameter");
+                    match urlencoding::decode(value) {
+                        Ok(decoded_token) => return Ok(decoded_token.into_owned()),
+                        Err(e) => {
+                            error!("Failed to URL decode token from query parameter: {}", e);
+                            return Err((
+                                axum::http::StatusCode::BAD_REQUEST,
+                                "Invalid token encoding",
+                            )
+                                .into_response());
+                        }
                     }
                 }
             }
         }
     }
 
-    // No token found
+    // No token found by either method
+    warn!("No token found in Authorization header or query parameters");
     Err((axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response())
 }

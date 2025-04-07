@@ -21,6 +21,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HelpIcon from '@mui/icons-material/Help';
+import { useAuth } from '../../shared/contexts/AuthContext';
 
 // Helper function to generate a random ID (replacement for uuid)
 const generateId = (): string => {
@@ -88,6 +89,7 @@ const Query: React.FC = () => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [wsStatus, setWsStatus] = useState<WebSocketStatus>(WebSocketStatus.CLOSED);
     const ws = useRef<WebSocket | null>(null);
+    const { token } = useAuth();
 
     // Handle incoming WebSocket messages
     const handleWebSocketMessage = (message: WsQueryMessage) => {
@@ -259,10 +261,8 @@ const Query: React.FC = () => {
     const connectWebSocket = useCallback(() => {
         setWsStatus(WebSocketStatus.CONNECTING);
 
-        // Get authentication token from localStorage or wherever it's stored
-        const token = localStorage.getItem('token');
         if (!token) {
-            console.error('No authentication token available');
+            console.error('No authentication token available (from AuthContext)');
             setWsStatus(WebSocketStatus.ERROR);
             return;
         }
@@ -271,9 +271,9 @@ const Query: React.FC = () => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.hostname;
         const port = process.env.NODE_ENV === 'development' ? ':5057' : '';
-        const wsUrl = `${protocol}//${host}${port}/api/query/ws?token=${encodeURIComponent(token)}`;
+        const wsUrl = `${protocol}//${host}${port}/query/ws?token=${encodeURIComponent(token)}`;
 
-        console.log(`Connecting to WebSocket at ${wsUrl}`);
+        console.log(`Attempting to connect WebSocket to: ${wsUrl}`);
 
         // Create new WebSocket connection
         ws.current = new WebSocket(wsUrl);
@@ -303,7 +303,7 @@ const Query: React.FC = () => {
             console.error('WebSocket error:', error);
             setWsStatus(WebSocketStatus.ERROR);
         };
-    }, [handleWebSocketMessage]);  // Add handleWebSocketMessage as a dependency
+    }, [token]);
 
     // Initialize WebSocket connection on component mount
     useEffect(() => {
