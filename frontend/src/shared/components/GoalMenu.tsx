@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
 import {
     Dialog,
@@ -11,12 +11,10 @@ import {
     FormControlLabel,
     Checkbox,
     Box,
-    Switch,
-    Typography,
-    Chip
+    Typography
 } from '@mui/material';
 import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
-import { Goal, GoalType, RelationshipType } from '../../types/goals';
+import { Goal, GoalType } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
@@ -60,7 +58,7 @@ const GoalMenu: GoalMenuComponent = () => {
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
 
-    const open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+    const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         // Create a deep copy of the goal to prevent accidental modification of the original
         const goalCopy = JSON.parse(JSON.stringify(goal));
 
@@ -92,8 +90,9 @@ const GoalMenu: GoalMenuComponent = () => {
             'view': 'View Goal'
         }[initialMode]);
         setIsOpen(true);
-    }
-    const close = () => {
+    }, [relationshipMode, setState]);
+
+    const close = useCallback(() => {
         setIsOpen(false);
         setTimeout(() => {
             setState({
@@ -105,14 +104,14 @@ const GoalMenu: GoalMenuComponent = () => {
             setTitle('');
             setRelationshipMode(null);
         }, 100);
-    }
+    }, [setState]);
 
     const isViewOnly = state.mode === 'view';
 
     useEffect(() => {
         GoalMenu.open = open;
         GoalMenu.close = close;
-    }, []);
+    }, [open, close]);
 
     const handleChange = (newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server

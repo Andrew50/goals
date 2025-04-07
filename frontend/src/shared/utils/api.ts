@@ -1,4 +1,4 @@
-import axios, { AxiosResponse, Method, type AxiosError } from 'axios';
+import axios, { AxiosResponse, Method } from 'axios';
 import { Goal, RelationshipType } from '../../types/goals';
 import { goalToUTC, goalToLocal } from './time';
 const API_URL = process.env.REACT_APP_API_URL;

@@ -6,9 +6,11 @@ import {
     toUTCTimestamp
 } from './time';
 
-// Helper to mock timezone offset
+// Helper to mock timezone offset - disable eslint warning for Date prototype extension
+// eslint-disable-next-line no-extend-native
 const mockTimezoneOffset = (offsetMinutes: number) => {
     const original = Date.prototype.getTimezoneOffset;
+    // eslint-disable-next-line no-extend-native
     Date.prototype.getTimezoneOffset = jest.fn(() => offsetMinutes);
     return () => {
         Date.prototype.getTimezoneOffset = original;

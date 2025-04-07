@@ -1,14 +1,9 @@
-use axum::{
-    extract::{Extension, Json, Path, Query},
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::Json, http::StatusCode};
 use chrono::{TimeZone, Utc};
 use neo4rs::{query, Graph};
 use serde_json::Value;
-use std::collections::HashMap;
 
-use crate::goal::GOAL_RETURN_QUERY;
+use crate::tools::goal::GOAL_RETURN_QUERY;
 
 // Business logic functions with regular parameters
 pub async fn get_day_tasks(

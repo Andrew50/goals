@@ -1,0 +1,31 @@
+services:
+  # Override the backend to connect to the test database
+  goals_backend:
+    environment:
+      - NEO4J_URI=bolt://goals_db_test:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=password123
+      - TEST_MODE=true
+
+  # Create a dedicated test database for testing
+  goals_db_test:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.dev
+    ports:
+      - "7475:7474"  # Web UI on a different port to avoid conflicts
+      - "7688:7687"  # Bolt protocol on a different port
+    volumes:
+      - goal_db_test:/data  # Separate volume for test data
+      - ./db/seed_test_db.sh:/data/seed_test_db.sh  # Mount the seed script
+    environment:
+      - NEO4J_AUTH=neo4j/password123
+    networks:
+      - dev_network
+
+volumes:
+  goal_db_test:
+
+networks:
+  dev_network:
+    driver: bridge 
