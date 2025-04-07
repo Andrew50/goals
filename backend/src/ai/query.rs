@@ -11,6 +11,7 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use serde::Serialize;
+use tracing::{error, info, warn};
 
 use crate::ai::tool_registry;
 
@@ -216,19 +217,25 @@ async fn process_user_query(
     let mut initial_gemini_contents = Vec::new();
 
     // Add instructional messages as the first turn
+    //
+    let system_message =
+        "You are an AI assistant that helps users manage their goals and tasks. You can 
+    make use of the included tools to help the user. If you need to use a tool, call it using the 
+    function call syntax. If you don't need to use a tool, just respond with the natural language 
+    response.";
     initial_gemini_contents.push(GeminiContent {
         parts: vec![Part {
-            text: "You are an AI assistant that helps users manage their goals and tasks. When users ask to create, list, or manage goals, use the appropriate function. For example, if a user says 'create a goal called X', use the create_goal function with the title parameter. If they ask to see their goals, use the list_goals function.".to_string(),
+            text: system_message.to_string(),
         }],
         role: "user".to_string(),
     });
 
-    initial_gemini_contents.push(GeminiContent {
+    /*initial_gemini_contents.push(GeminiContent {
         parts: vec![Part {
             text: "I understand my role. I'll help manage goals and tasks using the appropriate functions when needed.".to_string(),
         }],
         role: "model".to_string(),
-    });
+    });*/
 
     // Add actual conversation history
     for msg in message_history.iter_mut() {
@@ -1261,13 +1268,28 @@ pub async fn handle_query_ws(
     Extension(pool): Extension<neo4rs::Graph>,
     Extension(user_id): Extension<i64>,
 ) -> impl IntoResponse {
-    println!("WebSocket upgrade request for user {}", user_id);
-    ws.on_upgrade(move |socket| handle_websocket_connection(socket, pool, user_id))
+    // Add logging here
+    info!(
+        user_id = user_id,
+        "WebSocket upgrade request received for user"
+    );
+    // Log the upgrade attempt itself
+    info!("Attempting WebSocket upgrade...");
+
+    ws.on_upgrade(move |socket| {
+        // Add log inside the upgrade callback as well
+        info!(
+            user_id = user_id,
+            "WebSocket upgrade successful, handling connection"
+        );
+        handle_websocket_connection(socket, pool, user_id)
+    })
 }
 
 // WebSocket connection handler
 async fn handle_websocket_connection(socket: WebSocket, pool: neo4rs::Graph, user_id: i64) {
-    println!("New WebSocket connection established for user: {}", user_id);
+    // Log connection establishment
+    info!(user_id = user_id, "New WebSocket connection established");
 
     // Split the socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
@@ -1286,7 +1308,8 @@ async fn handle_websocket_connection(socket: WebSocket, pool: neo4rs::Graph, use
     while let Some(result) = receiver.next().await {
         match result {
             Ok(WsMessage::Text(text)) => {
-                println!("Received message: {}", text);
+                // Log received message
+                info!(user_id = user_id, message = %text, "Received WebSocket message");
 
                 // Parse the incoming message
                 match serde_json::from_str::<WsQueryMessage>(&text) {
@@ -1315,27 +1338,31 @@ async fn handle_websocket_connection(socket: WebSocket, pool: neo4rs::Graph, use
                     }
                     Err(e) => {
                         // Failed to parse message
-                        eprintln!("Failed to parse message: {}", e);
+                        // Use error! for parsing errors
+                        error!(user_id = user_id, error = %e, "Failed to parse WebSocket message");
                         if let Err(e) = send_error(&mut sender, "Failed to parse message").await {
-                            eprintln!("Error sending error message: {}", e);
+                            // Use error! for send errors
+                            error!(user_id = user_id, error = %e, "Error sending error message back to client");
                             break;
                         }
                     }
                 }
             }
             Ok(WsMessage::Close(_)) => {
-                println!("WebSocket connection closed by client");
+                // Use info! for client-initiated close
+                info!(user_id = user_id, "WebSocket connection closed by client");
                 break;
             }
             Ok(_) => {
                 // Ignore other message types
             }
             Err(e) => {
-                eprintln!("WebSocket error: {}", e);
+                // Use warn! or error! for WebSocket errors
+                warn!(user_id = user_id, error = %e, "WebSocket error encountered");
                 break;
             }
         }
     }
-
-    println!("WebSocket connection terminated for user: {}", user_id);
+    // Log connection termination
+    info!(user_id = user_id, "WebSocket connection terminated");
 }
