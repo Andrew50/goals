@@ -17,7 +17,7 @@ import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import PersonIcon from '@mui/icons-material/Person';
-import BuildIcon from '@mui/icons-material/Build';
+
 import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -91,22 +91,6 @@ interface Conversation {
     messages: Message[];
 }
 
-// Tool result content type for better typing
-interface ToolResultContent {
-    goals?: Array<{
-        name?: string;
-        description?: string;
-        [key: string]: any;
-    }>;
-    goal?: {
-        title?: string;
-        description?: string;
-        [key: string]: any;
-    };
-    status?: string;
-    error?: string;
-    [key: string]: any;
-}
 
 enum WebSocketStatus {
     CONNECTING = 'connecting',
@@ -225,8 +209,6 @@ const Query: React.FC = () => {
 
                         const updatedMessages = prev.messages.map(msg => {
                             if (msg.toolExecution && msg.toolExecution.name === message.name) {
-                                // Format content for display
-                                let formattedContent = msg.content;
 
                                 // Backend now sends content like: { result: "success", data: <actual_data> }
                                 // or { result: "error", error: <error_message> } for tool handler errors
@@ -379,7 +361,7 @@ const Query: React.FC = () => {
             console.error('WebSocket error:', error);
             setWsStatus(WebSocketStatus.ERROR);
         };
-    }, [token]);
+    }, [token, handleWebSocketMessage]); // Added handleWebSocketMessage dependency
 
     // Initialize WebSocket connection on component mount
     useEffect(() => {
@@ -475,8 +457,8 @@ const Query: React.FC = () => {
     ) => {
         // We'll split the message content into two parts (before and after the first blank line),
         // just in case there's text like "I'm executing X function." and then the appended results.
-        const [preContent, ...rest] = messageContent.split('\n\n');
-        const postContent = rest.join('\n\n');
+        const [preContent] = messageContent.split('\n\n');
+        // const postContent = rest.join('\n\n'); // Removed unused variable
 
         // Determine status and icon
         let color:
