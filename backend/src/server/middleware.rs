@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Request, WebSocketUpgrade},
+    extract::Request, // Removed unused WebSocketUpgrade
     http::header,
     middleware::Next,
     response::{IntoResponse, Response},

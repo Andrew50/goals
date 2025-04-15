@@ -2,7 +2,7 @@
 // needs to implement a web-handler function:
 use axum::http::StatusCode; // Import StatusCode
 use neo4rs::Graph;
-use serde::{Deserialize, Serialize};
+use serde::Serialize; // Removed unused Deserialize
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,6 +24,7 @@ use crate::tools::traversal::query_hierarchy_handler;
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
 /// This matches the FunctionCall struct from `query.rs`.
+#[allow(dead_code)] // Allow dead code as it's not constructed here but matches query.rs
 #[derive(Debug, Clone)]
 pub struct FunctionCall {
     pub name: String,
@@ -214,7 +215,11 @@ pub fn get_tools() -> Vec<Tool> {
         parameters: ParameterDefinition {
             type_: "object".to_string(),
             properties: {
+<<<<<<< HEAD
                 let props = serde_json::Map::new();
+=======
+                // Directly return the map, fixing let_and_return
+                 // Directly return the map, fixing let_and_return
                 /*props.insert(
                     "user_id".to_string(),
                     serde_json::json!({
@@ -222,7 +227,11 @@ pub fn get_tools() -> Vec<Tool> {
                         "description": "The ID of the user."
                     }),
                 );*/
+<<<<<<< HEAD
                 props
+=======
+                serde_json::Map::new() // Directly return the map
+                serde_json::Map::new() // Directly return the map
             },
             //required: Some(vec!["user_id".to_string()]),
             required: None,
