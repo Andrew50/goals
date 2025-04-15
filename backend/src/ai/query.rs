@@ -128,6 +128,7 @@ struct ContentPart {
     #[serde(rename = "functionCall")]
     function_call: Option<FunctionCall>,
     #[serde(flatten)]
+    #[allow(dead_code)] // Allow dead code for the 'other' field
     other: std::collections::HashMap<String, serde_json::Value>,
 }
 
@@ -179,8 +180,8 @@ async fn handle_websocket_connection(
                         let query_result = handle_user_query_loop(
                             &mut sender,
                             &mut conversation_history,
-                            &pool,
-                            &user_locks,
+                            pool, // Removed needless borrow
+                            user_locks, // Removed needless borrow
                             conversation_id,
                             user_id,
                         )
@@ -539,7 +540,7 @@ async fn call_gemini(
     );
 
     // Collect text parts and function calls
-    for (i, part) in candidate.content.parts.iter().enumerate() {
+    for (_i, part) in candidate.content.parts.iter().enumerate() { // Use _i for unused variable
         if let Some(fc) = &part.function_call {
             chunks.push(LlmChunk::FunctionCall(fc.clone()));
         }
