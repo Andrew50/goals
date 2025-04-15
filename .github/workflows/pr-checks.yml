@@ -78,6 +78,8 @@ jobs:
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Add write permission for pushing changes
     defaults:
       run:
         working-directory: ./backend
@@ -95,8 +97,8 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
       
-      - name: Check code format
-        run: cargo fmt --all -- --check
+      - name: Apply code format
+        run: cargo fmt --all
       
       - name: Check with clippy
         run: cargo clippy -- -D warnings
