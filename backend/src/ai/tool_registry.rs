@@ -417,10 +417,8 @@ pub fn get_tools() -> Vec<Tool> {
 // ======================================================================
 // Main function to handle a tool function-call from your LLM pipeline.
 // ======================================================================
-
 /// Plain function to execute a tool call, without Axum route handling.
 /// Takes a `Graph`, `UserLocks`, and a `FunctionCall` object.
-
 /// Dispatches calls to the correct base function based on the `tool_name`,
 /// extracts/validates arguments from `args`, and calls the corresponding handler.
 /// Returns `Result<serde_json::Value, String>` (on success, you get some JSON data; on error, you get a string).
