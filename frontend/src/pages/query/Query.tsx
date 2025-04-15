@@ -120,7 +120,8 @@ const Query: React.FC = () => {
     };
 
     // Handle incoming WebSocket messages
-    const handleWebSocketMessage = (message: WsQueryMessage) => {
+    // Wrap in useCallback to ensure stable identity for connectWebSocket dependency
+    const handleWebSocketMessage = useCallback((message: WsQueryMessage) => {
         console.log('Received WebSocket message:', message);
 
         switch (message.type) {
@@ -313,7 +314,7 @@ const Query: React.FC = () => {
             default:
                 console.warn('Unhandled WebSocket message type:', message.type);
         }
-    };
+    }, []); // Empty dependency array: uses stable state setters and outside functions
 
     // Function to establish WebSocket connection
     const connectWebSocket = useCallback(() => {
