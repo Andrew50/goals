@@ -180,8 +180,8 @@ async fn handle_websocket_connection(
                         let query_result = handle_user_query_loop(
                             &mut sender,
                             &mut conversation_history,
-                            pool, // Removed needless borrow
-                            user_locks, // Removed needless borrow
+                            &pool, // Pass as reference
+                            &user_locks, // Pass as reference
                             conversation_id,
                             user_id,
                         )
