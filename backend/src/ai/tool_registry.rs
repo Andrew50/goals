@@ -215,22 +215,6 @@ pub fn get_tools() -> Vec<Tool> {
         parameters: ParameterDefinition {
             type_: "object".to_string(),
             properties: {
-<<<<<<< HEAD
-                let props = serde_json::Map::new();
-=======
-                // Directly return the map, fixing let_and_return
-                 // Directly return the map, fixing let_and_return
-                /*props.insert(
-                    "user_id".to_string(),
-                    serde_json::json!({
-                        "type": "number",
-                        "description": "The ID of the user."
-                    }),
-                );*/
-<<<<<<< HEAD
-                props
-=======
-                serde_json::Map::new() // Directly return the map
                 serde_json::Map::new() // Directly return the map
             },
             //required: Some(vec!["user_id".to_string()]),
