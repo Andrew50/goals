@@ -11,8 +11,9 @@ use tokio::sync::Mutex;
 use crate::tools::calendar::get_calendar_data;
 use crate::tools::day::{get_day_tasks, toggle_complete_task};
 use crate::tools::goal::{
-    create_goal_handler, create_relationship_handler, delete_goal_handler, delete_relationship_handler,
-    toggle_completion, update_goal_handler, Goal, GoalUpdate, Relationship,
+    create_goal_handler, create_relationship_handler, delete_goal_handler,
+    delete_relationship_handler, toggle_completion, update_goal_handler, Goal, GoalUpdate,
+    Relationship,
 };
 use crate::tools::list::get_list_data;
 use crate::tools::network::{get_network_data, update_node_position};
@@ -83,7 +84,7 @@ pub fn get_tools() -> Vec<Tool> {
                 );
                 props
             },
-            required: Some(vec![ "goal".to_string()]),
+            required: Some(vec!["goal".to_string()]),
         },
     });
 
@@ -330,7 +331,8 @@ pub fn get_tools() -> Vec<Tool> {
     // 12) get_day_tasks
     function_declarations.push(FunctionDeclaration {
         name: "get_day_tasks".to_string(),
-        description: "Retrieves tasks for a specified day or day range, for a given user.".to_string(),
+        description: "Retrieves tasks for a specified day or day range, for a given user."
+            .to_string(),
         parameters: ParameterDefinition {
             type_: "object".to_string(),
             properties: {
@@ -387,7 +389,8 @@ pub fn get_tools() -> Vec<Tool> {
     // 14) process_user_routines
     function_declarations.push(FunctionDeclaration {
         name: "process_user_routines".to_string(),
-        description: "Processes all user routines for a given user EOD timestamp and user ID.".to_string(),
+        description: "Processes all user routines for a given user EOD timestamp and user ID."
+            .to_string(),
         parameters: ParameterDefinition {
             type_: "object".to_string(),
             properties: {
@@ -440,8 +443,8 @@ pub async fn dispatch_tool(
         "create_goal" => {
             //let user_id = must_get_i64(args, "user_id")?;
             let goal_val = must_get_value(args, "goal")?;
-            let goal_obj: Goal =
-                serde_json::from_value(goal_val).map_err(|e| format!("Invalid 'goal' object: {e}"))?;
+            let goal_obj: Goal = serde_json::from_value(goal_val)
+                .map_err(|e| format!("Invalid 'goal' object: {e}"))?;
             let result = create_goal_handler(graph.clone(), user_id, goal_obj).await;
             wrap_result(result)
         }
@@ -450,8 +453,8 @@ pub async fn dispatch_tool(
         "update_goal" => {
             let id = must_get_i64(args, "id")?;
             let goal_val = must_get_value(args, "goal")?;
-            let goal_obj: Goal =
-                serde_json::from_value(goal_val).map_err(|e| format!("Invalid 'goal' object: {e}"))?;
+            let goal_obj: Goal = serde_json::from_value(goal_val)
+                .map_err(|e| format!("Invalid 'goal' object: {e}"))?;
             let result = update_goal_handler(graph.clone(), id, goal_obj).await;
             wrap_result(result)
         }
@@ -466,8 +469,8 @@ pub async fn dispatch_tool(
         // 4) create_relationship
         "create_relationship" => {
             let rel_val = must_get_value(args, "relationship")?;
-            let rel_obj: Relationship =
-                serde_json::from_value(rel_val).map_err(|e| format!("Invalid 'relationship': {e}"))?;
+            let rel_obj: Relationship = serde_json::from_value(rel_val)
+                .map_err(|e| format!("Invalid 'relationship': {e}"))?;
             let result = create_relationship_handler(graph.clone(), rel_obj).await;
             wrap_result(result)
         }
@@ -531,7 +534,8 @@ pub async fn dispatch_tool(
             //let user_id = must_get_i64(args, "user_id")?;
             let start_timestamp = args.get("start_timestamp").and_then(|v| v.as_i64());
             let end_timestamp = args.get("end_timestamp").and_then(|v| v.as_i64());
-            let result = get_day_tasks(graph.clone(), user_id, start_timestamp, end_timestamp).await;
+            let result =
+                get_day_tasks(graph.clone(), user_id, start_timestamp, end_timestamp).await;
             wrap_result(result)
         }
 
@@ -546,7 +550,13 @@ pub async fn dispatch_tool(
         "process_user_routines" => {
             let user_eod_timestamp = must_get_i64(args, "user_eod_timestamp")?;
             //let user_id = must_get_i64(args, "user_id")?;
-            let result = process_user_routines(user_eod_timestamp, graph.clone(), user_id, user_locks.clone()).await;
+            let result = process_user_routines(
+                user_eod_timestamp,
+                graph.clone(),
+                user_id,
+                user_locks.clone(),
+            )
+            .await;
             wrap_result(result)
         }
 
@@ -572,7 +582,8 @@ fn wrap_result<T: std::fmt::Debug>(
             });
             Ok(json_val)
         }
-        Err((_status_code, err_message)) => { // Destructure (StatusCode, String)
+        Err((_status_code, err_message)) => {
+            // Destructure (StatusCode, String)
             // Return only the error message string
             Err(err_message)
         }
