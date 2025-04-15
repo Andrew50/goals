@@ -287,7 +287,7 @@ async fn handle_user_query_loop(
                     found_function_call = true;
                     let tool_call_name = function_call.name.clone();
                     let args = function_call.args.clone();
-                    
+
                     info!(
                         conversation_id = %conversation_uuid,
                         chunk_index = i,
@@ -309,17 +309,25 @@ async fn handle_user_query_loop(
                         tool_name = %tool_call_name,
                         "Executing tool"
                     );
-                    
-                    match tool_registry::dispatch_tool(&tool_call_name, &args, &pool, &user_locks,user_id).await {
+
+                    match tool_registry::dispatch_tool(
+                        &tool_call_name,
+                        &args,
+                        &pool,
+                        &user_locks,
+                        user_id,
+                    )
+                    .await
+                    {
                         // tool_result is now the JSON: {"result": "success", "data": ...}
-                        Ok(tool_result) => { 
+                        Ok(tool_result) => {
                             info!(
                                 conversation_id = %conversation_uuid,
                                 tool_name = %tool_call_name,
                                 result_size = tool_result.to_string().len(),
                                 "Tool execution succeeded"
                             );
-                            
+
                             // Send success result (tool_result is already the JSON value we want)
                             let tool_result_msg = WsQueryMessage::ToolResult {
                                 success: true,
@@ -350,7 +358,7 @@ async fn handle_user_query_loop(
                                 error = %e,
                                 "Tool execution failed"
                             );
-                            
+
                             let error_val = serde_json::json!({
                                 "error": e.to_string(),
                                 "tool_name": tool_call_name.clone()
@@ -376,7 +384,7 @@ async fn handle_user_query_loop(
                         tool_name = %tool_call_name,
                         "Restarting LLM loop after tool execution"
                     );
-                    
+
                     // Break out and do another loop iteration to re-call Gemini
                     break;
                 }
@@ -424,7 +432,10 @@ async fn handle_user_query_loop(
         break;
     }
 
-    info!("Completed user query cycle for conversation_id={}", conversation_uuid);
+    info!(
+        "Completed user query cycle for conversation_id={}",
+        conversation_uuid
+    );
     Ok(())
 }
 
@@ -436,8 +447,8 @@ async fn call_gemini(
     conversation_history: &[Message],
 ) -> Result<Vec<LlmChunk>, Box<dyn std::error::Error + Send + Sync>> {
     let tools = tool_registry::get_tools();
-    let api_key = std::env::var("GOALS_GEMINI_API_KEY")
-        .map_err(|_| "GOALS_GEMINI_API_KEY not set")?;
+    let api_key =
+        std::env::var("GOALS_GEMINI_API_KEY").map_err(|_| "GOALS_GEMINI_API_KEY not set")?;
 
     info!(
         history_length = conversation_history.len(),
@@ -487,7 +498,10 @@ async fn call_gemini(
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let err_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let err_text = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         let msg = format!("Gemini API error (status {}): {}", status, err_text);
         error!(
             status = %status,
@@ -501,12 +515,15 @@ async fn call_gemini(
     let response_text = resp.text().await?;
     info!(
         response_length = response_text.len(),
-        "Raw Gemini API response: {}",
-        response_text
+        "Raw Gemini API response: {}", response_text
     );
 
-    let gemini_resp: GeminiApiResponse = serde_json::from_str(&response_text)
-        .map_err(|e| format!("Failed to parse Gemini response: {}. Response: {}", e, response_text))?;
+    let gemini_resp: GeminiApiResponse = serde_json::from_str(&response_text).map_err(|e| {
+        format!(
+            "Failed to parse Gemini response: {}. Response: {}",
+            e, response_text
+        )
+    })?;
     if gemini_resp.candidates.is_empty() {
         info!("Gemini API returned empty candidates");
         return Ok(vec![]);
@@ -554,8 +571,7 @@ async fn send_ws_message(
     sender: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
     msg: &WsQueryMessage,
 ) -> Result<(), axum::Error> {
-    let json =
-        serde_json::to_string(msg).map_err(|e| axum::Error::new(format!("JSON serialization error: {}", e)))?;
+    let json = serde_json::to_string(msg)
+        .map_err(|e| axum::Error::new(format!("JSON serialization error: {}", e)))?;
     sender.send(WsMessage::Text(json)).await
 }
-
