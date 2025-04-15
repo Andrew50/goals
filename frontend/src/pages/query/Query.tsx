@@ -10,7 +10,8 @@ import {
     CircularProgress,
     Divider,
     IconButton,
-    Chip
+    Chip,
+    Collapse
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -21,17 +22,35 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HelpIcon from '@mui/icons-material/Help';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { useAuth } from '../../shared/contexts/AuthContext';
 
 // Helper function to generate a random ID (replacement for uuid)
 const generateId = (): string => {
-    return Math.random().toString(36).substring(2, 15) +
-        Math.random().toString(36).substring(2, 15);
+    return (
+        Math.random().toString(36).substring(2, 15) +
+        Math.random().toString(36).substring(2, 15)
+    );
 };
 
+// Define possible structures for ToolResult content
+interface ToolResultSuccessContent {
+    result: 'success';
+    data: any; // Can be refined further if the data structure is consistent
+}
+
+interface ToolResultErrorContent {
+    result: 'error';
+    error: string;
+}
+
+// More specific type for the content of a ToolResult message
+type ToolResultContentType = string | ToolResultSuccessContent | ToolResultErrorContent | { [key: string]: any }; // Allow generic object as fallback
+
 // WebSocket Message Types
-interface WsQueryMessage {
-    type: 'UserQuery' | 'AssistantText' | 'ToolCall' | 'ToolResult' | 'Error';
+interface WsQueryMessageBase {
+    type: 'UserQuery' | 'AssistantText' | 'ToolCall' | 'Error';
     content?: string;
     message?: string;
     name?: string;
@@ -39,6 +58,19 @@ interface WsQueryMessage {
     success?: boolean;
     conversation_id?: string;
 }
+
+interface WsToolResultMessage {
+    type: 'ToolResult';
+    content?: ToolResultContentType; // Use the more specific type here
+    message?: string;
+    name?: string; // Tool name is expected for ToolResult
+    args?: any;    // Args might not be present in result, but keeping for flexibility
+    success?: boolean; // Success status is expected for ToolResult
+    conversation_id?: string;
+}
+
+// Union type for all possible WebSocket messages
+type WsQueryMessage = WsQueryMessageBase | WsToolResultMessage;
 
 interface Message {
     role: string;
@@ -51,6 +83,7 @@ interface ToolExecution {
     args?: any;
     status: 'pending' | 'executing' | 'completed' | 'cancelled';
     messageId: string;
+    resultData?: any; // Added to store raw/parsed result data
 }
 
 interface Conversation {
@@ -91,6 +124,17 @@ const Query: React.FC = () => {
     const ws = useRef<WebSocket | null>(null);
     const { token } = useAuth();
 
+    // Store expanded state for each tool execution (collapsed by default)
+    const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
+
+    // Helper to format a tool/goal name by replacing underscores and capitalizing words
+    const formatGoalTitle = (title: string): string => {
+        return title
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+    };
+
     // Handle incoming WebSocket messages
     const handleWebSocketMessage = (message: WsQueryMessage) => {
         console.log('Received WebSocket message:', message);
@@ -105,10 +149,12 @@ const Query: React.FC = () => {
                             // If no conversation exists, create a new one
                             return {
                                 id: generateId(),
-                                messages: [{
-                                    role: 'assistant',
-                                    content: message.content || '' // Ensure non-null content
-                                }]
+                                messages: [
+                                    {
+                                        role: 'assistant',
+                                        content: message.content || ''
+                                    }
+                                ]
                             };
                         }
 
@@ -119,7 +165,7 @@ const Query: React.FC = () => {
                             const updatedMessages = [...prev.messages];
                             updatedMessages[updatedMessages.length - 1] = {
                                 ...lastMessage,
-                                content: message.content || '' // Ensure non-null content
+                                content: message.content || ''
                             };
 
                             return {
@@ -130,10 +176,13 @@ const Query: React.FC = () => {
                             // Add a new assistant message
                             return {
                                 ...prev,
-                                messages: [...prev.messages, {
-                                    role: 'assistant',
-                                    content: message.content || '' // Ensure non-null content
-                                }]
+                                messages: [
+                                    ...prev.messages,
+                                    {
+                                        role: 'assistant',
+                                        content: message.content || ''
+                                    }
+                                ]
                             };
                         }
                     });
@@ -146,7 +195,7 @@ const Query: React.FC = () => {
                     const toolExecution: ToolExecution = {
                         name: message.name,
                         args: message.args,
-                        status: 'executing' as const,
+                        status: 'executing',
                         messageId
                     };
 
@@ -156,11 +205,14 @@ const Query: React.FC = () => {
                         // Add a new assistant message with the tool execution
                         return {
                             ...prev,
-                            messages: [...prev.messages, {
-                                role: 'assistant',
-                                content: `I'm executing the ${message.name} function.`,
-                                toolExecution
-                            }]
+                            messages: [
+                                ...prev.messages,
+                                {
+                                    role: 'assistant',
+                                    content: `I'm executing the ${message.name} function.`,
+                                    toolExecution
+                                }
+                            ]
                         };
                     });
                 }
@@ -176,44 +228,64 @@ const Query: React.FC = () => {
                                 // Format content for display
                                 let formattedContent = msg.content;
 
-                                if (message.success) {
-                                    // Extract relevant information from the tool result
-                                    if (typeof message.content === 'object' && message.content !== null) {
-                                        const content = message.content as ToolResultContent;
+                                // Backend now sends content like: { result: "success", data: <actual_data> }
+                                // or { result: "error", error: <error_message> } for tool handler errors
+                                // or just the error string for dispatch/serialization errors.
 
-                                        if (message.name === 'list_goals' && Array.isArray(content.goals)) {
-                                            formattedContent += '\n\nGoals:';
-                                            content.goals.forEach((goal, index) => {
-                                                formattedContent += `\n${index + 1}. ${goal.name || 'Untitled Goal'}`;
-                                                if (goal.description) formattedContent += ` - ${goal.description}`;
-                                            });
-                                        } else if (message.name === 'create_goal' && content.goal) {
-                                            formattedContent += `\n\nCreated goal: "${content.goal.title || 'Untitled'}"`;
-                                            if (content.goal.description) {
-                                                formattedContent += `\nDescription: ${content.goal.description}`;
-                                            }
-                                        } else {
-                                            formattedContent += `\n\n${JSON.stringify(content, null, 2)}`;
-                                        }
-                                    } else {
-                                        formattedContent += '\n\nOperation completed successfully.';
-                                    }
+                                let resultData: any = undefined;
+                                let summaryContent = msg.content; // Keep the initial "Executing..." message
+                                let finalStatus: 'completed' | 'cancelled' = 'cancelled'; // Default to cancelled
+
+                                // Type guard to check if content is a ToolResultSuccessContent object
+                                const isSuccessResult = (content: any): content is ToolResultSuccessContent =>
+                                    typeof content === 'object' && content !== null && content.result === 'success';
+
+                                // Type guard to check if content is a ToolResultErrorContent object
+                                const isErrorResult = (content: any): content is ToolResultErrorContent =>
+                                    typeof content === 'object' && content !== null && content.result === 'error' && typeof content.error === 'string';
+
+                                // Type guard to check for generic object with an error property (fallback)
+                                const hasErrorProperty = (content: any): content is { error: string } =>
+                                    typeof content === 'object' && content !== null && typeof content.error === 'string';
+
+
+                                if (message.success && isSuccessResult(message.content)) {
+                                    // Successful execution, extract data
+                                    resultData = message.content.data; // Extract the actual data
+                                    summaryContent = `Executed ${formatGoalTitle(message.name || 'tool')} successfully.`; // More concise summary
+                                    finalStatus = 'completed';
                                 } else {
-                                    // Handle error case
-                                    if (typeof message.content === 'object' && message.content !== null) {
-                                        const errorContent = message.content as ToolResultContent;
-                                        formattedContent += `\n\nError: ${errorContent.error || 'Something went wrong'}`;
+                                    // Handle failure - could be structured error or plain string
+                                    let errorMsg = 'Operation failed';
+                                    if (isErrorResult(message.content)) {
+                                        // Structured error { result: 'error', error: '...' }
+                                        errorMsg += `: ${message.content.error}`;
+                                        resultData = message.content; // Store the whole error object
+                                    } else if (hasErrorProperty(message.content)) {
+                                        // Generic object with error property { error: '...' }
+                                        errorMsg += `: ${message.content.error}`;
+                                        resultData = message.content; // Store the whole error object
+                                    } else if (typeof message.content === 'string') {
+                                        // Plain error string from wrap_result or dispatch_tool
+                                        errorMsg += `: ${message.content}`;
+                                        resultData = { error: message.content }; // Store as an object for consistency
                                     } else {
-                                        formattedContent += '\n\nOperation failed: Something went wrong';
+                                        // Fallback for unexpected content structure
+                                        errorMsg += ': An unknown error occurred.';
+                                        resultData = message.content; // Store whatever we got
                                     }
+                                    summaryContent = errorMsg; // Use the error message as the summary
+                                    finalStatus = 'cancelled';
                                 }
+
 
                                 return {
                                     ...msg,
-                                    content: formattedContent,
+                                    content: summaryContent, // Use the generated summary text
                                     toolExecution: {
                                         ...msg.toolExecution,
-                                        status: message.success ? 'completed' as const : 'cancelled' as const
+                                        status: finalStatus,
+                                        resultData: resultData // Store the extracted data or error info
                                     }
                                 };
                             }
@@ -230,24 +302,28 @@ const Query: React.FC = () => {
 
             case 'Error':
                 setIsLoading(false);
-
                 setConversation(prev => {
                     if (!prev) {
                         return {
                             id: generateId(),
-                            messages: [{
-                                role: 'assistant',
-                                content: message.message || 'An error occurred'
-                            }]
+                            messages: [
+                                {
+                                    role: 'assistant',
+                                    content: message.message || 'An error occurred'
+                                }
+                            ]
                         };
                     }
 
                     return {
                         ...prev,
-                        messages: [...prev.messages, {
-                            role: 'assistant',
-                            content: message.message || 'An error occurred'
-                        }]
+                        messages: [
+                            ...prev.messages,
+                            {
+                                role: 'assistant',
+                                content: message.message || 'An error occurred'
+                            }
+                        ]
                     };
                 });
                 break;
@@ -284,7 +360,7 @@ const Query: React.FC = () => {
             setWsStatus(WebSocketStatus.OPEN);
         };
 
-        ws.current.onmessage = (event) => {
+        ws.current.onmessage = event => {
             try {
                 const message = JSON.parse(event.data) as WsQueryMessage;
                 handleWebSocketMessage(message);
@@ -299,7 +375,7 @@ const Query: React.FC = () => {
             // Could implement reconnection logic here
         };
 
-        ws.current.onerror = (error) => {
+        ws.current.onerror = error => {
             console.error('WebSocket error:', error);
             setWsStatus(WebSocketStatus.ERROR);
         };
@@ -369,10 +445,13 @@ const Query: React.FC = () => {
 
                 return {
                     ...prev,
-                    messages: [...prev.messages, {
-                        role: 'assistant',
-                        content: 'Failed to send message. Please try again.'
-                    }]
+                    messages: [
+                        ...prev.messages,
+                        {
+                            role: 'assistant',
+                            content: 'Failed to send message. Please try again.'
+                        }
+                    ]
                 };
             });
         }
@@ -389,12 +468,25 @@ const Query: React.FC = () => {
         setConversation(null);
     };
 
-    // Render tool execution status
-    const renderToolExecution = (toolExecution: ToolExecution) => {
-        // Define the type for color to fix TypeScript errors
-        let color: 'warning' | 'info' | 'success' | 'error' | 'default';
-        let icon;
-        let statusText;
+    // Render the entire tool execution (header + collapsible content)
+    const renderToolExecution = (
+        toolExecution: ToolExecution,
+        messageContent: string
+    ) => {
+        // We'll split the message content into two parts (before and after the first blank line),
+        // just in case there's text like "I'm executing X function." and then the appended results.
+        const [preContent, ...rest] = messageContent.split('\n\n');
+        const postContent = rest.join('\n\n');
+
+        // Determine status and icon
+        let color:
+            | 'warning'
+            | 'info'
+            | 'success'
+            | 'error'
+            | 'default' = 'default';
+        let icon: React.ReactNode;
+        let statusText: string;
 
         switch (toolExecution.status) {
             case 'pending':
@@ -418,106 +510,199 @@ const Query: React.FC = () => {
                 icon = <CancelIcon fontSize="small" />;
                 break;
             default:
-                color = 'default';
                 statusText = 'Unknown';
                 icon = <HelpIcon fontSize="small" />;
         }
 
-        // Helper function to get background and text colors based on status
-        const getStatusColors = () => {
-            switch (color) {
-                case 'warning':
-                    return { bg: '#FFF8E1', text: '#F57C00' };
-                case 'info':
-                    return { bg: '#E3F2FD', text: '#1976D2' };
-                case 'success':
-                    return { bg: '#E8F5E9', text: '#2E7D32' };
-                case 'error':
-                    return { bg: '#FFEBEE', text: '#C62828' };
-                default:
-                    return { bg: '#F5F5F5', text: '#757575' };
-            }
+        // Expanded/collapsed for this message
+        const isResultsExpanded = expandedTools[toolExecution.messageId] || false;
+
+        const toggleResultsExpansion = () => {
+            setExpandedTools(prev => ({
+                ...prev,
+                [toolExecution.messageId]: !prev[toolExecution.messageId]
+            }));
         };
 
-        const { bg, text } = getStatusColors();
-
         return (
-            <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                <Chip
-                    icon={icon}
-                    label={`${toolExecution.name} (${statusText})`}
-                    color={color}
-                    size="small"
-                    variant="outlined"
-                    sx={{ alignSelf: 'flex-start' }}
-                />
-
-                {toolExecution.args && (
-                    <Box sx={{
-                        mt: 1.5,
-                        border: '1px solid',
-                        borderColor: `${color}.main`,
-                        borderRadius: 1.5,
-                        overflow: 'hidden',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                    }}>
-                        <Box sx={{
-                            bgcolor: `${color}.main`,
-                            py: 0.7,
-                            px: 1.5,
-                            borderBottom: '1px solid',
-                            borderColor: `${color}.dark`,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 0.8
-                        }}>
-                            <BuildIcon fontSize="small" sx={{ color: 'white' }} />
-                            <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'white' }}>
-                                Function Arguments
-                            </Typography>
-                        </Box>
-                        <Box sx={{ p: 0, bgcolor: 'background.paper' }}>
-                            {Object.entries(toolExecution.args).map(([key, value], index) => (
-                                <Box key={key} sx={{
-                                    display: 'flex',
-                                    borderBottom: index < Object.entries(toolExecution.args).length - 1 ? '1px solid' : 'none',
-                                    borderColor: 'divider',
-                                }}>
-                                    <Box sx={{
-                                        width: '35%',
-                                        p: 1.2,
-                                        pl: 1.5,
-                                        bgcolor: bg,
-                                        color: text,
-                                        borderRight: '1px solid',
-                                        borderColor: 'divider',
-                                        fontWeight: 'bold',
-                                        fontSize: '0.8rem',
-                                        fontFamily: 'monospace',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis'
-                                    }}>
-                                        {key}
-                                    </Box>
-                                    <Box sx={{
-                                        width: '65%',
-                                        p: 1.2,
-                                        pl: 1.5,
-                                        wordBreak: 'break-word',
-                                        fontSize: '0.8rem',
-                                        fontFamily: 'monospace',
-                                        bgcolor: 'background.default',
-                                        color: 'text.primary'
-                                    }}>
-                                        {typeof value === 'object'
-                                            ? JSON.stringify(value, null, 2)
-                                            : String(value)}
-                                    </Box>
-                                </Box>
-                            ))}
-                        </Box>
+            <Box
+                sx={{
+                    mt: 1.5,
+                    border: '1px solid',
+                    borderColor: `${color}.main`,
+                    borderRadius: 1.5,
+                    overflow: 'hidden',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                }}
+            >
+                {/* Collapsible Header */}
+                <Box
+                    sx={{
+                        bgcolor: `${color}.main`,
+                        py: 0.7,
+                        px: 1.5,
+                        borderBottom: isResultsExpanded ? '1px solid' : 'none',
+                        borderColor: `${color}.dark`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer'
+                    }}
+                    onClick={toggleResultsExpansion}
+                >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+                        {icon}
+                        <Typography
+                            variant="caption"
+                            sx={{ fontWeight: 'bold', color: 'white' }}
+                        >
+                            {formatGoalTitle(toolExecution.name)} ({statusText})
+                        </Typography>
                     </Box>
-                )}
+                    <IconButton
+                        size="small"
+                        sx={{ color: 'white', p: 0.2 }}
+                        onClick={e => {
+                            e.stopPropagation();
+                            toggleResultsExpansion();
+                        }}
+                    >
+                        {isResultsExpanded ? (
+                            <ExpandLessIcon fontSize="small" />
+                        ) : (
+                            <ExpandMoreIcon fontSize="small" />
+                        )}
+                    </IconButton>
+                </Box>
+
+                {/* Collapsible Content */}
+                <Collapse in={isResultsExpanded}>
+                    <Box sx={{ bgcolor: 'background.paper', p: 1.5 }}>
+                        {/* Pre-content (e.g. "I'm executing the X function.") */}
+                        {preContent && (
+                            <Box sx={{ mb: 2 }}>
+                                <Typography
+                                    variant="body2"
+                                    sx={{ whiteSpace: 'pre-wrap' }}
+                                >
+                                    {preContent}
+                                </Typography>
+                            </Box>
+                        )}
+
+                        {/* Function Arguments Section */}
+                        <Box
+                            sx={{
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 1,
+                                mb: 2
+                            }}
+                        >
+                            <Box
+                                sx={{
+                                    bgcolor: 'rgba(0,0,0,0.04)',
+                                    px: 1.5,
+                                    py: 1
+                                }}
+                            >
+                                <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                                    Function Arguments
+                                </Typography>
+                            </Box>
+                            <Box sx={{ p: 1.5 }}>
+                                {toolExecution.args && Object.keys(toolExecution.args).length ? (
+                                    Object.entries(toolExecution.args).map(([key, value]) => (
+                                        <Box
+                                            key={key}
+                                            sx={{
+                                                mb: 1,
+                                                display: 'flex',
+                                                flexDirection: 'column'
+                                            }}
+                                        >
+                                            <Typography
+                                                variant="caption"
+                                                sx={{ fontWeight: 'bold', color: 'text.secondary' }}
+                                            >
+                                                {key}:
+                                            </Typography>
+                                            <Typography
+                                                variant="caption"
+                                                sx={{ whiteSpace: 'pre-wrap', ml: 1 }}
+                                            >
+                                                {typeof value === 'object'
+                                                    ? JSON.stringify(value, null, 2)
+                                                    : String(value)}
+                                            </Typography>
+                                        </Box>
+                                    ))
+                                ) : (
+                                    <Typography
+                                        variant="caption"
+                                        sx={{ fontStyle: 'italic', color: 'text.secondary' }}
+                                    >
+                                        None
+                                    </Typography>
+                                )}
+                            </Box>
+                        </Box>
+
+                        {/* Tool Result Section */}
+                        {toolExecution.resultData !== undefined && (
+                            <Box
+                                sx={{
+                                    border: '1px solid',
+                                    borderColor: 'divider',
+                                    borderRadius: 1
+                                }}
+                            >
+                                <Box
+                                    sx={{
+                                        bgcolor: 'rgba(0,0,0,0.04)',
+                                        px: 1.5,
+                                        py: 1
+                                    }}
+                                >
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                                        Tool Result Data
+                                    </Typography>
+                                </Box>
+                                <Box sx={{ p: 1.5, overflowX: 'auto' }}>
+                                    {typeof toolExecution.resultData === 'object' ? (
+                                        <Typography
+                                            component="pre" // Use <pre> for formatting
+                                            variant="body2"
+                                            sx={{
+                                                whiteSpace: 'pre-wrap', // Wrap long lines
+                                                wordBreak: 'break-all', // Break long words/strings
+                                                fontFamily: 'monospace', // Use monospace font
+                                                fontSize: '0.8rem', // Slightly smaller font
+                                                margin: 0 // Remove default pre margin
+                                            }}
+                                        >
+                                            {JSON.stringify(
+                                                toolExecution.resultData,
+                                                null,
+                                                2
+                                            )}
+                                        </Typography>
+                                    ) : (
+                                        <Typography
+                                            variant="body2"
+                                            sx={{
+                                                whiteSpace: 'pre-wrap',
+                                                fontFamily: 'inherit'
+                                            }}
+                                        >
+                                            {String(toolExecution.resultData)}
+                                        </Typography>
+                                    )}
+                                </Box>
+                            </Box>
+                        )}
+                    </Box>
+                </Collapse>
             </Box>
         );
     };
@@ -558,7 +743,15 @@ const Query: React.FC = () => {
     };
 
     return (
-        <Container maxWidth="md" sx={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', py: 2 }}>
+        <Container
+            maxWidth="md"
+            sx={{
+                height: 'calc(100vh - 100px)',
+                display: 'flex',
+                flexDirection: 'column',
+                py: 2
+            }}
+        >
             <Paper
                 elevation={3}
                 sx={{
@@ -571,12 +764,14 @@ const Query: React.FC = () => {
                     bgcolor: 'background.default'
                 }}
             >
-                <Box sx={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    mb: 2
-                }}>
+                <Box
+                    sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        mb: 2
+                    }}
+                >
                     <Typography variant="h6">
                         Conversation
                         {renderConnectionStatus()}
@@ -585,26 +780,28 @@ const Query: React.FC = () => {
 
                 <Divider sx={{ mb: 2 }} />
 
-                <Box sx={{
-                    flexGrow: 1,
-                    overflow: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2
-                }}>
+                <Box
+                    sx={{
+                        flexGrow: 1,
+                        overflow: 'auto',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2
+                    }}
+                >
                     {!conversation?.messages?.length && (
-                        <Box sx={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            height: '100%',
-                            opacity: 0.7
-                        }}>
+                        <Box
+                            sx={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                height: '100%',
+                                opacity: 0.7
+                            }}
+                        >
                             <SmartToyIcon sx={{ fontSize: 48, mb: 2 }} />
-                            <Typography>
-                                Start a conversation by sending a message
-                            </Typography>
+                            <Typography>Start a conversation by sending a message</Typography>
                         </Box>
                     )}
 
@@ -617,15 +814,20 @@ const Query: React.FC = () => {
                                 maxWidth: '80%'
                             }}
                         >
-                            <Box sx={{
-                                display: 'flex',
-                                flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
-                                alignItems: 'flex-start',
-                                gap: 1
-                            }}>
+                            <Box
+                                sx={{
+                                    display: 'flex',
+                                    flexDirection: message.role === 'user' ? 'row-reverse' : 'row',
+                                    alignItems: 'flex-start',
+                                    gap: 1
+                                }}
+                            >
                                 <Avatar
                                     sx={{
-                                        bgcolor: message.role === 'user' ? 'primary.main' : 'secondary.main',
+                                        bgcolor:
+                                            message.role === 'user'
+                                                ? 'primary.main'
+                                                : 'secondary.main',
                                         mt: 0.5
                                     }}
                                 >
@@ -635,46 +837,29 @@ const Query: React.FC = () => {
                                     elevation={1}
                                     sx={{
                                         p: 2,
-                                        bgcolor: message.role === 'user' ? 'primary.light' : 'background.paper',
+                                        bgcolor:
+                                            message.role === 'user'
+                                                ? 'primary.light'
+                                                : 'background.paper',
                                         borderRadius: 2
                                     }}
                                 >
                                     {message.toolExecution ? (
-                                        // If message has tool execution, split content into pre and post execution parts
-                                        <>
-                                            <div style={{
+                                        // Entire tool execution (collapsed by default)
+                                        renderToolExecution(
+                                            message.toolExecution,
+                                            message.content
+                                        )
+                                    ) : (
+                                        // Regular message without tool execution
+                                        <div
+                                            style={{
                                                 whiteSpace: 'pre-wrap',
                                                 fontFamily: 'inherit',
                                                 fontSize: '1rem',
                                                 lineHeight: '1.5'
-                                            }}>
-                                                {/* Display content up to the first blank line, which will separate pre and post execution content */}
-                                                {message.content.split('\n\n')[0]}
-                                            </div>
-
-                                            {renderToolExecution(message.toolExecution)}
-
-                                            {/* If there's content after a blank line, display it after the tool execution UI */}
-                                            {message.content.includes('\n\n') && (
-                                                <div style={{
-                                                    whiteSpace: 'pre-wrap',
-                                                    fontFamily: 'inherit',
-                                                    fontSize: '1rem',
-                                                    lineHeight: '1.5',
-                                                    marginTop: '12px'
-                                                }}>
-                                                    {message.content.split('\n\n').slice(1).join('\n\n')}
-                                                </div>
-                                            )}
-                                        </>
-                                    ) : (
-                                        // Regular message without tool execution
-                                        <div style={{
-                                            whiteSpace: 'pre-wrap',
-                                            fontFamily: 'inherit',
-                                            fontSize: '1rem',
-                                            lineHeight: '1.5'
-                                        }}>
+                                            }}
+                                        >
                                             {message.content}
                                         </div>
                                     )}
@@ -684,7 +869,15 @@ const Query: React.FC = () => {
                     ))}
 
                     {isLoading && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, alignSelf: 'flex-start', ml: 2 }}>
+                        <Box
+                            sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1,
+                                alignSelf: 'flex-start',
+                                ml: 2
+                            }}
+                        >
                             <CircularProgress size={20} />
                             <Typography variant="body2">Thinking...</Typography>
                         </Box>
@@ -694,7 +887,11 @@ const Query: React.FC = () => {
                 </Box>
             </Paper>
 
-            <Paper component="form" onSubmit={handleSendMessage} sx={{ p: 1, display: 'flex', alignItems: 'center' }}>
+            <Paper
+                component="form"
+                onSubmit={handleSendMessage}
+                sx={{ p: 1, display: 'flex', alignItems: 'center' }}
+            >
                 <TextField
                     fullWidth
                     multiline
@@ -724,11 +921,7 @@ const Query: React.FC = () => {
                 >
                     Send
                 </Button>
-                <IconButton
-                    onClick={clearConversation}
-                    title="Clear conversation"
-                    sx={{ ml: 1 }}
-                >
+                <IconButton onClick={clearConversation} title="Clear conversation" sx={{ ml: 1 }}>
                     <DeleteIcon />
                 </IconButton>
             </Paper>
@@ -736,4 +929,5 @@ const Query: React.FC = () => {
     );
 };
 
-export default Query; 
+export default Query;
+
