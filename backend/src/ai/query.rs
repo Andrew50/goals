@@ -314,8 +314,8 @@ async fn handle_user_query_loop(
                     match tool_registry::dispatch_tool(
                         &tool_call_name,
                         &args,
-                        &pool,
-                        &user_locks,
+                        pool,
+                        user_locks,
                         user_id,
                     )
                     .await
