@@ -540,7 +540,7 @@ async fn call_gemini(
     );
 
     // Collect text parts and function calls
-    for (_i, part) in candidate.content.parts.iter().enumerate() { // Use _i for unused variable
+    for part in candidate.content.parts.iter() { // Use _i for unused variable
         if let Some(fc) = &part.function_call {
             chunks.push(LlmChunk::FunctionCall(fc.clone()));
         }

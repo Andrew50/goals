@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { generateTestToken } from './helpers/auth';
+import { generateStorageState } from './helpers/auth'; // Import the new helper
 
 /**
  * Timestamp E2E Tests
@@ -9,25 +9,21 @@ import { generateTestToken } from './helpers/auth';
  */
 
 test.describe('Timestamp and Timezone E2E Tests', () => {
-    // Set up for all tests
+    // Set up for tests in this describe block
     test.beforeEach(async ({ page }) => {
-        // Set up an authenticated session
-        const token = generateTestToken(1); // user ID 1
+        // Authentication is handled by global setup and storageState in playwright.config.ts
+        // for the default context used by these tests.
 
-        // Set the token in local storage before navigating to the app
-        await page.goto('/');
-        await page.evaluate((authToken) => {
-            localStorage.setItem('authToken', authToken);
-        }, token);
-
-        // Go to the calendar page
+        // Go directly to the calendar page
         await page.goto('/calendar');
 
-        // Wait for the calendar to load
-        await page.waitForSelector('.fc-view-container', { timeout: 5000 });
+        // Wait for the calendar to load (use a reliable selector)
+        await page.waitForSelector('.calendar-container', { timeout: 10000 });
+        // Optional: Wait for events if expected immediately
+        // await page.waitForSelector('.fc-event', { timeout: 5000 });
     });
 
-    test('creates a task with specific time and verifies it persists correctly after reload', async ({ page, context }) => {
+    test('creates a task with specific time and verifies it persists correctly after reload', async ({ page }) => { // context fixture no longer needed here
         // Click on a specific time slot (e.g., 10:00 AM on the current day)
         // Find the time slot (this selector may need adjustment based on your FullCalendar setup)
         const timeSlot = page.locator('.fc-time-grid-slot').filter({ hasText: '10:00' }).first();
@@ -230,11 +226,17 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         // Create a new page in the different timezone
         const newTimezonePage = await newContext.newPage();
 
-        // Set up auth
-        await newTimezonePage.goto('/');
-        await newTimezonePage.evaluate((authToken) => {
-            localStorage.setItem('authToken', authToken);
-        }, generateTestToken(1));
+        // Set up auth for the new context MANUALLY, as it doesn't inherit global state
+        // Use the generateStorageState helper for consistency
+        const userId = 1; // Or the specific user needed for this test
+        const username = `testuser${userId}`;
+        // Use the baseURL from the config if possible, or default
+        const baseURL = context.browser()?.browserType().name() === 'chromium' // Example check, adjust as needed
+                       ? 'http://localhost:3000' // Or get from config more reliably if needed
+                       : 'http://localhost:3000'; 
+        const storageState = generateStorageState(userId, username, baseURL);
+        await newContext.addCookies(storageState.cookies || []); // Use newContext
+        await newContext.setStorageState(storageState); // Use newContext
 
         // Go to calendar
         await newTimezonePage.goto('/calendar');
@@ -247,7 +249,22 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         // Check the time - it should show at a different hour (3 PM Pacific would be 6 PM Eastern)
         const eventTimeInNewTimezone = newTimezonePage.locator('.fc-event:has-text("Timezone Change Test") .fc-time');
         const newTimezoneTimeText = await eventTimeInNewTimezone.textContent() || '';
-        expect(newTimezoneTimeText).toContain('18:00'); // 6 PM in Eastern Time
+        // Assuming the original click was 3 PM Pacific (default test timezone)
+        // 3 PM Pacific = 6 PM Eastern
+        expect(newTimezoneTimeText).toContain('18:00'); 
+
+        // *** ADDED VERIFICATION ***
+        // Click the event in the new timezone context
+        await eventInNewTimezone.click();
+
+        // Wait for the GoalMenu to appear in the new timezone page
+        await newTimezonePage.waitForSelector('input[type="datetime-local"]'); // Use a selector specific to GoalMenu's time input
+
+        // Verify the time input in GoalMenu shows the correct local time (18:00)
+        const timeInputInNewTimezone = newTimezonePage.locator('input[type="datetime-local"]'); // Adjust selector as needed
+        const prefilledTimeInNewTimezone = await timeInputInNewTimezone.inputValue();
+        expect(prefilledTimeInNewTimezone).toContain('T18:00');
+        // If it were just a time input: expect(prefilledTimeInNewTimezone).toBe('18:00');
 
         // Clean up
         await newContext.close();
@@ -265,16 +282,22 @@ test.describe('Timezone Handling in Calendar', () => {
                 timezoneId: timezone,
             });
 
-            // Setup and auth
-            await page.goto('/');
-            const testToken = generateTestToken();
-            await page.evaluate((token) => {
-                localStorage.setItem('token', token);
-                localStorage.setItem('userId', '1');
-            }, testToken);
+            // Setup auth MANUALLY for the context created by browser.newPage({ timezoneId: ... })
+            // as it doesn't inherit the global storage state.
+            const userId = 1;
+            const username = `testuser${userId}`;
+            const context = page.context(); // Get context from the page
+            // Use the baseURL from the config if possible, or default
+            const baseURL = context.browser()?.browserType().name() === 'chromium' // Example check, adjust as needed
+                           ? 'http://localhost:3000' // Or get from config more reliably if needed
+                           : 'http://localhost:3000';
+            const storageState = generateStorageState(userId, username, baseURL);
+            await context.addCookies(storageState.cookies || []);
+            await context.setStorageState(storageState);
 
-            await page.goto('/');
-            await page.waitForSelector('.calendar-container');
+            // Go directly to the calendar page
+            await page.goto('/calendar');
+            await page.waitForSelector('.calendar-container', { timeout: 10000 }); // Increased timeout
 
             // Switch to day view for precise time testing
             await page.locator('.fc-timeGridDay-button').click();
@@ -286,14 +309,24 @@ test.describe('Timezone Handling in Calendar', () => {
             await page.locator('input[placeholder="Name"]').fill(eventName);
             await page.locator('select[name="goal_type"]').selectOption('task');
 
-            // Set time to 9:30 AM local time for this timezone
-            const timeInput = page.locator('input[type="datetime-local"]');
-            await timeInput.click();
+            // *** ADDED VERIFICATION ***
+            // Verify the GoalMenu's time input is pre-filled with the clicked time (9:30 AM)
+            // Assuming the input for a time-slot click is of type 'time' or 'datetime-local'
+            // Adjust selector if GoalMenu uses a different input type/name for scheduled time
+            const scheduleInput = page.locator('input[type="datetime-local"]'); // Or potentially 'input[type="time"]'
+            const prefilledTime = await scheduleInput.inputValue();
+            // The datetime-local input includes the date, so we check if the time part is correct
+            expect(prefilledTime).toContain('T09:30'); 
+            // If it were just a time input: expect(prefilledTime).toBe('09:30');
 
-            // Get current date in YYYY-MM-DD format
-            const today = new Date();
-            const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T09:30`;
-            await timeInput.fill(dateString);
+            // Set time to 9:30 AM local time for this timezone (if needed, might be prefilled)
+            // If the input is datetime-local, we still need to ensure the date is correct
+            if (!prefilledTime.startsWith(`${today.getFullYear()}`)) {
+                 const today = new Date();
+                 const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T09:30`;
+                 await scheduleInput.fill(dateString);
+            }
+            // If the input is just 'time', the click might already set it correctly.
 
             await page.locator('button:has-text("Create")').click();
 
@@ -338,16 +371,29 @@ test.describe('Timezone Handling in Calendar', () => {
                 timezoneId: timezone,
             });
 
-            // Setup and auth
-            await page.goto('/');
-            const testToken = generateTestToken();
-            await page.evaluate((token) => {
-                localStorage.setItem('token', token);
-                localStorage.setItem('userId', '1');
-            }, testToken);
+            // Setup and auth using context storage state
+            const userId = 1;
+            const username = `testuser${userId}`;
+            const testToken = generateTestToken(userId, username); // Pass username if helper supports it
+            const context = page.context(); // Get context from the page
+            await context.addCookies([]);
+            await context.setStorageState({
+                cookies: [],
+                origins: [
+                    {
+                        origin: 'http://localhost:3000', // Match the baseURL
+                        localStorage: [
+                            { name: 'authToken', value: testToken },
+                            { name: 'userId', value: String(userId) },
+                            { name: 'username', value: username }
+                        ],
+                    },
+                ],
+            });
 
-            await page.goto('/');
-            await page.waitForSelector('.calendar-container');
+            // Go directly to the calendar page
+            await page.goto('/calendar');
+            await page.waitForSelector('.calendar-container', { timeout: 10000 });
 
             // Switch to week view
             await page.locator('.fc-timeGridWeek-button').click();

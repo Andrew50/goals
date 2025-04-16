@@ -101,7 +101,7 @@ export const goalToUTC = (goal: Goal): Goal => {
  * @returns UTC timestamp in milliseconds
  */
 export const dateToTimestamp = (date: Date): number => {
-    return Date.UTC(
+    let timestamp = Date.UTC(
         date.getFullYear(),
         date.getMonth(),
         date.getDate(),
@@ -109,6 +109,8 @@ export const dateToTimestamp = (date: Date): number => {
         date.getMinutes(),
         date.getSeconds()
     );
+    // console.log(`[time.ts] dateToTimestamp: Input Date=${date.toString()}, Output UTC Timestamp=${timestamp}`);
+    return timestamp;
 };
 
 /**
@@ -141,7 +143,8 @@ export const timestampToInputString = (
     const date = new Date(timestamp);
 
     // Log for debugging
-    //console.log(`timestampToInputString: input timestamp=${timestamp}, format=${format}, date=${date.toString()}`);
+    console.log(`[time.ts] timestampToInputString: Input timestamp=${timestamp}, format=${format}`);
+    console.log(`[time.ts] timestampToInputString: Created Date object=${date.toString()} (local time)`);
 
     // Format the date according to the required format
     let result = '';

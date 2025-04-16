@@ -1,12 +1,14 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import path from 'path'; // Import path module
+import dotenv from 'dotenv'; // Import dotenv
+
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
  */
-// import dotenv from 'dotenv';
-// import path from 'path';
-// dotenv.config({ path: path.resolve(__dirname, '.env') });
+// Load environment variables from the root .env file
+dotenv.config({ path: path.resolve(__dirname, '../.env') }); // <-- Point to ../.env
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -23,10 +25,17 @@ export default defineConfig({
     workers: process.env.CI ? 1 : undefined,
     /* Reporter to use. See https://playwright.dev/docs/test-reporters */
     reporter: 'html',
+    /* Path to the global setup file. */
+    globalSetup: require.resolve('./tests/global-setup'),
+
     /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
     use: {
         /* Base URL to use in actions like `await page.goto('/')`. */
         baseURL: 'http://localhost:3000',
+        /* Use the saved storage state for authentication. */
+        storageState: 'tests/.auth/storageState.json',
+        /* Default locale */
+        locale: 'en-US',
         /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
         trace: 'on-first-retry',
         /* Add video recording for failed tests */
