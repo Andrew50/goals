@@ -65,7 +65,8 @@ const GoalMenu: GoalMenuComponent = () => {
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
         }
-        //console.log('GoalMenu opening with goal:', JSON.stringify(goalCopy));
+        console.log('[GoalMenu.tsx] open: Received goal:', JSON.stringify(goalCopy));
+        console.log('[GoalMenu.tsx] open: Initial scheduled_timestamp:', goalCopy.scheduled_timestamp, `(_tz=${goalCopy._tz})`);
         //console.log('Initial scheduled_timestamp:', goalCopy.scheduled_timestamp,
         //  'formatted:', timestampToDisplayString(goalCopy.scheduled_timestamp));
 
@@ -384,10 +385,10 @@ const GoalMenu: GoalMenuComponent = () => {
             label="Schedule Date"
             type="datetime-local"
             value={(() => {
-                const converted = timestampToInputString(state.goal.scheduled_timestamp, 'datetime');
-                //console.log('Rendering scheduled field:',
-                //  'Raw timestamp:', state.goal.scheduled_timestamp,
-                //  'Converted to input:', converted);
+                const rawTimestamp = state.goal.scheduled_timestamp;
+                console.log(`[GoalMenu.tsx] scheduleField render: Raw timestamp=${rawTimestamp}, _tz=${state.goal._tz}`);
+                const converted = timestampToInputString(rawTimestamp, 'datetime');
+                console.log(`[GoalMenu.tsx] scheduleField render: Converted to input string=${converted}`);
                 return converted;
             })()}
             onChange={(e) => {

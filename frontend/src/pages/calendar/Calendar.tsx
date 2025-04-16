@@ -253,18 +253,26 @@ const Calendar: React.FC = () => {
   };
 
   const handleDateClick = (arg: any) => {
-    console.log('Date clicked:', arg.date);
+    const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
+    console.log('[Calendar.tsx] handleDateClick: Date clicked:', clickedDate.toString());
     try {
+      // Use getTime() to get the timestamp representing the local time instant
+      const localTimestamp = clickedDate.getTime();
+      console.log('[Calendar.tsx] handleDateClick: Calculated local timestamp:', localTimestamp);
+
       const tempGoal: Goal = {
         id: 0,
         name: '',
         goal_type: 'task',
         description: '',
         priority: 'medium',
-        scheduled_timestamp: dateToTimestamp(arg.date),
-        routine_time: dateToTimestamp(arg.date),
-        _tz: 'user'
+        // Assign the correct local timestamp
+        scheduled_timestamp: localTimestamp,
+        // Also use localTimestamp if routine_time should default to the clicked time
+        routine_time: localTimestamp,
+        _tz: 'user' // This is now correct, as the timestamp represents the user's local time
       };
+      console.log('[Calendar.tsx] handleDateClick: tempGoal before opening menu:', JSON.stringify(tempGoal));
 
       if (arg.allDay) {
         tempGoal.duration = 1440;

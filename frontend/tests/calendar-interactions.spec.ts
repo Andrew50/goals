@@ -1,32 +1,27 @@
-import { test, expect, Page } from '@playwright/test';
-import { generateTestToken } from './helpers/auth';
+import { test, expect } from '@playwright/test';
 
+// Use the standard test function that provides page and context
 test.describe('Calendar UI Interactions', () => {
-    let page: Page;
 
-    test.beforeEach(async ({ browser }) => {
-        // Create a fresh page for each test with timezone control
-        page = await browser.newPage({
-            timezoneId: 'America/New_York', // Control timezone for consistent testing
-        });
+    test.beforeEach(async ({ page, context }) => {
+        // Authentication is now handled by global setup and storageState in playwright.config.ts
+        // Locale is set in playwright.config.ts
 
-        // Set up authentication
-        await page.goto('/');
-        const testToken = generateTestToken();
-        await page.evaluate((token) => {
-            localStorage.setItem('token', token);
-            localStorage.setItem('userId', '1');
-        }, testToken);
+        // Reset geolocation if needed for consistency
+        await context.setGeolocation(null);
 
         // Go to calendar page and wait for it to load
-        await page.goto('/');
+        // Playwright automatically waits for page load events, but specific element waits are good practice
+        await page.goto('/calendar');
         await page.waitForSelector('.calendar-container', { timeout: 10000 });
 
-        // Wait for initial calendar data to load
-        await page.waitForSelector('.fc-event', { timeout: 5000 });
+        // Wait for initial calendar data to load (e.g., FullCalendar rendering)
+        await page.waitForSelector('.fc-view-harness', { timeout: 5000 });
     });
 
-    test('left-clicking an event opens GoalMenu in view mode', async () => {
+    // Tests now implicitly use the 'page' fixture provided by Playwright,
+    // which is already authenticated via global setup.
+    test('left-clicking an event opens GoalMenu in view mode', async ({ page }) => {
         // Find an event (we know there's one from our seed data)
         const calendarEvent = page.locator('.fc-event').first();
 
@@ -48,7 +43,7 @@ test.describe('Calendar UI Interactions', () => {
         await page.locator('button:has-text("Close")').click();
     });
 
-    test('right-clicking an event opens GoalMenu in edit mode', async () => {
+    test('right-clicking an event opens GoalMenu in edit mode', async ({ page }) => { // Destructure page
         // Find an event
         const calendarEvent = page.locator('.fc-event').first();
 
@@ -67,7 +62,7 @@ test.describe('Calendar UI Interactions', () => {
         await page.locator('button:has-text("Cancel")').click();
     });
 
-    test('clicking calendar background opens GoalMenu in create mode', async () => {
+    test('clicking calendar background opens GoalMenu in create mode', async ({ page }) => { // Destructure page
         // Click on an empty spot in the calendar (find a day cell not occupied by events)
         await page.locator('.fc-day:not(.fc-day-past)').first().click();
 
@@ -85,7 +80,7 @@ test.describe('Calendar UI Interactions', () => {
         await page.locator('button:has-text("Cancel")').click();
     });
 
-    test('dragging event to a new date updates the event', async () => {
+    test('dragging event to a new date updates the event', async ({ page }) => { // Destructure page
         // Store initial position/date of first event
         const firstEvent = page.locator('.fc-event').first();
         const initialTitle = await firstEvent.textContent();
@@ -112,7 +107,7 @@ test.describe('Calendar UI Interactions', () => {
         await expect(dayAfterReload.locator('.fc-event')).toContainText(initialTitle || '');
     });
 
-    test('resizing event from bottom changes duration', async () => {
+    test('resizing event from bottom changes duration', async ({ page }) => { // Destructure page
         // Switch to week view for better resizing control
         await page.locator('.fc-timeGridWeek-button').click();
 
@@ -150,7 +145,7 @@ test.describe('Calendar UI Interactions', () => {
         expect(reloadedBounds.height).toBeGreaterThan(initialBounds.height);
     });
 
-    test('resizing event from top changes start time and preserves duration', async () => {
+    test('resizing event from top changes start time and preserves duration', async ({ page }) => { // Destructure page
         // Switch to week view
         await page.locator('.fc-timeGridWeek-button').click();
 
@@ -181,7 +176,7 @@ test.describe('Calendar UI Interactions', () => {
         expect(finalBounds.height).toBeGreaterThan(initialBounds.height);
     });
 
-    test('create new unscheduled task and verify it appears in task list', async () => {
+    test('create new unscheduled task and verify it appears in task list', async ({ page }) => { // Destructure page
         // Find and click "Add Task" button in the task list sidebar
         await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
 
@@ -203,7 +198,7 @@ test.describe('Calendar UI Interactions', () => {
         await expect(page.locator('.task-item').filter({ hasText: taskName })).toBeVisible();
     });
 
-    test('drag unscheduled task to calendar', async () => {
+    test('drag unscheduled task to calendar', async ({ page }) => { // Destructure page
         // Create a new task first
         const taskName = `Drag Test ${Date.now()}`;
         await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
@@ -240,7 +235,7 @@ test.describe('Calendar UI Interactions', () => {
         await expect(page.locator('.fc-event', { hasText: taskName })).toBeVisible();
     });
 
-    test('drag scheduled event back to task list', async () => {
+    test('drag scheduled event back to task list', async ({ page }) => { // Destructure page
         // First create and schedule a task
         const taskName = `Return to List ${Date.now()}`;
 
@@ -286,7 +281,7 @@ test.describe('Calendar UI Interactions', () => {
         await expect(page.locator('.fc-event', { hasText: taskName })).not.toBeVisible();
     });
 
-    test('long event name displays correctly in month and week views', async () => {
+    test('long event name displays correctly in month and week views', async ({ page }) => { // Destructure page
         // Create an event with a very long name
         await page.locator('.fc-day:not(.fc-day-past)').first().click();
 

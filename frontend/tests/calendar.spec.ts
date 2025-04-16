@@ -2,17 +2,10 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Calendar Page E2E Tests', () => {
     test.beforeEach(async ({ page }) => {
-        // Assume we have a test user and we're authenticated (for CI)
-        await page.goto('/');
+        // Authentication is handled by global setup and storageState in playwright.config.ts
 
-        // Mock API authentication for testing
-        await page.evaluate(() => {
-            localStorage.setItem('token', 'fake-test-token');
-            localStorage.setItem('userId', '1');
-        });
-
-        // Go to calendar page - assuming it's available at root
-        await page.goto('/');
+        // Go directly to the calendar page
+        await page.goto('/calendar');
 
         // Wait for the calendar to load
         await page.waitForSelector('.calendar-container', { timeout: 10000 });
