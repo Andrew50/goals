@@ -3,7 +3,7 @@ use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 
-use crate::goal::Goal;
+use crate::tools::goal::Goal;
 
 #[derive(Debug, Serialize)]
 pub struct NetworkData {
@@ -62,7 +62,7 @@ pub async fn get_network_data(
             }}
             ELSE NULL
          END) as relationships",
-        crate::goal::GOAL_RETURN_QUERY
+        crate::tools::goal::GOAL_RETURN_QUERY
     );
 
     let query = query(&query_str).param("user_id", user_id);

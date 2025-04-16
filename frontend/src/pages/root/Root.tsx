@@ -15,16 +15,15 @@ import {
     CalendarMonth,
     AccountTree,
     FormatListBulleted,
-    Today,
 } from '@mui/icons-material';
 
-import {useAuth} from '../../shared/contexts/AuthContext';
+import { useAuth } from '../../shared/contexts/AuthContext';
 
 const Welcome: React.FC = () => {
     const navigate = useNavigate();
-    const {isAuthenticated} = useAuth();
-        
-    
+    const { isAuthenticated } = useAuth();
+
+
     return (
         <Container component="main" maxWidth="md">
             <Box
@@ -42,54 +41,54 @@ const Welcome: React.FC = () => {
 
                     {isAuthenticated ? (
                         <>
-                        <Typography variant="body1" sx={{ mb: 4 }}>
-                            Here's a quick overview of how to use the application:
+                            <Typography variant="body1" sx={{ mb: 4 }}>
+                                Here's a quick overview of how to use the application:
+                            </Typography>
+
+                            <List sx={{ mb: 4 }}>
+                                <ListItem>
+                                    <ListItemIcon>
+                                        <AccountTree color="primary" />
+                                    </ListItemIcon>
+                                    <ListItemText
+                                        primary="Network View"
+                                        secondary="Visualize and manage your goals in a hierarchical network. Create relationships between goals and see how they connect."
+                                    />
+                                </ListItem>
+
+                                <ListItem>
+                                    <ListItemIcon>
+                                        <CalendarMonth color="primary" />
+                                    </ListItemIcon>
+                                    <ListItemText
+                                        primary="Calendar View"
+                                        secondary="Plan and schedule your tasks and goals across time. Drag and drop to reschedule items."
+                                    />
+                                </ListItem>
+
+                                <ListItem>
+                                    <ListItemIcon>
+                                        <FormatListBulleted color="primary" />
+                                    </ListItemIcon>
+                                    <ListItemText
+                                        primary="List View"
+                                        secondary="See all your goals in a simple list format. Great for quick overview and management."
+                                    />
+                                </ListItem>
+                            </List>
+                        </>
+                    ) : (
+                        <Typography variant="body1" sx={{ mb: 4, textAlign: 'center' }}>
+                            Please sign in to access your goals and manage your tasks.
                         </Typography>
+                    )}
 
-                        <List sx={{ mb: 4 }}>
-                            <ListItem>
-                                <ListItemIcon>
-                                    <AccountTree color="primary" />
-                                </ListItemIcon>
-                                <ListItemText
-                                    primary="Network View"
-                                    secondary="Visualize and manage your goals in a hierarchical network. Create relationships between goals and see how they connect."
-                                />
-                            </ListItem>
-
-                            <ListItem>
-                                <ListItemIcon>
-                                    <CalendarMonth color="primary" />
-                                </ListItemIcon>
-                                <ListItemText
-                                    primary="Calendar View"
-                                    secondary="Plan and schedule your tasks and goals across time. Drag and drop to reschedule items."
-                                />
-                            </ListItem>
-
-                            <ListItem>
-                                <ListItemIcon>
-                                    <FormatListBulleted color="primary" />
-                                </ListItemIcon>
-                                <ListItemText
-                                    primary="List View"
-                                    secondary="See all your goals in a simple list format. Great for quick overview and management."
-                                />
-                            </ListItem>
-                        </List>
-                    </>
-                ) : (
-                    <Typography variant="body1" sx={{ mb: 4, textAlign: 'center' }}>
-                        Please sign in to access your goals and manage your tasks.
-                    </Typography>
-                )}
-                    
-                {!isAuthenticated && (
+                    {!isAuthenticated && (
                         <Button
                             type="button"
                             fullWidth
                             variant="contained"
-                            sx={{ mt: 3, mb: 2}}
+                            sx={{ mt: 3, mb: 2 }}
                             onClick={() => navigate('/signin')}
                         >
                             Sign In
@@ -100,9 +99,9 @@ const Welcome: React.FC = () => {
         </Container>
     );
 };
-        
 
-        
+
+
 
 
 export default Welcome; 
