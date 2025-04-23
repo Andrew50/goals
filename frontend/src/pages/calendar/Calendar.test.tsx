@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { goalToLocal } from '../../shared/utils/time';
-import { Goal } from '../../types/goals';
+import { Goal, ApiGoal } from '../../types/goals';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 
@@ -144,30 +144,30 @@ describe('Calendar Component', () => {
         // Mock timezone to EST (-5 hours, offset 300 minutes)
         const restoreOffset = mockTimezoneOffset(300);
 
-        // Prepare test data with UTC timestamps
-        const utcTask: Goal = {
+        // Prepare test data representing API response (numeric timestamps)
+        const apiTask = {
             id: 1,
             name: 'Test Task',
-            goal_type: 'task',
-            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z (7:00 AM EST)
-            end_timestamp: 1672578000000,   // 2023-01-01T13:00:00Z (8:00 AM EST)
+            goal_type: 'task', // Ensure this matches GoalType if defined
+            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z
+            end_timestamp: 1672578000000,   // 2023-01-01T13:00:00Z
             scheduled_timestamp: 1672574400000, // Same as start
             duration: 60, // 1 hour
             completed: false,
-            _tz: 'utc'
-        };
+            _tz: 'utc' // Assuming API might provide this
+        } as ApiGoal; // Cast ensures the object matches the expected type for goalToLocal
 
-        // Set up mock API response
+        // Set up mock API response using the API-like task
         (fetchCalendarData as jest.Mock).mockResolvedValueOnce({
             events: [
                 {
                     id: '1',
                     title: 'Test Task',
-                    start: new Date(utcTask.start_timestamp!), // UTC date
-                    end: new Date(utcTask.end_timestamp!),     // UTC date
+                    start: new Date(apiTask.start_timestamp!), // Convert to Date for FullCalendar event
+                    end: new Date(apiTask.end_timestamp!),     // Convert to Date for FullCalendar event
                     allDay: false,
                     type: 'scheduled',
-                    goal: utcTask
+                    goal: apiTask // Pass the original API-like task here
                 }
             ],
             unscheduledTasks: [],
@@ -187,9 +187,11 @@ describe('Calendar Component', () => {
             expect(fetchCalendarData).toHaveBeenCalled();
         });
 
-        // Check that the event is converted to local time
-        const localTask = goalToLocal(utcTask);
-        expect(localTask.start_timestamp).toBe(utcTask.start_timestamp! - (300 * 60 * 1000));
+        // Check that the event is converted to local time using goalToLocal
+        // goalToLocal expects an ApiGoal (numeric timestamps)
+        const localTask = goalToLocal(apiTask); // Use the apiTask defined earlier
+        // Verify the resulting Date object's time is correct
+        expect(localTask.start_timestamp?.getTime()).toBe(apiTask.start_timestamp! - (300 * 60 * 1000));
 
         // Clean up
         restoreOffset();
@@ -217,51 +219,51 @@ describe('Calendar Component', () => {
 
         const restoreDST = mockDSTOffset();
 
-        // Set up goals before and after DST transition
-        const beforeDST: Goal = {
+        // Set up API-like goals (numeric timestamps) before and after DST transition
+        const apiBeforeDST = {
             id: 1,
             name: 'Before DST',
-            goal_type: 'task',
-            // March 11, 2023 at 12:00 UTC (7:00 AM EST)
-            start_timestamp: new Date(Date.UTC(2023, 2, 11, 12, 0)).getTime(),
-            end_timestamp: new Date(Date.UTC(2023, 2, 11, 13, 0)).getTime(),
-            scheduled_timestamp: new Date(Date.UTC(2023, 2, 11, 12, 0)).getTime(),
+            goal_type: 'task', // Ensure this matches GoalType if defined
+            // March 11, 2023 at 12:00 UTC
+            start_timestamp: Date.UTC(2023, 2, 11, 12, 0),
+            end_timestamp: Date.UTC(2023, 2, 11, 13, 0),
+            scheduled_timestamp: Date.UTC(2023, 2, 11, 12, 0),
             duration: 60,
-            _tz: 'utc'
-        };
+            _tz: 'utc' // Assuming API might provide this
+        } as ApiGoal; // Cast ensures the object matches the expected type for goalToLocal
 
-        const afterDST: Goal = {
+        const apiAfterDST = {
             id: 2,
             name: 'After DST',
-            goal_type: 'task',
-            // March 12, 2023 at 12:00 UTC (8:00 AM EDT)
-            start_timestamp: new Date(Date.UTC(2023, 2, 12, 12, 0)).getTime(),
-            end_timestamp: new Date(Date.UTC(2023, 2, 12, 13, 0)).getTime(),
-            scheduled_timestamp: new Date(Date.UTC(2023, 2, 12, 12, 0)).getTime(),
+            goal_type: 'task', // Ensure this matches GoalType if defined
+            // March 12, 2023 at 12:00 UTC
+            start_timestamp: Date.UTC(2023, 2, 12, 12, 0),
+            end_timestamp: Date.UTC(2023, 2, 12, 13, 0),
+            scheduled_timestamp: Date.UTC(2023, 2, 12, 12, 0),
             duration: 60,
-            _tz: 'utc'
-        };
+            _tz: 'utc' // Assuming API might provide this
+        } as ApiGoal; // Cast ensures the object matches the expected type for goalToLocal
 
-        // Set up mock API response
+        // Set up mock API response using the API-like tasks
         (fetchCalendarData as jest.Mock).mockResolvedValueOnce({
             events: [
                 {
                     id: '1',
                     title: 'Before DST',
-                    start: new Date(beforeDST.start_timestamp!),
-                    end: new Date(beforeDST.end_timestamp!),
+                    start: new Date(apiBeforeDST.start_timestamp!), // Convert to Date for FullCalendar
+                    end: new Date(apiBeforeDST.end_timestamp!),     // Convert to Date for FullCalendar
                     allDay: false,
                     type: 'scheduled',
-                    goal: beforeDST
+                    goal: apiBeforeDST // Pass original API-like task
                 },
                 {
                     id: '2',
                     title: 'After DST',
-                    start: new Date(afterDST.start_timestamp!),
-                    end: new Date(afterDST.end_timestamp!),
+                    start: new Date(apiAfterDST.start_timestamp!), // Convert to Date for FullCalendar
+                    end: new Date(apiAfterDST.end_timestamp!),     // Convert to Date for FullCalendar
                     allDay: false,
                     type: 'scheduled',
-                    goal: afterDST
+                    goal: apiAfterDST // Pass original API-like task
                 }
             ],
             unscheduledTasks: [],
@@ -281,16 +283,16 @@ describe('Calendar Component', () => {
             expect(fetchCalendarData).toHaveBeenCalled();
         });
 
-        // Convert goals to local time
-        const localBeforeDST = goalToLocal(beforeDST);
-        const localAfterDST = goalToLocal(afterDST);
+        // Convert API-like goals to local time using goalToLocal
+        const localBeforeDST = goalToLocal(apiBeforeDST);
+        const localAfterDST = goalToLocal(apiAfterDST);
 
-        // Verify the offset differences
-        // Before DST: 5 hours difference
-        expect(localBeforeDST.start_timestamp).toBe(beforeDST.start_timestamp! - (300 * 60 * 1000));
+        // Verify the offset differences by checking the resulting Date object's time
+        // Before DST: 5 hours difference (300 minutes)
+        expect(localBeforeDST.start_timestamp?.getTime()).toBe(apiBeforeDST.start_timestamp! - (300 * 60 * 1000));
 
-        // After DST: 4 hours difference
-        expect(localAfterDST.start_timestamp).toBe(afterDST.start_timestamp! - (240 * 60 * 1000));
+        // After DST: 4 hours difference (240 minutes)
+        expect(localAfterDST.start_timestamp?.getTime()).toBe(apiAfterDST.start_timestamp! - (240 * 60 * 1000));
 
         restoreDST();
     });
@@ -349,15 +351,15 @@ describe('Calendar Component', () => {
             id: 1,
             name: 'Test Task',
             goal_type: 'task',
-            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z
-            end_timestamp: 1672578000000,   // 2023-01-01T13:00:00Z
-            scheduled_timestamp: 1672574400000,
+            start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z
+            end_timestamp: new Date(1672578000000),   // 2023-01-01T13:00:00Z
+            scheduled_timestamp: new Date(1672574400000),
             duration: 60,
             _tz: 'utc'
         };
 
         // Create a new date 1 hour later to simulate drag
-        const newStartDate = new Date(originalTask.start_timestamp! + 3600000);
+        const newStartDate = new Date(originalTask.start_timestamp?.getDate()! + 3600000);
         const newScheduledTimestamp = newStartDate.getTime();
 
         // Mock updateGoal to return the updated goal
@@ -395,9 +397,9 @@ describe('Calendar Component', () => {
             id: 1,
             name: 'Test Task',
             goal_type: 'task',
-            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z
-            end_timestamp: 1672578000000,   // 2023-01-01T13:00:00Z
-            scheduled_timestamp: 1672574400000,
+            start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z
+            end_timestamp: new Date(1672578000000),   // 2023-01-01T13:00:00Z
+            scheduled_timestamp: new Date(1672574400000),
             duration: 60, // 1 hour
             _tz: 'utc'
         };
@@ -428,7 +430,7 @@ describe('Calendar Component', () => {
         // This avoids the useState/useHistoryState issue
 
         // Calculate the duration in minutes (same as in handleEventResize)
-        const newEndDate = new Date(originalTask.end_timestamp! + 1800000);
+        const newEndDate = new Date(originalTask.end_timestamp?.getTime()! + 1800000);
         const durationInMinutes = Math.round((newEndDate.getTime() -
             new Date(originalTask.start_timestamp!).getTime()) / 60000);
 
