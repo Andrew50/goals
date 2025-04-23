@@ -9,7 +9,7 @@ import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
-import { NetworkNode, NetworkEdge, Goal, RelationshipType } from '../../types/goals';
+import { NetworkNode, NetworkEdge, Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import GoalMenu from '../../shared/components/GoalMenu';
 import { privateRequest, createRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
@@ -21,13 +21,8 @@ import {
 import { getGoalColor } from '../../shared/styles/colors';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 
-const formatNetworkNode = (goal: Goal, inlineUpdate: boolean = false): NetworkNode => {
-  let localGoal: Goal;
-  if (!inlineUpdate) {
-    localGoal = goalToLocal(goal);
-  } else {
-    localGoal = goal;
-  }
+// Expect ApiGoal from the backend, return NetworkNode (which extends Goal)
+const formatNetworkNode = (localGoal: Goal): NetworkNode => {
   return {
     ...localGoal,
     label: localGoal.name,
@@ -97,12 +92,23 @@ const NetworkView: React.FC = () => {
 
     const nodeId = networkRef.current.getNodeAt(params.pointer.DOM);
     if (nodeId && nodesDataSetRef.current) {
-      const node = nodesDataSetRef.current.get(nodeId);
-      if (node) {
-        GoalMenu.open(node, goalDialogMode, (goal: Goal) => {
+      const nodeData = nodesDataSetRef.current?.get(nodeId);
+      if (nodeData) {
+        // GoalMenu expects a Goal object (with Dates)
+        // nodeData from DataSet might still be ApiGoal-like if not fully processed,
+        // Assuming nodeData here is effectively a Goal or NetworkNode.
+        GoalMenu.open(nodeData as Goal, goalDialogMode, (updatedGoal: Goal) => {
           // After editing/viewing, update the node's properties
-          const updatedNode = formatNetworkNode(goal);
-          nodesDataSetRef.current?.update(updatedNode);
+          // GoalMenu returns an updated Goal object.
+          const updatedNode = formatNetworkNode(updatedGoal); // Pass updatedGoal (Goal), isAlreadyGoal = true
+          // Update the node in the DataSet. Ensure all necessary NetworkNode properties are present.
+          // We might need to merge with existing x/y if they shouldn't be reset.
+          const existingNode = nodesDataSetRef.current?.get(updatedGoal.id);
+          nodesDataSetRef.current?.update({
+            ...updatedNode,
+            x: existingNode?.x, // Preserve existing position
+            y: existingNode?.y
+          });
         });
       }
     }
@@ -212,11 +218,13 @@ const NetworkView: React.FC = () => {
   useEffect(() => {
     const initializeNetwork = async () => {
       try {
-        // Fetch initial data and format nodes
-        const response = await privateRequest<{ nodes: NetworkNode[], edges: NetworkEdge[] }>('network');
-        response.nodes = response.nodes.map(node => formatNetworkNode(node));
+        // Fetch initial data (nodes should be ApiGoal compatible)
+        const response = await privateRequest<{ nodes: ApiGoal[], edges: NetworkEdge[] }>('network');
+        //response.nodes.map(goalToLocal) 
+        // Format nodes from ApiGoal[] to NetworkNode[] (which extends Goal)
+        const formattedNodes = response.nodes.map(apiNode => formatNetworkNode(goalToLocal(apiNode)));
         // Calculate positions and styling using the full hierarchy algorithm
-        const formattedData = await buildHierarchy(response);
+        const formattedData = await buildHierarchy({ nodes: formattedNodes, edges: response.edges });
 
         // Create DataSets for nodes and edges (used by vis‑network)
         nodesDataSetRef.current = new DataSet(formattedData.nodes);
@@ -341,8 +349,10 @@ const NetworkView: React.FC = () => {
       setAddEdgeMode(false);
       setDeleteMode(false);
       deleteModeRef.current = false;
-      GoalMenu.open({} as Goal, 'create', (goal: Goal) => {
-        const newNode = formatNetworkNode(goal, true);
+      // GoalMenu creates a Goal object
+      GoalMenu.open({} as Goal, 'create', (newGoal: Goal) => {
+        // GoalMenu returns a new Goal object.
+        const newNode = formatNetworkNode(newGoal); // Pass newGoal (Goal), isAlreadyGoal = true
         // Get existing nodes from the DataSet and calculate a new position
         const existingNodes = nodesDataSetRef.current?.get() || [];
         const position = calculateNewNodePosition(newNode, existingNodes);

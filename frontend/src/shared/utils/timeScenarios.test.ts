@@ -61,7 +61,8 @@ describe('Timezone scenario tests', () => {
             const expectedOffset = 480 * 60 * 1000; // 8 hours in milliseconds
 
             // Verify the difference is exactly 8 hours
-            expect(utcTimestamp - localTimestamp!).toBe(expectedOffset);
+            // Compare using getTime() as localTimestamp is a Date
+            expect(utcTimestamp - localTimestamp!.getTime()).toBe(expectedOffset);
 
             // Convert back to UTC - should get original value
             const backToUTC = toUTCTimestamp(localTimestamp);
@@ -84,7 +85,8 @@ describe('Timezone scenario tests', () => {
             const expectedOffset = -330 * 60 * 1000; // -5.5 hours in milliseconds
 
             // Verify the difference is exactly -5.5 hours
-            expect(utcTimestamp - localTimestamp!).toBe(expectedOffset);
+            // Compare using getTime() as localTimestamp is a Date
+            expect(utcTimestamp - localTimestamp!.getTime()).toBe(expectedOffset);
 
             // Convert back to UTC - should get original value
             const backToUTC = toUTCTimestamp(localTimestamp);
@@ -166,8 +168,8 @@ describe('Timezone scenario tests', () => {
 
             // Just verify that round-trip conversion works 
             // with approximate values (not exact matches due to timezone handling)
-            expect(Math.abs(backToLocalBefore! - beforeTime)).toBeLessThan(3600000); // Within an hour
-            expect(Math.abs(backToLocalAfter! - afterTime)).toBeLessThan(3600000); // Within an hour
+            expect(Math.abs(backToLocalBefore.getTime()! - beforeTime)).toBeLessThan(3600000); // Within an hour
+            expect(Math.abs(backToLocalAfter.getTime()! - afterTime)).toBeLessThan(3600000); // Within an hour
 
             // Verify the timestamps have a significant difference (this is what really matters)
             expect(afterTime - beforeTime).toBeGreaterThan(3600000); // More than 1 hour
@@ -193,8 +195,9 @@ describe('Timezone scenario tests', () => {
 
             // Just verify that round-trip conversion works
             // with approximate values (not exact matches due to timezone handling)
-            expect(Math.abs(backToLocalStart! - startTime)).toBeLessThan(3600000); // Within an hour
-            expect(Math.abs(backToLocalEnd! - endTime)).toBeLessThan(3600000); // Within an hour
+            // Compare using getTime() as backToLocal... are Dates
+            expect(Math.abs(backToLocalStart!.getTime() - startTime)).toBeLessThan(3600000); // Within an hour
+            expect(Math.abs(backToLocalEnd!.getTime() - endTime)).toBeLessThan(3600000); // Within an hour
 
             // Verify that the time difference makes sense
             expect(endTime - startTime).toBeGreaterThan(3600000); // More than 1 hour
@@ -316,7 +319,8 @@ describe('Timezone scenario tests', () => {
 
             // The difference should be exactly the timezone offset
             const expectedOffset = 480 * 60 * 1000; // 8 hours in milliseconds
-            expect(utcDateTime - localDateTime!).toBe(expectedOffset);
+            // Compare using getTime() as localDateTime is a Date
+            expect(utcDateTime - localDateTime!.getTime()).toBe(expectedOffset);
 
             // Verify conversion preserves date correctly
             // 2021-09-01T00:00:00Z -> 2021-08-31T16:00:00 PST (day changes due to timezone)

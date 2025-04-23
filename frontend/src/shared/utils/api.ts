@@ -1,5 +1,5 @@
 import axios, { AxiosResponse, Method } from 'axios';
-import { Goal, RelationshipType } from '../../types/goals';
+import { Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { goalToUTC, goalToLocal } from './time';
 const API_URL = process.env.REACT_APP_API_URL;
 if (!API_URL) {
@@ -7,17 +7,21 @@ if (!API_URL) {
 }
 
 
-function cloneGoal(goal: Goal): Goal {
-    return JSON.parse(JSON.stringify(goal));
+// Takes a frontend Goal (Date objects) and returns an ApiGoal (numeric timestamps)
+function prepareGoalForAPI(goal: Goal): ApiGoal {
+    // No need to clone here, goalToUTC creates a new object structure
+    // and doesn't mutate the original goal.
+    // Passing the original goal directly avoids the Date -> string conversion issue.
+    console.log("Original goal before goalToUTC:", goal); // Optional: keep for debugging if needed
+    console.log("Type of scheduled_timestamp before goalToUTC:", typeof goal.scheduled_timestamp); // Should be 'object' (Date) or 'undefined'
+
+    return goalToUTC(goal); // goalToUTC returns ApiGoal
 }
 
-function prepareGoalForAPI(goal: Goal): Goal {
-    const goalCopy = cloneGoal(goal);
-    return goalToUTC(goalCopy);
-}
-
-function processGoalFromAPI(goal: Goal): Goal {
-    return goalToLocal(goal);
+// Takes an ApiGoal (numeric timestamps) from API and returns a frontend Goal (Date objects)
+function processGoalFromAPI(apiGoal: ApiGoal): Goal {
+    // goalToLocal expects ApiGoal and returns Goal
+    return goalToLocal(apiGoal);
 }
 
 export async function privateRequest<T>(
@@ -111,17 +115,22 @@ export async function updateRoutines(to_timestamp?: number): Promise<void> {
 // Goal CRUD operations
 export async function createGoal(goal: Goal): Promise<Goal> {
     //console.log(goal)
-    const preparedGoal = prepareGoalForAPI(goal);
+    const preparedGoal = prepareGoalForAPI(goal); // preparedGoal is ApiGoal
     //console.log(preparedGoal)
-    const response = await privateRequest<Goal>('goals/create', 'POST', preparedGoal);
+    // API returns ApiGoal
+    const response = await privateRequest<ApiGoal>('goals/create', 'POST', preparedGoal);
+    // Convert ApiGoal from response to Goal
     return processGoalFromAPI(response);
 }
 
 export async function updateGoal(goalId: number, goal: Goal): Promise<Goal> {
     //console.log(goal)
-    const preparedGoal = prepareGoalForAPI(goal);
+    console.log(typeof goal.scheduled_timestamp)
+    const preparedGoal = prepareGoalForAPI(goal); // preparedGoal is ApiGoal
     //console.log(preparedGoal)
-    const response = await privateRequest<Goal>(`goals/${goalId}`, 'PUT', preparedGoal);
+    // API returns ApiGoal
+    const response = await privateRequest<ApiGoal>(`goals/${goalId}`, 'PUT', preparedGoal);
+    // Convert ApiGoal from response to Goal
     return processGoalFromAPI(response);
 }
 

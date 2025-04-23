@@ -102,9 +102,9 @@ describe('GoalMenu Component', () => {
             id: 1,
             name: 'Test Goal',
             goal_type: 'task',
-            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z (7 AM EST)
-            end_timestamp: 1672660800000,   // 2023-01-02T12:00:00Z (7 AM EST next day)
-            scheduled_timestamp: 1672596000000, // 2023-01-01T18:00:00Z (1 PM EST)
+            start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z (7 AM EST)
+            end_timestamp: new Date(1672660800000),   // 2023-01-02T12:00:00Z (7 AM EST next day)
+            scheduled_timestamp: new Date(1672596000000), // 2023-01-01T18:00:00Z (1 PM EST)
             duration: 60, // 1 hour
             _tz: 'utc'
         };
@@ -195,9 +195,9 @@ describe('GoalMenu Component', () => {
             id: 1,
             name: 'Test Goal',
             goal_type: 'task',
-            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z (13:00 CET)
-            end_timestamp: 1672660800000,   // 2023-01-02T12:00:00Z (13:00 CET next day)
-            scheduled_timestamp: 1672596000000, // 2023-01-01T18:00:00Z (19:00 CET)
+            start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z (13:00 CET)
+            end_timestamp: new Date(1672660800000),   // 2023-01-02T12:00:00Z (13:00 CET next day)
+            scheduled_timestamp: new Date(1672596000000), // 2023-01-01T18:00:00Z (19:00 CET)
             duration: 60, // 1 hour
             _tz: 'utc'
         };
@@ -368,9 +368,9 @@ describe('GoalMenu Component', () => {
             id: 1,
             name: 'Original Task Name',
             goal_type: 'task',
-            start_timestamp: 1672574400000, // 2023-01-01T12:00:00Z (13:00 CET)
-            end_timestamp: 1672660800000,   // 2023-01-02T12:00:00Z (13:00 CET next day)
-            scheduled_timestamp: 1672596000000, // 2023-01-01T18:00:00Z (19:00 CET)
+            start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z (13:00 CET)
+            end_timestamp: new Date(1672660800000),   // 2023-01-02T12:00:00Z (13:00 CET next day)
+            scheduled_timestamp: new Date(1672596000000), // 2023-01-01T18:00:00Z (19:00 CET)
             duration: 60, // 1 hour
             _tz: 'utc'
         };

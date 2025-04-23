@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { generateStorageState } from './helpers/auth'; // Import the new helper
+import { generateStorageState } from '../helpers/auth'; // Import the new helper
 
 /**
  * Timestamp E2E Tests

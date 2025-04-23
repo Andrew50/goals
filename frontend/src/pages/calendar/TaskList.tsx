@@ -23,7 +23,7 @@ const DraggableTask: React.FC<{
 }> = ({ task, onTaskUpdate }) => {
   const { goal } = task;
 
-  const formatDate = (timestamp?: number) => {
+  const formatDate = (timestamp?: Date) => {
     if (!timestamp) return '';
     return timestampToDisplayString(timestamp, 'date');
   };
@@ -149,8 +149,8 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
     // Sort tasks by some criterion, e.g., earliest due date at the top, or descending
     const sortedTasks = useMemo(() => {
       return [...tasks].sort((a, b) => {
-        const aDue = a.goal?.end_timestamp || 0;
-        const bDue = b.goal?.end_timestamp || 0;
+        const aDue = a.goal?.end_timestamp?.getTime() || 0;
+        const bDue = b.goal?.end_timestamp?.getTime() || 0;
         return aDue - bDue; // earliest due date first
       });
     }, [tasks]);
