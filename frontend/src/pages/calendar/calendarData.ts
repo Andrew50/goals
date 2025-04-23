@@ -1,4 +1,4 @@
-import { Goal, CalendarResponse, CalendarEvent, CalendarTask } from '../../types/goals';
+import { Goal, CalendarResponse, CalendarEvent, CalendarTask, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 
@@ -103,7 +103,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             try {
                 // Force _tz to be undefined to prevent error if object structure is incomplete
                 const normalizedRoutine = { ...routine, _tz: routine._tz || undefined };
-                return goalToLocal(normalizedRoutine);
+                // Cast to ApiGoal before passing to goalToLocal
+                return goalToLocal(normalizedRoutine as ApiGoal); // Explicit cast
             } catch (error) {
                 console.error('Error converting routine to local timezone:', error, routine);
                 // Mark the goal so we know it's still in UTC format
@@ -118,7 +119,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 .filter(routine => !routine._failed_conversion) // Only process properly converted routines
                 .map(routine => {
                     try {
-                        const events = generateRoutineEvents(routine, currentDate, start, actualEnd);
+                        // Pass only the necessary range parameters
+                        const events = generateRoutineEvents(routine, start, actualEnd);
 
                         // Deduplicate routine events by checking against processed event IDs
                         return events.filter(event => {
@@ -172,7 +174,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
 
                         // Force _tz to be undefined to prevent error if object structure is incomplete
                         const normalizedTask = { ...task, _tz: task._tz || undefined };
-                        const localTask = goalToLocal(normalizedTask);
+                        const localTask = goalToLocal(normalizedTask as ApiGoal); // Explicit cast
 
                         // Log after conversion
                         //console.log(`Task[${ localTask.id }]"${localTask.name}" after conversion: ${ localTask.scheduled_timestamp } (${ localTask.scheduled_timestamp ? new Date(localTask.scheduled_timestamp).toISOString() : 'undefined' })`);
@@ -295,7 +297,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                     try {
                         // Force _tz to be undefined to prevent error if object structure is incomplete
                         const normalizedTask = { ...task, _tz: task._tz || undefined };
-                        const localTask = goalToLocal(normalizedTask);
+                        const localTask = goalToLocal(normalizedTask as ApiGoal); // Explicit cast
 
                         return localTask;
                     } catch (error) {
@@ -317,7 +319,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
 
             // Sort by end_timestamp and limit to 100 tasks for performance
             unscheduledTasks.sort((a, b) => {
-                return (b.goal.end_timestamp || 0) - (a.goal.end_timestamp || 0);
+                return (b.goal.end_timestamp?.getTime() || 0) - (a.goal.end_timestamp?.getTime() || 0);
             });
             unscheduledTasks = unscheduledTasks.slice(0, 100);
             //console.log(`Processed ${ unscheduledTasks.length } unscheduled tasks`);
@@ -341,7 +343,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                     try {
                         // Force _tz to be undefined to prevent error if object structure is incomplete
                         const normalizedAchievement = { ...achievement, _tz: achievement._tz || undefined };
-                        return goalToLocal(normalizedAchievement);
+                        // Cast to ApiGoal before passing to goalToLocal
+                        return goalToLocal(normalizedAchievement as ApiGoal); // Explicit cast
                     } catch (error) {
                         console.error('Error processing achievement event:', error, achievement);
                         return null;
@@ -422,7 +425,7 @@ const mapGoalTypeToTaskType = (goalType: string): 'meeting' | 'task' | 'appointm
 
 const generateRoutineEvents = (
     routine: Goal,
-    currentDate: Date,
+
     rangeStart: Date,
     rangeEnd: Date
 ): CalendarEvent[] => {
@@ -442,7 +445,7 @@ const generateRoutineEvents = (
             // Create a timestamp for 9:00 AM today
             const defaultTime = new Date();
             defaultTime.setHours(9, 0, 0, 0);
-            routine.routine_time = defaultTime.getTime();
+            routine.routine_time = defaultTime;
         }
 
         if (!routine.start_timestamp) {
@@ -460,13 +463,20 @@ const generateRoutineEvents = (
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Make sure we don't generate events for days before today
-        const effectiveRangeStart = new Date(Math.max(today.getTime(), rangeStart.getTime()));
+        // Calculate the start of the next day
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+
+        // Make sure we don't generate events for days before *tomorrow* OR before the requested rangeStart
+        const effectiveRangeStart = new Date(Math.max(tomorrow.getTime(), rangeStart.getTime()));
 
         const events: CalendarEvent[] = [];
 
         // Use the effective range start date as the starting point
-        const initialStartDate = new Date(Math.max(routine.start_timestamp, effectiveRangeStart.getTime()));
+        // Ensure start_timestamp exists before using getTime()
+        const routineStartTime = routine.start_timestamp?.getTime() ?? 0;
+        const effectiveStartTime = effectiveRangeStart.getTime();
+        const initialStartDate = new Date(Math.max(routineStartTime, effectiveStartTime));
         const end = rangeEnd;
 
         // Only create routineTimeDate if it's not an all-day event

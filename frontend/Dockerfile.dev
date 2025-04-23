@@ -1,6 +1,8 @@
 # Use Node.js as the base - specify exact version for better reproducibility
 FROM node:18.19-alpine
 ENV REACT_APP_API_URL=http://localhost:5057
+ENV CHOKIDAR_USEPOLLING=true
+ENV CHOKIDAR_INTERVAL=300
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -16,12 +18,10 @@ RUN npm config set registry https://registry.npmjs.org/ && \
     npm config set fetch-retries 5 && \
     npm install || (sleep 5 && npm install) || (sleep 10 && npm install --no-package-lock)
 
-# Copy the rest of the application code
-#COPY . .
+#managed by volume mount in docker compose
+#COPY . . 
 
-# Expose the port the app will run on
 EXPOSE 3000
 
-# Start the app - using a simpler start command since we've already installed dependencies
 CMD ["npm", "start"]
 

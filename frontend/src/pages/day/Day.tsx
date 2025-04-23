@@ -1,7 +1,7 @@
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal, timestampToDisplayString } from '../../shared/utils/time';
 import React, { useEffect, useState } from 'react';
-import { Goal } from '../../types/goals';
+import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { Box, Typography, Paper, Button } from '@mui/material';
@@ -20,12 +20,14 @@ const Day: React.FC = () => {
         const startTimestamp = today.getTime();
         //console.log(startTimestamp, endTimestamp);
 
-        privateRequest<Goal[]>('day', 'GET', undefined, {
+        // Expect ApiGoal[] from the API
+        privateRequest<ApiGoal[]>('day', 'GET', undefined, {
             start: startTimestamp,
             end: endTimestamp
-        }).then((goals) => {
-            //console.log(goals);
-            const localGoals = goals.map(goalToLocal);
+        }).then((apiGoals) => {
+            //console.log(apiGoals);
+            // Now map ApiGoal[] to Goal[] using goalToLocal
+            const localGoals = apiGoals.map(goalToLocal) as Goal[];
             //console.log(localGoals);
             setTasks(localGoals);
         }).catch(error => {
@@ -75,8 +77,8 @@ const Day: React.FC = () => {
         const completedItems = tasks.filter(item => item.completed);
 
         const sortByScheduled = (a: Goal, b: Goal) => {
-            const aTime = a.scheduled_timestamp || 0;
-            const bTime = b.scheduled_timestamp || 0;
+            const aTime = a.scheduled_timestamp?.getTime() || 0;
+            const bTime = b.scheduled_timestamp?.getTime() || 0;
             return aTime - bTime;
         };
 
@@ -97,7 +99,7 @@ const Day: React.FC = () => {
         today.setHours(0, 0, 0, 0);
 
         GoalMenu.open(
-            { scheduled_timestamp: today.getTime(), goal_type: 'task' } as Goal,
+            { scheduled_timestamp: today, goal_type: 'task' } as Goal,
             'create',
             (newGoal) => {
                 if (newGoal.id) {

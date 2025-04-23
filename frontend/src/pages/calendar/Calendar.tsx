@@ -5,7 +5,6 @@ import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
 import TaskList from './TaskList';
-import { dateToTimestamp } from '../../shared/utils/time';
 import { useHistoryState } from '../../shared/hooks/useHistoryState';
 import './Calendar.css';
 
@@ -178,7 +177,6 @@ const Calendar: React.FC = () => {
 
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      console.log('[DEBUG] Global click:', target.tagName, target.className);
     };
 
     document.addEventListener('click', handleGlobalClick);
@@ -335,9 +333,9 @@ const Calendar: React.FC = () => {
       const updates = { ...goal };
 
       if (isRoutine) {
-        updates.routine_time = info.event.start.getTime();
+        updates.routine_time = info.event.start;
       } else {
-        updates.scheduled_timestamp = info.event.start.getTime();
+        updates.scheduled_timestamp = info.event.start;
       }
 
       await updateGoal(goal.id, updates);
@@ -355,11 +353,12 @@ const Calendar: React.FC = () => {
         const goal = existingEvent.goal;
         const isRoutine = goal.goal_type === 'routine';
         const updates = { ...goal };
+        console.log(info.event.start,info.event.end)
 
         if (isRoutine) {
-          updates.routine_time = info.event.start.getTime();
+          updates.routine_time = info.event.start;
         } else {
-          updates.scheduled_timestamp = info.event.start.getTime();
+          updates.scheduled_timestamp = info.event.start;
         }
 
         await updateGoal(goal.id, updates);
@@ -377,6 +376,8 @@ const Calendar: React.FC = () => {
       if (existingEvent?.goal) {
         const start = info.event.start;
         const end = info.event.end;
+        console.log(end, start)
+        console.log(typeof end)
         const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
 
         const oldStartTime = new Date(existingEvent.start).getTime();
@@ -391,9 +392,9 @@ const Calendar: React.FC = () => {
           };
 
           if (isRoutine) {
-            updates.routine_time = start.getTime();
+            updates.routine_time = start;
           } else {
-            updates.scheduled_timestamp = start.getTime();
+            updates.scheduled_timestamp = start;
           }
 
           await updateGoal(goal.id, updates);
