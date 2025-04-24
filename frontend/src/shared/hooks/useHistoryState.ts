@@ -25,7 +25,7 @@ class HistoryManager<T> {
 
         // Add new state
         this.history.push({
-            data: JSON.parse(JSON.stringify(data)), // Deep clone the data
+            data: structuredClone(data), // Deep clone the data
             timestamp: Date.now(),
             undoFunction,
             redoFunction
