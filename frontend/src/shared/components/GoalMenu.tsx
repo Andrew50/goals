@@ -59,19 +59,15 @@ const GoalMenu: GoalMenuComponent = () => {
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
 
     const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
-        // Create a deep copy of the goal to prevent accidental modification of the original
-        const goalCopy = JSON.parse(JSON.stringify(goal));
+        //create copy, might need to be date.
+        const goalCopy = {...goal}
 
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
         }
-        console.log('[GoalMenu.tsx] open: Received goal:', JSON.stringify(goalCopy));
-        console.log('[GoalMenu.tsx] open: Initial scheduled_timestamp:', goalCopy.scheduled_timestamp, `(_tz=${goalCopy._tz})`);
-        //console.log('Initial scheduled_timestamp:', goalCopy.scheduled_timestamp,
-        //  'formatted:', timestampToDisplayString(goalCopy.scheduled_timestamp));
 
         if (initialMode === 'create' && !goalCopy.start_timestamp) {
-            goalCopy.start_timestamp = Date.now();
+            goalCopy.start_timestamp = new Date();
         }
 
         //queue relationships can only between achievements, default to achievement and force achievemnt in ui
@@ -126,13 +122,6 @@ const GoalMenu: GoalMenuComponent = () => {
             newGoal.frequency = '1D';
         }
 
-        // For timestamp debugging
-        if (newGoal.scheduled_timestamp !== state.goal.scheduled_timestamp) {
-            //console.log('Scheduled timestamp changed:',
-            //  'Old:', state.goal.scheduled_timestamp,
-            //  'New:', newGoal.scheduled_timestamp);
-        }
-
         // For all other changes, update the local state
         setState({
             ...state,
@@ -146,6 +135,7 @@ const GoalMenu: GoalMenuComponent = () => {
         }
 
         // Validation checks
+
         const validationErrors = validateGoal(state.goal);
         if (validationErrors.length > 0) {
             setState({

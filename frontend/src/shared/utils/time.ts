@@ -135,9 +135,12 @@ export const inputStringToTimestamp = (
         d = new Date(y, m - 1, dd, hh, mm, 0, 0);
       }
     }
+    console.log(d)
+    console.log(typeof d)
     // Ensure the parsed date is valid before returning
     return isNaN(d.getTime()) ? new Date(0) : d;
-  } catch {
+  } catch (e){
+      console.error(e)
     // Return Epoch date on parsing error
     return new Date(0);
   }
