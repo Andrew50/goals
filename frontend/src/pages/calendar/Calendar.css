@@ -186,7 +186,7 @@
 /* Remove excessive transparency from event wrappers */
 .fc-daygrid-event,
 .fc-timegrid-event {
-    background: none !important;
+    /*background: none !important;*/ /* this overrides full calendar*/
     /* Let FullCalendar set the color */
     pointer-events: auto !important;
     /* Ensure events are clickable */

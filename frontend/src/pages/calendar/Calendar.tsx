@@ -434,13 +434,8 @@ const Calendar: React.FC = () => {
   // Build events array with color from the goal
   const eventsWithColors = state.events.map((evt) => {
     const goal = evt.goal;
-    let bgColor = '#999';
+    const bgColor = goal ? getGoalColor(goal) || '#999' : '#999';
     let txtColor = '#fff';
-
-    if (goal) {
-      bgColor = getGoalColor(goal) || '#999';
-      txtColor = '#fff';
-    }
 
     return {
       id: evt.id,
@@ -501,6 +496,7 @@ const Calendar: React.FC = () => {
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView="dayGridMonth"
+          eventDisplay="block" //supposed to add full background color but doesnt ?
           headerToolbar={{
             left: 'prev,next today',
             center: 'title',
