@@ -37,7 +37,8 @@ export function validateGoal(goal: Goal): string[] {
                     if (!frequencyMatch) {
                         validationErrors.push('Invalid frequency format');
                     } else {
-                        const [_, interval, unit, days] = frequencyMatch;
+                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                        const [unused, interval, unit, days] = frequencyMatch;
                         if (parseInt(interval) < 1) {
                             validationErrors.push('Frequency interval must be at least 1');
                         }
@@ -69,5 +70,23 @@ export function validateGoal(goal: Goal): string[] {
                 break;
         }
     }
+
+    // Validate timestamp fields are Date objects if they exist
+    const timestampFields: (keyof Goal)[] = [
+        'start_timestamp',
+        'end_timestamp',
+        'scheduled_timestamp',
+        'routine_time',
+        'next_timestamp'
+    ];
+
+    timestampFields.forEach(field => {
+        const value = goal[field];
+        if (value !== null && value !== undefined && !(value instanceof Date)) {
+            validationErrors.push(`${field} must be a valid Date object instead of ${typeof value}`);
+            console.trace()
+        }
+    });
+
     return validationErrors
 }

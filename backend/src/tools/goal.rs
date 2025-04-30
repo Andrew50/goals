@@ -333,6 +333,15 @@ pub async fn update_goal_handler(
         set_clauses.push("g.position_y = $position_y");
         params.push(("position_y", y.into()));
     }
+     // Log the routine_time being sent in the update
+    if let Some(rt) = goal.routine_time {
+        use chrono::{TimeZone, Utc};
+        println!("[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: {} ({})",
+                 id, rt, Utc.timestamp_millis_opt(rt).unwrap());
+    } else {
+         println!("[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: None", id);
+    }
+
 
     let query_str = format!(
         "MATCH (g:Goal) WHERE id(g) = $id SET {}",
@@ -340,7 +349,7 @@ pub async fn update_goal_handler(
     );
 
     println!("Final query string: {}", query_str);
-    println!("Final params: {:?}", params);
+    //println!("Final params: {:?}", params); // Can be verbose, log specific parts if needed
 
     let query = query(&query_str).params(params);
 
@@ -545,11 +554,19 @@ pub async fn toggle_completion(
 
 impl Goal {
     pub async fn create_goal(&self, graph: &Graph) -> Result<Goal, neo4rs::Error> {
+        // Enhanced logging for routine_time specifically
+        println!("[goal.rs] create_goal - Attempting to create goal. Received routine_time: {:?}", self.routine_time);
+        if let Some(rt) = self.routine_time {
+             // Log the UTC interpretation of the received timestamp
+             use chrono::{TimeZone, Utc};
+             println!("[goal.rs] create_goal - Received routine_time as UTC DateTime: {}", Utc.timestamp_millis_opt(rt).unwrap());
+        }
+
         if DEBUG_PRINTS {
             println!("Attempting to create goal in database: {:?}", self);
             println!("Routine fields in incoming goal:");
             println!("routine_type: {:?}", self.routine_type);
-            println!("routine_time: {:?}", self.routine_time);
+            //println!("routine_time: {:?}", self.routine_time); // Covered above
         }
 
         // Define all possible properties and their corresponding parameter values
