@@ -1,18 +1,23 @@
 import { Goal, RelationshipType } from '../../types/goals';
 
 export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipType: RelationshipType): string | null {
-    if (fromGoal.goal_type === 'task') {
-        return 'Tasks cannot have children';
+    // If the relationship being formed is 'child'
+    if (relationshipType === 'child') {
+        if (fromGoal.goal_type === 'task') {
+            return 'Tasks cannot have children (i.e., cannot be parents).';
+        }
+        if (fromGoal.goal_type === 'directive' && toGoal.goal_type === 'achievement') {
+            return 'Directives cannot be parents of Achievements.';
+        }
     }
-    if (fromGoal.goal_type === 'directive' && toGoal.goal_type === 'achievement') {
-        return 'Directives cannot directly connect to achievements';
-    }
+
     if (relationshipType === 'queue') {
         if (fromGoal.goal_type !== 'achievement') {
-            return 'Queue relationships can only be created on achievements';
+            return 'Queue relationships can only start from an Achievement.';
         }
         if (toGoal.goal_type !== 'achievement') {
-            return 'Queue relationships can only connect to tasks';
+            // Corrected the confusing message here, queue is between achievements
+            return 'Queue relationships can only connect to another Achievement.';
         }
     }
     return null; // Return null if validation passes

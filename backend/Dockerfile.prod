@@ -35,5 +35,5 @@ done"\n\
 echo "Neo4j is ready, starting backend..."\n\
 exec ./backend' > /start.sh && chmod +x /start.sh
 
-EXPOSE 5057
+EXPOSE 5059
 CMD ["/start.sh"]

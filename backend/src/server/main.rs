@@ -27,7 +27,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Database connection pool created successfully");
 
     let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "http://localhost".to_string());
-    let frontend_origin = format!("{host_url}:3000");
+    let frontend_origin = format!("{host_url}:3030");
 
     let cors = CorsLayer::new()
         .allow_origin([
@@ -41,8 +41,8 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = http_handler::create_routes(pool.clone(), user_locks.clone()).layer(cors);
 
-    let listener = TcpListener::bind("0.0.0.0:5057").await.unwrap();
-    println!("Listening on 0.0.0.0:5057");
+    let listener = TcpListener::bind("0.0.0.0:5059").await.unwrap();
+    println!("Listening on 0.0.0.0:5059");
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
