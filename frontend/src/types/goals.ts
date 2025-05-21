@@ -1,22 +1,24 @@
 export type GoalType = 'directive' | 'project' | 'achievement' | 'routine' | 'task';
 export type RelationshipType = 'child' | 'queue';
+
+// dates, time, timestamps as Date, durations as timestamp (number) as decided by whether you want timezone conversions or not.
 export interface Goal {
     id: number;
     name: string;
     description?: string;
     goal_type: GoalType;
     priority?: 'high' | 'medium' | 'low';
-    start_timestamp?: number;
-    end_timestamp?: number;
+    start_timestamp?: Date;
+    end_timestamp?: Date;
     completed?: boolean;
     frequency?: string;
-    next_timestamp?: number;
+    next_timestamp?: Date;
     routine_name?: string;
     routine_description?: string;
     routine_type?: 'task' | 'achievement';
     routine_duration?: number;
-    routine_time?: number;
-    scheduled_timestamp?: number;
+    routine_time?: Date;
+    scheduled_timestamp?: Date;
     duration?: number; // minuites
     _tz?: 'utc' | 'user';
     position_x?: number;
@@ -101,3 +103,10 @@ export interface NetworkEdge {
         forceDirection: string;
     };
 }
+export type ApiGoal = Omit<Goal, 'start_timestamp' | 'end_timestamp' | 'next_timestamp' | 'scheduled_timestamp' | 'routine_time'> & {
+  start_timestamp?: number | null;
+  end_timestamp?: number | null;
+  next_timestamp?: number | null;
+  scheduled_timestamp?: number | null;
+  routine_time?: number | null;
+};
