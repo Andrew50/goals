@@ -11,6 +11,8 @@ services:
           - /usr/src/app/target
         env_file:
           - .env
+        environment:
+          HOST_URL: ${HOST_URL:-http://localhost}
         networks:
             - dev_network
             #    db:
@@ -44,7 +46,9 @@ services:
           - ./frontend:/app
           - /app/node_modules
         environment:
-          - CHOKIDAR_USEPOLLING=true #enable polling
+          CHOKIDAR_USEPOLLING: "true" #enable polling
+          HOST_URL: ${HOST_URL:-http://localhost}
+          REACT_APP_API_URL: "http://${HOST_URL:-localhost}:5057"
         env_file:
           - .env
         ports:

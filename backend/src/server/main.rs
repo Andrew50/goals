@@ -26,9 +26,12 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Database connection pool created successfully");
 
+    let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "http://localhost".to_string());
+    let frontend_origin = format!("{host_url}:3000");
+
     let cors = CorsLayer::new()
         .allow_origin([
-            "http://localhost:3000".parse().unwrap(),
+            frontend_origin.parse().unwrap(),
             "https://goals.atlantis.trading".parse().unwrap(),
         ])
         .allow_methods(Any)
