@@ -22,6 +22,7 @@ import {
 } from '../utils/time';
 import { validateGoal } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
+import GoalRelations from "./GoalRelations";
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
 
@@ -38,6 +39,7 @@ interface GoalMenuState {
 
 const GoalMenu: GoalMenuComponent = () => {
     const [isOpen, setIsOpen] = useState(false);
+    const [relationsOpen, setRelationsOpen] = useState(false);
     const [state, setState] = useHistoryState<GoalMenuState>(
         {
             goal: {} as Goal,
@@ -752,6 +754,7 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     const handleEdit = () => {
+    const handleRelations = () => { setRelationsOpen(true); };
         setState({
             ...state,
             mode: 'edit'
@@ -824,6 +827,9 @@ const GoalMenu: GoalMenuComponent = () => {
                             <Button onClick={handleEdit} color="primary">
                                 Edit
                             </Button>
+                            <Button onClick={handleRelations} color="secondary">
+                                Relationships
+                            </Button>
                         </>
                     )}
                     {state.mode === 'edit' && (
@@ -849,6 +855,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 </Box>
             </DialogActions>
         </Dialog>
+        {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
     );
 }
 
