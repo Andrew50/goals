@@ -1,39 +1,18 @@
-name: Deploy to Production
+name: Self-hosted Deploy
 
 on:
   push:
     branches: [ prod ]
+  workflow_dispatch:
 
 jobs:
-  # This is a placeholder for the actual deployment steps
-  # The actual implementation will depend on your deployment strategy
-  prepare-deployment:
-    name: Prepare Deployment
-    runs-on: ubuntu-latest
+  build-and-deploy:
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v3
-      
-      - name: Set up environment
-        run: echo "Setting up deployment environment"
-      
-      - name: Build artifacts
-        run: echo "Building deployment artifacts"
-        
-  deploy:
-    name: Deploy to Production
-    needs: [prepare-deployment]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy application
-        run: echo "Future deployment step - This would deploy the application"
-        
-  post-deploy:
-    name: Post-deployment Tasks
-    needs: [deploy]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run post-deployment verification
-        run: echo "Running post-deployment verification"
-      
-      - name: Notify deployment status
-        run: echo "Notifying team of deployment status" 
+
+      - name: Build containers
+        run: docker compose -f docker-compose.prod.yaml build
+
+      - name: Deploy stack
+        run: docker compose -f docker-compose.prod.yaml up -d

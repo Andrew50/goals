@@ -16,7 +16,7 @@ RUN npm install -g serve
 COPY --from=builder /app/build ./build
 
 ENV REACT_APP_API_URL=https://goals.atlantis.trading/api
-EXPOSE 3000
+EXPOSE 3030
 
 # Use serve instead of npm start
-CMD ["serve", "-s", "build", "-l", "3000"]
+CMD ["serve", "-s", "build", "-l", "3030"]

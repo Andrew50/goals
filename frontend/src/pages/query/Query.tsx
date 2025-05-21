@@ -329,7 +329,7 @@ const Query: React.FC = () => {
         // Determine WebSocket URL based on environment
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.hostname;
-        const port = process.env.NODE_ENV === 'development' ? ':5057' : '';
+        const port = process.env.NODE_ENV === 'development' ? ':5059' : '';
         const wsUrl = `${protocol}//${host}${port}/query/ws?token=${encodeURIComponent(token)}`;
 
         console.log(`Attempting to connect WebSocket to: ${wsUrl}`);

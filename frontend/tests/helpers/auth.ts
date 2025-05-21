@@ -25,7 +25,7 @@ export function generateTestToken(userId: number, username?: string): string {
  * @param baseURL The base URL of the application (needed for origin).
  * @returns A Playwright StorageState object.
  */
-export function generateStorageState(userId: number, username?: string, baseURL: string = 'http://localhost:3000'): StorageState {
+export function generateStorageState(userId: number, username?: string, baseURL: string = 'http://localhost:3030'): StorageState {
     const effectiveUsername = username || `testuser${userId}`;
     const token = generateTestToken(userId, effectiveUsername);
 
