@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, ChangeEvent, MouseEvent, KeyboardEvent } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
 import {
     Dialog,
@@ -62,7 +62,7 @@ const GoalMenu: GoalMenuComponent = () => {
 
     const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         //create copy, might need to be date.
-        const goalCopy = {...goal}
+        const goalCopy = { ...goal }
 
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
@@ -271,7 +271,7 @@ const GoalMenu: GoalMenuComponent = () => {
             label="Priority"
             select
             value={state.goal.priority || ''}
-            onChange={(e) => handleChange({
+            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
                 ...state.goal,
                 priority: e.target.value as 'high' | 'medium' | 'low'
             })}
@@ -301,7 +301,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 control={
                     <Checkbox
                         checked={state.goal.duration === 1440}
-                        onChange={(e) => {
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => {
                             handleChange({
                                 ...state.goal,
                                 duration: e.target.checked ? 1440 : 60 // Default to 1 hour when unchecking
@@ -320,7 +320,7 @@ const GoalMenu: GoalMenuComponent = () => {
                             const hours = state.goal.duration ? Math.floor(state.goal.duration / 60) : '';
                             return hours;
                         })()}
-                        onChange={(e) => {
+                        onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                             const hours = e.target.value ? parseInt(e.target.value) : 0;
                             const minutes = state.goal.duration ? state.goal.duration % 60 : 0;
                             const newDuration = hours * 60 + minutes;
@@ -345,7 +345,7 @@ const GoalMenu: GoalMenuComponent = () => {
                             const minutes = state.goal.duration ? state.goal.duration % 60 : '';
                             return minutes;
                         })()}
-                        onChange={(e) => {
+                        onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                             const minutes = e.target.value ? parseInt(e.target.value) : 0;
                             const hours = state.goal.duration ? Math.floor(state.goal.duration / 60) : 0;
                             const newDuration = hours * 60 + minutes;
@@ -383,7 +383,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 console.log(`[GoalMenu.tsx] scheduleField render: Converted to input string=${converted}`);
                 return converted;
             })()}
-            onChange={(e) => {
+            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                 const inputValue = e.target.value;
                 const newTimestamp = inputStringToTimestamp(inputValue, 'datetime');
                 //console.log('Schedule date changed:',
@@ -416,7 +416,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 label="Start Date"
                 type="date"
                 value={timestampToInputString(state.goal.start_timestamp, 'date')}
-                onChange={(e) => {
+                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                     handleChange({
                         ...state.goal,
                         start_timestamp: inputStringToTimestamp(e.target.value, "date")
@@ -431,7 +431,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 label="End Date"
                 type="date"
                 value={timestampToInputString(state.goal.end_timestamp, 'date')}
-                onChange={(e) => {
+                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                     handleChange({
                         ...state.goal,
                         end_timestamp: inputStringToTimestamp(e.target.value, 'end-date')
@@ -450,7 +450,7 @@ const GoalMenu: GoalMenuComponent = () => {
             control={
                 <Checkbox
                     checked={state.goal.completed || false}
-                    onChange={(e) => handleChange({
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => handleChange({
                         ...state.goal,
                         completed: e.target.checked
                     })}
@@ -478,7 +478,7 @@ const GoalMenu: GoalMenuComponent = () => {
                         const match = state.goal.frequency?.match(/^(\d+)[DWMY]/);
                         return match ? match[1] : '1';
                     })()}
-                    onChange={(e) => {
+                    onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                         const value = e.target.value;
                         const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
                         const days = state.goal.frequency?.split(':')?.[1] || '';
@@ -504,7 +504,7 @@ const GoalMenu: GoalMenuComponent = () => {
                 <TextField
                     select
                     value={state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D'}
-                    onChange={(e) => {
+                    onChange={(e: ChangeEvent<{ value: unknown }>) => {
                         const interval = state.goal.frequency?.match(/^\d+/)?.[0] || '1';
 
                         // If changing to weekly and we have a scheduled date, use its day of week
@@ -552,15 +552,15 @@ const GoalMenu: GoalMenuComponent = () => {
                                     key={index}
                                     onClick={() => {
                                         const interval = state.goal.frequency?.match(/^\d+/)?.[0] || '1';
-                                        let days = state.goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
+                                        let currentDays = state.goal.frequency?.split(':')?.[1]?.split(',').map(Number) || [];
 
                                         if (isSelected) {
-                                            days = days.filter(d => d !== index);
+                                            currentDays = currentDays.filter((d: number) => d !== index);
                                         } else {
-                                            days.push(index);
+                                            currentDays.push(index);
                                         }
 
-                                        const newFreq = `${interval}W${days.length ? ':' + days.sort().join(',') : ''}`;
+                                        const newFreq = `${interval}W${currentDays.length ? ':' + currentDays.sort((a, b) => a - b).join(',') : ''}`;
                                         //console.log(newFreq);
                                         handleChange({
                                             ...state.goal,
@@ -609,7 +609,7 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Name"
                 value={state.goal.name || ''}
-                onChange={(e) => handleChange({ ...state.goal, name: e.target.value })}
+                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({ ...state.goal, name: e.target.value })}
                 fullWidth
                 margin="dense"
                 required
@@ -623,7 +623,7 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Goal Type"
                 value={state.goal.goal_type || ''}
-                onChange={(e) => handleChange({
+                onChange={(e: ChangeEvent<{ value: unknown }>) => handleChange({
                     ...state.goal,
                     goal_type: e.target.value as GoalType
                 })}
@@ -642,7 +642,7 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Description"
                 value={state.goal.description || ''}
-                onChange={(e) => handleChange({ ...state.goal, description: e.target.value })}
+                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({ ...state.goal, description: e.target.value })}
                 fullWidth
                 margin="dense"
                 multiline
@@ -677,7 +677,7 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Routine Type"
                 value={state.goal.routine_type || ''}
-                onChange={(e) => handleChange({
+                onChange={(e: ChangeEvent<{ value: unknown }>) => handleChange({
                     ...state.goal,
                     routine_type: e.target.value as "task" | "achievement"
                 })}
@@ -697,7 +697,7 @@ const GoalMenu: GoalMenuComponent = () => {
                             label="Scheduled Time"
                             type="time"
                             value={timestampToInputString(state.goal.routine_time, 'time')}
-                            onChange={(e) => {
+                            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                                 handleChange({
                                     ...state.goal,
                                     routine_time: inputStringToTimestamp(e.target.value, 'time')
@@ -754,13 +754,14 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     const handleEdit = () => {
-    const handleRelations = () => { setRelationsOpen(true); };
         setState({
             ...state,
             mode: 'edit'
         });
         setTitle('Edit Goal');
     };
+    const handleRelations = () => { setRelationsOpen(true); };
+
     const handleCompletionToggle = async (completed: boolean) => {
         try {
             const completion = await completeGoal(state.goal.id!, completed);
@@ -789,73 +790,74 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     return (
-        <Dialog
-            open={isOpen}
-            onClose={close}
-            maxWidth="sm"
-            fullWidth
-            onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
-                    event.preventDefault();
-                    handleSubmit();
-                }
-            }}
-        >
-            <DialogTitle>{title}</DialogTitle>
-            <DialogContent>
-                {state.error && (
-                    <Box sx={{ color: 'error.main', mb: 2 }}>
-                        {state.error}
-                    </Box>
-                )}
-                {commonFields}
-                {renderTypeSpecificFields()}
-            </DialogContent>
-            <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                    {state.mode === 'view' && (
-                        <>
-
-                            <Button onClick={handleCreateChild} color="secondary">
-                                Create Child
-                            </Button>
-                            {state.goal.goal_type === 'achievement' && (
-                                <Button onClick={handleCreateQueue} color="secondary">
-                                    Create Queue
+        <>
+            <Dialog
+                open={isOpen}
+                onClose={close}
+                maxWidth="sm"
+                fullWidth
+                onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>) => {
+                    if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
+                        event.preventDefault();
+                        handleSubmit();
+                    }
+                }}
+            >
+                <DialogTitle>{title}</DialogTitle>
+                <DialogContent>
+                    {state.error && (
+                        <Box sx={{ color: 'error.main', mb: 2 }}>
+                            {state.error}
+                        </Box>
+                    )}
+                    {commonFields}
+                    {renderTypeSpecificFields()}
+                </DialogContent>
+                <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                        {state.mode === 'view' && (
+                            <>
+                                <Button onClick={handleCreateChild} color="secondary">
+                                    Create Child
                                 </Button>
-                            )}
-                            <Button onClick={handleEdit} color="primary">
-                                Edit
+                                {state.goal.goal_type === 'achievement' && (
+                                    <Button onClick={handleCreateQueue} color="secondary">
+                                        Create Queue
+                                    </Button>
+                                )}
+                                <Button onClick={handleEdit} color="primary">
+                                    Edit
+                                </Button>
+                                <Button onClick={handleRelations} color="secondary">
+                                    Relationships
+                                </Button>
+                            </>
+                        )}
+                        {state.mode === 'edit' && (
+                            <Button onClick={handleDelete} color="error">
+                                Delete
                             </Button>
-                            <Button onClick={handleRelations} color="secondary">
-                                Relationships
+                        )}
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button onClick={close}>
+                            {isViewOnly ? 'Close' : 'Cancel'}
+                        </Button>
+                        {!isViewOnly && (
+                            <Button onClick={() => handleSubmit()} color="primary">
+                                {state.mode === 'create' ? 'Create' : 'Save'}
                             </Button>
-                        </>
-                    )}
-                    {state.mode === 'edit' && (
-                        <Button onClick={handleDelete} color="error">
-                            Delete
-                        </Button>
-                    )}
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button onClick={close}>
-                        {isViewOnly ? 'Close' : 'Cancel'}
-                    </Button>
-                    {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary">
-                            {state.mode === 'create' ? 'Create' : 'Save'}
-                        </Button>
-                    )}
-                    {state.mode === 'create' && (
-                        <Button onClick={() => handleSubmit(true)} color="primary">
-                            Create Another
-                        </Button>
-                    )}
-                </Box>
-            </DialogActions>
-        </Dialog>
-        {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
+                        )}
+                        {state.mode === 'create' && (
+                            <Button onClick={() => handleSubmit(true)} color="primary">
+                                Create Another
+                            </Button>
+                        )}
+                    </Box>
+                </DialogActions>
+            </Dialog>
+            {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
+        </>
     );
 }
 
