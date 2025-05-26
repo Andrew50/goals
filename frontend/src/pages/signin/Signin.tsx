@@ -5,7 +5,7 @@ import { useAuth } from "../../shared/contexts/AuthContext";
 
 
 const Signin: React.FC = () => {
-  const { login, isAuthenticated } = useAuth();
+  const { login, loginWithGoogle, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [username, setUsername] = useState("");
@@ -13,12 +13,38 @@ const Signin: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const handleGoogleCredential = async (response: any) => {
+    setError(null);
+    setSuccess(null);
+    try {
+      const message = await loginWithGoogle(response.credential);
+      setSuccess(message);
+      navigate("/calendar");
+    } catch (err: any) {
+      setError(err.message || "Google sign in failed");
+    }
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
       const destination = location.state?.from || '/';
       navigate(destination, { replace: true });
     }
   }, [isAuthenticated, navigate, location]);
+
+  useEffect(() => {
+    const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+    if ((window as any).google && clientId) {
+      (window as any).google.accounts.id.initialize({
+        client_id: clientId,
+        callback: handleGoogleCredential,
+      });
+      (window as any).google.accounts.id.renderButton(
+        document.getElementById("googleSignInDiv"),
+        { theme: "outline", size: "large" }
+      );
+    }
+  }, []);
 
   const handleSignin = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -80,6 +106,7 @@ const Signin: React.FC = () => {
               Sign In
             </Button>
           </form>
+          <Box id="googleSignInDiv" sx={{ mt: 2 }} />
         </Paper>
       </Box>
     </Container>

@@ -13,6 +13,7 @@ interface AuthContextType {
     setIsAuthenticated: (value: boolean) => void;
     scheduleRoutineUpdate: () => void;
     login: (username: string, password: string) => Promise<string>;
+    loginWithGoogle: (credential: string) => Promise<string>;
     logout: () => void;
 }
 
@@ -23,6 +24,7 @@ export const AuthContext = createContext<AuthContextType>({
     setIsAuthenticated: () => { },
     scheduleRoutineUpdate: () => { },
     login: async () => '',
+    loginWithGoogle: async () => '',
     logout: () => { },
 });
 
@@ -147,6 +149,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return response.message;
     }, [scheduleRoutineUpdate]);
 
+    const loginWithGoogle = useCallback(async (credential: string): Promise<string> => {
+        const response = await publicRequest<SigninResponse>(
+            'auth/google',
+            'POST',
+            { token: credential }
+        );
+
+        try {
+            localStorage?.setItem('authToken', response.token);
+            const payload = JSON.parse(atob(response.token.split('.')[1]));
+            const usernameFromToken = payload.username;
+            if (usernameFromToken) {
+                localStorage?.setItem('username', usernameFromToken);
+                setUsername(usernameFromToken);
+            }
+        } catch (error) {
+            console.warn('Could not process token from Google login:', error);
+        }
+
+        setIsAuthenticated(true);
+
+        try {
+            await updateRoutines();
+        } catch (error) {
+            console.error('Failed to update routines on login:', error);
+        }
+
+        scheduleRoutineUpdate();
+
+        return response.message;
+    }, [scheduleRoutineUpdate]);
+
     return (
         <AuthContext.Provider value={{
             isAuthenticated,
@@ -155,6 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsAuthenticated,
             scheduleRoutineUpdate,
             login,
+            loginWithGoogle,
             logout
         }}>
             {children}
@@ -162,4 +197,4 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 };
 
-export const useAuth = () => useContext(AuthContext); 
+export const useAuth = () => useContext(AuthContext);
