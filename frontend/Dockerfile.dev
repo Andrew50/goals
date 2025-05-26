@@ -1,6 +1,6 @@
 # Use Node.js as the base - specify exact version for better reproducibility
 FROM node:18.19-alpine
-ENV REACT_APP_API_URL=http://localhost:5057
+ENV REACT_APP_API_URL=http://localhost:5059
 ENV CHOKIDAR_USEPOLLING=true
 ENV CHOKIDAR_INTERVAL=300
 
