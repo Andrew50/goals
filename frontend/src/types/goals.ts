@@ -19,6 +19,7 @@ export interface Goal {
     routine_duration?: number;
     routine_time?: Date;
     scheduled_timestamp?: Date;
+    suggested_timestamp?: Date;
     duration?: number; // minuites
     _tz?: 'utc' | 'user';
     position_x?: number;
@@ -44,7 +45,7 @@ export interface CalendarEvent {
     textColor?: string;
     display?: 'auto' | 'block' | 'list-item' | 'background' | 'none';
     goal: Goal;
-    type: 'scheduled' | 'routine' | 'achievement' | 'all-day';
+    type: 'scheduled' | 'routine' | 'achievement' | 'all-day' | 'suggested';
 }
 export interface CalendarTask {
     id: string;
@@ -103,10 +104,11 @@ export interface NetworkEdge {
         forceDirection: string;
     };
 }
-export type ApiGoal = Omit<Goal, 'start_timestamp' | 'end_timestamp' | 'next_timestamp' | 'scheduled_timestamp' | 'routine_time'> & {
+export type ApiGoal = Omit<Goal, 'start_timestamp' | 'end_timestamp' | 'next_timestamp' | 'scheduled_timestamp' | 'suggested_timestamp' | 'routine_time'> & {
   start_timestamp?: number | null;
   end_timestamp?: number | null;
   next_timestamp?: number | null;
   scheduled_timestamp?: number | null;
+  suggested_timestamp?: number | null;
   routine_time?: number | null;
 };

@@ -437,7 +437,7 @@ const Calendar: React.FC = () => {
     const bgColor = goal ? getGoalColor(goal) || '#999' : '#999';
     let txtColor = '#fff';
 
-    return {
+    const base = {
       id: evt.id,
       title: evt.title,
       start: evt.start,
@@ -450,7 +450,12 @@ const Calendar: React.FC = () => {
         ...evt,
         goal
       }
-    };
+    } as any;
+
+    if (evt.type === 'suggested') {
+      base.className = 'suggested-event';
+    }
+    return base;
   });
 
   // -----------------------------
