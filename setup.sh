@@ -62,45 +62,19 @@ else
     echo "✅ Rust already installed: $(rustc --version)"
 fi
 
-# Install Neo4j
-echo "🗄️  Installing Neo4j..."
-if ! command_exists neo4j; then
-    if [[ "$MACHINE" == "Mac" ]]; then
-        brew install neo4j
-    elif [[ "$MACHINE" == "Linux" ]]; then
-        # Add Neo4j repository and install
-        wget -O - https://debian.neo4j.com/neotechnology.gpg.key | sudo apt-key add -
-        echo 'deb https://debian.neo4j.com stable latest' | sudo tee -a /etc/apt/sources.list.d/neo4j.list
-        sudo apt-get update
-        sudo apt-get install neo4j
-    fi
+# Ensure Rust is in PATH for current session
+if command_exists rustc; then
+    echo "✅ Rust toolchain ready: $(rustc --version)"
 else
-    echo "✅ Neo4j already installed"
-fi
-
-# Configure Neo4j
-echo "⚙️  Configuring Neo4j..."
-if [[ "$MACHINE" == "Mac" ]]; then
-    NEO4J_CONF="/opt/homebrew/var/neo4j/conf/neo4j.conf"
-    NEO4J_HOME="/opt/homebrew/var/neo4j"
-elif [[ "$MACHINE" == "Linux" ]]; then
-    NEO4J_CONF="/etc/neo4j/neo4j.conf"
-    NEO4J_HOME="/var/lib/neo4j"
-fi
-
-# Set Neo4j initial password
-echo "🔐 Setting Neo4j password..."
-if [[ "$MACHINE" == "Mac" ]]; then
-    neo4j-admin dbms set-initial-password password123 || echo "Password may already be set"
-elif [[ "$MACHINE" == "Linux" ]]; then
-    sudo neo4j-admin dbms set-initial-password password123 || echo "Password may already be set"
+    echo "⚠️  Sourcing Rust environment..."
+    source ~/.cargo/env
 fi
 
 # Check if .env file exists
 if [ ! -f .env ]; then
     echo "⚠️  .env file not found. Creating a template..."
     cat > .env << EOF
-# Database Configuration
+# Database Configuration (configure your own Neo4j instance)
 NEO4J_AUTH=neo4j/password123
 NEO4J_PLUGINS=["apoc"]
 DATABASE_URL=bolt://localhost:7687
@@ -130,56 +104,55 @@ fi
 echo "📦 Installing frontend dependencies..."
 cd frontend
 if [ -f package.json ]; then
+    # Install all dependencies including dev dependencies
     yarn install
-    echo "✅ Frontend dependencies installed"
+    
+    # Install Playwright browsers for E2E testing
+    echo "🎭 Installing Playwright browsers..."
+    npx playwright install
+    
+    echo "✅ Frontend dependencies and Playwright browsers installed"
 else
     echo "❌ No package.json found in frontend directory"
     exit 1
 fi
 cd ..
 
-# Build backend
-echo "🦀 Building Rust backend..."
+# Build backend and install Rust dependencies
+echo "🦀 Building Rust backend and installing dependencies..."
 cd backend
-cargo build
-echo "✅ Backend built successfully"
-cd ..
-
-# Start Neo4j
-echo "🗄️  Starting Neo4j..."
-if [[ "$MACHINE" == "Mac" ]]; then
-    brew services start neo4j
-elif [[ "$MACHINE" == "Linux" ]]; then
-    sudo systemctl start neo4j
-    sudo systemctl enable neo4j
+if [ -f Cargo.toml ]; then
+    # This will download and compile all Rust dependencies
+    cargo build
+    echo "✅ Backend built successfully with all Rust dependencies"
+else
+    echo "❌ No Cargo.toml found in backend directory"
+    exit 1
 fi
-
-# Wait for Neo4j to start
-echo "⏳ Waiting for Neo4j to start..."
-sleep 10
+cd ..
 
 echo "✅ Setup complete!"
 echo ""
 echo "🌐 To start the development environment:"
 echo ""
-echo "1. Start the backend (in one terminal):"
+echo "1. Start your Neo4j database (install separately if needed)"
+echo "2. Start the backend (in one terminal):"
 echo "   cd backend && cargo run"
 echo ""
-echo "2. Start the frontend (in another terminal):"
+echo "3. Start the frontend (in another terminal):"
 echo "   cd frontend && yarn start"
 echo ""
 echo "🌐 Services will be available at:"
 echo "  - Frontend: http://localhost:3000"
 echo "  - Backend API: http://localhost:5057"
-echo "  - Neo4j Browser: http://localhost:7474 (username: neo4j, password: password123)"
+echo "  - Neo4j Browser: http://localhost:7474 (if running locally)"
 echo ""
 echo "📝 Don't forget to:"
+echo "  - Install and configure Neo4j separately"
 echo "  - Update your GOALS_GEMINI_API_KEY in the .env file"
 echo "  - Restart your terminal or run 'source ~/.zshrc' to load new PATH variables"
 echo ""
-echo "🛑 To stop Neo4j:"
-if [[ "$MACHINE" == "Mac" ]]; then
-    echo "   brew services stop neo4j"
-elif [[ "$MACHINE" == "Linux" ]]; then
-    echo "   sudo systemctl stop neo4j"
-fi 
+echo "🧪 To run tests:"
+echo "  - Frontend unit tests: cd frontend && yarn test"
+echo "  - Frontend E2E tests: cd frontend && yarn test:e2e"
+echo "  - Backend tests: cd backend && cargo test" 
