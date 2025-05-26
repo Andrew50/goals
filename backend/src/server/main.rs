@@ -28,7 +28,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cors = CorsLayer::new()
         .allow_origin([
-            "http://localhost:3000".parse().unwrap(),
+            "http://localhost:3030".parse().unwrap(),
             "https://goals.atlantis.trading".parse().unwrap(),
         ])
         .allow_methods(Any)
