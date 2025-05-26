@@ -230,13 +230,48 @@ The AI has access to 14 specialized tools for goal management:
 # The script will install:
 # - Node.js 20 and Yarn
 # - Rust (latest stable)
-# - Neo4j database
-# - Configure Neo4j with default password
-# - Install frontend and backend dependencies
+# - All frontend dependencies (including Playwright for E2E testing)
+# - All backend Rust dependencies
+# Note: Neo4j database needs to be installed and configured separately
 ```
+
+#### Database Setup (Neo4j)
+Neo4j needs to be installed separately. Choose one of these options:
+
+**Option 1: Local Installation**
+```bash
+# macOS
+brew install neo4j
+brew services start neo4j
+neo4j-admin dbms set-initial-password password123
+
+# Linux (Ubuntu/Debian)
+wget -O - https://debian.neo4j.com/neotechnology.gpg.key | sudo apt-key add -
+echo 'deb https://debian.neo4j.com stable latest' | sudo tee -a /etc/apt/sources.list.d/neo4j.list
+sudo apt-get update
+sudo apt-get install neo4j
+sudo systemctl start neo4j
+sudo neo4j-admin dbms set-initial-password password123
+```
+
+**Option 2: Docker (if preferred)**
+```bash
+docker run -d \
+  --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/password123 \
+  neo4j:latest
+```
+
+**Option 3: Neo4j Desktop**
+- Download and install Neo4j Desktop
+- Create a new database with password `password123`
+- Start the database
 
 #### Starting the Development Environment
 ```bash
+# Ensure Neo4j is running (check http://localhost:7474)
+
 # Terminal 1: Start the backend
 cd backend
 cargo run
@@ -247,20 +282,8 @@ yarn start
 
 # Services will be available at:
 # - Frontend: http://localhost:3000
-# - Backend: http://localhost:5057
+# - Backend API: http://localhost:5057
 # - Neo4j Browser: http://localhost:7474 (neo4j/password123)
-```
-
-#### Manual Service Management
-```bash
-# Start/stop Neo4j (macOS)
-brew services start neo4j
-brew services stop neo4j
-
-# Start/stop Neo4j (Linux)
-sudo systemctl start neo4j
-sudo systemctl stop neo4j
-sudo systemctl status neo4j
 ```
 
 ### Testing Strategy
@@ -309,13 +332,22 @@ REACT_APP_API_URL=http://localhost:5057
 #### System Requirements
 - **Node.js**: 20.x (installed by setup script)
 - **Rust**: Latest stable (installed by setup script)
-- **Neo4j**: Latest stable (installed by setup script)
+- **Neo4j**: Latest stable (install separately - see Database Setup section)
 - **Yarn**: Package manager (installed by setup script)
+- **Playwright**: E2E testing framework (installed by setup script)
 
 #### Platform Support
 - **macOS**: Full support via Homebrew
 - **Linux**: Ubuntu/Debian support via package managers
 - **Windows**: Manual installation required (setup script supports WSL)
+
+#### What the Setup Script Installs
+- **Node.js 20** and **Yarn** package manager
+- **Rust toolchain** (rustc, cargo, etc.)
+- **All frontend dependencies** from package.json
+- **Playwright browsers** for E2E testing
+- **All Rust crates** and dependencies for the backend
+- **Environment configuration** (.env template)
 
 ## API Endpoints
 
