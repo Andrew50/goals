@@ -24,6 +24,18 @@ pub struct Claims {
     pub exp: usize,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GoogleAuthPayload {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleTokenInfo {
+    sub: String,
+    email: Option<String>,
+    aud: String,
+}
+
 // Business logic functions with regular parameters
 
 // Sign-up function
@@ -157,6 +169,61 @@ pub async fn sign_in(
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+pub async fn google_sign_in(
+    graph: Graph,
+    token: String,
+) -> Result<Json<AuthResponse>, StatusCode> {
+    let client = reqwest::Client::new();
+    let info: GoogleTokenInfo = client
+        .get("https://oauth2.googleapis.com/tokeninfo")
+        .query(&[("id_token", &token)])
+        .send()
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?
+        .json()
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let client_id = env::var("GOOGLE_CLIENT_ID").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if info.aud != client_id {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let username = info.email.unwrap_or(info.sub);
+
+    let query = Query::new("MATCH (u:User {username: $username}) RETURN id(u) as user_id".to_string())
+        .param("username", username.clone());
+
+    let mut result = graph.execute(query).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user_id: i64;
+    if let Ok(Some(record)) = result.next().await {
+        user_id = record.get("user_id").unwrap();
+    } else {
+        let hashed_password = hash(uuid::Uuid::new_v4().to_string(), DEFAULT_COST)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let create_query = Query::new(
+            "CREATE (u:User {username: $username, password_hash: $password_hash}) RETURN id(u) as user_id".to_string(),
+        )
+        .param("username", username.clone())
+        .param("password_hash", hashed_password);
+        let mut created = graph.execute(create_query).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let record = created.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        user_id = record.get("user_id").unwrap();
+    }
+
+    let claims = Claims {
+        user_id,
+        username: username.clone(),
+        exp: (chrono::Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
+    };
+
+    let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
+    let jwt = encode(&Header::default(), &claims, &EncodingKey::from_secret(jwt_secret.as_bytes()))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(AuthResponse { message: "Sign-in successful".to_string(), token: jwt }))
 }
 
 // Token validation function

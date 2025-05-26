@@ -29,6 +29,7 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
     let auth_routes = Router::new()
         .route("/signup", post(handle_signup))
         .route("/signin", post(handle_signin))
+        .route("/google", post(handle_google_signin))
         .route("/validate", get(handle_validate_token));
 
     let goals_routes = Router::new()
@@ -95,6 +96,13 @@ async fn handle_signin(
     Json(payload): Json<auth::AuthPayload>,
 ) -> Result<impl IntoResponse, StatusCode> {
     auth::sign_in(graph, payload.username, payload.password).await
+}
+
+async fn handle_google_signin(
+    Extension(graph): Extension<Graph>,
+    Json(payload): Json<auth::GoogleAuthPayload>,
+) -> Result<impl IntoResponse, StatusCode> {
+    auth::google_sign_in(graph, payload.token).await
 }
 
 async fn handle_validate_token(
