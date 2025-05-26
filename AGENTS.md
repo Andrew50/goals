@@ -278,13 +278,31 @@ cargo run
 
 # Terminal 2: Start the frontend  
 cd frontend
-yarn start
+npm start
 
 # Services will be available at:
 # - Frontend: http://localhost:3000
 # - Backend API: http://localhost:5057
 # - Neo4j Browser: http://localhost:7474 (neo4j/password123)
 ```
+
+#### Post-Setup Reminders
+After running the setup script, don't forget to:
+- **Install and configure Neo4j separately** (see Database Setup section above)
+- **Update your GOALS_GEMINI_API_KEY** in the .env file with your actual API key
+- **Restart your terminal** or run `source ~/.zshrc` to load new PATH variables
+
+#### Setup Script Details
+The setup script (`./setup.sh`) performs the following operations:
+- **OS Detection**: Automatically detects macOS, Linux, or other platforms
+- **Homebrew Installation**: Installs Homebrew on macOS if not present
+- **Node.js 20 Installation**: Via Homebrew (macOS) or NodeSource repository (Linux)
+- **Yarn Installation**: Global installation via npm
+- **Rust Installation**: Latest stable toolchain via rustup
+- **Environment Setup**: Creates .env template with all required variables
+- **Frontend Dependencies**: Clean installation with npm, including react-scripts verification
+- **Playwright Setup**: Installs browsers for E2E testing
+- **Backend Dependencies**: Compiles Rust project and downloads all crates
 
 ### Testing Strategy
 - **Frontend**: Jest unit tests + Playwright E2E tests
@@ -296,11 +314,15 @@ yarn start
 ```bash
 # Frontend unit tests
 cd frontend
-yarn test
+npm test
+
+# Frontend unit tests (CI mode)
+cd frontend
+CI=true npm test
 
 # Frontend E2E tests (requires running backend and Neo4j)
 cd frontend
-yarn test:e2e
+npm run test:e2e
 
 # Backend tests
 cd backend
@@ -308,24 +330,46 @@ cargo test
 
 # Specific test suites
 cd frontend
-yarn test:calendar      # Calendar-specific E2E tests
-yarn test:timezone      # Timezone-related E2E tests
+npm run test:calendar      # Calendar-specific E2E tests
+npm run test:timezone      # Timezone-related E2E tests
 ```
 
 ### Environment Variables
+The setup script creates a comprehensive .env template with all required configuration:
+
 ```bash
-# Required for AI functionality
-GOALS_GEMINI_API_KEY=your_gemini_api_key
-
-# Database (automatically configured by setup script)
-DATABASE_URL=bolt://localhost:7687
+# Database Configuration (configure your own Neo4j instance)
 NEO4J_AUTH=neo4j/password123
+NEO4J_PLUGINS=["apoc"]
+DATABASE_URL=bolt://localhost:7687
 
-# Optional (have defaults)
-JWT_SECRET=your_jwt_secret
+# Backend Configuration
+RUST_LOG=debug
 HOST_URL=http://localhost
+
+# Frontend Configuration
 REACT_APP_API_URL=http://localhost:5057
+
+# Development
+NODE_ENV=development
+
+# AI Configuration (Required for AI functionality)
+GOALS_GEMINI_API_KEY=your_gemini_api_key_here
+
+# JWT Secret (Optional - has default)
+JWT_SECRET=your_jwt_secret_here
 ```
+
+**Required Variables:**
+- `GOALS_GEMINI_API_KEY`: Your Google Gemini API key for AI functionality
+
+**Auto-configured Variables:**
+- `DATABASE_URL`, `NEO4J_AUTH`: Set up for local Neo4j instance
+- `REACT_APP_API_URL`, `HOST_URL`: Configured for local development ports
+
+**Optional Variables:**
+- `JWT_SECRET`: Has secure default if not specified
+- `RUST_LOG`: Controls backend logging level
 
 ### Development Dependencies
 
@@ -421,6 +465,8 @@ REACT_APP_API_URL=http://localhost:5057
 4. **Timezone Issues**: Check browser timezone vs server timezone
 5. **AI Tool Failures**: Verify Gemini API key and rate limits
 6. **Rust Compilation**: Ensure Rust toolchain is properly installed and updated
+7. **react-scripts not found**: Run `cd frontend && npm install react-scripts` to fix missing react-scripts
+8. **Missing Dependencies**: Run `cd frontend && rm -rf node_modules && npm install` for clean dependency reinstall
 
 ### Debug Tools
 - **Browser DevTools**: Network tab for API debugging
