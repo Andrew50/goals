@@ -147,6 +147,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
 
         // Handle scheduled tasks with local timezone
         let scheduledEvents: CalendarEvent[] = [];
+        let suggestedEvents: CalendarEvent[] = [];
         try {
             //console.log(`Processing ${ safeResponse.scheduled_tasks.length } scheduled tasks`);
 
@@ -299,6 +300,20 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                         const normalizedTask = { ...task, _tz: task._tz || undefined };
                         const localTask = goalToLocal(normalizedTask as ApiGoal); // Explicit cast
 
+                        if (localTask.suggested_timestamp) {
+                            const start = new Date(localTask.suggested_timestamp);
+                            const endDate = new Date(start.getTime() + (localTask.duration || 60) * 60000);
+                            suggestedEvents.push({
+                                id: `suggested-${localTask.id}`,
+                                title: localTask.name,
+                                start,
+                                end: endDate,
+                                type: 'suggested',
+                                goal: localTask,
+                                allDay: localTask.duration === 1440,
+                            } as CalendarEvent);
+                        }
+
                         return localTask;
                     } catch (error) {
                         console.error('Error processing unscheduled task:', error, task);
@@ -389,7 +404,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
         //console.log(`Found potential duplicate event keys out of ${ eventTracker.size } total`);
 
         // Combine all events with proper date filtering
-        const allEvents = [...scheduledEvents, ...routineEvents, ...achievementEvents];
+        const allEvents = [...scheduledEvents, ...suggestedEvents, ...routineEvents, ...achievementEvents];
         //console.log(`Combined ${ allEvents.length } total events after date range filtering`);
 
         // No artificial limits - all events within date range should be included

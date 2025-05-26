@@ -23,6 +23,7 @@ pub struct Goal {
     pub next_timestamp: Option<i64>,
     //pub previous_timestamp: Option<i64>,
     pub scheduled_timestamp: Option<i64>,
+    pub suggested_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub completed: Option<bool>,
     pub frequency: Option<String>,
@@ -42,6 +43,7 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     end_timestamp: g.end_timestamp,
                     next_timestamp: g.next_timestamp,
                     scheduled_timestamp: g.scheduled_timestamp,
+                    suggested_timestamp: g.suggested_timestamp,
                     duration: g.duration,
                     completed: g.completed,
                     frequency: g.frequency,
@@ -156,6 +158,7 @@ pub async fn create_goal_handler(
             "completion_date",
             "next_timestamp",
             "scheduled_timestamp",
+            "suggested_timestamp",
             "duration",
             "completed",
             "frequency",
@@ -304,6 +307,10 @@ pub async fn update_goal_handler(
     if let Some(scheduled) = goal.scheduled_timestamp {
         set_clauses.push("g.scheduled_timestamp = $scheduled_timestamp");
         params.push(("scheduled_timestamp", scheduled.into()));
+    }
+    if let Some(suggested) = goal.suggested_timestamp {
+        set_clauses.push("g.suggested_timestamp = $suggested_timestamp");
+        params.push(("suggested_timestamp", suggested.into()));
     }
     if let Some(duration) = goal.duration {
         set_clauses.push("g.duration = $duration");
@@ -602,6 +609,11 @@ impl Goal {
             (
                 "scheduled_timestamp",
                 self.scheduled_timestamp
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
+            (
+                "suggested_timestamp",
+                self.suggested_timestamp
                     .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
             ),
             (

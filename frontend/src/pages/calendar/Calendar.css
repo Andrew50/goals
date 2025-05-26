@@ -204,3 +204,9 @@
 .fc .fc-timegrid-all-day-cushion {
     min-height: 40px !important;
 }
+
+/* Style for suggested scheduling events */
+.fc-event.suggested-event {
+    opacity: 0.6 !important;
+    border-style: dashed !important;
+}

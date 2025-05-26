@@ -54,6 +54,7 @@ export const goalToLocal = (apiGoal: ApiGoal): Goal => ({
   end_timestamp: msToDate(apiGoal.end_timestamp),
   next_timestamp: msToDate(apiGoal.next_timestamp),
   scheduled_timestamp: msToDate(apiGoal.scheduled_timestamp),
+  suggested_timestamp: msToDate(apiGoal.suggested_timestamp),
   routine_time: msToDate(apiGoal.routine_time),
 });
 
@@ -64,6 +65,7 @@ export const goalToUTC = (goal: Goal): ApiGoal => ({
   end_timestamp: dateToMs(goal.end_timestamp),
   next_timestamp: dateToMs(goal.next_timestamp),
   scheduled_timestamp: dateToMs(goal.scheduled_timestamp),
+  suggested_timestamp: dateToMs(goal.suggested_timestamp),
   routine_time: dateToMs(goal.routine_time),
 });
 

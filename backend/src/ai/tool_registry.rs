@@ -18,6 +18,7 @@ use crate::tools::goal::{
 use crate::tools::list::get_list_data;
 use crate::tools::network::{get_network_data, update_node_position};
 use crate::tools::routine::process_user_routines;
+use crate::tools::scheduler::suggest_schedule_tasks;
 use crate::tools::traversal::query_hierarchy_handler;
 
 // The same alias as in http_handler for user locks
@@ -400,6 +401,17 @@ pub fn get_tools() -> Vec<Tool> {
             required: Some(vec!["user_eod_timestamp".to_string()]),
         },
     });
+    // 15) suggest_schedule_tasks
+    function_declarations.push(FunctionDeclaration {
+        name: "suggest_schedule_tasks".to_string(),
+        description: "Generates scheduling suggestions for unscheduled tasks based on user preferences.".to_string(),
+        parameters: ParameterDefinition {
+            type_: "object".to_string(),
+            properties: serde_json::Map::new(),
+            required: None,
+        },
+    });
+
 
     vec![Tool {
         function_declarations,
@@ -532,7 +544,6 @@ pub async fn dispatch_tool(
         // 14) process_user_routines
         "process_user_routines" => {
             let user_eod_timestamp = must_get_i64(args, "user_eod_timestamp")?;
-            //let user_id = must_get_i64(args, "user_id")?;
             let result = process_user_routines(
                 user_eod_timestamp,
                 graph.clone(),
@@ -540,6 +551,12 @@ pub async fn dispatch_tool(
                 user_locks.clone(),
             )
             .await;
+            wrap_result(result)
+        }
+
+        // 15) suggest_schedule_tasks
+        "suggest_schedule_tasks" => {
+            let result = suggest_schedule_tasks(graph.clone(), user_id).await;
             wrap_result(result)
         }
 
