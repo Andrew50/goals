@@ -19,7 +19,7 @@
 - **Database**: Neo4j (Graph Database)
 - **AI Integration**: Google Gemini 2.0 Flash
 - **Authentication**: JWT tokens
-- **Deployment**: Docker containers with Nginx reverse proxy
+- **Development**: Local installation with native runtimes
 
 ### Project Structure
 ```
@@ -35,9 +35,10 @@ goals/
 │       ├── ai/         # AI integration (Gemini API, tool registry)
 │       ├── server/     # HTTP handlers, auth, middleware
 │       └── tools/      # Business logic modules
-├── db/                 # Neo4j database configuration
-├── router/             # Nginx reverse proxy configuration
-└── docker-compose.*.yaml # Container orchestration
+├── db/                 # Neo4j database configuration (legacy Docker files)
+├── router/             # Nginx reverse proxy configuration (legacy Docker files)
+├── setup.sh            # Local development setup script
+└── docker-compose.*.yaml # Legacy Docker files (not used in local dev)
 ```
 
 ## Core Domain Models
@@ -219,32 +220,102 @@ The AI has access to 14 specialized tools for goal management:
 
 ## Development & Testing
 
-### Docker Development Environment
-```bash
-# Start development environment
-docker-compose -f docker-compose.dev.yaml up
+### Local Development Environment
 
-# Services:
-# - Frontend: http://localhost:3030
-# - Backend: http://localhost:5059  
-# - Neo4j: http://localhost:7474 (browser), bolt://localhost:7687
+#### Initial Setup
+```bash
+# Run the setup script to install all dependencies
+./setup.sh
+
+# The script will install:
+# - Node.js 20 and Yarn
+# - Rust (latest stable)
+# - Neo4j database
+# - Configure Neo4j with default password
+# - Install frontend and backend dependencies
+```
+
+#### Starting the Development Environment
+```bash
+# Terminal 1: Start the backend
+cd backend
+cargo run
+
+# Terminal 2: Start the frontend  
+cd frontend
+yarn start
+
+# Services will be available at:
+# - Frontend: http://localhost:3000
+# - Backend: http://localhost:5057
+# - Neo4j Browser: http://localhost:7474 (neo4j/password123)
+```
+
+#### Manual Service Management
+```bash
+# Start/stop Neo4j (macOS)
+brew services start neo4j
+brew services stop neo4j
+
+# Start/stop Neo4j (Linux)
+sudo systemctl start neo4j
+sudo systemctl stop neo4j
+sudo systemctl status neo4j
 ```
 
 ### Testing Strategy
 - **Frontend**: Jest unit tests + Playwright E2E tests
-- **Backend**: Rust unit tests with Neo4j test containers
+- **Backend**: Rust unit tests with local Neo4j instance
 - **Integration**: Full-stack testing with authentication
 - **Timezone**: Comprehensive timezone scenario testing
+
+#### Running Tests
+```bash
+# Frontend unit tests
+cd frontend
+yarn test
+
+# Frontend E2E tests (requires running backend and Neo4j)
+cd frontend
+yarn test:e2e
+
+# Backend tests
+cd backend
+cargo test
+
+# Specific test suites
+cd frontend
+yarn test:calendar      # Calendar-specific E2E tests
+yarn test:timezone      # Timezone-related E2E tests
+```
 
 ### Environment Variables
 ```bash
 # Required for AI functionality
 GOALS_GEMINI_API_KEY=your_gemini_api_key
 
+# Database (automatically configured by setup script)
+DATABASE_URL=bolt://localhost:7687
+NEO4J_AUTH=neo4j/password123
+
 # Optional (have defaults)
 JWT_SECRET=your_jwt_secret
 HOST_URL=http://localhost
+REACT_APP_API_URL=http://localhost:5057
 ```
+
+### Development Dependencies
+
+#### System Requirements
+- **Node.js**: 20.x (installed by setup script)
+- **Rust**: Latest stable (installed by setup script)
+- **Neo4j**: Latest stable (installed by setup script)
+- **Yarn**: Package manager (installed by setup script)
+
+#### Platform Support
+- **macOS**: Full support via Homebrew
+- **Linux**: Ubuntu/Debian support via package managers
+- **Windows**: Manual installation required (setup script supports WSL)
 
 ## API Endpoints
 
@@ -313,16 +384,34 @@ HOST_URL=http://localhost
 
 ### Common Issues
 1. **Authentication Failures**: Check JWT_SECRET consistency
-2. **Database Connection**: Verify Neo4j container is running
-3. **CORS Errors**: Ensure frontend origin is in CORS allowlist
+2. **Database Connection**: Verify Neo4j is running (`brew services list` or `systemctl status neo4j`)
+3. **Port Conflicts**: Ensure ports 3000, 5057, 7474, 7687 are available
 4. **Timezone Issues**: Check browser timezone vs server timezone
 5. **AI Tool Failures**: Verify Gemini API key and rate limits
+6. **Rust Compilation**: Ensure Rust toolchain is properly installed and updated
 
 ### Debug Tools
 - **Browser DevTools**: Network tab for API debugging
-- **Neo4j Browser**: Direct database query interface
-- **Docker Logs**: Container-specific logging
-- **Rust Tracing**: Structured logging in backend
+- **Neo4j Browser**: Direct database query interface at http://localhost:7474
+- **Cargo Logs**: `RUST_LOG=debug cargo run` for detailed backend logging
+- **Frontend Logs**: React DevTools and browser console
+
+### Service Management
+```bash
+# Check if services are running
+lsof -i :3000  # Frontend
+lsof -i :5057  # Backend
+lsof -i :7474  # Neo4j HTTP
+lsof -i :7687  # Neo4j Bolt
+
+# Restart Neo4j if needed
+brew services restart neo4j  # macOS
+sudo systemctl restart neo4j  # Linux
+
+# Clear Neo4j data (development only)
+# macOS: rm -rf /opt/homebrew/var/neo4j/data/databases/*
+# Linux: sudo rm -rf /var/lib/neo4j/data/databases/*
+```
 
 ## Agent-Specific Guidelines
 
@@ -334,13 +423,22 @@ HOST_URL=http://localhost
 5. **Test Thoroughly**: Especially time-related and AI integration features
 6. **Consider Performance**: Graph database queries can be expensive
 7. **Maintain Security**: Always validate user permissions and input sanitization
+8. **Local Development**: Use native runtimes instead of Docker for faster development cycles
 
 ### Key Files to Reference
 - `frontend/src/types/goals.ts` - Core type definitions
 - `backend/src/tools/goal.rs` - Goal business logic
 - `backend/src/ai/tool_registry.rs` - AI tool definitions
 - `frontend/src/shared/utils/time.ts` - Time handling utilities
-- `docker-compose.dev.yaml` - Development environment setup
+- `setup.sh` - Local development environment setup
+- `.env` - Environment configuration
 
-This documentation provides a comprehensive foundation for understanding and working with the Goals application codebase.
+### Development Workflow
+1. **Initial Setup**: Run `./setup.sh` once to install all dependencies
+2. **Daily Development**: Start backend with `cd backend && cargo run`, frontend with `cd frontend && yarn start`
+3. **Testing**: Run unit tests frequently, E2E tests before commits
+4. **Database**: Use Neo4j Browser for direct database inspection and queries
+5. **AI Development**: Ensure GOALS_GEMINI_API_KEY is set for AI functionality testing
+
+This documentation provides a comprehensive foundation for understanding and working with the Goals application codebase in a local development environment.
 
