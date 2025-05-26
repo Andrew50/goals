@@ -104,14 +104,32 @@ fi
 echo "📦 Installing frontend dependencies..."
 cd frontend
 if [ -f package.json ]; then
+    # Clean any existing node_modules and lock files to ensure fresh install
+    echo "🧹 Cleaning existing dependencies..."
+    rm -rf node_modules package-lock.json yarn.lock
+    
     # Install all dependencies including dev dependencies
-    yarn install
+    echo "📦 Installing dependencies with npm..."
+    npm install
+    
+    # Verify react-scripts is installed
+    if [ -f node_modules/.bin/react-scripts ]; then
+        echo "✅ react-scripts installed successfully"
+    else
+        echo "❌ react-scripts not found, trying alternative installation..."
+        npm install react-scripts --save
+    fi
     
     # Install Playwright browsers for E2E testing
     echo "🎭 Installing Playwright browsers..."
     npx playwright install
     
-    echo "✅ Frontend dependencies and Playwright browsers installed"
+    # Verify installation by checking if key binaries exist
+    if [ -f node_modules/.bin/react-scripts ] && [ -f node_modules/.bin/playwright ]; then
+        echo "✅ Frontend dependencies and Playwright browsers installed successfully"
+    else
+        echo "⚠️  Some dependencies may not have installed correctly. Please check manually."
+    fi
 else
     echo "❌ No package.json found in frontend directory"
     exit 1
@@ -153,6 +171,11 @@ echo "  - Update your GOALS_GEMINI_API_KEY in the .env file"
 echo "  - Restart your terminal or run 'source ~/.zshrc' to load new PATH variables"
 echo ""
 echo "🧪 To run tests:"
-echo "  - Frontend unit tests: cd frontend && yarn test"
-echo "  - Frontend E2E tests: cd frontend && yarn test:e2e"
-echo "  - Backend tests: cd backend && cargo test" 
+echo "  - Frontend unit tests: cd frontend && npm test"
+echo "  - Frontend unit tests (CI mode): cd frontend && CI=true npm test"
+echo "  - Frontend E2E tests: cd frontend && npm run test:e2e"
+echo "  - Backend tests: cd backend && cargo test"
+echo ""
+echo "🔧 Troubleshooting:"
+echo "  - If 'react-scripts: not found' error occurs, run: cd frontend && npm install react-scripts"
+echo "  - If dependencies are missing, run: cd frontend && rm -rf node_modules && npm install" 
