@@ -410,6 +410,30 @@ const Calendar: React.FC = () => {
     }
   };
 
+  const handleEventDragStop = async (info: any) => {
+    try {
+      if (!taskListRef.current) return;
+      const rect = taskListRef.current.getBoundingClientRect();
+      const { clientX, clientY } = info.jsEvent;
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        const existingEvent = state.events.find((e) => e.id === info.event.id);
+        if (existingEvent?.goal) {
+          const goal = existingEvent.goal;
+          await updateGoal(goal.id, { ...goal, scheduled_timestamp: null });
+          info.event.remove();
+          loadCalendarData();
+        }
+      }
+    } catch (error) {
+      console.error('Failed to unschedule event:', error);
+    }
+  };
+
   // -----------------------------
   // Helpers and UI
   // -----------------------------
@@ -512,6 +536,7 @@ const Calendar: React.FC = () => {
           eventClick={handleEventClick}
           eventReceive={handleEventReceive}
           eventDrop={handleEventDrop}
+          eventDragStop={handleEventDragStop}
           eventResize={handleEventResize}
           eventDidMount={handleEventDidMount}
           eventResizableFromStart={true}

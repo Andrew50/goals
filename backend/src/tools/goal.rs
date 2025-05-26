@@ -304,6 +304,9 @@ pub async fn update_goal_handler(
     if let Some(scheduled) = goal.scheduled_timestamp {
         set_clauses.push("g.scheduled_timestamp = $scheduled_timestamp");
         params.push(("scheduled_timestamp", scheduled.into()));
+    } else {
+        // If scheduled_timestamp is explicitly null/missing, clear it
+        set_clauses.push("g.scheduled_timestamp = NULL");
     }
     if let Some(duration) = goal.duration {
         set_clauses.push("g.duration = $duration");
