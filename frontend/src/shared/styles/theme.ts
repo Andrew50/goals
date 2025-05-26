@@ -2,25 +2,28 @@ import { createTheme } from '@mui/material';
 
 export const theme = createTheme({
   palette: {
-    mode: 'dark',
+    mode: 'light',
     primary: {
-      main: '#2196f3',
+      main: '#1976d2',
       light: '#64b5f6',
-      dark: '#1976d2',
+      dark: '#115293',
     },
     secondary: {
       main: '#90caf9',
-      light: '#bbdefb',
+      light: '#e3f2fd',
       dark: '#42a5f5',
     },
     background: {
-      default: '#0a1929',
-      paper: '#101f33',
+      default: '#fafafa',
+      paper: '#ffffff',
     },
     text: {
-      primary: '#ffffff',
-      secondary: 'rgba(255, 255, 255, 0.7)',
+      primary: '#333333',
+      secondary: '#666666',
     },
+  },
+  typography: {
+    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
   },
   components: {
     MuiPaper: {
@@ -33,7 +36,7 @@ export const theme = createTheme({
     MuiAppBar: {
       styleOverrides: {
         root: {
-          backgroundColor: '#101f33',
+          backgroundColor: '#ffffff',
           backgroundImage: 'none',
         },
       },
