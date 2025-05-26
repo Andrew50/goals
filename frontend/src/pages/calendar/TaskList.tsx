@@ -5,6 +5,7 @@ import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
+import { updateGoal } from '../../shared/utils/api';
 
 interface TaskListProps {
   tasks: CalendarTask[];
@@ -115,7 +116,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
      */
     const [, dropRef] = useDrop({
       accept: ['calendar-event', 'task'],
-      drop: (item: { id: string }) => {
+      drop: async (item: { id: string }) => {
         // Find the matching event in `events` by ID
         const eventToUnschedule = events.find((ev) => ev.id === item.id);
         if (!eventToUnschedule || !eventToUnschedule.goal) return;
@@ -123,8 +124,14 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
         // "Unschedule" means remove its scheduled_timestamp
         const updatedGoal: Goal = {
           ...eventToUnschedule.goal,
-          scheduled_timestamp: undefined
+          scheduled_timestamp: null
         };
+
+        try {
+          await updateGoal(updatedGoal.id, updatedGoal);
+        } catch (err) {
+          console.error('Failed to unschedule goal:', err);
+        }
 
         // Convert that event to a new unscheduled task
         const newTask: CalendarTask = {

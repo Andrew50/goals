@@ -127,6 +127,10 @@ export async function updateGoal(goalId: number, goal: Goal): Promise<Goal> {
     //console.log(goal)
     console.log(typeof goal.scheduled_timestamp)
     const preparedGoal = prepareGoalForAPI(goal); // preparedGoal is ApiGoal
+    // Preserve explicit null for scheduled_timestamp so backend can unset it
+    if (Object.prototype.hasOwnProperty.call(goal, 'scheduled_timestamp') && goal.scheduled_timestamp === null) {
+        (preparedGoal as any).scheduled_timestamp = null;
+    }
     //console.log(preparedGoal)
     // API returns ApiGoal
     const response = await privateRequest<ApiGoal>(`goals/${goalId}`, 'PUT', preparedGoal);
