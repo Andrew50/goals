@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use chrono::{Timelike, Utc};
+use chrono::{TimeZone, Timelike, Utc};
 use neo4rs::{query, Graph};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ pub async fn update_scheduling_window(
         let day = ts / day_ms;
         let minutes = {
             let dt = Utc.timestamp_millis_opt(ts).unwrap();
-            dt.time().num_minutes_from_midnight() as i64
+            dt.time().num_seconds_from_midnight() as i64 / 60
         };
         let entry = day_map.entry(day).or_insert((i64::MAX, i64::MIN));
         if minutes < entry.0 {

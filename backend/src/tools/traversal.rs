@@ -36,6 +36,7 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
             end_timestamp: None,
             next_timestamp: None,
             scheduled_timestamp: None,
+            suggested_timestamp: None,
             duration: None,
             completed: None,
             frequency: None,
