@@ -1,0 +1,16 @@
+name: Deploy to Prod
+
+on:
+  push:
+    branches: [ prod ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Run docker compose
+        run: docker compose -f docker-compose.prod.yaml -p prod up --build -d
+
