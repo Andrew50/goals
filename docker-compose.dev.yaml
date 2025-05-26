@@ -1,64 +1,64 @@
 services:
-    goals_backend:
-        build:
-            context: ./backend
-            dockerfile: Dockerfile.dev
-        restart: unless-stopped
-        ports:
-          - "5059:5059"
-        volumes:
-          - ./backend/:/usr/src/app
-          - /usr/src/app/target
-        env_file:
-          - .env
-        environment:
-          HOST_URL: ${HOST_URL:-http://localhost}
-        networks:
-            - dev_network
-            #    db:
-            #build:
-            #context: ./db
-            #dockerfile: Dockerfile.dev
-            #ports:
-            #- "5432:5432"
-            #networks:
-            #- dev_network
-            #volumes:
-            #- goal_db:/var/lib/postgresql/data
-            #restart: unless-stopped
-    goals_db:
-      build:
-          context: ./db
-          dockerfile: Dockerfile.dev
-      ports:
-        - "7474:7474"
-        - "7687:7687"
-      volumes:
-        - goal_db:/data
-      networks:
-        - dev_network
+  goals_backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    ports:
+      - "5059:5059"
+    volumes:
+      - ./backend/:/usr/src/app
+      - /usr/src/app/target
+    env_file:
+      - .env
+    environment:
+      HOST_URL: ${HOST_URL:-http://localhost}
+    networks:
+      - dev_network
+      #    db:
+      #build:
+      #context: ./db
+      #dockerfile: Dockerfile.dev
+      #ports:
+      #- "5432:5432"
+      #networks:
+      #- dev_network
+      #volumes:
+      #- goal_db:/var/lib/postgresql/data
+      #restart: unless-stopped
+  goals_db:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.dev
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - goal_db:/data
+    networks:
+      - dev_network
 
-    goals_frontend:
-        build:
-            context: ./frontend
-            dockerfile: Dockerfile.dev
-        volumes:
-          - ./frontend:/app
-          - /app/node_modules
-        environment:
-          CHOKIDAR_USEPOLLING: "true" #enable polling
-          HOST_URL: ${HOST_URL:-http://localhost}
-          REACT_APP_API_URL: "http://${HOST_URL:-localhost}:5059"
-        env_file:
-          - .env
-        ports:
-          - "3030:3030"
-        restart: unless-stopped
+  goals_frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      CHOKIDAR_USEPOLLING: "true" #enable polling
+      HOST_URL: ${HOST_URL:-http://localhost}
+      REACT_APP_API_URL: "http://${HOST_URL:-localhost}:5059"
+    env_file:
+      - .env
+    ports:
+      - "3030:3030"
+    restart: unless-stopped
 
 volumes:
   goal_db:
 
+
 networks:
   dev_network:
     driver: bridge
-    
