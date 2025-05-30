@@ -42,17 +42,18 @@ pub async fn get_year_stats(
         .and_utc()
         .timestamp_millis();
 
-    // Query all events (tasks and achievements) for the year
+    // Query all events (Goal nodes with goal_type='event') linked to tasks and achievements for the year
     let query_str = "
-        MATCH (g:Goal)
-        WHERE g.user_id = $user_id
+        MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
+        WHERE e.goal_type = 'event'
+        AND g.user_id = $user_id
         AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
-        AND g.scheduled_timestamp >= $start_timestamp
-        AND g.scheduled_timestamp <= $end_timestamp
-        RETURN g.id as id,
-               g.scheduled_timestamp as scheduled_timestamp,
-               g.completed as completed,
-               COALESCE(g.priority, 'medium') as priority
+        AND e.scheduled_timestamp >= $start_timestamp
+        AND e.scheduled_timestamp <= $end_timestamp
+        AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        RETURN e.scheduled_timestamp as date,
+               COALESCE(e.completed, false) as completed,
+               COALESCE(e.priority, g.priority, 'medium') as priority
     ";
 
     let query = query(query_str)
@@ -65,7 +66,7 @@ pub async fn get_year_stats(
             let mut daily_events: HashMap<String, Vec<(bool, String)>> = HashMap::new();
             
             while let Ok(Some(row)) = result.next().await {
-                let timestamp = row.get::<i64>("scheduled_timestamp").unwrap_or(0);
+                let timestamp = row.get::<i64>("date").unwrap_or(0);
                 let completed = row.get::<bool>("completed").unwrap_or(false);
                 let priority = row.get::<String>("priority").unwrap_or_else(|_| "medium".to_string());
                 

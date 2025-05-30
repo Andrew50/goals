@@ -1,0 +1,166 @@
+.event-menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+}
+
+.event-menu {
+    position: fixed;
+    background: white;
+    border-radius: 8px;
+    width: 320px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+}
+
+.event-menu-header {
+    padding: 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f8f8;
+}
+
+.event-menu-header h3 {
+    margin: 0 0 5px 0;
+    font-size: 1.2rem;
+    color: #333;
+}
+
+.event-parent-info {
+    font-size: 0.9rem;
+    color: #666;
+    text-transform: capitalize;
+}
+
+.event-menu-actions {
+    padding: 10px;
+}
+
+.event-menu-action {
+    width: 100%;
+    padding: 12px 16px;
+    margin: 5px 0;
+    border: none;
+    border-radius: 4px;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 1rem;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: all 0.2s;
+}
+
+.event-menu-action:hover:not(:disabled) {
+    background: #e8e8e8;
+    transform: translateX(2px);
+}
+
+.event-menu-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.event-menu-action.complete {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.event-menu-action.complete:hover:not(:disabled) {
+    background: #c8e6c9;
+}
+
+.event-menu-action.split {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.event-menu-action.split:hover {
+    background: #bbdefb;
+}
+
+.event-menu-action.delete {
+    background: #ffebee;
+    color: #c62828;
+}
+
+.event-menu-action.delete:hover {
+    background: #ffcdd2;
+}
+
+.event-menu-action.edit {
+    background: #fff3e0;
+    color: #ef6c00;
+}
+
+.event-menu-action.edit:hover {
+    background: #ffe0b2;
+}
+
+.event-menu-action i {
+    font-style: normal;
+    width: 20px;
+}
+
+.icon-check::before {
+    content: "✓";
+}
+
+.icon-split::before {
+    content: "⑃";
+}
+
+.icon-delete::before {
+    content: "🗑";
+}
+
+.icon-edit::before {
+    content: "✎";
+}
+
+.event-menu-info {
+    padding: 15px 20px;
+    border-top: 1px solid #e0e0e0;
+    background: #fafafa;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    margin: 5px 0;
+    font-size: 0.9rem;
+}
+
+.info-item .label {
+    color: #666;
+}
+
+.info-item .value {
+    color: #333;
+    font-weight: 500;
+}
+
+.event-menu-footer {
+    padding: 15px 20px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.btn-secondary {
+    padding: 8px 16px;
+    background: #666;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+.btn-secondary:hover {
+    background: #555;
+}

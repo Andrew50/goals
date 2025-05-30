@@ -15,12 +15,12 @@ const dateToMs = (d?: Date | null): number | undefined =>
   d == null ? undefined : d.getTime();
 
 /* ────────────────────────────────────────────────────────── *
- *  2.  Former “timestamp conversion” API                     *
+ *  2.  Former "timestamp conversion" API                     *
  *      (names kept for drop-in compatibility)                *
  * ────────────────────────────────────────────────────────── */
 
 /**
- * API → frontend : UTC ms ➜ Date   (was “toLocalTimestamp”).
+ * API → frontend : UTC ms ➜ Date   (was "toLocalTimestamp").
  */
 export const toLocalTimestamp = <T extends number | null | undefined>(
   timestamp?: T
@@ -30,7 +30,7 @@ export const toLocalTimestamp = <T extends number | null | undefined>(
 };
 
 /**
- * frontend → API : Date ➜ UTC ms   (was “toUTCTimestamp”).
+ * frontend → API : Date ➜ UTC ms   (was "toUTCTimestamp").
  */
 export const toUTCTimestamp = <T extends Date | number | null | undefined>(
   value?: T
@@ -55,6 +55,8 @@ export const goalToLocal = (apiGoal: ApiGoal): Goal => ({
   next_timestamp: msToDate(apiGoal.next_timestamp),
   scheduled_timestamp: msToDate(apiGoal.scheduled_timestamp),
   routine_time: msToDate(apiGoal.routine_time),
+  due_date: msToDate(apiGoal.due_date),
+  start_date: msToDate(apiGoal.start_date),
 });
 
 /** Converts a frontend Goal (Date objects) to an API Goal representation (numeric timestamps). */
@@ -65,6 +67,8 @@ export const goalToUTC = (goal: Goal): ApiGoal => ({
   next_timestamp: dateToMs(goal.next_timestamp),
   scheduled_timestamp: dateToMs(goal.scheduled_timestamp),
   routine_time: dateToMs(goal.routine_time),
+  due_date: dateToMs(goal.due_date),
+  start_date: dateToMs(goal.start_date),
 });
 
 /* ────────────────────────────────────────────────────────── *
@@ -139,8 +143,8 @@ export const inputStringToTimestamp = (
     console.log(typeof d)
     // Ensure the parsed date is valid before returning
     return isNaN(d.getTime()) ? new Date(0) : d;
-  } catch (e){
-      console.error(e)
+  } catch (e) {
+    console.error(e)
     // Return Epoch date on parsing error
     return new Date(0);
   }
@@ -158,8 +162,8 @@ export const timestampToDisplayString = (
     format === 'time'
       ? { hour: 'numeric', minute: '2-digit' }
       : format === 'date'
-      ? { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }
-      : {
+        ? { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }
+        : {
           weekday: 'short',
           year: 'numeric',
           month: 'short',

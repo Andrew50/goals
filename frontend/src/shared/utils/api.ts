@@ -173,3 +173,37 @@ export async function completeGoal(goalId: number, completed: boolean): Promise<
     return response.completed;
     //return processGoalFromAPI(response);
 }
+
+// Event-specific API calls
+export const createEvent = async (event: {
+    parent_id: number;
+    parent_type: string;
+    scheduled_timestamp: Date;
+    duration: number;
+}): Promise<Goal> => {
+    const apiEvent = {
+        ...event,
+        scheduled_timestamp: event.scheduled_timestamp.getTime()
+    };
+    const response = await privateRequest<ApiGoal>('events', 'POST', apiEvent);
+    return processGoalFromAPI(response);
+};
+
+export const completeEvent = async (eventId: number): Promise<{
+    event_completed: boolean;
+    parent_task_id: number | null;
+    parent_task_name: string;
+    has_future_events: boolean;
+    should_prompt_task_completion: boolean;
+}> => {
+    return privateRequest(`events/${eventId}/complete`, 'PUT');
+};
+
+export const deleteEvent = async (eventId: number, deleteFuture: boolean = false): Promise<void> => {
+    await privateRequest(`events/${eventId}?delete_future=${deleteFuture}`, 'DELETE');
+};
+
+export const splitEvent = async (eventId: number): Promise<Goal[]> => {
+    const response = await privateRequest<ApiGoal[]>(`events/${eventId}/split`, 'POST');
+    return response.map(apiGoal => processGoalFromAPI(apiGoal));
+};

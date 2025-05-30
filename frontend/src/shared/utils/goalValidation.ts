@@ -1,6 +1,16 @@
 import { Goal, RelationshipType } from '../../types/goals';
 
 export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipType: RelationshipType): string | null {
+    // Events cannot have children
+    if (relationshipType === 'child' && fromGoal.goal_type === 'event') {
+        return 'Events cannot have children.';
+    }
+
+    // Events cannot be in relationships
+    if (toGoal.goal_type === 'event') {
+        return 'Events cannot be targets of relationships.';
+    }
+
     // If the relationship being formed is 'child'
     if (relationshipType === 'child') {
         if (fromGoal.goal_type === 'task') {
@@ -34,6 +44,17 @@ export function validateGoal(goal: Goal): string[] {
     }
     if (goal.goal_type) {
         switch (goal.goal_type) {
+            case 'event':
+                if (!goal.parent_id) {
+                    validationErrors.push('Events must have a parent task or routine');
+                }
+                if (!goal.scheduled_timestamp) {
+                    validationErrors.push('Events must have a scheduled time');
+                }
+                if (!goal.duration) {
+                    validationErrors.push('Events must have a duration');
+                }
+                break;
             case 'routine':
                 if (!goal.frequency) {
                     validationErrors.push('Frequency is required');
@@ -82,7 +103,9 @@ export function validateGoal(goal: Goal): string[] {
         'end_timestamp',
         'scheduled_timestamp',
         'routine_time',
-        'next_timestamp'
+        'next_timestamp',
+        'due_date',
+        'start_date'
     ];
 
     timestampFields.forEach(field => {

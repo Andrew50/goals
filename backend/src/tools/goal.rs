@@ -30,6 +30,16 @@ pub struct Goal {
     pub routine_time: Option<i64>,
     pub position_x: Option<f64>,
     pub position_y: Option<f64>,
+    
+    // For events only:
+    pub parent_id: Option<i64>,  // Reference to parent task/routine
+    pub parent_type: Option<String>,  // "task" or "routine"
+    pub routine_instance_id: Option<String>,  // For routine events
+    pub is_deleted: Option<bool>,  // Soft delete for routine events
+    
+    // Modified fields for tasks:
+    pub due_date: Option<i64>,  // New for tasks
+    pub start_date: Option<i64>,  // New for tasks (earliest event date)
 }
 
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
@@ -49,6 +59,12 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     routine_time: g.routine_time,
                     position_x: g.position_x,
                     position_y: g.position_y,
+                    parent_id: g.parent_id,
+                    parent_type: g.parent_type,
+                    routine_instance_id: g.routine_instance_id,
+                    is_deleted: g.is_deleted,
+                    due_date: g.due_date,
+                    start_date: g.start_date,
                     id: id(g)
                  } as g";
 
@@ -60,6 +76,7 @@ pub enum GoalType {
     Achievement,
     Routine,
     Task,
+    Event,  // NEW
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum RelationshipType {
@@ -75,6 +92,7 @@ impl GoalType {
             GoalType::Achievement => "achievement",
             GoalType::Routine => "routine",
             GoalType::Task => "task",
+            GoalType::Event => "event",
         }
     }
 }
@@ -87,6 +105,7 @@ impl std::fmt::Display for GoalType {
             GoalType::Project => write!(f, "project"),
             GoalType::Directive => write!(f, "directive"),
             GoalType::Achievement => write!(f, "achievement"),
+            GoalType::Event => write!(f, "event"),
         }
     }
 }
@@ -163,6 +182,12 @@ pub async fn create_goal_handler(
             "routine_time",
             "position_x",
             "position_y",
+            "parent_id",
+            "parent_type",
+            "routine_instance_id",
+            "is_deleted",
+            "due_date",
+            "start_date",
         ];
 
         let unknown_fields: Vec<String> = map
@@ -209,6 +234,17 @@ pub async fn create_goal_handler(
         GoalType::Task => {
             if goal.duration.is_none() {
                 validation_errors.push("Duration is required for task goals");
+            }
+        }
+        GoalType::Event => {
+            if goal.parent_id.is_none() {
+                validation_errors.push("Events must have a parent task or routine");
+            }
+            if goal.scheduled_timestamp.is_none() {
+                validation_errors.push("Events must have a scheduled time");
+            }
+            if goal.duration.is_none() {
+                validation_errors.push("Events must have a duration");
             }
         }
         GoalType::Project | GoalType::Achievement => {
@@ -332,6 +368,30 @@ pub async fn update_goal_handler(
     if let Some(y) = goal.position_y {
         set_clauses.push("g.position_y = $position_y");
         params.push(("position_y", y.into()));
+    }
+    if let Some(parent_id) = goal.parent_id {
+        set_clauses.push("g.parent_id = $parent_id");
+        params.push(("parent_id", parent_id.into()));
+    }
+    if let Some(parent_type) = &goal.parent_type {
+        set_clauses.push("g.parent_type = $parent_type");
+        params.push(("parent_type", parent_type.clone().into()));
+    }
+    if let Some(routine_instance_id) = &goal.routine_instance_id {
+        set_clauses.push("g.routine_instance_id = $routine_instance_id");
+        params.push(("routine_instance_id", routine_instance_id.clone().into()));
+    }
+    if let Some(is_deleted) = goal.is_deleted {
+        set_clauses.push("g.is_deleted = $is_deleted");
+        params.push(("is_deleted", is_deleted.into()));
+    }
+    if let Some(due_date) = goal.due_date {
+        set_clauses.push("g.due_date = $due_date");
+        params.push(("due_date", due_date.into()));
+    }
+    if let Some(start_date) = goal.start_date {
+        set_clauses.push("g.start_date = $start_date");
+        params.push(("start_date", start_date.into()));
     }
      // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
@@ -633,6 +693,33 @@ impl Goal {
                 self.position_y
                     .map(|v| neo4rs::BoltType::Float(neo4rs::BoltFloat { value: v })),
             ),
+            (
+                "parent_id",
+                self.parent_id
+                    .map(|v| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: v })),
+            ),
+            (
+                "parent_type",
+                self.parent_type.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "routine_instance_id",
+                self.routine_instance_id.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "is_deleted",
+                self.is_deleted.map(|v| v.into()),
+            ),
+            (
+                "due_date",
+                self.due_date
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
+            (
+                "start_date",
+                self.start_date
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
         ];
 
         // Build query properties and parameters in one pass
@@ -711,9 +798,19 @@ impl Goal {
                         "Tasks cannot have children".to_string(),
                     ))
                 }
+                (GoalType::Event, _, _) => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Events cannot have children".to_string(),
+                    ))
+                }
                 (GoalType::Directive, GoalType::Achievement, _) => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Directives cannot directly connect to achievements".to_string(),
+                    ))
+                }
+                (_, GoalType::Event, _) => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Events cannot be targets of relationships".to_string(),
                     ))
                 }
                 (_, _, "QUEUE") if from_type != GoalType::Achievement => {
@@ -754,6 +851,7 @@ fn parse_goal_type(goal_type: &str) -> Result<GoalType, neo4rs::Error> {
         "achievement" => Ok(GoalType::Achievement),
         "routine" => Ok(GoalType::Routine),
         "task" => Ok(GoalType::Task),
+        "event" => Ok(GoalType::Event),
         _ => Err(neo4rs::Error::ConversionError),
     }
 }
