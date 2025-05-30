@@ -14,7 +14,7 @@ import {
     Typography
 } from '@mui/material';
 import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
-import { Goal, GoalType } from '../../types/goals';
+import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
@@ -23,6 +23,9 @@ import {
 import { validateGoal } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
+import { getGoalColor } from '../styles/colors';
+import { goalToLocal } from '../utils/time';
+import { privateRequest } from '../utils/api';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
 
@@ -40,6 +43,7 @@ interface GoalMenuState {
 const GoalMenu: GoalMenuComponent = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [relationsOpen, setRelationsOpen] = useState(false);
+    const [parentGoals, setParentGoals] = useState<Goal[]>([]);
     const [state, setState] = useHistoryState<GoalMenuState>(
         {
             goal: {} as Goal,
@@ -89,6 +93,12 @@ const GoalMenu: GoalMenuComponent = () => {
             'view': 'View Goal'
         }[initialMode]);
         setIsOpen(true);
+        // Fetch parent goals if we have a goal ID
+        if (goal.id) {
+            fetchParentGoals(goal.id);
+        } else {
+            setParentGoals([]);
+        }
     }, [relationshipMode, setState]);
 
     const close = useCallback(() => {
@@ -102,6 +112,7 @@ const GoalMenu: GoalMenuComponent = () => {
             setOnSuccess(undefined);
             setTitle('');
             setRelationshipMode(null);
+            setParentGoals([]);
         }, 100);
     }, [setState]);
 
@@ -260,6 +271,28 @@ const GoalMenu: GoalMenuComponent = () => {
             });
             setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
         }, 100);
+    };
+
+    // Fetch parent goals using traversal API
+    const fetchParentGoals = async (goalId: number) => {
+        try {
+            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
+            // Filter to only get parent goals (those that have a child relationship to current goal)
+            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+            const parentIds = networkData.edges
+                .filter(e => e.relationship_type === 'child' && e.to === goalId)
+                .map(e => e.from);
+
+            const parents = hierarchyResponse
+                .filter(g => parentIds.includes(g.id!))
+                .map(goalToLocal);
+
+            // Sort by hierarchy level (furthest parents first)
+            setParentGoals(parents);
+        } catch (error) {
+            console.error('Failed to fetch parent goals:', error);
+            setParentGoals([]);
+        }
     };
 
     const priorityField = isViewOnly ? (
@@ -808,6 +841,50 @@ const GoalMenu: GoalMenuComponent = () => {
                     {state.error && (
                         <Box sx={{ color: 'error.main', mb: 2 }}>
                             {state.error}
+                        </Box>
+                    )}
+                    {/* Parent Goals Display */}
+                    {parentGoals.length > 0 && (
+                        <Box sx={{ mb: 3 }}>
+                            <Typography
+                                variant="subtitle2"
+                                sx={{
+                                    mb: 1,
+                                    color: 'text.secondary',
+                                    fontSize: '0.875rem'
+                                }}
+                            >
+                                Why should I do this?
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                {parentGoals.map((parent) => (
+                                    <Box
+                                        key={parent.id}
+                                        sx={{
+                                            backgroundColor: getGoalColor(parent),
+                                            color: 'white',
+                                            padding: '6px 12px',
+                                            borderRadius: '16px',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 500,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            '&:hover': {
+                                                transform: 'translateY(-2px)',
+                                                boxShadow: 2,
+                                            }
+                                        }}
+                                        onClick={() => {
+                                            close();
+                                            setTimeout(() => {
+                                                GoalMenu.open(parent, 'view');
+                                            }, 100);
+                                        }}
+                                    >
+                                        {parent.name}
+                                    </Box>
+                                ))}
+                            </Box>
                         </Box>
                     )}
                     {commonFields}
