@@ -17,8 +17,10 @@ use crate::server::middleware;
 use crate::tools::achievements;
 use crate::tools::calendar;
 use crate::tools::day;
+use crate::tools::event;
 use crate::tools::goal::{Goal, GoalUpdate, Relationship};
 use crate::tools::list;
+use crate::tools::migration;
 use crate::tools::network;
 use crate::tools::routine;
 use crate::tools::stats;
@@ -44,6 +46,12 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         )
         .route("/:id/complete", put(handle_toggle_completion));
 
+    let event_routes = Router::new()
+        .route("/", post(handle_create_event))
+        .route("/:id/complete", put(handle_complete_event))
+        .route("/:id", delete(handle_delete_event))
+        .route("/:id/split", post(handle_split_event));
+
     let network_routes = Router::new()
         .route("/", get(handle_get_network_data))
         .route("/:id/position", put(handle_update_node_position));
@@ -66,9 +74,14 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let stats_routes = Router::new().route("/", get(handle_get_stats_data));
 
+    // Add migration route (should be protected or removed after migration)
+    let migration_routes = Router::new()
+        .route("/migrate-to-events", post(handle_migrate_to_events));
+
     // Auth routes don't need the auth middleware
     let api_routes = Router::new()
         .nest("/goals", goals_routes)
+        .nest("/events", event_routes)
         .nest("/network", network_routes)
         .nest("/traversal", traversal_routes)
         .nest("/calendar", calendar_routes)
@@ -78,6 +91,7 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .nest("/query", query_routes)
         .nest("/achievements", achievements_routes)
         .nest("/stats", stats_routes)
+        .nest("/migration", migration_routes)
         .route_layer(from_fn(middleware::auth_middleware))
         .layer(Extension(graph.clone()))
         .layer(Extension(user_locks));
@@ -165,6 +179,42 @@ async fn handle_toggle_completion(
     Json(update): Json<GoalUpdate>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     crate::tools::goal::toggle_completion(graph, update).await
+}
+
+// Event handlers
+async fn handle_create_event(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<event::CreateEventRequest>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    event::create_event_handler(graph, user_id, request).await
+}
+
+async fn handle_complete_event(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    event::complete_event_handler(graph, id).await
+}
+
+async fn handle_delete_event(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    let delete_future = params
+        .get("delete_future")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    
+    event::delete_event_handler(graph, id, delete_future).await
+}
+
+async fn handle_split_event(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    event::split_event_handler(graph, id).await
 }
 
 // Network handlers
@@ -257,4 +307,14 @@ async fn handle_get_stats_data(
 // Add this function at the end of the file
 async fn handle_health_check() -> impl IntoResponse {
     StatusCode::OK
+}
+
+// Add this function at the end of the file
+async fn handle_migrate_to_events(
+    Extension(graph): Extension<Graph>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match migration::migrate_to_events(&graph).await {
+        Ok(_) => Ok((StatusCode::OK, "Migration completed successfully")),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+    }
 }

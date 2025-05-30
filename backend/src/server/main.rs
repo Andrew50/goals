@@ -5,9 +5,11 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::Level;
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 use crate::server::db;
 use crate::server::http_handler;
+use crate::jobs::routine_generator;
 
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
@@ -25,6 +27,27 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("Database connection pool created successfully");
+
+    // Set up the scheduler for background jobs
+    let scheduler = JobScheduler::new().await?;
+    
+    // Clone the pool for the scheduler
+    let scheduler_pool = pool.clone();
+    
+    // Schedule routine event generation to run every hour
+    let routine_job = Job::new_async("0 0 * * * *", move |_uuid, _l| {
+        let pool = scheduler_pool.clone();
+        Box::pin(async move {
+            println!("Running scheduled routine event generation...");
+            routine_generator::run_routine_generator(pool).await;
+        })
+    })?;
+    
+    scheduler.add(routine_job).await?;
+    
+    // Start the scheduler
+    scheduler.start().await?;
+    println!("Scheduler started - routine events will be generated hourly");
 
     let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "http://localhost".to_string());
     let frontend_origin = format!("{host_url}:3030");

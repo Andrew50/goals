@@ -44,6 +44,12 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
             routine_time: None,
             position_x: None,
             position_y: None,
+            parent_id: None,
+            parent_type: None,
+            routine_instance_id: None,
+            is_deleted: None,
+            due_date: None,
+            start_date: None,
         });
     }
 
@@ -119,6 +125,12 @@ pub async fn query_parent_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Go
             routine_time: None,
             position_x: None,
             position_y: None,
+            parent_id: None,
+            parent_type: None,
+            routine_instance_id: None,
+            is_deleted: None,
+            due_date: None,
+            start_date: None,
         });
     }
 

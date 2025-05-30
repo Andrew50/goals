@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal } from '../../shared/utils/api';
+import { updateGoal, createEvent } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
@@ -252,34 +252,22 @@ const Calendar: React.FC = () => {
 
   const handleDateClick = (arg: any) => {
     const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
-    try {
-      // Use getTime() to get the timestamp representing the local time instant
 
-      const tempGoal: Goal = {
-        id: 0,
-        name: '',
-        goal_type: 'task',
-        description: '',
-        priority: 'medium',
-        // Assign the Date object directly
-        scheduled_timestamp: clickedDate,
-        // Also use the Date object if routine_time should default to the clicked time
-        routine_time: clickedDate,
-        _tz: 'user' // Keep track that this is user's local time
-      };
-      // Use a different logging method for objects to avoid premature stringification issues
-      console.log('[Calendar.tsx] handleDateClick: tempGoal before opening menu:', tempGoal);
+    // Create a new goal with the clicked date pre-populated for tasks
+    const newGoal: Goal = {
+      id: 0,
+      name: '',
+      goal_type: 'task', // Default to task
+      description: '',
+      priority: 'medium',
+      scheduled_timestamp: clickedDate, // Pre-populate scheduled date
+      duration: 60 // Default duration
+    };
 
-      if (arg.allDay) {
-        tempGoal.duration = 1440;
-      }
-
-      GoalMenu.open(tempGoal, 'create', async () => {
-        loadCalendarData();
-      });
-    } catch (error) {
-      console.error('Error handling date click:', error);
-    }
+    // Open GoalMenu in create mode
+    GoalMenu.open(newGoal, 'create', async () => {
+      loadCalendarData();
+    });
   };
 
   const handleEventClick = (info: any) => {
@@ -287,21 +275,16 @@ const Calendar: React.FC = () => {
       console.log('[DEBUG] Event clicked:', info.event.title, info.event.id);
     }
 
-    const goal = info.event.extendedProps?.goal;
-    if (goal) {
-      GoalMenu.open(goal, 'view', async () => {
-        loadCalendarData();
-      });
-      return;
-    }
+    const event = info.event.extendedProps?.goal;
+    const parent = info.event.extendedProps?.parent;
 
-    const foundEvent = state.events.find((e) => e.id === info.event.id);
-    if (foundEvent && foundEvent.goal) {
-      GoalMenu.open(foundEvent.goal, 'view', async () => {
+    if (event) {
+      // Open GoalMenu for all goal types, including events
+      // GoalMenu will handle view/edit mode and all actions internally
+      GoalMenu.open(event, 'view', async () => {
+        // This callback is called when the goal is updated/deleted/split
         loadCalendarData();
       });
-    } else {
-      console.warn('No associated goal found for event:', info.event.id);
     }
   };
 
@@ -309,8 +292,12 @@ const Calendar: React.FC = () => {
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
+      const parent = info.event.extendedProps?.parent;
+
       if (goal) {
-        GoalMenu.open(goal, 'edit', async () => {
+        // Use GoalMenu for all goal types on right-click
+        // For events, it will open in view mode by default
+        GoalMenu.open(goal, goal.goal_type === 'event' ? 'view' : 'edit', async () => {
           loadCalendarData();
         });
       }
@@ -327,86 +314,69 @@ const Calendar: React.FC = () => {
       }
 
       const goal = task.goal;
-      const isRoutine = goal.goal_type === 'routine';
-      const updates = { ...goal };
+      const duration = goal.duration || 60;
 
-      if (isRoutine) {
-        updates.routine_time = info.event.start;
-      } else {
-        updates.scheduled_timestamp = info.event.start;
-      }
+      // Create an event instead of updating the task
+      await createEvent({
+        parent_id: goal.id,
+        parent_type: goal.goal_type,
+        scheduled_timestamp: info.event.start,
+        duration: duration
+      });
 
-      await updateGoal(goal.id, updates);
+      info.revert(); // Revert the drag since we're creating a new event
       loadCalendarData();
     } catch (error) {
-      console.error('Failed to update goal:', error);
+      console.error('Failed to create event:', error);
       info.revert();
+      setError('Failed to create event. Please try again.');
     }
   };
 
   const handleEventDrop = async (info: any) => {
     try {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
-      if (existingEvent?.goal) {
-        const goal = existingEvent.goal;
-        const isRoutine = goal.goal_type === 'routine';
-        const updates = { ...goal };
-        console.log(info.event.start, info.event.end)
+      if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
+        // Update event timestamp
+        const updates = { ...existingEvent.goal };
+        updates.scheduled_timestamp = info.event.start;
 
-        if (isRoutine) {
-          updates.routine_time = info.event.start;
-        } else {
-          updates.scheduled_timestamp = info.event.start;
-        }
-
-        await updateGoal(goal.id, updates);
+        await updateGoal(existingEvent.goal.id, updates);
+        loadCalendarData();
+      } else {
+        // Non-event goals shouldn't be draggable in the new system
+        info.revert();
       }
-      loadCalendarData();
     } catch (error) {
       console.error('Failed to move event:', error);
       info.revert();
+      setError('Failed to move event. Please try again.');
     }
   };
 
   const handleEventResize = async (info: any) => {
     try {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
-      if (existingEvent?.goal) {
+      if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
         const start = info.event.start;
         const end = info.event.end;
-        console.log(end, start)
-        console.log(typeof end)
         const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
 
-        const oldStartTime = new Date(existingEvent.start).getTime();
-        const newStartTime = start.getTime();
-        const goal = existingEvent.goal;
-        const isRoutine = goal.goal_type === 'routine';
+        const updates = {
+          ...existingEvent.goal,
+          duration: durationInMinutes,
+          scheduled_timestamp: start
+        };
 
-        if (oldStartTime !== newStartTime) {
-          const updates = {
-            ...goal,
-            duration: durationInMinutes
-          };
-
-          if (isRoutine) {
-            updates.routine_time = start;
-          } else {
-            updates.scheduled_timestamp = start;
-          }
-
-          await updateGoal(goal.id, updates);
-        } else {
-          await updateGoal(goal.id, {
-            ...goal,
-            duration: durationInMinutes
-          });
-        }
+        await updateGoal(existingEvent.goal.id, updates);
+        loadCalendarData();
+      } else {
+        info.revert();
       }
-      loadCalendarData();
     } catch (error) {
       console.error('Failed to resize event:', error);
       info.revert();
+      setError('Failed to resize event. Please try again.');
     }
   };
 
@@ -434,8 +404,9 @@ const Calendar: React.FC = () => {
   // Build events array with color from the goal
   const eventsWithColors = state.events.map((evt) => {
     const goal = evt.goal;
-    const bgColor = goal ? getGoalColor(goal) || '#999' : '#999';
-    let txtColor = '#fff';
+    const parent = evt.parent;
+    const bgColor = evt.backgroundColor || getGoalColor(parent || goal) || '#999';
+    let txtColor = evt.textColor || '#fff';
 
     return {
       id: evt.id,
@@ -444,11 +415,12 @@ const Calendar: React.FC = () => {
       end: evt.end,
       allDay: evt.allDay,
       backgroundColor: bgColor,
-      borderColor: bgColor,
+      borderColor: evt.borderColor || bgColor,
       textColor: txtColor,
       extendedProps: {
         ...evt,
-        goal
+        goal,
+        parent
       }
     };
   });

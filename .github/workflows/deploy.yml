@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Build containers
-        run: docker compose -f docker-compose.prod.yaml build
+        run: docker compose -p prod -f docker-compose.prod.yaml build
 
       - name: Deploy stack
-        run: docker compose -f docker-compose.prod.yaml up -d
+        run: docker compose -p prod -f docker-compose.prod.yaml up -d

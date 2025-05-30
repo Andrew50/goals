@@ -1,4 +1,5 @@
 mod ai;
+mod jobs;
 mod server;
 mod tools;
 
