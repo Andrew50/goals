@@ -320,7 +320,10 @@ const List: React.FC = () => {
                                             <td className="table-cell">{goal.description}</td>
                                             <td className="table-cell">
                                                 {goal.priority && (
-                                                    <span className="priority-badge">
+                                                    <span
+                                                        className="priority-badge"
+                                                        data-priority={goal.priority}
+                                                    >
                                                         {goal.priority}
                                                     </span>
                                                 )}

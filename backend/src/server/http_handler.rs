@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use crate::ai::query;
 use crate::server::auth;
 use crate::server::middleware;
+use crate::tools::achievements;
 use crate::tools::calendar;
 use crate::tools::day;
 use crate::tools::goal::{Goal, GoalUpdate, Relationship};
@@ -60,6 +61,8 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let query_routes = Router::new().route("/ws", get(query::handle_query_ws));
 
+    let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
+
     // Auth routes don't need the auth middleware
     let api_routes = Router::new()
         .nest("/goals", goals_routes)
@@ -70,6 +73,7 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .nest("/day", day_routes)
         .nest("/routine", routine_routes)
         .nest("/query", query_routes)
+        .nest("/achievements", achievements_routes)
         .route_layer(from_fn(middleware::auth_middleware))
         .layer(Extension(graph.clone()))
         .layer(Extension(user_locks));
@@ -226,6 +230,14 @@ async fn handle_process_user_routines(
     Extension(user_locks): Extension<UserLocks>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     routine::process_user_routines(user_eod_timestamp, graph, user_id, user_locks).await
+}
+
+// Achievements handlers
+async fn handle_get_achievements_data(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    achievements::get_achievements_data(graph, user_id).await
 }
 
 // Add this function at the end of the file

@@ -1,58 +1,80 @@
 /* -----------------------------
-   Root Variables (Optional)
+   Root Variables
 ----------------------------- */
 :root {
-    /* Button colors, borders, etc. */
-    --fc-button-text-color: #ffffff;
-    --fc-button-bg-color: #2c3e50;
-    --fc-button-border-color: #2c3e50;
-    --fc-button-hover-bg-color: #1e2b37;
-    --fc-button-hover-border-color: #1a252f;
-    --fc-button-active-bg-color: #1a252f;
-    --fc-button-active-border-color: #151e27;
+    /* Button colors */
+    --fc-button-text-color: #4a5568;
+    --fc-button-bg-color: #ffffff;
+    --fc-button-border-color: #e2e8f0;
+    --fc-button-hover-bg-color: #f7fafc;
+    --fc-button-hover-border-color: #cbd5e0;
+    --fc-button-active-bg-color: #edf2f7;
+    --fc-button-active-border-color: #a0aec0;
 
-    /* Misc. */
-    --fc-border-color: rgba(255, 255, 255, 0.15);
-    --fc-today-bg-color: rgba(33, 150, 243, 0.1);
-    --fc-now-indicator-color: #ff0000;
+    /* Calendar colors */
+    --fc-border-color: #e2e8f0;
+    --fc-today-bg-color: rgba(66, 153, 225, 0.1);
+    --fc-now-indicator-color: #4299e1;
 
-    /* Default event colors if not set in code */
-    --fc-event-border-color: #3788d8;
-    --fc-event-bg-color: #3788d8;
-    --fc-event-text-color: #fff;
+    /* Event colors */
+    --fc-event-border-color: #4299e1;
+    --fc-event-bg-color: #4299e1;
+    --fc-event-text-color: #ffffff;
 }
 
 /* -----------------------------
    Layout Containers
 ----------------------------- */
 .calendar-container {
-    display: flex;
-    gap: 20px;
-    padding: 20px;
     height: calc(100vh - 64px);
+    /* Account for navbar */
+    background-color: #f5f7fa;
+    padding: 2rem;
     overflow: hidden;
-    background-color: #f0f2f5;
-    /* Optional body background */
+}
+
+.calendar-content {
+    max-width: 1600px;
+    margin: 0 auto;
+    display: flex;
+    gap: 2rem;
+    height: 100%;
 }
 
 .calendar-sidebar {
-    width: 250px;
+    width: 320px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    background-color: #101f33;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    gap: 1.5rem;
+    overflow-y: auto;
+    padding-right: 1rem;
+}
+
+.calendar-sidebar>div {
+    background-color: #ffffff;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-section-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #2d3748;
+    margin-bottom: 1rem;
 }
 
 .calendar-main {
     flex: 1;
-    background-color: #101f33;
-    border-radius: 12px;
-    overflow: hidden;
+    background-color: #ffffff;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    padding: 1.5rem;
     position: relative;
-    padding: 16px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 /* -----------------------------
@@ -63,9 +85,10 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(255, 255, 255, 0.9);
-    padding: 20px;
-    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.95);
+    padding: 2rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     z-index: 1000;
     display: flex;
     flex-direction: column;
@@ -73,13 +96,13 @@
 }
 
 .loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #3498db;
+    width: 3rem;
+    height: 3rem;
+    border: 4px solid #e2e8f0;
+    border-top: 4px solid #4299e1;
     border-radius: 50%;
     animation: spin 1s linear infinite;
-    margin-bottom: 10px;
+    margin-bottom: 1rem;
 }
 
 @keyframes spin {
@@ -92,6 +115,11 @@
     }
 }
 
+.loading-text {
+    color: #718096;
+    font-size: 1rem;
+}
+
 /* -----------------------------
    Error Container
 ----------------------------- */
@@ -101,106 +129,198 @@
     align-items: center;
     justify-content: center;
     min-height: 400px;
-    padding: 2rem;
+    padding: 3rem;
     text-align: center;
-    background-color: #f9f9f9;
-    border-radius: 8px;
-    margin: 1rem 0;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    background-color: #ffffff;
+    border-radius: 0.75rem;
+    margin: 2rem auto;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    max-width: 600px;
 }
 
 .calendar-error-container h2 {
     margin-bottom: 1rem;
-    color: #333;
+    color: #2d3748;
+    font-size: 1.5rem;
 }
 
 .calendar-error-container p {
     margin-bottom: 1.5rem;
-    color: #666;
-    max-width: 500px;
+    color: #718096;
+    line-height: 1.6;
 }
 
 .retry-button {
-    padding: 0.5rem 1.5rem;
-    background-color: #4a6cf7;
-    color: #fff;
+    padding: 0.75rem 1.5rem;
+    background-color: #4299e1;
+    color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 0.5rem;
     cursor: pointer;
-    font-weight: 500;
-    transition: background-color 0.2s;
+    font-weight: 600;
+    transition: all 0.2s;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
 }
 
 .retry-button:hover {
-    background-color: #3a5ce5;
+    background-color: #3182ce;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
 /* -----------------------------
    FullCalendar Overrides
 ----------------------------- */
-/* Let FullCalendar handle pointer events. Avoid forcing pointer-events: all !important */
+.fc {
+    background-color: #ffffff;
+    height: 100%;
+}
+
 .fc .fc-button {
     background-color: var(--fc-button-bg-color) !important;
     border-color: var(--fc-button-border-color) !important;
     color: var(--fc-button-text-color) !important;
+    font-weight: 500 !important;
+    padding: 0.5rem 1rem !important;
+    transition: all 0.2s !important;
 }
 
 .fc .fc-button:hover {
     background-color: var(--fc-button-hover-bg-color) !important;
     border-color: var(--fc-button-hover-border-color) !important;
+    transform: translateY(-1px);
 }
 
-.fc .fc-button:active {
-    background-color: var(--fc-button-active-bg-color) !important;
-    border-color: var(--fc-button-active-border-color) !important;
+.fc .fc-button:active,
+.fc .fc-button.fc-button-active {
+    background-color: #4299e1 !important;
+    border-color: #4299e1 !important;
+    color: white !important;
 }
 
-/* Example custom event class (optional) */
+.fc .fc-toolbar-title {
+    color: #2d3748 !important;
+    font-weight: 600 !important;
+}
+
+.fc-theme-standard td,
+.fc-theme-standard th {
+    border-color: var(--fc-border-color) !important;
+}
+
+.fc-theme-standard .fc-scrollgrid {
+    border-color: var(--fc-border-color) !important;
+}
+
+.fc .fc-daygrid-day-number {
+    color: #4a5568 !important;
+    padding: 0.5rem !important;
+}
+
+.fc .fc-col-header-cell-cushion {
+    color: #718096 !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    font-size: 0.75rem !important;
+}
+
+.fc .fc-daygrid-day.fc-day-today {
+    background-color: var(--fc-today-bg-color) !important;
+}
+
+/* Event styling */
 .fc-event {
-    border-radius: 4px !important;
-    overflow: hidden !important;
-    /* rely on FullCalendar for backgroundColor, textColor, borderColor */
+    border-radius: 0.375rem !important;
+    border: none !important;
+    padding: 0.25rem 0.5rem !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+    transition: all 0.2s !important;
 }
 
-/* If you want an alternative style for events, you can use your own class:
-   .fc-event.my-custom-class { ... } */
+.fc-event:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
 
-/* More link in dayGrid */
+.fc-daygrid-event {
+    white-space: normal !important;
+}
+
 .fc-daygrid-more-link {
-    margin: 2px !important;
-    padding: 2px 4px !important;
-    background-color: rgba(255, 255, 255, 0.1) !important;
-    border-radius: 4px !important;
-    color: #ffffff !important;
-    font-weight: 500;
+    margin: 0.25rem !important;
+    padding: 0.25rem 0.5rem !important;
+    background-color: #edf2f7 !important;
+    border-radius: 0.375rem !important;
+    color: #4a5568 !important;
+    font-weight: 500 !important;
 }
 
-/* Make sure text is visible inside events */
-.fc-event-title,
-.fc-event-time {
-    color: #fff !important;
-    font-weight: 500;
-    font-size: 0.85em;
+.fc-daygrid-more-link:hover {
+    background-color: #e2e8f0 !important;
+    color: #2d3748 !important;
 }
 
-/* Remove excessive transparency from event wrappers */
-.fc-daygrid-event,
-.fc-timegrid-event {
-    /*background: none !important;*/ /* this overrides full calendar*/
-    /* Let FullCalendar set the color */
-    pointer-events: auto !important;
-    /* Ensure events are clickable */
+/* Task list in sidebar */
+.task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: calc(100vh - 300px);
+    overflow-y: auto;
 }
 
-/* If your layout is cramped, you can limit dayGrid cell height in mobile */
-@media (max-width: 768px) {
-    .fc-daygrid-day-events {
-        max-height: 100px;
-        overflow-y: auto;
+.task-item {
+    padding: 0.75rem;
+    background-color: #f7fafc;
+    border-radius: 0.5rem;
+    border: 1px solid #e2e8f0;
+    cursor: grab;
+    transition: all 0.2s;
+}
+
+.task-item:hover {
+    background-color: #edf2f7;
+    transform: translateX(4px);
+}
+
+.task-item.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+/* Responsive design */
+@media (max-width: 1024px) {
+    .calendar-content {
+        flex-direction: column;
+        height: auto;
+        min-height: calc(100vh - 64px);
+    }
+
+    .calendar-sidebar {
+        width: 100%;
+        max-height: 300px;
+    }
+
+    .calendar-main {
+        min-height: 600px;
     }
 }
 
-/* Add a height fix for the all-day section in timeGrid if needed */
-.fc .fc-timegrid-all-day-cushion {
-    min-height: 40px !important;
+@media (max-width: 768px) {
+    .calendar-container {
+        padding: 1rem;
+        height: auto;
+        min-height: calc(100vh - 64px);
+    }
+
+    .fc .fc-toolbar {
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .fc .fc-toolbar-chunk {
+        display: flex;
+        justify-content: center;
+    }
 }
