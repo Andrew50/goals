@@ -21,6 +21,7 @@ use crate::tools::goal::{Goal, GoalUpdate, Relationship};
 use crate::tools::list;
 use crate::tools::network;
 use crate::tools::routine;
+use crate::tools::stats;
 use crate::tools::traversal;
 
 // Type alias for user locks that's used in routine processing
@@ -63,6 +64,8 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
+    let stats_routes = Router::new().route("/", get(handle_get_stats_data));
+
     // Auth routes don't need the auth middleware
     let api_routes = Router::new()
         .nest("/goals", goals_routes)
@@ -74,6 +77,7 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .nest("/routine", routine_routes)
         .nest("/query", query_routes)
         .nest("/achievements", achievements_routes)
+        .nest("/stats", stats_routes)
         .route_layer(from_fn(middleware::auth_middleware))
         .layer(Extension(graph.clone()))
         .layer(Extension(user_locks));
@@ -238,6 +242,16 @@ async fn handle_get_achievements_data(
     Extension(user_id): Extension<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     achievements::get_achievements_data(graph, user_id).await
+}
+
+// Stats handlers
+async fn handle_get_stats_data(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, i32>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let year = params.get("year").copied();
+    stats::get_year_stats(graph, user_id, year).await
 }
 
 // Add this function at the end of the file
