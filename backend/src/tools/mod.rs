@@ -1,3 +1,4 @@
+pub mod achievements;
 pub mod calendar;
 pub mod day;
 pub mod goal;

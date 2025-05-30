@@ -351,7 +351,7 @@ const Calendar: React.FC = () => {
         const goal = existingEvent.goal;
         const isRoutine = goal.goal_type === 'routine';
         const updates = { ...goal };
-        console.log(info.event.start,info.event.end)
+        console.log(info.event.start, info.event.end)
 
         if (isRoutine) {
           updates.routine_time = info.event.start;
@@ -476,62 +476,64 @@ const Calendar: React.FC = () => {
 
   return (
     <div className="calendar-container">
-      <div className="calendar-sidebar">
-        <TaskList
-          ref={taskListRef}
-          tasks={state.tasks}
-          events={state.events}
-          onAddTask={handleAddTask}
-          onTaskUpdate={handleTaskUpdate}
-        />
-      </div>
-      <div className="calendar-main">
-        {state.isLoading && (
-          <div className="calendar-loading-indicator">
-            <div className="loading-spinner" />
-            <span>Loading calendar data...</span>
-          </div>
-        )}
-        <FullCalendar
-          ref={calendarRef}
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="dayGridMonth"
-          eventDisplay="block" //supposed to add full background color but doesnt ?
-          headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,timeGridWeek,timeGridDay'
-          }}
-          height="100%"
-          allDaySlot={true}
-          editable={true}
-          droppable={true}
-          dropAccept=".external-event"
-          events={eventsWithColors}
-          dateClick={handleDateClick}
-          eventClick={handleEventClick}
-          eventReceive={handleEventReceive}
-          eventDrop={handleEventDrop}
-          eventResize={handleEventResize}
-          eventDidMount={handleEventDidMount}
-          eventResizableFromStart={true}
-          slotMinTime="00:00:00"
-          slotMaxTime="24:00:00"
-          nowIndicator={true}
-          dayMaxEvents={true}
-          timeZone="local"
-          lazyFetching={true}
-          datesSet={handleDatesSet}
-          slotDuration="00:30:00"
-          slotLabelInterval="01:00"
-          scrollTime="08:00:00"
-          snapDuration="00:05:00"
-          eventTimeFormat={{
-            hour: 'numeric',
-            minute: '2-digit',
-            meridiem: 'short'
-          }}
-        />
+      <div className="calendar-content">
+        <div className="calendar-sidebar">
+          <TaskList
+            ref={taskListRef}
+            tasks={state.tasks}
+            events={state.events}
+            onAddTask={handleAddTask}
+            onTaskUpdate={handleTaskUpdate}
+          />
+        </div>
+        <div className="calendar-main">
+          {state.isLoading && (
+            <div className="calendar-loading-indicator">
+              <div className="loading-spinner" />
+              <span className="loading-text">Loading calendar data...</span>
+            </div>
+          )}
+          <FullCalendar
+            ref={calendarRef}
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="dayGridMonth"
+            eventDisplay="block" //supposed to add full background color but doesnt ?
+            headerToolbar={{
+              left: 'prev,next today',
+              center: 'title',
+              right: 'dayGridMonth,timeGridWeek,timeGridDay'
+            }}
+            height="100%"
+            allDaySlot={true}
+            editable={true}
+            droppable={true}
+            dropAccept=".external-event"
+            events={eventsWithColors}
+            dateClick={handleDateClick}
+            eventClick={handleEventClick}
+            eventReceive={handleEventReceive}
+            eventDrop={handleEventDrop}
+            eventResize={handleEventResize}
+            eventDidMount={handleEventDidMount}
+            eventResizableFromStart={true}
+            slotMinTime="00:00:00"
+            slotMaxTime="24:00:00"
+            nowIndicator={true}
+            dayMaxEvents={true}
+            timeZone="local"
+            lazyFetching={true}
+            datesSet={handleDatesSet}
+            slotDuration="00:30:00"
+            slotLabelInterval="01:00"
+            scrollTime="08:00:00"
+            snapDuration="00:05:00"
+            eventTimeFormat={{
+              hour: 'numeric',
+              minute: '2-digit',
+              meridiem: 'short'
+            }}
+          />
+        </div>
       </div>
     </div>
   );

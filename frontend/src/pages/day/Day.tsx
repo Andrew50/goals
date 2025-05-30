@@ -111,118 +111,139 @@ const Day: React.FC = () => {
 
     return (
         <Box className="day-container">
-            <div className="day1737199800000-header">
-                <Typography variant="h4" className="day-title">Today's Tasks</Typography>
-                <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handleCreateGoal}
-                    startIcon={<AddIcon />}
-                >
-                    New Task
-                </Button>
+            <div className="day-content">
+                <div className="day-header">
+                    <Typography variant="h4" className="day-title">Today's Tasks</Typography>
+                    <Box className="completion-status">
+                        <span>{getCompletionPercentage()}% complete</span>
+                        <span> • {organizedTasks().completed.length} of {tasks.length} tasks</span>
+                    </Box>
+                </div>
+
+                <Box className="columns-container">
+                    <Box className="column">
+                        <div className="column-header">
+                            <Typography variant="h6" className="column-title">To Do</Typography>
+                            <span className="column-count">{organizedTasks().todo.length}</span>
+                        </div>
+                        <div className="tasks-list">
+                            {organizedTasks().todo.length === 0 ? (
+                                <div className="empty-state">
+                                    <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                    </svg>
+                                    <p className="empty-state-text">No tasks for today</p>
+                                    <Button
+                                        variant="contained"
+                                        color="primary"
+                                        onClick={handleCreateGoal}
+                                        startIcon={<AddIcon />}
+                                        size="small"
+                                    >
+                                        Add Task
+                                    </Button>
+                                </div>
+                            ) : (
+                                organizedTasks().todo.map(task => {
+                                    const goalColor = getGoalColor(task);
+                                    const timeString = timestampToDisplayString(task.scheduled_timestamp, 'time');
+                                    return (
+                                        <Paper
+                                            key={task.id}
+                                            className="task-card"
+                                            style={{
+                                                borderLeft: `4px solid ${goalColor}`,
+                                            }}
+                                        >
+                                            <div
+                                                className="task-content"
+                                                onClick={() => handleTaskClick(task)}
+                                                onContextMenu={(e) => handleTaskContextMenu(e, task)}
+                                            >
+                                                <div className="task-header">
+                                                    <Typography variant="body1" className="task-name">
+                                                        {task.name}
+                                                    </Typography>
+                                                    {timeString && (
+                                                        <span className="task-time">{timeString}</span>
+                                                    )}
+                                                </div>
+                                                {task.description && (
+                                                    <Typography variant="body2" className="task-description">
+                                                        {task.description}
+                                                    </Typography>
+                                                )}
+                                            </div>
+
+                                            <label className="checkbox-container">
+                                                <input
+                                                    type="checkbox"
+                                                    className="hidden-checkbox"
+                                                    checked={false}
+                                                    onChange={() => handleTaskComplete(task)}
+                                                />
+                                                <div className="custom-checkbox" />
+                                            </label>
+                                        </Paper>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </Box>
+
+                    <Box className="column">
+                        <div className="column-header">
+                            <Typography variant="h6" className="column-title completed">
+                                Completed
+                            </Typography>
+                            <span className="column-count">{organizedTasks().completed.length}</span>
+                        </div>
+                        <div className="tasks-list completed">
+                            {organizedTasks().completed.length === 0 ? (
+                                <div className="empty-state">
+                                    <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <p className="empty-state-text">No completed tasks yet</p>
+                                </div>
+                            ) : (
+                                organizedTasks().completed.map(task => {
+                                    const goalColor = getGoalColor(task);
+                                    return (
+                                        <Paper
+                                            key={task.id}
+                                            className="task-card completed"
+                                            style={{
+                                                borderLeft: `4px solid ${goalColor}`,
+                                            }}
+                                        >
+                                            <div
+                                                className="task-content"
+                                                onClick={() => handleTaskClick(task)}
+                                                onContextMenu={(e) => handleTaskContextMenu(e, task)}
+                                            >
+                                                <Typography variant="body1" className="task-name completed">
+                                                    {task.name}
+                                                </Typography>
+                                            </div>
+
+                                            <label className="checkbox-container">
+                                                <input
+                                                    type="checkbox"
+                                                    className="hidden-checkbox"
+                                                    checked={true}
+                                                    onChange={() => handleTaskComplete(task)}
+                                                />
+                                                <div className="custom-checkbox checked" />
+                                            </label>
+                                        </Paper>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </Box>
+                </Box>
             </div>
-            <Box className="completion-status">
-                <span>{getCompletionPercentage()}% complete</span>
-                <span>({organizedTasks().completed.length}/{tasks.length} tasks)</span>
-            </Box>
-
-            <Box className="columns-container">
-                <Box className="column todo-column">
-                    <Typography variant="h6" className="column-title">To Do</Typography>
-                    <div className="tasks-list">
-                        {organizedTasks().todo.map(task => {
-                            const goalColor = getGoalColor(task);
-                            const timeString = timestampToDisplayString(task.scheduled_timestamp, 'time');
-                            return (
-                                <Paper
-                                    key={task.id}
-                                    className="task-card"
-                                    style={{
-                                        borderLeft: `4px solid ${goalColor}`,
-                                    }}
-                                >
-                                    <div
-                                        className="task-content"
-                                        onClick={() => handleTaskClick(task)}
-                                        onContextMenu={(e) => handleTaskContextMenu(e, task)}
-                                    >
-                                        <div className="task-header">
-                                            <Typography variant="body1" className="task-name">
-                                                {task.name}
-                                            </Typography>
-                                            {timeString && (
-                                                <span className="task-time">{timeString}</span>
-                                            )}
-                                        </div>
-                                        {task.description && (
-                                            <Typography variant="body2" className="task-description">
-                                                {task.description}
-                                            </Typography>
-                                        )}
-                                    </div>
-
-                                    <label className="checkbox-container">
-                                        <input
-                                            type="checkbox"
-                                            className="hidden-checkbox"
-                                            checked={false}
-                                            onChange={() => handleTaskComplete(task)}
-                                        />
-                                        <div
-                                            className="custom-checkbox"
-                                            style={{ borderColor: goalColor }}
-                                        />
-                                    </label>
-                                </Paper>
-                            );
-                        })}
-                    </div>
-                </Box>
-
-                <Box className="column completed-column">
-                    <Typography variant="h6" className="column-title completed">
-                        Completed
-                    </Typography>
-                    <div className="tasks-list completed">
-                        {organizedTasks().completed.map(task => {
-                            const goalColor = getGoalColor(task);
-                            return (
-                                <Paper
-                                    key={task.id}
-                                    className="task-card completed"
-                                    style={{
-                                        borderLeft: `4px solid ${goalColor}`,
-                                    }}
-                                >
-                                    <div
-                                        className="task-content completed"
-                                        onClick={() => handleTaskClick(task)}
-                                        onContextMenu={(e) => handleTaskContextMenu(e, task)}
-                                    >
-                                        <Typography variant="body1" className="task-name">
-                                            {task.name}
-                                        </Typography>
-                                    </div>
-
-                                    <label className="checkbox-container">
-                                        <input
-                                            type="checkbox"
-                                            className="hidden-checkbox"
-                                            checked={true}
-                                            onChange={() => handleTaskComplete(task)}
-                                        />
-                                        <div
-                                            className="custom-checkbox checked"
-                                            style={{ borderColor: goalColor }}
-                                        />
-                                    </label>
-                                </Paper>
-                            );
-                        })}
-                    </div>
-                </Box>
-            </Box>
         </Box>
     );
 };
