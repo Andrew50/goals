@@ -14,6 +14,9 @@ pub async fn migrate_to_events(graph: &Graph) -> Result<(), String> {
     // Step 3: Update relationships
     update_relationships(graph).await?;
     
+    // Step 4: Create EventMove tracking infrastructure
+    create_event_move_tracking(graph).await?;
+    
     println!("Migration completed successfully!");
     Ok(())
 }
@@ -190,5 +193,21 @@ async fn update_relationships(_graph: &Graph) -> Result<(), String> {
     // Update any other necessary relationships
     // This is a placeholder for any additional relationship updates needed
     
+    Ok(())
+}
+
+async fn create_event_move_tracking(graph: &Graph) -> Result<(), String> {
+    println!("Creating EventMove tracking infrastructure...");
+    
+    // Create an index on EventMove nodes for efficient querying
+    let index_query = "
+        CREATE INDEX event_move_user_time IF NOT EXISTS 
+        FOR (em:EventMove) ON (em.user_id, em.move_timestamp)
+    ";
+    
+    graph.run(neo4rs::query(index_query)).await
+        .map_err(|e| format!("Failed to create EventMove index: {}", e))?;
+    
+    println!("EventMove tracking infrastructure created successfully");
     Ok(())
 } 

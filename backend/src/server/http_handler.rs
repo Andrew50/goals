@@ -6,10 +6,13 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use axum::extract::ws::WebSocketUpgrade;
+use futures_util::{sink::SinkExt, stream::StreamExt};
 use neo4rs::Graph;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use oauth2::TokenResponse;
 
 use crate::ai::query;
 use crate::server::auth;
@@ -33,7 +36,17 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
     let auth_routes = Router::new()
         .route("/signup", post(handle_signup))
         .route("/signin", post(handle_signin))
-        .route("/validate", get(handle_validate_token));
+        .route("/validate", get(handle_validate_token))
+        .route("/google", get(handle_google_auth))
+        .route("/callback", get(handle_google_callback))
+        .layer(Extension(graph.clone()));
+
+    // Account management routes (require authentication)
+    let account_routes = Router::new()
+        .route("/", get(handle_get_user_account))
+        .route("/set-password", post(handle_set_password))
+        .route("/link-google", post(handle_link_google_account))
+        .route("/unlink-google", post(handle_unlink_google_account));
 
     let goals_routes = Router::new()
         .route("/create", post(handle_create_goal))
@@ -48,9 +61,12 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let event_routes = Router::new()
         .route("/", post(handle_create_event))
+        .route("/:id/update", put(handle_update_event))
+        .route("/:id/routine-update", put(handle_update_routine_event))
         .route("/:id/complete", put(handle_complete_event))
-        .route("/:id", delete(handle_delete_event))
-        .route("/:id/split", post(handle_split_event));
+        .route("/:id/delete", delete(handle_delete_event))
+        .route("/:id/split", post(handle_split_event))
+        .route("/task/:task_id", get(handle_get_task_events));
 
     let network_routes = Router::new()
         .route("/", get(handle_get_network_data))
@@ -72,13 +88,19 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
-    let stats_routes = Router::new().route("/", get(handle_get_stats_data));
+    let stats_routes = Router::new()
+        .route("/", get(handle_get_stats_data))
+        .route("/extended", get(handle_get_extended_stats))
+        .route("/routines/search", get(handle_search_routines))
+        .route("/routines/stats", post(handle_get_routine_stats))
+        .route("/rescheduling", get(handle_get_rescheduling_stats))
+        .route("/event-moves", post(handle_record_event_move));
 
     // Add migration route (should be protected or removed after migration)
     let migration_routes = Router::new()
         .route("/migrate-to-events", post(handle_migrate_to_events));
 
-    // Auth routes don't need the auth middleware
+    // Protected routes with auth middleware
     let api_routes = Router::new()
         .nest("/goals", goals_routes)
         .nest("/events", event_routes)
@@ -92,13 +114,14 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .nest("/achievements", achievements_routes)
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
+        .nest("/account", account_routes)
         .route_layer(from_fn(middleware::auth_middleware))
         .layer(Extension(graph.clone()))
         .layer(Extension(user_locks));
 
     // Combine auth routes with the rest of the API
     Router::new()
-        .nest("/auth", auth_routes.layer(Extension(graph)))
+        .nest("/auth", auth_routes)
         .merge(api_routes)
         // Add health check endpoint that doesn't require auth
         .route("/health", get(handle_health_check))
@@ -130,6 +153,182 @@ async fn handle_validate_token(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     auth::validate_token(token).await
+}
+
+// Google OAuth handlers
+async fn handle_google_auth() -> Result<impl IntoResponse, impl IntoResponse> {
+    auth::generate_google_auth_url().await
+}
+
+async fn handle_google_callback(
+    Extension(graph): Extension<Graph>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    eprintln!("🌐 [ROUTE] Google OAuth callback handler called");
+    eprintln!("📋 [ROUTE] Query parameters received: {:?}", params);
+
+    let code = params.get("code").ok_or_else(|| {
+        eprintln!("❌ [ROUTE] Missing authorization code parameter");
+        (
+            StatusCode::BAD_REQUEST,
+            Json(auth::AuthResponse {
+                message: "Missing authorization code".to_string(),
+                token: "".to_string(),
+                username: None,
+            }),
+        )
+    })?;
+
+    let state = params.get("state").ok_or_else(|| {
+        eprintln!("❌ [ROUTE] Missing state parameter");
+        (
+            StatusCode::BAD_REQUEST,
+            Json(auth::AuthResponse {
+                message: "Missing state parameter".to_string(),
+                token: "".to_string(),
+                username: None,
+            }),
+        )
+    })?;
+
+    eprintln!("✅ [ROUTE] Both code and state parameters extracted successfully");
+    eprintln!("🔄 [ROUTE] Calling auth::handle_google_callback...");
+
+    let result = auth::handle_google_callback(graph, code.clone(), state.clone()).await;
+    
+    match &result {
+        Ok(_) => eprintln!("✅ [ROUTE] Google OAuth callback completed successfully"),
+        Err((status, response)) => {
+            eprintln!("❌ [ROUTE] Google OAuth callback failed with status: {:?}", status);
+            eprintln!("❌ [ROUTE] Error response: {:?}", response);
+        }
+    }
+
+    result
+}
+
+// New account management handlers
+async fn handle_get_user_account(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    match auth::get_user_account(&graph, user_id).await {
+        Ok(account) => Ok(Json(account)),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(auth::AuthResponse {
+                message: format!("Failed to get account info: {}", e),
+                token: "".to_string(),
+                username: None,
+            }),
+        )),
+    }
+}
+
+async fn handle_set_password(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<auth::SetPasswordPayload>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    match auth::set_password_for_user(&graph, user_id, payload.password).await {
+        Ok(()) => Ok(Json(auth::AccountLinkResponse {
+            message: "Password set successfully".to_string(),
+            success: true,
+        })),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(auth::AccountLinkResponse {
+                message: format!("Failed to set password: {}", e),
+                success: false,
+            }),
+        )),
+    }
+}
+
+async fn handle_link_google_account(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<auth::LinkAccountPayload>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    // First, exchange the Google code for user info
+    let client = match auth::create_google_oauth_client() {
+        Ok(client) => client,
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(auth::AccountLinkResponse {
+                    message: format!("OAuth configuration error: {}", e),
+                    success: false,
+                }),
+            ));
+        }
+    };
+
+    // Exchange the code with a token
+    let token_result = match client
+        .exchange_code(oauth2::AuthorizationCode::new(payload.google_code))
+        .request_async(oauth2::reqwest::async_http_client)
+        .await
+    {
+        Ok(token) => token,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(auth::AccountLinkResponse {
+                    message: format!("Failed to exchange authorization code: {:?}", e),
+                    success: false,
+                }),
+            ));
+        }
+    };
+
+    // Get user info from Google
+    let user_info = match auth::get_google_user_info(token_result.access_token().secret()).await {
+        Ok(info) => info,
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(auth::AccountLinkResponse {
+                    message: format!("Failed to get Google user info: {}", e),
+                    success: false,
+                }),
+            ));
+        }
+    };
+
+    // Link the Google account to the current user
+    match auth::link_google_account(&graph, user_id, &user_info).await {
+        Ok(()) => Ok(Json(auth::AccountLinkResponse {
+            message: "Google account linked successfully".to_string(),
+            success: true,
+        })),
+        Err(e) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(auth::AccountLinkResponse {
+                message: format!("Failed to link Google account: {}", e),
+                success: false,
+            }),
+        )),
+    }
+}
+
+async fn handle_unlink_google_account(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    match auth::unlink_google_account(&graph, user_id).await {
+        Ok(()) => Ok(Json(auth::AccountLinkResponse {
+            message: "Google account unlinked successfully".to_string(),
+            success: true,
+        })),
+        Err(e) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(auth::AccountLinkResponse {
+                message: format!("Failed to unlink Google account: {}", e),
+                success: false,
+            }),
+        )),
+    }
 }
 
 // Goal handlers
@@ -186,14 +385,32 @@ async fn handle_create_event(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
     Json(request): Json<event::CreateEventRequest>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     event::create_event_handler(graph, user_id, request).await
+}
+
+async fn handle_update_event(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+    Json(request): Json<event::UpdateEventRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::update_event_handler(graph, user_id, id, request).await
+}
+
+async fn handle_update_routine_event(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+    Json(request): Json<event::UpdateRoutineEventRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::update_routine_event_handler(graph, user_id, id, request).await
 }
 
 async fn handle_complete_event(
     Extension(graph): Extension<Graph>,
     Path(id): Path<i64>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     event::complete_event_handler(graph, id).await
 }
 
@@ -213,8 +430,15 @@ async fn handle_delete_event(
 async fn handle_split_event(
     Extension(graph): Extension<Graph>,
     Path(id): Path<i64>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     event::split_event_handler(graph, id).await
+}
+
+async fn handle_get_task_events(
+    Extension(graph): Extension<Graph>,
+    Path(task_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::get_task_events_handler(graph, task_id).await
 }
 
 // Network handlers
@@ -302,6 +526,57 @@ async fn handle_get_stats_data(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").copied();
     stats::get_year_stats(graph, user_id, year).await
+}
+
+async fn handle_get_extended_stats(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, i32>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let year = params.get("year").copied();
+    stats::get_extended_stats(graph, user_id, year).await
+}
+
+async fn handle_search_routines(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let search_term = params.get("q").cloned().unwrap_or_default();
+    stats::search_routines(graph, user_id, search_term).await
+}
+
+async fn handle_get_routine_stats(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, i32>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let year = params.get("year").copied();
+    let routine_ids: Vec<i64> = payload.get("routine_ids")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
+        .unwrap_or_default();
+    
+    stats::get_routine_stats(graph, user_id, routine_ids, year).await
+}
+
+async fn handle_get_rescheduling_stats(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, i32>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let year = params.get("year").copied();
+    stats::get_rescheduling_stats(graph, user_id, year).await
+}
+
+async fn handle_record_event_move(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(mut event_move): Json<stats::EventMove>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event_move.user_id = user_id; // Ensure user_id is set from authentication
+    stats::record_event_move(graph, event_move).await
 }
 
 // Add this function at the end of the file

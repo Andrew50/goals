@@ -1,8 +1,10 @@
 use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
+use chrono::Utc;
 
 use crate::tools::goal::{Goal, GoalType};
+use crate::tools::stats::EventMove;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateEventRequest {
@@ -12,6 +14,20 @@ pub struct CreateEventRequest {
     pub duration: i32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateEventRequest {
+    pub scheduled_timestamp: Option<i64>,
+    pub duration: Option<i32>,
+    pub completed: Option<bool>,
+    pub move_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRoutineEventRequest {
+    pub new_timestamp: i64,
+    pub update_scope: String,  // "single", "all", or "future"
+}
+
 #[derive(Debug, Serialize)]
 pub struct CompleteEventResponse {
     pub event_completed: bool,
@@ -19,6 +35,15 @@ pub struct CompleteEventResponse {
     pub parent_task_name: String,
     pub has_future_events: bool,
     pub should_prompt_task_completion: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskEventsResponse {
+    pub task_id: i64,
+    pub events: Vec<Goal>,
+    pub total_duration: i32,
+    pub next_scheduled: Option<i64>,
+    pub last_scheduled: Option<i64>,
 }
 
 pub async fn create_event_handler(
@@ -240,4 +265,269 @@ pub async fn split_event_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     
     Ok(Json(vec![created1, created2]))
+}
+
+pub async fn get_task_events_handler(
+    graph: Graph,
+    task_id: i64,
+) -> Result<Json<TaskEventsResponse>, (StatusCode, String)> {
+    let query_str = "
+        MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal)
+        WHERE id(t) = $task_id 
+        AND e.goal_type = 'event'
+        AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        RETURN e
+        ORDER BY e.scheduled_timestamp ASC
+    ";
+    
+    let query = query(query_str).param("task_id", task_id);
+    
+    let mut result = graph.execute(query).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    let mut events = Vec::new();
+    let mut total_duration = 0i32;
+    let mut next_scheduled = None;
+    let mut last_scheduled = None;
+    
+    while let Some(row) = result.next().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+        let event: Goal = row.get("e")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        
+        if let Some(duration) = event.duration {
+            total_duration += duration;
+        }
+        
+        if let Some(scheduled) = event.scheduled_timestamp {
+            if next_scheduled.is_none() || next_scheduled.unwrap() > scheduled {
+                next_scheduled = Some(scheduled);
+            }
+            if last_scheduled.is_none() || last_scheduled.unwrap() < scheduled {
+                last_scheduled = Some(scheduled);
+            }
+        }
+        
+        events.push(event);
+    }
+    
+    Ok(Json(TaskEventsResponse {
+        task_id,
+        events,
+        total_duration,
+        next_scheduled,
+        last_scheduled,
+    }))
+}
+
+pub async fn update_event_handler(
+    graph: Graph,
+    user_id: i64,
+    event_id: i64,
+    request: UpdateEventRequest,
+) -> Result<Json<Goal>, (StatusCode, String)> {
+    // First fetch the existing event
+    let fetch_query = query(
+        "MATCH (e:Goal)
+         WHERE id(e) = $event_id
+         RETURN e"
+    )
+    .param("event_id", event_id);
+    
+    let mut result = graph.execute(fetch_query).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    let event_row = result.next().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Event not found".to_string()))?;
+    
+    let old_event: Goal = event_row.get("e")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    // Check if this is a reschedule (timestamp change)
+    let is_reschedule = request.scheduled_timestamp.is_some() && 
+        request.scheduled_timestamp != old_event.scheduled_timestamp;
+    
+    // Build update query
+    let mut set_clauses = Vec::new();
+    let mut params = vec![("event_id", neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: event_id }))];
+    
+    if let Some(timestamp) = request.scheduled_timestamp {
+        set_clauses.push("e.scheduled_timestamp = $new_timestamp");
+        params.push(("new_timestamp", neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: timestamp })));
+    }
+    
+    if let Some(duration) = request.duration {
+        set_clauses.push("e.duration = $duration");
+        params.push(("duration", neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: duration as i64 })));
+    }
+    
+    if let Some(completed) = request.completed {
+        set_clauses.push("e.completed = $completed");
+        params.push(("completed", neo4rs::BoltType::Boolean(neo4rs::BoltBoolean { value: completed })));
+    }
+    
+    if set_clauses.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "No fields to update".to_string()));
+    }
+    
+    let update_query = format!(
+        "MATCH (e:Goal) WHERE id(e) = $event_id SET {} RETURN e",
+        set_clauses.join(", ")
+    );
+    
+    let mut query_builder = query(&update_query);
+    for (key, value) in params {
+        query_builder = query_builder.param(key, value);
+    }
+    
+    let mut update_result = graph.execute(query_builder).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    let updated_event: Goal = if let Some(row) = update_result.next().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+        row.get("e").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    } else {
+        return Err((StatusCode::NOT_FOUND, "Event not found after update".to_string()));
+    };
+    
+    // Record the move if this was a reschedule
+    if is_reschedule {
+        let event_move = EventMove {
+            id: None,
+            event_id,
+            user_id,
+            old_timestamp: old_event.scheduled_timestamp.unwrap_or(0),
+            new_timestamp: request.scheduled_timestamp.unwrap(),
+            move_type: "reschedule".to_string(),
+            move_timestamp: Utc::now().timestamp_millis(),
+            reason: request.move_reason,
+        };
+        
+        // Record the move (don't fail the update if this fails, just log)
+        if let Err(e) = crate::tools::stats::record_event_move(graph.clone(), event_move).await {
+            eprintln!("Warning: Failed to record event move: {:?}", e);
+        }
+    }
+    
+    Ok(Json(updated_event))
+}
+
+pub async fn update_routine_event_handler(
+    graph: Graph,
+    user_id: i64,
+    event_id: i64,
+    request: UpdateRoutineEventRequest,
+) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
+    // First, fetch the event to get routine information
+    let fetch_query = query(
+        "MATCH (e:Goal)
+         WHERE id(e) = $event_id
+         AND e.goal_type = 'event'
+         AND e.parent_type = 'routine'
+         RETURN e"
+    )
+    .param("event_id", event_id);
+    
+    let mut result = graph.execute(fetch_query).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    let event_row = result.next().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Routine event not found".to_string()))?;
+    
+    let event: Goal = event_row.get("e")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    let parent_id = event.parent_id
+        .ok_or((StatusCode::BAD_REQUEST, "Event missing parent_id".to_string()))?;
+    let current_timestamp = event.scheduled_timestamp
+        .ok_or((StatusCode::BAD_REQUEST, "Event missing scheduled_timestamp".to_string()))?;
+    
+    // Extract the time-of-day from the new timestamp (milliseconds since midnight)
+    let day_in_ms: i64 = 24 * 60 * 60 * 1000;
+    let new_time_of_day = request.new_timestamp % day_in_ms;
+    
+    match request.update_scope.as_str() {
+        "single" => {
+            // Update only this event
+            let update_query = query(
+                "MATCH (e:Goal)
+                 WHERE id(e) = $event_id
+                 SET e.scheduled_timestamp = $new_timestamp
+                 RETURN e"
+            )
+            .param("event_id", event_id)
+            .param("new_timestamp", request.new_timestamp);
+            
+            let mut update_result = graph.execute(update_query).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            
+            if let Some(row) = update_result.next().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+                let updated_event: Goal = row.get("e")
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                Ok(Json(vec![updated_event]))
+            } else {
+                Err((StatusCode::NOT_FOUND, "Event not found after update".to_string()))
+            }
+        },
+        "all" => {
+            // Update all events for this routine to the same time-of-day
+            let update_query = query(
+                "MATCH (e:Goal)
+                 WHERE e.goal_type = 'event'
+                 AND e.parent_id = $parent_id
+                 AND e.parent_type = 'routine'
+                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
+                 RETURN collect(e) as events"
+            )
+            .param("parent_id", parent_id)
+            .param("day_in_ms", day_in_ms)
+            .param("new_time_of_day", new_time_of_day);
+            
+            let mut update_result = graph.execute(update_query).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            
+            if let Some(row) = update_result.next().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+                let events: Vec<Goal> = row.get("events")
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                Ok(Json(events))
+            } else {
+                Ok(Json(vec![]))
+            }
+        },
+        "future" => {
+            // Update this event and all future events to the same time-of-day
+            let update_query = query(
+                "MATCH (e:Goal)
+                 WHERE e.goal_type = 'event'
+                 AND e.parent_id = $parent_id
+                 AND e.parent_type = 'routine'
+                 AND e.scheduled_timestamp >= $current_timestamp
+                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
+                 RETURN collect(e) as events"
+            )
+            .param("parent_id", parent_id)
+            .param("current_timestamp", current_timestamp)
+            .param("day_in_ms", day_in_ms)
+            .param("new_time_of_day", new_time_of_day);
+            
+            let mut update_result = graph.execute(update_query).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            
+            if let Some(row) = update_result.next().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+                let events: Vec<Goal> = row.get("events")
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                Ok(Json(events))
+            } else {
+                Ok(Json(vec![]))
+            }
+        },
+        _ => Err((StatusCode::BAD_REQUEST, "Invalid update_scope. Must be 'single', 'all', or 'future'".to_string()))
+    }
 } 

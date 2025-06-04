@@ -22,6 +22,7 @@ import Day from './pages/day/Day';
 import Query from './pages/query/Query';
 import Achievements from './pages/achievements/Achievements';
 import Stats from './pages/stats/Stats';
+import GoogleCallback from './pages/auth/GoogleCallback';
 import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 
@@ -88,6 +89,7 @@ const App: React.FC = () => {
                   <Routes>
                     <Route path="/signup" element={<Signup />} />
                     <Route path="/signin" element={<Signin />} />
+                    <Route path="/auth/callback" element={<GoogleCallback />} />
                     <Route path="/" element={<Root />} />
 
                     {/* Protected Routes */}

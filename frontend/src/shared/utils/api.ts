@@ -91,9 +91,11 @@ export async function updateRoutines(to_timestamp?: number): Promise<void> {
         }
 
         if (!to_timestamp) {
-            const endOfDay = new Date();
-            endOfDay.setHours(23, 59, 59, 999);
-            to_timestamp = endOfDay.getTime();
+            // Create events for the next 7 days instead of just today
+            const endOfWeek = new Date();
+            endOfWeek.setDate(endOfWeek.getDate() + 7);
+            endOfWeek.setHours(23, 59, 59, 999);
+            to_timestamp = endOfWeek.getTime();
         }
 
         //console.log('updateRoutines request made')
@@ -205,5 +207,45 @@ export const deleteEvent = async (eventId: number, deleteFuture: boolean = false
 
 export const splitEvent = async (eventId: number): Promise<Goal[]> => {
     const response = await privateRequest<ApiGoal[]>(`events/${eventId}/split`, 'POST');
-    return response.map(apiGoal => processGoalFromAPI(apiGoal));
+    return response.map(processGoalFromAPI);
+};
+
+export const getTaskEvents = async (taskId: number): Promise<{
+    task_id: number;
+    events: Goal[];
+    total_duration: number;
+    next_scheduled: Date | null;
+    last_scheduled: Date | null;
+}> => {
+    const response = await privateRequest<{
+        task_id: number;
+        events: ApiGoal[];
+        total_duration: number;
+        next_scheduled: number | null;
+        last_scheduled: number | null;
+    }>(`events/task/${taskId}`, 'GET');
+
+    return {
+        task_id: response.task_id,
+        events: response.events.map(processGoalFromAPI),
+        total_duration: response.total_duration,
+        next_scheduled: response.next_scheduled ? new Date(response.next_scheduled) : null,
+        last_scheduled: response.last_scheduled ? new Date(response.last_scheduled) : null,
+    };
+};
+
+export const updateRoutineEvent = async (
+    eventId: number,
+    newTimestamp: Date,
+    updateScope: 'single' | 'all' | 'future'
+): Promise<Goal[]> => {
+    const response = await privateRequest<ApiGoal[]>(
+        `events/${eventId}/routine-update`,
+        'PUT',
+        {
+            new_timestamp: newTimestamp.getTime(),
+            update_scope: updateScope
+        }
+    );
+    return response.map(processGoalFromAPI);
 };

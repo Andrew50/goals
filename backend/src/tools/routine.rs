@@ -108,7 +108,8 @@ pub async fn catch_up_routine(
     to_timestamp: i64, // the timestamp to update routines up to. is the end of the user timezone's day, in UTC
 ) -> Result<(), RoutineError> {
     let mut scheduled_timestamp = routine.next_timestamp.unwrap_or_else(|| {
-        calculate_next_timestamp(
+        // For new routines, calculate the first occurrence properly
+        calculate_first_occurrence(
             routine.start_timestamp.unwrap(),
             &routine.frequency.clone().unwrap_or_default(),
             routine.routine_time,
@@ -123,7 +124,7 @@ pub async fn catch_up_routine(
         );
 
         println!(
-            "Creating task from routine '{}'\nScheduled: {} UTC / {} EST\nCreating up to: {} UTC / {} EST\nCurrent time: {} UTC / {} EST\nRoutine time: {}",
+            "Creating event from routine '{}'\nScheduled: {} UTC / {} EST\nCreating up to: {} UTC / {} EST\nCurrent time: {} UTC / {} EST\nRoutine time: {}",
             routine.name,
             Utc.timestamp_millis_opt(scheduled_timestamp).unwrap(),
             Utc.timestamp_millis_opt(scheduled_timestamp).unwrap().with_timezone(&chrono_tz::America::New_York),
@@ -136,23 +137,16 @@ pub async fn catch_up_routine(
                 .map_or("None".to_string(), |t| t.to_string()),
         );
 
-        // Create child (task) goal
-        let child_goal = Goal {
+        // Create event instead of task
+        let event_goal = Goal {
             id: None,
             name: routine.name.clone(),
-            goal_type: if routine.goal_type == GoalType::Routine {
-                match routine.routine_type.as_deref() {
-                    Some("achievement") => GoalType::Achievement,
-                    _ => GoalType::Task,
-                }
-            } else {
-                GoalType::Task
-            },
+            goal_type: GoalType::Event,
             description: routine.description.clone(),
             user_id: routine.user_id,
             priority: routine.priority.clone(),
-            start_timestamp: Some(scheduled_timestamp),
-            end_timestamp: Some(next_scheduled_timestamp),
+            start_timestamp: None,
+            end_timestamp: None,
             completion_date: None,
             next_timestamp: None,
             scheduled_timestamp: Some(scheduled_timestamp),
@@ -163,25 +157,25 @@ pub async fn catch_up_routine(
             routine_time: None,
             position_x: None,
             position_y: None,
-            parent_id: None,
-            parent_type: None,
-            routine_instance_id: None,
-            is_deleted: None,
+            parent_id: Some(routine.id.unwrap()),
+            parent_type: Some("routine".to_string()),
+            routine_instance_id: Some(format!("{}-{}", routine.id.unwrap(), Utc::now().timestamp_millis())),
+            is_deleted: Some(false),
             due_date: None,
             start_date: None,
         };
-        let created_goal = child_goal.create_goal(graph).await?;
+        let created_goal = event_goal.create_goal(graph).await?;
 
-        // Create relationship between routine and child goal
-        let relationship = "MATCH (r:Goal), (c:Goal) 
-             WHERE id(r) = $routine_id AND id(c) = $child_id 
-             CREATE (r)-[:GENERATED]->(c)"
+        // Create HAS_EVENT relationship instead of GENERATED
+        let relationship = "MATCH (r:Goal), (e:Goal) 
+             WHERE id(r) = $routine_id AND id(e) = $event_id 
+             CREATE (r)-[:HAS_EVENT]->(e)"
             .to_string();
         let _ = graph
             .execute(
                 neo4rs::query(&relationship)
                     .param("routine_id", routine.id.unwrap())
-                    .param("child_id", created_goal.id.unwrap()),
+                    .param("event_id", created_goal.id.unwrap()),
             )
             .await?;
         let update = neo4rs::query(
@@ -196,6 +190,31 @@ pub async fn catch_up_routine(
     }
 
     Ok(())
+}
+
+// New function to calculate first occurrence correctly
+fn calculate_first_occurrence(start_timestamp: i64, frequency: &str, routine_time: Option<i64>) -> i64 {
+    let start_dt = Utc
+        .timestamp_millis_opt(start_timestamp)
+        .earliest()
+        .expect("Invalid timestamp");
+    
+    let routine_time_ms = routine_time.unwrap_or(0);
+    
+    // Calculate what time the routine should run today
+    let today = start_dt.date_naive();
+    let today_routine_time = set_time_of_day(
+        today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis(),
+        routine_time_ms,
+    );
+    
+    // If the routine time for today hasn't passed yet, use today
+    if today_routine_time > start_timestamp {
+        today_routine_time
+    } else {
+        // Otherwise, calculate the next occurrence
+        calculate_next_timestamp(start_timestamp, frequency, routine_time)
+    }
 }
 
 fn calculate_next_timestamp(current: i64, frequency: &str, routine_time: Option<i64>) -> i64 {
