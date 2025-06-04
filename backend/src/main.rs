@@ -1,9 +1,6 @@
 use dotenvy::dotenv;
 use neo4rs::{ConfigBuilder, Graph};
-use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 mod ai;
 mod jobs;
@@ -53,8 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Default: Start the server
-    start_server().await
+    // Default: Start the server (delegate to server/main.rs)
+    server::main::start_server().await
 }
 
 async fn run_migration(force: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -182,35 +179,4 @@ async fn create_graph_connection() -> Result<Graph, Box<dyn std::error::Error>> 
     println!("✅ Connected to Neo4j successfully!");
 
     Ok(graph)
-}
-
-async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Starting Goals server...");
-
-    let graph = create_graph_connection().await?;
-
-    // Initialize user locks for routine processing
-    let user_locks: Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>> = Arc::new(Mutex::new(HashMap::new()));
-
-    // Create router with the graph connection and user locks
-    let app = server::http_handler::create_routes(graph.clone(), user_locks.clone());
-
-    // Start background job for routine processing (optional)
-    let routine_graph = graph.clone();
-    tokio::spawn(async move {
-        // Run routine generator periodically
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
-        loop {
-            interval.tick().await;
-            jobs::routine_generator::run_routine_generator(routine_graph.clone()).await;
-        }
-    });
-
-    // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
-    println!("✅ Server running on http://0.0.0.0:3001");
-
-    axum::serve(listener, app).await?;
-
-    Ok(())
 }
