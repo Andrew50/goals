@@ -80,14 +80,49 @@ interface SmoothedDataPoint {
     smoothedScore: number;
 }
 
+// New analytics interfaces
+interface EventAnalytics {
+    duration_stats: DurationStats[];
+    priority_stats: PriorityStats[];
+    source_stats: SourceStats;
+}
+
+interface DurationStats {
+    duration_range: string;
+    completion_rate: number;
+    total_events: number;
+    completed_events: number;
+    avg_duration_minutes: number;
+}
+
+interface PriorityStats {
+    priority: string;
+    completion_rate: number;
+    total_events: number;
+    completed_events: number;
+}
+
+interface SourceStats {
+    routine_events: SourceBreakdown;
+    task_events: SourceBreakdown;
+}
+
+interface SourceBreakdown {
+    completion_rate: number;
+    total_events: number;
+    completed_events: number;
+    avg_priority_weight: number;
+}
+
 const Stats: React.FC = () => {
     const [yearStats, setYearStats] = useState<YearStats | null>(null);
     const [extendedStats, setExtendedStats] = useState<ExtendedStats | null>(null);
+    const [eventAnalytics, setEventAnalytics] = useState<EventAnalytics | null>(null);
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
     const [hoveredDay, setHoveredDay] = useState<DailyStats | null>(null);
     const [loading, setLoading] = useState(true);
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-    const [activeTab, setActiveTab] = useState<'overview' | 'periods' | 'routines' | 'rescheduling'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'periods' | 'routines' | 'rescheduling' | 'analytics'>('overview');
 
     // Routine-specific state
     const [routineSearchTerm, setRoutineSearchTerm] = useState('');
@@ -99,14 +134,16 @@ const Stats: React.FC = () => {
     const fetchStats = async () => {
         setLoading(true);
         try {
-            const [yearData, extendedData, reschedulingData] = await Promise.all([
+            const [yearData, extendedData, reschedulingData, analyticsData] = await Promise.all([
                 privateRequest<YearStats>(`stats?year=${selectedYear}`),
                 privateRequest<ExtendedStats>(`stats/extended?year=${selectedYear}`),
-                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}`)
+                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}`),
+                privateRequest<EventAnalytics>(`stats/analytics?year=${selectedYear}`)
             ]);
             setYearStats(yearData);
             setExtendedStats(extendedData);
             setReschedulingStats(reschedulingData);
+            setEventAnalytics(analyticsData);
         } catch (error) {
             console.error('Failed to fetch stats:', error);
         } finally {
@@ -287,7 +324,9 @@ const Stats: React.FC = () => {
             return;
         }
         try {
+            console.log('🔍 [FRONTEND] Searching routines with term:', searchTerm);
             const results = await privateRequest<RoutineSearchResult[]>(`stats/routines/search?q=${encodeURIComponent(searchTerm)}`);
+            console.log('🔍 [FRONTEND] Search results:', results);
             setRoutineSearchResults(results);
         } catch (error) {
             console.error('Failed to search routines:', error);
@@ -300,11 +339,13 @@ const Stats: React.FC = () => {
             return;
         }
         try {
+            console.log('🔍 [FRONTEND] Fetching routine stats for IDs:', selectedRoutineIds, 'year:', selectedYear);
             const stats = await privateRequest<RoutineStats[]>(
                 `stats/routines/stats?year=${selectedYear}`,
                 'POST',
                 { routine_ids: selectedRoutineIds }
             );
+            console.log('🔍 [FRONTEND] Routine stats response:', stats);
             setRoutineStats(stats);
         } catch (error) {
             console.error('Failed to fetch routine stats:', error);
@@ -358,6 +399,12 @@ const Stats: React.FC = () => {
                         onClick={() => setActiveTab('rescheduling')}
                     >
                         Rescheduling
+                    </button>
+                    <button
+                        className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('analytics')}
+                    >
+                        Analytics
                     </button>
                 </div>
 
@@ -854,6 +901,87 @@ const Stats: React.FC = () => {
                                                     <span className="reschedule-count">{event.reschedule_count} times</span>
                                                 </div>
                                             ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'analytics' && eventAnalytics && (
+                            <div className="analytics-stats">
+                                <div className="analytics-summary">
+                                    <div className="summary-cards">
+                                        <div className="summary-card">
+                                            <h3>Duration Stats</h3>
+                                            <div className="summary-metrics">
+                                                {eventAnalytics.duration_stats.map((stat, index) => (
+                                                    <div key={index} className="metric">
+                                                        <span className="metric-label">{stat.duration_range}:</span>
+                                                        <span className="metric-value">{(stat.completion_rate * 100).toFixed(1)}%</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="summary-card">
+                                            <h3>Priority Stats</h3>
+                                            <div className="summary-metrics">
+                                                {eventAnalytics.priority_stats.map((stat, index) => (
+                                                    <div key={index} className="metric">
+                                                        <span className="metric-label">{stat.priority}:</span>
+                                                        <span className="metric-value">{(stat.completion_rate * 100).toFixed(1)}%</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="analytics-charts">
+                                    <div className="source-stats">
+                                        <h3>Source Breakdown</h3>
+                                        <div className="source-cards">
+                                            <div className="source-card">
+                                                <h4>Routine Events</h4>
+                                                <div className="source-metrics">
+                                                    <div className="metric">
+                                                        <span className="metric-label">Completion Rate:</span>
+                                                        <span className="metric-value">{(eventAnalytics.source_stats.routine_events.completion_rate * 100).toFixed(1)}%</span>
+                                                    </div>
+                                                    <div className="metric">
+                                                        <span className="metric-label">Total Events:</span>
+                                                        <span className="metric-value">{eventAnalytics.source_stats.routine_events.total_events}</span>
+                                                    </div>
+                                                    <div className="metric">
+                                                        <span className="metric-label">Completed Events:</span>
+                                                        <span className="metric-value">{eventAnalytics.source_stats.routine_events.completed_events}</span>
+                                                    </div>
+                                                    <div className="metric">
+                                                        <span className="metric-label">Average Priority Weight:</span>
+                                                        <span className="metric-value">{eventAnalytics.source_stats.routine_events.avg_priority_weight.toFixed(2)}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="source-card">
+                                                <h4>Task Events</h4>
+                                                <div className="source-metrics">
+                                                    <div className="metric">
+                                                        <span className="metric-label">Completion Rate:</span>
+                                                        <span className="metric-value">{(eventAnalytics.source_stats.task_events.completion_rate * 100).toFixed(1)}%</span>
+                                                    </div>
+                                                    <div className="metric">
+                                                        <span className="metric-label">Total Events:</span>
+                                                        <span className="metric-value">{eventAnalytics.source_stats.task_events.total_events}</span>
+                                                    </div>
+                                                    <div className="metric">
+                                                        <span className="metric-label">Completed Events:</span>
+                                                        <span className="metric-value">{eventAnalytics.source_stats.task_events.completed_events}</span>
+                                                    </div>
+                                                    <div className="metric">
+                                                        <span className="metric-label">Average Priority Weight:</span>
+                                                        <span className="metric-value">{eventAnalytics.source_stats.task_events.avg_priority_weight.toFixed(2)}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

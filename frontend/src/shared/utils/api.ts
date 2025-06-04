@@ -202,7 +202,7 @@ export const completeEvent = async (eventId: number): Promise<{
 };
 
 export const deleteEvent = async (eventId: number, deleteFuture: boolean = false): Promise<void> => {
-    await privateRequest(`events/${eventId}?delete_future=${deleteFuture}`, 'DELETE');
+    await privateRequest(`events/${eventId}/delete?delete_future=${deleteFuture}`, 'DELETE');
 };
 
 export const splitEvent = async (eventId: number): Promise<Goal[]> => {
@@ -248,4 +248,109 @@ export const updateRoutineEvent = async (
         }
     );
     return response.map(processGoalFromAPI);
+};
+
+export const updateEvent = async (eventId: number, updates: {
+    scheduled_timestamp?: Date;
+    duration?: number;
+    completed?: boolean;
+    move_reason?: string;
+}): Promise<Goal> => {
+    const apiUpdates = {
+        ...updates,
+        scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined
+    };
+    const response = await privateRequest<ApiGoal>(`events/${eventId}/update`, 'PUT', apiUpdates);
+    return processGoalFromAPI(response);
+};
+
+export const getRescheduleOptions = async (eventId: number, lookAheadDays: number = 7): Promise<{
+    suggestions: Array<{
+        timestamp: Date;
+        reason: string;
+        score: number;
+    }>;
+}> => {
+    const response = await privateRequest<{
+        suggestions: Array<{
+            timestamp: number;
+            reason: string;
+            score: number;
+        }>;
+    }>(`events/${eventId}/reschedule-options?look_ahead_days=${lookAheadDays}`);
+
+    return {
+        suggestions: response.suggestions.map(s => ({
+            ...s,
+            timestamp: new Date(s.timestamp)
+        }))
+    };
+};
+
+export const getSmartScheduleOptions = async (options: {
+    duration: number;
+    lookAheadDays?: number;
+    preferredTimeStart?: number; // Hour of day (0-23)
+    preferredTimeEnd?: number;   // Hour of day (0-23)
+    startAfterTimestamp?: Date;  // For rescheduling - start suggestions after this time
+}): Promise<{
+    suggestions: Array<{
+        timestamp: Date;
+        reason: string;
+        score: number;
+    }>;
+}> => {
+    const requestData = {
+        duration: options.duration,
+        look_ahead_days: options.lookAheadDays,
+        preferred_time_start: options.preferredTimeStart,
+        preferred_time_end: options.preferredTimeEnd,
+        start_after_timestamp: options.startAfterTimestamp ? options.startAfterTimestamp.getTime() : undefined
+    };
+
+    const response = await privateRequest<{
+        suggestions: Array<{
+            timestamp: number;
+            reason: string;
+            score: number;
+        }>;
+    }>('events/smart-schedule', 'POST', requestData);
+
+    return {
+        suggestions: response.suggestions.map(s => ({
+            ...s,
+            timestamp: new Date(s.timestamp)
+        }))
+    };
+};
+
+// Add types for task date validation errors
+export interface TaskDateRangeViolation {
+    violation_type: string; // "before_start" or "after_end"
+    event_timestamp: number;
+    task_start: number | null;
+    task_end: number | null;
+    suggested_task_start: number | null;
+    suggested_task_end: number | null;
+}
+
+export interface TaskDateValidationError {
+    error_type: string; // "task_date_range_violation"
+    message: string;
+    violation: TaskDateRangeViolation;
+}
+
+export const expandTaskDateRange = async (options: {
+    task_id: number;
+    new_start_timestamp?: Date;
+    new_end_timestamp?: Date;
+}): Promise<Goal> => {
+    const requestData = {
+        task_id: options.task_id,
+        new_start_timestamp: options.new_start_timestamp ? options.new_start_timestamp.getTime() : undefined,
+        new_end_timestamp: options.new_end_timestamp ? options.new_end_timestamp.getTime() : undefined,
+    };
+
+    const response = await privateRequest<ApiGoal>('goals/expand-date-range', 'POST', requestData);
+    return processGoalFromAPI(response);
 };

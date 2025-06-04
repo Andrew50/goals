@@ -1,3 +1,4 @@
+use axum::extract::ws::WebSocketUpgrade;
 use axum::{
     extract::{Extension, Json, Path, Query},
     http::StatusCode,
@@ -6,13 +7,12 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use axum::extract::ws::WebSocketUpgrade;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use neo4rs::Graph;
+use oauth2::TokenResponse;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use oauth2::TokenResponse;
 
 use crate::ai::query;
 use crate::server::auth;
@@ -57,7 +57,8 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
             "/relationship/:from_id/:to_id",
             delete(handle_delete_relationship),
         )
-        .route("/:id/complete", put(handle_toggle_completion));
+        .route("/:id/complete", put(handle_toggle_completion))
+        .route("/expand-date-range", post(handle_expand_task_date_range));
 
     let event_routes = Router::new()
         .route("/", post(handle_create_event))
@@ -66,6 +67,11 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .route("/:id/complete", put(handle_complete_event))
         .route("/:id/delete", delete(handle_delete_event))
         .route("/:id/split", post(handle_split_event))
+        .route(
+            "/:id/reschedule-options",
+            get(handle_get_reschedule_options),
+        )
+        .route("/smart-schedule", post(handle_get_smart_schedule_options))
         .route("/task/:task_id", get(handle_get_task_events));
 
     let network_routes = Router::new()
@@ -91,14 +97,15 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
     let stats_routes = Router::new()
         .route("/", get(handle_get_stats_data))
         .route("/extended", get(handle_get_extended_stats))
+        .route("/analytics", get(handle_get_event_analytics))
         .route("/routines/search", get(handle_search_routines))
         .route("/routines/stats", post(handle_get_routine_stats))
         .route("/rescheduling", get(handle_get_rescheduling_stats))
         .route("/event-moves", post(handle_record_event_move));
 
     // Add migration route (should be protected or removed after migration)
-    let migration_routes = Router::new()
-        .route("/migrate-to-events", post(handle_migrate_to_events));
+    let migration_routes =
+        Router::new().route("/migrate-to-events", post(handle_migrate_to_events));
 
     // Protected routes with auth middleware
     let api_routes = Router::new()
@@ -195,11 +202,14 @@ async fn handle_google_callback(
     eprintln!("🔄 [ROUTE] Calling auth::handle_google_callback...");
 
     let result = auth::handle_google_callback(graph, code.clone(), state.clone()).await;
-    
+
     match &result {
         Ok(_) => eprintln!("✅ [ROUTE] Google OAuth callback completed successfully"),
         Err((status, response)) => {
-            eprintln!("❌ [ROUTE] Google OAuth callback failed with status: {:?}", status);
+            eprintln!(
+                "❌ [ROUTE] Google OAuth callback failed with status: {:?}",
+                status
+            );
             eprintln!("❌ [ROUTE] Error response: {:?}", response);
         }
     }
@@ -423,7 +433,7 @@ async fn handle_delete_event(
         .get("delete_future")
         .map(|v| v == "true")
         .unwrap_or(false);
-    
+
     event::delete_event_handler(graph, id, delete_future).await
 }
 
@@ -439,6 +449,24 @@ async fn handle_get_task_events(
     Path(task_id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     event::get_task_events_handler(graph, task_id).await
+}
+
+async fn handle_get_reschedule_options(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(event_id): Path<i64>,
+    Query(params): Query<HashMap<String, i32>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let look_ahead_days = params.get("look_ahead_days").copied().unwrap_or(7);
+    event::get_reschedule_options_handler(graph, user_id, event_id, look_ahead_days).await
+}
+
+async fn handle_get_smart_schedule_options(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<event::SmartScheduleRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::get_smart_schedule_options_handler(graph, user_id, request).await
 }
 
 // Network handlers
@@ -537,6 +565,15 @@ async fn handle_get_extended_stats(
     stats::get_extended_stats(graph, user_id, year).await
 }
 
+async fn handle_get_event_analytics(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, i32>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let year = params.get("year").copied();
+    stats::get_event_analytics(graph, user_id, year).await
+}
+
 async fn handle_search_routines(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -553,11 +590,12 @@ async fn handle_get_routine_stats(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").copied();
-    let routine_ids: Vec<i64> = payload.get("routine_ids")
+    let routine_ids: Vec<i64> = payload
+        .get("routine_ids")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
         .unwrap_or_default();
-    
+
     stats::get_routine_stats(graph, user_id, routine_ids, year).await
 }
 
@@ -590,6 +628,14 @@ async fn handle_migrate_to_events(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     match migration::migrate_to_events(&graph).await {
         Ok(_) => Ok((StatusCode::OK, "Migration completed successfully")),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
+}
+
+async fn handle_expand_task_date_range(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<crate::tools::goal::ExpandTaskDateRangeRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    crate::tools::goal::expand_task_date_range_handler(graph, user_id, request).await
 }
