@@ -30,6 +30,16 @@ pub struct Goal {
     pub routine_time: Option<i64>,
     pub position_x: Option<f64>,
     pub position_y: Option<f64>,
+
+    // For events only:
+    pub parent_id: Option<i64>,      // Reference to parent task/routine
+    pub parent_type: Option<String>, // "task" or "routine"
+    pub routine_instance_id: Option<String>, // For routine events
+    pub is_deleted: Option<bool>,    // Soft delete for routine events
+
+    // Modified fields for tasks:
+    pub due_date: Option<i64>,   // New for tasks
+    pub start_date: Option<i64>, // New for tasks (earliest event date)
 }
 
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
@@ -49,6 +59,12 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     routine_time: g.routine_time,
                     position_x: g.position_x,
                     position_y: g.position_y,
+                    parent_id: g.parent_id,
+                    parent_type: g.parent_type,
+                    routine_instance_id: g.routine_instance_id,
+                    is_deleted: g.is_deleted,
+                    due_date: g.due_date,
+                    start_date: g.start_date,
                     id: id(g)
                  } as g";
 
@@ -60,6 +76,7 @@ pub enum GoalType {
     Achievement,
     Routine,
     Task,
+    Event, // NEW
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum RelationshipType {
@@ -75,6 +92,7 @@ impl GoalType {
             GoalType::Achievement => "achievement",
             GoalType::Routine => "routine",
             GoalType::Task => "task",
+            GoalType::Event => "event",
         }
     }
 }
@@ -87,6 +105,7 @@ impl std::fmt::Display for GoalType {
             GoalType::Project => write!(f, "project"),
             GoalType::Directive => write!(f, "directive"),
             GoalType::Achievement => write!(f, "achievement"),
+            GoalType::Event => write!(f, "event"),
         }
     }
 }
@@ -103,6 +122,13 @@ pub struct Relationship {
 pub struct GoalUpdate {
     pub id: i64,
     pub completed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExpandTaskDateRangeRequest {
+    pub task_id: i64,
+    pub new_start_timestamp: Option<i64>,
+    pub new_end_timestamp: Option<i64>,
 }
 
 pub async fn delete_relationship_handler(
@@ -163,6 +189,12 @@ pub async fn create_goal_handler(
             "routine_time",
             "position_x",
             "position_y",
+            "parent_id",
+            "parent_type",
+            "routine_instance_id",
+            "is_deleted",
+            "due_date",
+            "start_date",
         ];
 
         let unknown_fields: Vec<String> = map
@@ -207,8 +239,17 @@ pub async fn create_goal_handler(
             }
         }
         GoalType::Task => {
+            // Duration is no longer required for tasks - it will be calculated from child events
+        }
+        GoalType::Event => {
+            if goal.parent_id.is_none() {
+                validation_errors.push("Events must have a parent task or routine");
+            }
+            if goal.scheduled_timestamp.is_none() {
+                validation_errors.push("Events must have a scheduled time");
+            }
             if goal.duration.is_none() {
-                validation_errors.push("Duration is required for task goals");
+                validation_errors.push("Events must have a duration");
             }
         }
         GoalType::Project | GoalType::Achievement => {
@@ -333,15 +374,45 @@ pub async fn update_goal_handler(
         set_clauses.push("g.position_y = $position_y");
         params.push(("position_y", y.into()));
     }
-     // Log the routine_time being sent in the update
+    if let Some(parent_id) = goal.parent_id {
+        set_clauses.push("g.parent_id = $parent_id");
+        params.push(("parent_id", parent_id.into()));
+    }
+    if let Some(parent_type) = &goal.parent_type {
+        set_clauses.push("g.parent_type = $parent_type");
+        params.push(("parent_type", parent_type.clone().into()));
+    }
+    if let Some(routine_instance_id) = &goal.routine_instance_id {
+        set_clauses.push("g.routine_instance_id = $routine_instance_id");
+        params.push(("routine_instance_id", routine_instance_id.clone().into()));
+    }
+    if let Some(is_deleted) = goal.is_deleted {
+        set_clauses.push("g.is_deleted = $is_deleted");
+        params.push(("is_deleted", is_deleted.into()));
+    }
+    if let Some(due_date) = goal.due_date {
+        set_clauses.push("g.due_date = $due_date");
+        params.push(("due_date", due_date.into()));
+    }
+    if let Some(start_date) = goal.start_date {
+        set_clauses.push("g.start_date = $start_date");
+        params.push(("start_date", start_date.into()));
+    }
+    // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
         use chrono::{TimeZone, Utc};
-        println!("[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: {} ({})",
-                 id, rt, Utc.timestamp_millis_opt(rt).unwrap());
+        println!(
+            "[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: {} ({})",
+            id,
+            rt,
+            Utc.timestamp_millis_opt(rt).unwrap()
+        );
     } else {
-         println!("[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: None", id);
+        println!(
+            "[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: None",
+            id
+        );
     }
-
 
     let query_str = format!(
         "MATCH (g:Goal) WHERE id(g) = $id SET {}",
@@ -552,14 +623,117 @@ pub async fn toggle_completion(
     }
 }
 
+pub async fn expand_task_date_range_handler(
+    graph: Graph,
+    user_id: i64,
+    request: ExpandTaskDateRangeRequest,
+) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
+    // Verify the task exists and belongs to the user
+    let verify_query = query(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         AND t.user_id = $user_id
+         AND t.goal_type = 'task'
+         RETURN t",
+    )
+    .param("task_id", request.task_id)
+    .param("user_id", user_id);
+
+    let mut result = graph
+        .execute(verify_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, "Task not found".to_string()));
+    }
+
+    // Build update query for the new date range
+    let mut set_clauses = Vec::new();
+    let mut params = vec![(
+        "task_id",
+        neo4rs::BoltType::Integer(neo4rs::BoltInteger {
+            value: request.task_id,
+        }),
+    )];
+
+    if let Some(start) = request.new_start_timestamp {
+        set_clauses.push("t.start_timestamp = $new_start");
+        params.push((
+            "new_start",
+            neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: start }),
+        ));
+    }
+
+    if let Some(end) = request.new_end_timestamp {
+        set_clauses.push("t.end_timestamp = $new_end");
+        params.push((
+            "new_end",
+            neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: end }),
+        ));
+    }
+
+    if set_clauses.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No date changes specified".to_string(),
+        ));
+    }
+
+    let update_query = format!(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         SET {}
+         RETURN t",
+        set_clauses.join(", ")
+    );
+
+    let mut query_builder = query(&update_query);
+    for (key, value) in params {
+        query_builder = query_builder.param(key, value);
+    }
+
+    let mut update_result = graph
+        .execute(query_builder)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = update_result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        let updated_task: Goal = row
+            .get("t")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok((StatusCode::OK, Json(updated_task)))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            "Task not found after update".to_string(),
+        ))
+    }
+}
+
 impl Goal {
     pub async fn create_goal(&self, graph: &Graph) -> Result<Goal, neo4rs::Error> {
         // Enhanced logging for routine_time specifically
-        println!("[goal.rs] create_goal - Attempting to create goal. Received routine_time: {:?}", self.routine_time);
+        println!(
+            "[goal.rs] create_goal - Attempting to create goal. Received routine_time: {:?}",
+            self.routine_time
+        );
         if let Some(rt) = self.routine_time {
-             // Log the UTC interpretation of the received timestamp
-             use chrono::{TimeZone, Utc};
-             println!("[goal.rs] create_goal - Received routine_time as UTC DateTime: {}", Utc.timestamp_millis_opt(rt).unwrap());
+            // Log the UTC interpretation of the received timestamp
+            use chrono::{TimeZone, Utc};
+            println!(
+                "[goal.rs] create_goal - Received routine_time as UTC DateTime: {}",
+                Utc.timestamp_millis_opt(rt).unwrap()
+            );
         }
 
         if DEBUG_PRINTS {
@@ -632,6 +806,30 @@ impl Goal {
                 "position_y",
                 self.position_y
                     .map(|v| neo4rs::BoltType::Float(neo4rs::BoltFloat { value: v })),
+            ),
+            (
+                "parent_id",
+                self.parent_id
+                    .map(|v| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: v })),
+            ),
+            (
+                "parent_type",
+                self.parent_type.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "routine_instance_id",
+                self.routine_instance_id.as_ref().map(|v| v.clone().into()),
+            ),
+            ("is_deleted", self.is_deleted.map(|v| v.into())),
+            (
+                "due_date",
+                self.due_date
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
+            (
+                "start_date",
+                self.start_date
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
             ),
         ];
 
@@ -711,9 +909,19 @@ impl Goal {
                         "Tasks cannot have children".to_string(),
                     ))
                 }
+                (GoalType::Event, _, _) => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Events cannot have children".to_string(),
+                    ))
+                }
                 (GoalType::Directive, GoalType::Achievement, _) => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Directives cannot directly connect to achievements".to_string(),
+                    ))
+                }
+                (_, GoalType::Event, _) => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Events cannot be targets of relationships".to_string(),
                     ))
                 }
                 (_, _, "QUEUE") if from_type != GoalType::Achievement => {
@@ -754,6 +962,7 @@ fn parse_goal_type(goal_type: &str) -> Result<GoalType, neo4rs::Error> {
         "achievement" => Ok(GoalType::Achievement),
         "routine" => Ok(GoalType::Routine),
         "task" => Ok(GoalType::Task),
+        "event" => Ok(GoalType::Event),
         _ => Err(neo4rs::Error::ConversionError),
     }
 }

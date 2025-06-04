@@ -29,7 +29,7 @@ services:
             context: ./frontend
             dockerfile: Dockerfile.prod
         expose:
-          - "3000"
+          - "3030"
         restart: unless-stopped
         networks:
           - prod_network

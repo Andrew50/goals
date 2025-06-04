@@ -1,12 +1,25 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
 import TaskList from './TaskList';
 import { useHistoryState } from '../../shared/hooks/useHistoryState';
 import './Calendar.css';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Typography,
+  Box,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
+  FormControl
+} from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -22,6 +35,106 @@ interface CalendarState {
     end: Date;
   };
 }
+
+interface RoutineRescheduleDialogState {
+  isOpen: boolean;
+  eventId: number | null;
+  eventName: string;
+  newTimestamp: Date | null;
+  eventInfo: any; // FullCalendar event info for reverting
+}
+
+// Task Date Range Warning Dialog Component
+interface TaskDateRangeWarningDialogProps {
+  open: boolean;
+  onClose: () => void;
+  onRevert: () => void;
+  onExpand: () => void;
+  validationError: TaskDateValidationError | null;
+  eventName: string;
+}
+
+const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
+  open,
+  onClose,
+  onRevert,
+  onExpand,
+  validationError,
+  eventName
+}) => {
+  if (!validationError) return null;
+
+  const { violation } = validationError;
+  const eventDate = new Date(violation.event_timestamp);
+  const taskStartDate = violation.task_start ? new Date(violation.task_start) : null;
+  const taskEndDate = violation.task_end ? new Date(violation.task_end) : null;
+  const suggestedStartDate = violation.suggested_task_start ? new Date(violation.suggested_task_start) : null;
+  const suggestedEndDate = violation.suggested_task_end ? new Date(violation.suggested_task_end) : null;
+
+  const formatDate = (date: Date | null) => {
+    return date ? date.toLocaleDateString() : 'Not set';
+  };
+
+  const getExpandMessage = () => {
+    if (violation.violation_type === 'before_start') {
+      return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
+    } else {
+      return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ color: 'warning.main' }}>
+        ⚠️ Event Outside Task Date Range
+      </DialogTitle>
+      <DialogContent>
+        <Typography variant="body1" sx={{ mb: 2 }}>
+          The event "{eventName}" is scheduled for <strong>{eventDate.toLocaleDateString()}</strong>,
+          which is {violation.violation_type === 'before_start' ? 'before' : 'after'} the task's date range.
+        </Typography>
+
+        <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
+          <Typography variant="body2">
+            Start: {formatDate(taskStartDate)}
+            <br />
+            End: {formatDate(taskEndDate)}
+          </Typography>
+        </Box>
+
+        <Typography variant="body2" sx={{ mb: 2 }}>
+          What would you like to do?
+        </Typography>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box>
+            <strong>Option 1: Cancel event creation</strong>
+            <br />
+            <Typography variant="body2" color="text.secondary">
+              Don't create this event and keep the task dates as they are.
+            </Typography>
+          </Box>
+          <Box>
+            <strong>Option 2: Expand task date range</strong>
+            <br />
+            <Typography variant="body2" color="text.secondary">
+              {getExpandMessage()}
+            </Typography>
+          </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onRevert} color="secondary">
+          Cancel Event
+        </Button>
+        <Button onClick={onExpand} color="primary" variant="contained">
+          Expand Task Dates
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
 
 const Calendar: React.FC = () => {
   // -----------------------------
@@ -44,10 +157,35 @@ const Calendar: React.FC = () => {
 
   const [error, setError] = useState<string | null>(null);
   const [dataLoadAttempts, setDataLoadAttempts] = useState(0);
+  const [routineRescheduleDialog, setRoutineRescheduleDialog] = useState<RoutineRescheduleDialogState>({
+    isOpen: false,
+    eventId: null,
+    eventName: '',
+    newTimestamp: null,
+    eventInfo: null
+  });
+  const [selectedUpdateScope, setSelectedUpdateScope] = useState<'single' | 'all' | 'future'>('single');
   const calendarRef = useRef<FullCalendar | null>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
   const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Task date range warning dialog state
+  const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
+    isOpen: boolean;
+    validationError: TaskDateValidationError | null;
+    eventName: string;
+    onRetry: () => void;
+    originalAction: () => Promise<void>;
+    eventInfo: any; // For reverting the FullCalendar drag operation
+  }>({
+    isOpen: false,
+    validationError: null,
+    eventName: '',
+    onRetry: () => { },
+    originalAction: async () => { },
+    eventInfo: null
+  });
 
   // Debugging mode toggles global logs, etc.
   const [debugMode] = useState(true);
@@ -252,34 +390,22 @@ const Calendar: React.FC = () => {
 
   const handleDateClick = (arg: any) => {
     const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
-    try {
-      // Use getTime() to get the timestamp representing the local time instant
 
-      const tempGoal: Goal = {
-        id: 0,
-        name: '',
-        goal_type: 'task',
-        description: '',
-        priority: 'medium',
-        // Assign the Date object directly
-        scheduled_timestamp: clickedDate,
-        // Also use the Date object if routine_time should default to the clicked time
-        routine_time: clickedDate,
-        _tz: 'user' // Keep track that this is user's local time
-      };
-      // Use a different logging method for objects to avoid premature stringification issues
-      console.log('[Calendar.tsx] handleDateClick: tempGoal before opening menu:', tempGoal);
+    // Create a new goal with the clicked date pre-populated for tasks
+    const newGoal: Goal = {
+      id: 0,
+      name: '',
+      goal_type: 'task', // Default to task
+      description: '',
+      priority: 'medium',
+      scheduled_timestamp: clickedDate, // Pre-populate scheduled date
+      duration: 60 // Default duration
+    };
 
-      if (arg.allDay) {
-        tempGoal.duration = 1440;
-      }
-
-      GoalMenu.open(tempGoal, 'create', async () => {
-        loadCalendarData();
-      });
-    } catch (error) {
-      console.error('Error handling date click:', error);
-    }
+    // Open GoalMenu in create mode
+    GoalMenu.open(newGoal, 'create', async () => {
+      loadCalendarData();
+    });
   };
 
   const handleEventClick = (info: any) => {
@@ -287,21 +413,16 @@ const Calendar: React.FC = () => {
       console.log('[DEBUG] Event clicked:', info.event.title, info.event.id);
     }
 
-    const goal = info.event.extendedProps?.goal;
-    if (goal) {
-      GoalMenu.open(goal, 'view', async () => {
-        loadCalendarData();
-      });
-      return;
-    }
+    const event = info.event.extendedProps?.goal;
+    const parent = info.event.extendedProps?.parent;
 
-    const foundEvent = state.events.find((e) => e.id === info.event.id);
-    if (foundEvent && foundEvent.goal) {
-      GoalMenu.open(foundEvent.goal, 'view', async () => {
+    if (event) {
+      // Open GoalMenu for all goal types, including events
+      // GoalMenu will handle view/edit mode and all actions internally
+      GoalMenu.open(event, 'view', async () => {
+        // This callback is called when the goal is updated/deleted/split
         loadCalendarData();
       });
-    } else {
-      console.warn('No associated goal found for event:', info.event.id);
     }
   };
 
@@ -309,8 +430,12 @@ const Calendar: React.FC = () => {
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
+      const parent = info.event.extendedProps?.parent;
+
       if (goal) {
-        GoalMenu.open(goal, 'edit', async () => {
+        // Use GoalMenu for all goal types on right-click
+        // For events, it will open in view mode by default
+        GoalMenu.open(goal, goal.goal_type === 'event' ? 'view' : 'edit', async () => {
           loadCalendarData();
         });
       }
@@ -318,7 +443,7 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventReceive = async (info: any) => {
-    try {
+    const executeEventCreation = async () => {
       const task = info.event.extendedProps?.task;
       if (!task) {
         console.error('Received event has no task data:', info);
@@ -327,86 +452,199 @@ const Calendar: React.FC = () => {
       }
 
       const goal = task.goal;
-      const isRoutine = goal.goal_type === 'routine';
-      const updates = { ...goal };
 
-      if (isRoutine) {
-        updates.routine_time = info.event.start;
+      // Handle duration based on whether it was dropped in all-day section
+      let duration: number;
+      if (info.event.allDay) {
+        // Event was dropped in all-day section - set duration to 1440 minutes (24 hours)
+        duration = 1440;
       } else {
-        updates.scheduled_timestamp = info.event.start;
+        // Event was dropped in timed section - use task's duration or default to 60 minutes
+        duration = goal.duration || 60;
       }
 
-      await updateGoal(goal.id, updates);
+      // Create an event instead of updating the task
+      await createEvent({
+        parent_id: goal.id,
+        parent_type: goal.goal_type,
+        scheduled_timestamp: info.event.start,
+        duration: duration
+      });
+
+      info.revert(); // Revert the drag since we're creating a new event
       loadCalendarData();
+    };
+
+    try {
+      await executeEventCreation();
     } catch (error) {
-      console.error('Failed to update goal:', error);
+      console.error('Failed to create event:', error);
+
+      // Check if it's a task date validation error
+      if (isTaskDateValidationError(error)) {
+        const validationError = extractValidationError(error);
+        if (validationError) {
+          const taskName = info.event.extendedProps?.task?.goal?.name || 'Unknown Task';
+          showTaskDateWarning(validationError, `${taskName} Event`, executeEventCreation, info);
+          return;
+        }
+      }
+
+      // For other errors, show generic error and revert
       info.revert();
+      setError('Failed to create event. Please try again.');
     }
   };
 
   const handleEventDrop = async (info: any) => {
-    try {
+    const executeEventMove = async () => {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
-      if (existingEvent?.goal) {
-        const goal = existingEvent.goal;
-        const isRoutine = goal.goal_type === 'routine';
-        const updates = { ...goal };
-        console.log(info.event.start,info.event.end)
-
-        if (isRoutine) {
-          updates.routine_time = info.event.start;
-        } else {
-          updates.scheduled_timestamp = info.event.start;
+      if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
+        // Check if this is a routine event
+        if (existingEvent.goal.parent_type === 'routine') {
+          // Show dialog for routine event rescheduling
+          setRoutineRescheduleDialog({
+            isOpen: true,
+            eventId: existingEvent.goal.id!,
+            eventName: existingEvent.goal.name,
+            newTimestamp: info.event.start,
+            eventInfo: info
+          });
+          return; // Don't proceed with immediate update
         }
 
-        await updateGoal(goal.id, updates);
+        // For non-routine events, proceed with normal update
+        const updates = { ...existingEvent.goal };
+        updates.scheduled_timestamp = info.event.start;
+
+        // Handle duration changes when moving between all-day and timed sections
+        if (info.event.allDay) {
+          // Event was dropped in all-day section - set duration to 1440 minutes (24 hours)
+          updates.duration = 1440;
+        } else if (existingEvent.goal.duration === 1440) {
+          // Event was moved from all-day to timed section - restore reasonable duration
+          // Use 60 minutes as default (same as GoalMenu does when unchecking "All Day")
+          updates.duration = 60;
+        }
+        // If duration is not 1440 and not moving to all-day, keep existing duration
+
+        await updateGoal(existingEvent.goal.id, updates);
+        loadCalendarData();
+      } else {
+        // Non-event goals shouldn't be draggable in the new system
+        info.revert();
       }
-      loadCalendarData();
+    };
+
+    try {
+      await executeEventMove();
     } catch (error) {
       console.error('Failed to move event:', error);
+
+      // Check if it's a task date validation error
+      if (isTaskDateValidationError(error)) {
+        const validationError = extractValidationError(error);
+        if (validationError) {
+          const eventName = info.event.title || 'Event';
+          showTaskDateWarning(validationError, eventName, executeEventMove, info);
+          return;
+        }
+      }
+
+      // For other errors, show generic error and revert
       info.revert();
+      setError('Failed to move event. Please try again.');
     }
   };
 
-  const handleEventResize = async (info: any) => {
+  const handleRoutineRescheduleConfirm = async () => {
     try {
-      const existingEvent = state.events.find((e) => e.id === info.event.id);
-      if (existingEvent?.goal) {
-        const start = info.event.start;
-        const end = info.event.end;
-        console.log(end, start)
-        console.log(typeof end)
-        const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
-
-        const oldStartTime = new Date(existingEvent.start).getTime();
-        const newStartTime = start.getTime();
-        const goal = existingEvent.goal;
-        const isRoutine = goal.goal_type === 'routine';
-
-        if (oldStartTime !== newStartTime) {
-          const updates = {
-            ...goal,
-            duration: durationInMinutes
-          };
-
-          if (isRoutine) {
-            updates.routine_time = start;
-          } else {
-            updates.scheduled_timestamp = start;
-          }
-
-          await updateGoal(goal.id, updates);
-        } else {
-          await updateGoal(goal.id, {
-            ...goal,
-            duration: durationInMinutes
-          });
-        }
+      if (!routineRescheduleDialog.eventId || !routineRescheduleDialog.newTimestamp) {
+        return;
       }
+
+      await updateRoutineEvent(
+        routineRescheduleDialog.eventId,
+        routineRescheduleDialog.newTimestamp,
+        selectedUpdateScope
+      );
+
+      // Close dialog and reload data
+      setRoutineRescheduleDialog({
+        isOpen: false,
+        eventId: null,
+        eventName: '',
+        newTimestamp: null,
+        eventInfo: null
+      });
+      setSelectedUpdateScope('single');
       loadCalendarData();
     } catch (error) {
+      console.error('Failed to update routine event:', error);
+      setError('Failed to update routine event. Please try again.');
+      // Revert the drag operation
+      if (routineRescheduleDialog.eventInfo) {
+        routineRescheduleDialog.eventInfo.revert();
+      }
+      handleRoutineRescheduleCancel();
+    }
+  };
+
+  const handleRoutineRescheduleCancel = () => {
+    // Revert the drag operation
+    if (routineRescheduleDialog.eventInfo) {
+      routineRescheduleDialog.eventInfo.revert();
+    }
+
+    setRoutineRescheduleDialog({
+      isOpen: false,
+      eventId: null,
+      eventName: '',
+      newTimestamp: null,
+      eventInfo: null
+    });
+    setSelectedUpdateScope('single');
+  };
+
+  const handleEventResize = async (info: any) => {
+    const executeEventResize = async () => {
+      const existingEvent = state.events.find((e) => e.id === info.event.id);
+      if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
+        const start = info.event.start;
+        const end = info.event.end;
+        const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
+
+        const updates = {
+          ...existingEvent.goal,
+          duration: durationInMinutes,
+          scheduled_timestamp: start
+        };
+
+        await updateGoal(existingEvent.goal.id, updates);
+        loadCalendarData();
+      } else {
+        info.revert();
+      }
+    };
+
+    try {
+      await executeEventResize();
+    } catch (error) {
       console.error('Failed to resize event:', error);
+
+      // Check if it's a task date validation error
+      if (isTaskDateValidationError(error)) {
+        const validationError = extractValidationError(error);
+        if (validationError) {
+          const eventName = info.event.title || 'Event';
+          showTaskDateWarning(validationError, eventName, executeEventResize, info);
+          return;
+        }
+      }
+
+      // For other errors, show generic error and revert
       info.revert();
+      setError('Failed to resize event. Please try again.');
     }
   };
 
@@ -434,8 +672,10 @@ const Calendar: React.FC = () => {
   // Build events array with color from the goal
   const eventsWithColors = state.events.map((evt) => {
     const goal = evt.goal;
-    const bgColor = goal ? getGoalColor(goal) || '#999' : '#999';
-    let txtColor = '#fff';
+    const parent = evt.parent;
+    // Use the event's own completion status for color (not parent's)
+    const bgColor = evt.backgroundColor || getGoalColor(goal) || '#999';
+    let txtColor = evt.textColor || '#fff';
 
     return {
       id: evt.id,
@@ -444,14 +684,116 @@ const Calendar: React.FC = () => {
       end: evt.end,
       allDay: evt.allDay,
       backgroundColor: bgColor,
-      borderColor: bgColor,
+      borderColor: evt.borderColor || bgColor,
       textColor: txtColor,
       extendedProps: {
         ...evt,
-        goal
+        goal,
+        parent
       }
     };
   });
+
+  // Helper function to check if an error is a task date validation error
+  const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
+    try {
+      if (error?.response?.data?.error_type === 'task_date_range_violation') {
+        return true;
+      }
+      if (typeof error?.response?.data === 'string') {
+        const parsed = JSON.parse(error.response.data);
+        return parsed.error_type === 'task_date_range_violation';
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  // Helper function to extract validation error from axios error
+  const extractValidationError = (error: any): TaskDateValidationError | null => {
+    try {
+      if (error?.response?.data?.error_type === 'task_date_range_violation') {
+        return error.response.data;
+      }
+      if (typeof error?.response?.data === 'string') {
+        return JSON.parse(error.response.data);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Helper function to show task date warning dialog
+  const showTaskDateWarning = (error: TaskDateValidationError, eventName: string, retryAction: () => Promise<void>, eventInfo: any) => {
+    setTaskDateWarningDialog({
+      isOpen: true,
+      validationError: error,
+      eventName,
+      onRetry: () => { },
+      originalAction: retryAction,
+      eventInfo
+    });
+  };
+
+  // Handle task date warning dialog actions
+  const handleTaskDateWarningRevert = () => {
+    // Revert the drag operation
+    if (taskDateWarningDialog.eventInfo) {
+      taskDateWarningDialog.eventInfo.revert();
+    }
+
+    setTaskDateWarningDialog({
+      isOpen: false,
+      validationError: null,
+      eventName: '',
+      onRetry: () => { },
+      originalAction: async () => { },
+      eventInfo: null
+    });
+  };
+
+  const handleTaskDateWarningExpand = async () => {
+    const { validationError, originalAction, eventInfo } = taskDateWarningDialog;
+    if (!validationError) return;
+
+    try {
+      // Expand the task date range
+      await expandTaskDateRange({
+        task_id: validationError.violation.task_start !== null || validationError.violation.task_end !== null
+          ? eventInfo?.event?.extendedProps?.task?.goal?.id
+          : eventInfo?.event?.extendedProps?.task?.goal?.id,
+        new_start_timestamp: validationError.violation.suggested_task_start
+          ? new Date(validationError.violation.suggested_task_start)
+          : undefined,
+        new_end_timestamp: validationError.violation.suggested_task_end
+          ? new Date(validationError.violation.suggested_task_end)
+          : undefined,
+      });
+
+      // Close the warning dialog
+      setTaskDateWarningDialog({
+        isOpen: false,
+        validationError: null,
+        eventName: '',
+        onRetry: () => { },
+        originalAction: async () => { },
+        eventInfo: null
+      });
+
+      // Retry the original action
+      await originalAction();
+
+    } catch (expandError) {
+      console.error('Failed to expand task date range:', expandError);
+      // Revert the drag operation
+      if (eventInfo) {
+        eventInfo.revert();
+      }
+      setError('Failed to expand task date range. Please try again.');
+    }
+  };
 
   // -----------------------------
   // Render
@@ -476,63 +818,130 @@ const Calendar: React.FC = () => {
 
   return (
     <div className="calendar-container">
-      <div className="calendar-sidebar">
-        <TaskList
-          ref={taskListRef}
-          tasks={state.tasks}
-          events={state.events}
-          onAddTask={handleAddTask}
-          onTaskUpdate={handleTaskUpdate}
-        />
+      <div className="calendar-content">
+        <div className="calendar-sidebar">
+          <TaskList
+            ref={taskListRef}
+            tasks={state.tasks}
+            events={state.events}
+            onAddTask={handleAddTask}
+            onTaskUpdate={handleTaskUpdate}
+          />
+        </div>
+        <div className="calendar-main">
+          {state.isLoading && (
+            <div className="calendar-loading-indicator">
+              <div className="loading-spinner" />
+              <span className="loading-text">Loading calendar data...</span>
+            </div>
+          )}
+          <FullCalendar
+            ref={calendarRef}
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            initialView="dayGridMonth"
+            eventDisplay="block" //supposed to add full background color but doesnt ?
+            headerToolbar={{
+              left: 'prev,next today',
+              center: 'title',
+              right: 'dayGridMonth,timeGridWeek,timeGridDay'
+            }}
+            height="100%"
+            allDaySlot={true}
+            editable={true}
+            droppable={true}
+            dropAccept=".external-event"
+            events={eventsWithColors}
+            dateClick={handleDateClick}
+            eventClick={handleEventClick}
+            eventReceive={handleEventReceive}
+            eventDrop={handleEventDrop}
+            eventResize={handleEventResize}
+            eventDidMount={handleEventDidMount}
+            eventResizableFromStart={true}
+            slotMinTime="00:00:00"
+            slotMaxTime="24:00:00"
+            nowIndicator={true}
+            dayMaxEvents={true}
+            timeZone="local"
+            lazyFetching={true}
+            datesSet={handleDatesSet}
+            slotDuration="00:30:00"
+            slotLabelInterval="01:00"
+            scrollTime="08:00:00"
+            snapDuration="00:05:00"
+            eventTimeFormat={{
+              hour: 'numeric',
+              minute: '2-digit',
+              meridiem: 'short'
+            }}
+          />
+        </div>
       </div>
-      <div className="calendar-main">
-        {state.isLoading && (
-          <div className="calendar-loading-indicator">
-            <div className="loading-spinner" />
-            <span>Loading calendar data...</span>
-          </div>
-        )}
-        <FullCalendar
-          ref={calendarRef}
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="dayGridMonth"
-          eventDisplay="block" //supposed to add full background color but doesnt ?
-          headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,timeGridWeek,timeGridDay'
-          }}
-          height="100%"
-          allDaySlot={true}
-          editable={true}
-          droppable={true}
-          dropAccept=".external-event"
-          events={eventsWithColors}
-          dateClick={handleDateClick}
-          eventClick={handleEventClick}
-          eventReceive={handleEventReceive}
-          eventDrop={handleEventDrop}
-          eventResize={handleEventResize}
-          eventDidMount={handleEventDidMount}
-          eventResizableFromStart={true}
-          slotMinTime="00:00:00"
-          slotMaxTime="24:00:00"
-          nowIndicator={true}
-          dayMaxEvents={true}
-          timeZone="local"
-          lazyFetching={true}
-          datesSet={handleDatesSet}
-          slotDuration="00:30:00"
-          slotLabelInterval="01:00"
-          scrollTime="08:00:00"
-          snapDuration="00:05:00"
-          eventTimeFormat={{
-            hour: 'numeric',
-            minute: '2-digit',
-            meridiem: 'short'
-          }}
-        />
-      </div>
+
+      {/* Routine Reschedule Dialog */}
+      <Dialog
+        open={routineRescheduleDialog.isOpen}
+        onClose={handleRoutineRescheduleCancel}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Reschedule Routine Event
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              You're rescheduling the routine event "{routineRescheduleDialog.eventName}".
+              What would you like to update?
+            </Typography>
+
+            <FormControl component="fieldset">
+              <RadioGroup
+                value={selectedUpdateScope}
+                onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
+              >
+                <FormControlLabel
+                  value="single"
+                  control={<Radio />}
+                  label="Only this occurrence"
+                />
+                <FormControlLabel
+                  value="future"
+                  control={<Radio />}
+                  label="This and all future occurrences"
+                />
+                <FormControlLabel
+                  value="all"
+                  control={<Radio />}
+                  label="All occurrences of this routine"
+                />
+              </RadioGroup>
+            </FormControl>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleRoutineRescheduleCancel}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleRoutineRescheduleConfirm}
+            color="primary"
+            variant="contained"
+          >
+            Update
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Task Date Range Warning Dialog */}
+      <TaskDateRangeWarningDialog
+        open={taskDateWarningDialog.isOpen}
+        onClose={handleTaskDateWarningRevert}
+        onRevert={handleTaskDateWarningRevert}
+        onExpand={handleTaskDateWarningExpand}
+        validationError={taskDateWarningDialog.validationError}
+        eventName={taskDateWarningDialog.eventName}
+      />
     </div>
   );
 };

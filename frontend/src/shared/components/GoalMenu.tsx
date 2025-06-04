@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, ChangeEvent, MouseEvent, KeyboardEvent } from 'react';
+import React, { useState, useEffect, useCallback, ChangeEvent, useMemo } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
 import {
     Dialog,
@@ -11,18 +11,32 @@ import {
     FormControlLabel,
     Checkbox,
     Box,
-    Typography
+    Typography,
+    Autocomplete,
+    Chip,
+    IconButton,
+    List,
+    ListItem,
+    ListItemText,
+    ListItemSecondaryAction
 } from '@mui/material';
-import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
-import { Goal, GoalType } from '../../types/goals';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, expandTaskDateRange, TaskDateValidationError } from '../utils/api';
+import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
     timestampToDisplayString
 } from '../utils/time';
-import { validateGoal } from '../utils/goalValidation'
+import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
+import SmartScheduleDialog from "./SmartScheduleDialog";
+import { getGoalColor } from '../styles/colors';
+import { goalToLocal } from '../utils/time';
+import { privateRequest } from '../utils/api';
+import Fuse from 'fuse.js';
 //let singletonInstance: { open: Function; close: Function } | null = null;
 type Mode = 'create' | 'edit' | 'view';
 
@@ -37,9 +51,102 @@ interface GoalMenuState {
     mode: Mode;
 }
 
+// Task Date Range Warning Dialog Component
+interface TaskDateRangeWarningDialogProps {
+    open: boolean;
+    onClose: () => void;
+    onRevert: () => void;
+    onExpand: () => void;
+    validationError: TaskDateValidationError | null;
+    eventName: string;
+}
+
+const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
+    open,
+    onClose,
+    onRevert,
+    onExpand,
+    validationError,
+    eventName
+}) => {
+    if (!validationError) return null;
+
+    const { violation } = validationError;
+    const eventDate = new Date(violation.event_timestamp);
+    const taskStartDate = violation.task_start ? new Date(violation.task_start) : null;
+    const taskEndDate = violation.task_end ? new Date(violation.task_end) : null;
+    const suggestedStartDate = violation.suggested_task_start ? new Date(violation.suggested_task_start) : null;
+    const suggestedEndDate = violation.suggested_task_end ? new Date(violation.suggested_task_end) : null;
+
+    const formatDate = (date: Date | null) => {
+        return date ? date.toLocaleDateString() : 'Not set';
+    };
+
+    const getExpandMessage = () => {
+        if (violation.violation_type === 'before_start') {
+            return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
+        } else {
+            return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
+        }
+    };
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle sx={{ color: 'warning.main' }}>
+                ⚠️ Event Outside Task Date Range
+            </DialogTitle>
+            <DialogContent>
+                <Typography variant="body1" sx={{ mb: 2 }}>
+                    The event "{eventName}" is scheduled for <strong>{eventDate.toLocaleDateString()}</strong>,
+                    which is {violation.violation_type === 'before_start' ? 'before' : 'after'} the task's date range.
+                </Typography>
+
+                <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
+                    <Typography variant="body2">
+                        Start: {formatDate(taskStartDate)}
+                        <br />
+                        End: {formatDate(taskEndDate)}
+                    </Typography>
+                </Box>
+
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                    What would you like to do?
+                </Typography>
+
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <Box>
+                        <strong>Option 1: Revert the change</strong>
+                        <br />
+                        <Typography variant="body2" color="text.secondary">
+                            Cancel scheduling this event and keep the task dates as they are.
+                        </Typography>
+                    </Box>
+                    <Box>
+                        <strong>Option 2: Expand task date range</strong>
+                        <br />
+                        <Typography variant="body2" color="text.secondary">
+                            {getExpandMessage()}
+                        </Typography>
+                    </Box>
+                </Box>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={onRevert} color="secondary">
+                    Revert
+                </Button>
+                <Button onClick={onExpand} color="primary" variant="contained">
+                    Expand Task Dates
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
 const GoalMenu: GoalMenuComponent = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [relationsOpen, setRelationsOpen] = useState(false);
+    const [parentGoals, setParentGoals] = useState<Goal[]>([]);
     const [state, setState] = useHistoryState<GoalMenuState>(
         {
             goal: {} as Goal,
@@ -59,6 +166,53 @@ const GoalMenu: GoalMenuComponent = () => {
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
     const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
+    const [allGoals, setAllGoals] = useState<Goal[]>([]);
+    const [selectedParent, setSelectedParent] = useState<Goal | null>(null);
+    const [parentSearchQuery, setParentSearchQuery] = useState('');
+
+    // Task events management
+    const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
+    const [totalDuration, setTotalDuration] = useState<number>(0);
+    const [showAddEvent, setShowAddEvent] = useState<boolean>(false);
+    const [newEventScheduled, setNewEventScheduled] = useState<Date>(new Date());
+    const [newEventDuration, setNewEventDuration] = useState<number>(60);
+
+    // Smart schedule dialog management
+    const [smartScheduleOpen, setSmartScheduleOpen] = useState<boolean>(false);
+    const [smartScheduleContext, setSmartScheduleContext] = useState<{
+        type: 'event' | 'new-task-event';
+        duration: number;
+        eventName?: string;
+        currentScheduledTime?: Date;
+    } | null>(null);
+
+    // Task date range warning dialog state
+    const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
+        isOpen: boolean;
+        validationError: TaskDateValidationError | null;
+        eventName: string;
+        onRetry: () => void;
+        originalAction: () => Promise<void>;
+    }>({
+        isOpen: false,
+        validationError: null,
+        eventName: '',
+        onRetry: () => { },
+        originalAction: async () => { }
+    });
+
+    // Fetch task events
+    const fetchTaskEvents = useCallback(async (taskId: number) => {
+        try {
+            const taskEventsData = await getTaskEvents(taskId);
+            setTaskEvents(taskEventsData.events);
+            setTotalDuration(taskEventsData.total_duration);
+        } catch (error) {
+            console.error('Failed to fetch task events:', error);
+            setTaskEvents([]);
+            setTotalDuration(0);
+        }
+    }, []);
 
     const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         //create copy, might need to be date.
@@ -68,7 +222,10 @@ const GoalMenu: GoalMenuComponent = () => {
             goalCopy._tz = 'user';
         }
 
-        if (initialMode === 'create' && !goalCopy.start_timestamp) {
+        // Allow events to be edited like other goal types
+        const actualMode = initialMode;
+
+        if (actualMode === 'create' && !goalCopy.start_timestamp) {
             goalCopy.start_timestamp = new Date();
         }
 
@@ -79,7 +236,7 @@ const GoalMenu: GoalMenuComponent = () => {
 
         setState({
             goal: goalCopy,
-            mode: initialMode,
+            mode: actualMode,
             error: ''
         });
         setOnSuccess(() => onSuccess);
@@ -87,9 +244,32 @@ const GoalMenu: GoalMenuComponent = () => {
             'create': 'Create New Goal',
             'edit': 'Edit Goal',
             'view': 'View Goal'
-        }[initialMode]);
+        }[actualMode]);
         setIsOpen(true);
-    }, [relationshipMode, setState]);
+
+        // If in relationship mode, set the parent
+        if (relationshipMode) {
+            // Find the parent goal from allGoals
+            const parent = allGoals.find(g => g.id === relationshipMode.parentId);
+            setSelectedParent(parent || null);
+        } else {
+            setSelectedParent(null);
+        }
+
+        // Fetch parent goals if we have a goal ID
+        if (goal.id) {
+            fetchParentGoals(goal.id);
+
+            // Fetch task events if this is a task
+            if (goal.goal_type === 'task') {
+                fetchTaskEvents(goal.id);
+            }
+        } else {
+            setParentGoals([]);
+            setTaskEvents([]);
+            setTotalDuration(0);
+        }
+    }, [relationshipMode, setState, allGoals, fetchTaskEvents]);
 
     const close = useCallback(() => {
         setIsOpen(false);
@@ -102,6 +282,16 @@ const GoalMenu: GoalMenuComponent = () => {
             setOnSuccess(undefined);
             setTitle('');
             setRelationshipMode(null);
+            setParentGoals([]);
+            setSelectedParent(null);
+            setParentSearchQuery('');
+            setTaskEvents([]);
+            setTotalDuration(0);
+            setShowAddEvent(false);
+            setNewEventScheduled(new Date());
+            setNewEventDuration(60);
+            setSmartScheduleOpen(false);
+            setSmartScheduleContext(null);
         }, 100);
     }, [setState]);
 
@@ -111,6 +301,54 @@ const GoalMenu: GoalMenuComponent = () => {
         GoalMenu.open = open;
         GoalMenu.close = close;
     }, [open, close]);
+
+    // Fetch all goals when dialog opens
+    useEffect(() => {
+        if (isOpen) {
+            privateRequest<ApiGoal[]>('list').then(res => {
+                setAllGoals(res.map(goalToLocal));
+            }).catch(error => {
+                console.error('Failed to fetch goals:', error);
+            });
+        }
+    }, [isOpen]);
+
+    // Create fuzzy search instance
+    const fuse = useMemo(() => {
+        return new Fuse(allGoals, {
+            keys: ['name', 'description'],
+            threshold: 0.3
+        });
+    }, [allGoals]);
+
+    // Get filtered parent options based on search and validation
+    const getParentOptions = useCallback(() => {
+        if (!state.goal.goal_type) return [];
+
+        // Filter out invalid parent options based on goal type
+        let validGoals = allGoals.filter(g => {
+            // Can't be parent of itself
+            if (g.id === state.goal.id) return false;
+
+            // Special handling for events - only tasks and routines can be parents
+            if (state.goal.goal_type === 'event') {
+                return g.goal_type === 'task' || g.goal_type === 'routine';
+            }
+
+            // For non-events, validate the relationship
+            const error = validateRelationship(g, state.goal, 'child');
+            return !error;
+        });
+
+        // Apply fuzzy search if there's a query
+        if (parentSearchQuery) {
+            const results = fuse.search(parentSearchQuery);
+            const resultIds = new Set(results.map(r => r.item.id));
+            validGoals = validGoals.filter(g => resultIds.has(g.id));
+        }
+
+        return validGoals.slice(0, 10); // Limit to 10 results
+    }, [allGoals, state.goal, parentSearchQuery, fuse]);
 
     const handleChange = (newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server
@@ -122,6 +360,11 @@ const GoalMenu: GoalMenuComponent = () => {
         // Set default frequency if goal type is 'routine' and frequency is undefined
         if (newGoal.goal_type === 'routine' && newGoal.frequency === undefined) {
             newGoal.frequency = '1D';
+        }
+
+        // Set default routine_type if goal type is 'routine' and routine_type is undefined
+        if (newGoal.goal_type === 'routine' && newGoal.routine_type === undefined) {
+            newGoal.routine_type = 'task';
         }
 
         // For all other changes, update the local state
@@ -137,7 +380,6 @@ const GoalMenu: GoalMenuComponent = () => {
         }
 
         // Validation checks
-
         const validationErrors = validateGoal(state.goal);
         if (validationErrors.length > 0) {
             setState({
@@ -146,17 +388,84 @@ const GoalMenu: GoalMenuComponent = () => {
             });
             return;
         }
+
+        // Validate parent relationship if selected
+        if (selectedParent && state.mode === 'create' && state.goal.goal_type !== 'event') {
+            const relationshipError = validateRelationship(selectedParent, state.goal, 'child');
+            if (relationshipError) {
+                setState({
+                    ...state,
+                    error: relationshipError
+                });
+                return;
+            }
+        }
+
+        // Special validation for events
+        if (state.goal.goal_type === 'event' && state.mode === 'create') {
+            if (!selectedParent) {
+                setState({
+                    ...state,
+                    error: 'Events must have a parent task or routine'
+                });
+                return;
+            }
+            if (selectedParent.goal_type !== 'task' && selectedParent.goal_type !== 'routine') {
+                setState({
+                    ...state,
+                    error: 'Events can only be created for tasks or routines'
+                });
+                return;
+            }
+        }
+
         try {
             let updatedGoal: Goal;
             if (state.mode === 'create') {
-                updatedGoal = await createGoal(state.goal);
+                if (state.goal.goal_type === 'event' && selectedParent) {
+                    // Use createEvent API for events
+                    updatedGoal = await createEvent({
+                        parent_id: selectedParent.id!,
+                        parent_type: selectedParent.goal_type,
+                        scheduled_timestamp: state.goal.scheduled_timestamp || new Date(),
+                        duration: state.goal.duration || 60
+                    });
+                } else {
+                    // Use createGoal for non-events
+                    updatedGoal = await createGoal(state.goal);
 
-                if (relationshipMode) {
-                    await createRelationship(
-                        relationshipMode.parentId,
-                        updatedGoal.id!,
-                        relationshipMode.type
-                    );
+                    // For tasks, create any events that were added during creation
+                    if (state.goal.goal_type === 'task' && taskEvents.length > 0) {
+                        for (const event of taskEvents) {
+                            if (event.id === 0) { // Only create events with temporary IDs
+                                try {
+                                    await createEvent({
+                                        parent_id: updatedGoal.id!,
+                                        parent_type: 'task',
+                                        scheduled_timestamp: event.scheduled_timestamp!,
+                                        duration: event.duration!
+                                    });
+                                } catch (error) {
+                                    console.error('Failed to create event for new task:', error);
+                                }
+                            }
+                        }
+                    }
+
+                    // Create parent relationship if selected (prioritize selectedParent over relationshipMode)
+                    if (selectedParent) {
+                        await createRelationship(
+                            selectedParent.id!,
+                            updatedGoal.id!,
+                            'child'
+                        );
+                    } else if (relationshipMode) {
+                        await createRelationship(
+                            relationshipMode.parentId,
+                            updatedGoal.id!,
+                            relationshipMode.type
+                        );
+                    }
                 }
             } else if (state.mode === 'edit' && state.goal.id) {
                 updatedGoal = await updateGoal(state.goal.id, state.goal);
@@ -201,7 +510,21 @@ const GoalMenu: GoalMenuComponent = () => {
             return;
         }
         try {
-            await deleteGoal(state.goal.id);
+            // Special handling for events
+            if (state.goal.goal_type === 'event') {
+                if (state.goal.parent_type === 'routine') {
+                    // For routine events, ask about deleting future occurrences
+                    const deleteFuture = window.confirm('Delete only this occurrence or this and all future occurrences?\n\nOK = This and all future\nCancel = Only this occurrence');
+                    await deleteEvent(state.goal.id, deleteFuture);
+                } else {
+                    // For regular events, just delete the single event
+                    await deleteEvent(state.goal.id, false);
+                }
+            } else {
+                // For non-events, use regular delete
+                await deleteGoal(state.goal.id);
+            }
+
             if (onSuccess) {
                 onSuccess(state.goal);
             }
@@ -260,6 +583,57 @@ const GoalMenu: GoalMenuComponent = () => {
             });
             setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
         }, 100);
+    };
+
+    const handleSplitEvent = async () => {
+        if (!state.goal.id || state.goal.goal_type !== 'event') {
+            setState({
+                ...state,
+                error: 'Can only split events'
+            });
+            return;
+        }
+
+        try {
+            const splitEvents = await splitEvent(state.goal.id);
+
+            if (onSuccess) {
+                onSuccess(state.goal);
+            }
+
+            close();
+
+            // Optionally show a success message
+            console.log(`Event split into ${splitEvents.length} parts`);
+        } catch (error) {
+            console.error('Failed to split event:', error);
+            setState({
+                ...state,
+                error: error instanceof Error ? error.message : 'Failed to split event'
+            });
+        }
+    };
+
+    // Fetch parent goals using traversal API
+    const fetchParentGoals = async (goalId: number) => {
+        try {
+            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
+            // Filter to only get parent goals (those that have a child relationship to current goal)
+            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+            const parentIds = networkData.edges
+                .filter(e => e.relationship_type === 'child' && e.to === goalId)
+                .map(e => e.from);
+
+            const parents = hierarchyResponse
+                .filter(g => parentIds.includes(g.id!))
+                .map(goalToLocal);
+
+            // Sort by hierarchy level (furthest parents first)
+            setParentGoals(parents);
+        } catch (error) {
+            console.error('Failed to fetch parent goals:', error);
+            setParentGoals([]);
+        }
     };
 
     const priorityField = isViewOnly ? (
@@ -612,8 +986,10 @@ const GoalMenu: GoalMenuComponent = () => {
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({ ...state.goal, name: e.target.value })}
                 fullWidth
                 margin="dense"
-                required
+                required={state.goal.goal_type !== 'event'}
                 disabled={isViewOnly}
+                placeholder={state.goal.goal_type === 'event' && selectedParent ? `Event: ${selectedParent.name}` : ''}
+                helperText={state.goal.goal_type === 'event' ? 'Name will be auto-generated from parent goal' : ''}
                 inputProps={{
                     spellCheck: 'false',
                     // Explicitly allow all characters
@@ -623,21 +999,41 @@ const GoalMenu: GoalMenuComponent = () => {
             <TextField
                 label="Goal Type"
                 value={state.goal.goal_type || ''}
-                onChange={(e: ChangeEvent<{ value: unknown }>) => handleChange({
-                    ...state.goal,
-                    goal_type: e.target.value as GoalType
-                })}
+                onChange={(e: ChangeEvent<{ value: unknown }>) => {
+                    const newGoalType = e.target.value as GoalType;
+                    const updates: Partial<Goal> = {
+                        goal_type: newGoalType
+                    };
+
+                    // Set defaults based on goal type
+                    if (newGoalType === 'event') {
+                        // Events need duration and scheduled timestamp
+                        if (!state.goal.duration) updates.duration = 60;
+                        if (!state.goal.scheduled_timestamp) updates.scheduled_timestamp = new Date();
+                    } else if (newGoalType === 'routine') {
+                        // Routines always have routine_type as "task" and need duration
+                        updates.routine_type = 'task';
+                        if (!state.goal.duration) updates.duration = 60;
+                        if (!state.goal.frequency) updates.frequency = '1D';
+                    }
+
+                    handleChange({
+                        ...state.goal,
+                        ...updates
+                    });
+                }}
                 select
                 fullWidth
                 margin="dense"
                 required
-                disabled={isViewOnly}
+                disabled={isViewOnly || state.goal.goal_type === 'event'}
             >
                 <MenuItem value="directive">Directive</MenuItem>
                 <MenuItem value="project">Project</MenuItem>
                 <MenuItem value="achievement">Achievement</MenuItem>
                 <MenuItem value="routine">Routine</MenuItem>
                 <MenuItem value="task">Task</MenuItem>
+                <MenuItem value="event">Event</MenuItem>
             </TextField>
             <TextField
                 label="Description"
@@ -656,61 +1052,90 @@ const GoalMenu: GoalMenuComponent = () => {
         </>
     );
 
+    // Parent selector field (only in create mode, not shown for events in view mode as they have special display)
+    const parentSelectorField = state.mode === 'create' ? (
+        <Box sx={{ mt: 2, mb: 2 }}>
+            <Autocomplete
+                value={selectedParent}
+                onChange={(event, newValue) => {
+                    setSelectedParent(newValue);
+                }}
+                inputValue={parentSearchQuery}
+                onInputChange={(event, newInputValue) => {
+                    setParentSearchQuery(newInputValue);
+                }}
+                options={getParentOptions()}
+                getOptionLabel={(option) => option.name}
+                renderOption={(props, option) => (
+                    <Box component="li" {...props}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                            <Chip
+                                label={option.goal_type}
+                                size="small"
+                                sx={{
+                                    backgroundColor: getGoalColor(option),
+                                    color: 'white',
+                                    fontSize: '0.75rem'
+                                }}
+                            />
+                            <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                                {option.name}
+                            </Typography>
+                        </Box>
+                    </Box>
+                )}
+                renderInput={(params) => (
+                    <TextField
+                        {...params}
+                        label={state.goal.goal_type === 'event' ? "Parent Goal (Required)" : "Parent Goal (Optional)"}
+                        placeholder="Search for a parent goal..."
+                        helperText={
+                            state.goal.goal_type === 'event'
+                                ? "Events must be associated with a task or routine"
+                                : "Select a parent goal to create a relationship"
+                        }
+                        required={state.goal.goal_type === 'event'}
+                        error={state.goal.goal_type === 'event' && !selectedParent}
+                    />
+                )}
+                fullWidth
+                clearOnBlur={false}
+                selectOnFocus
+                handleHomeEndKeys
+                freeSolo={false}
+            />
+        </Box>
+    ) : null;
+
     const routineFields = isViewOnly ? (
         <>
-            <Box sx={{ mb: 2 }}>
-                <strong>Routine Type:</strong> {state.goal.routine_type ? state.goal.routine_type.charAt(0).toUpperCase() + state.goal.routine_type.slice(1) : 'Not set'}
-            </Box>
-            {state.goal.routine_type === 'task' && (
-                <>
-                    {durationField}
-                    {state.goal.duration !== 1440 && (
-                        <Box sx={{ mb: 2 }}>
-                            <strong>Scheduled Time:</strong> {timestampToDisplayString(state.goal.routine_time, 'time')}
-                        </Box>
-                    )}
-                </>
+            {durationField}
+            {state.goal.duration !== 1440 && (
+                <Box sx={{ mb: 2 }}>
+                    <strong>Scheduled Time:</strong> {timestampToDisplayString(state.goal.routine_time, 'time')}
+                </Box>
             )}
         </>
     ) : (
         <>
-            <TextField
-                label="Routine Type"
-                value={state.goal.routine_type || ''}
-                onChange={(e: ChangeEvent<{ value: unknown }>) => handleChange({
-                    ...state.goal,
-                    routine_type: e.target.value as "task" | "achievement"
-                })}
-                select
-                fullWidth
-                margin="dense"
-                disabled={isViewOnly}
-            >
-                <MenuItem value="task">Task</MenuItem>
-                <MenuItem value="achievement">Achievement</MenuItem>
-            </TextField>
-            {state.goal.routine_type === 'task' && (
-                <>
-                    {durationField}
-                    {state.goal.duration !== 1440 && (
-                        <TextField
-                            label="Scheduled Time"
-                            type="time"
-                            value={timestampToInputString(state.goal.routine_time, 'time')}
-                            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                                handleChange({
-                                    ...state.goal,
-                                    routine_time: inputStringToTimestamp(e.target.value, 'time')
-                                });
-                            }}
-                            fullWidth
-                            margin="dense"
-                            InputLabelProps={{ shrink: true }}
-                            inputProps={{ step: 300 }}
-                            disabled={isViewOnly}
-                        />
-                    )}
-                </>
+            {durationField}
+            {state.goal.duration !== 1440 && (
+                <TextField
+                    label="Scheduled Time"
+                    type="time"
+                    value={timestampToInputString(state.goal.routine_time, 'time')}
+                    onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                        handleChange({
+                            ...state.goal,
+                            routine_time: inputStringToTimestamp(e.target.value, 'time')
+                        });
+                    }}
+                    fullWidth
+                    margin="dense"
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ step: 300 }}
+                    disabled={isViewOnly}
+                />
             )}
         </>
     );
@@ -745,6 +1170,136 @@ const GoalMenu: GoalMenuComponent = () => {
                     <>
                         {priorityField}
                         {dateFields}
+                        {/* Task Events Section */}
+                        <Box sx={{ mt: 2, mb: 2 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                                    Events {taskEvents.length > 0 && `(${taskEvents.length})`}
+                                </Typography>
+                                {!isViewOnly && (
+                                    <IconButton
+                                        size="small"
+                                        onClick={() => setShowAddEvent(true)}
+                                        sx={{ color: 'primary.main' }}
+                                    >
+                                        <AddIcon />
+                                    </IconButton>
+                                )}
+                            </Box>
+
+                            {/* Total Duration Display */}
+                            <Box sx={{ mb: 2 }}>
+                                <Typography variant="body2" color="text.secondary">
+                                    Total Duration: {Math.floor(totalDuration / 60)}h {totalDuration % 60}m
+                                </Typography>
+                            </Box>
+
+                            {/* Events List */}
+                            {taskEvents.length > 0 ? (
+                                <List dense>
+                                    {taskEvents.map((event, index) => (
+                                        <ListItem key={index} sx={{ px: 0 }}>
+                                            <ListItemText
+                                                primary={timestampToDisplayString(event.scheduled_timestamp)}
+                                                secondary={`Duration: ${Math.floor((event.duration || 0) / 60)}h ${(event.duration || 0) % 60}m`}
+                                            />
+                                            {!isViewOnly && (
+                                                <ListItemSecondaryAction>
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => handleRemoveEvent(index)}
+                                                        sx={{ color: 'error.main' }}
+                                                    >
+                                                        <DeleteIcon />
+                                                    </IconButton>
+                                                </ListItemSecondaryAction>
+                                            )}
+                                        </ListItem>
+                                    ))}
+                                </List>
+                            ) : (
+                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                    No events scheduled. {!isViewOnly && 'Click + to add an event.'}
+                                </Typography>
+                            )}
+
+                            {/* Add Event Form */}
+                            {showAddEvent && (
+                                <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1 }}>Add New Event</Typography>
+                                    <TextField
+                                        label="Scheduled Time"
+                                        type="datetime-local"
+                                        value={timestampToInputString(newEventScheduled, 'datetime')}
+                                        onChange={(e) => {
+                                            const newTimestamp = inputStringToTimestamp(e.target.value, 'datetime');
+                                            setNewEventScheduled(newTimestamp);
+                                        }}
+                                        fullWidth
+                                        margin="dense"
+                                        InputLabelProps={{ shrink: true }}
+                                    />
+                                    <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                                        <TextField
+                                            label="Hours"
+                                            type="number"
+                                            value={Math.floor(newEventDuration / 60)}
+                                            onChange={(e) => {
+                                                const hours = parseInt(e.target.value) || 0;
+                                                const minutes = newEventDuration % 60;
+                                                setNewEventDuration(hours * 60 + minutes);
+                                            }}
+                                            margin="dense"
+                                            inputProps={{ min: 0, step: 1 }}
+                                            sx={{ width: '50%' }}
+                                        />
+                                        <TextField
+                                            label="Minutes"
+                                            type="number"
+                                            value={newEventDuration % 60}
+                                            onChange={(e) => {
+                                                const minutes = parseInt(e.target.value) || 0;
+                                                const hours = Math.floor(newEventDuration / 60);
+                                                setNewEventDuration(hours * 60 + minutes);
+                                            }}
+                                            margin="dense"
+                                            inputProps={{ min: 0, max: 59, step: 1 }}
+                                            sx={{ width: '50%' }}
+                                        />
+                                    </Box>
+                                    <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+                                        <Button
+                                            size="small"
+                                            onClick={handleAddEvent}
+                                            variant="contained"
+                                        >
+                                            Add Event
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            onClick={() => handleSmartSchedule('new-task-event', newEventDuration, state.goal.name)}
+                                            variant="outlined"
+                                            color="secondary"
+                                        >
+                                            Smart Schedule
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            onClick={() => setShowAddEvent(false)}
+                                        >
+                                            Cancel
+                                        </Button>
+                                    </Box>
+                                </Box>
+                            )}
+                        </Box>
+                        {completedField}
+                    </>
+                );
+            case 'event':
+                // Events should display their scheduled time and duration
+                return (
+                    <>
                         {scheduleField}
                         {durationField}
                         {completedField}
@@ -762,23 +1317,166 @@ const GoalMenu: GoalMenuComponent = () => {
     };
     const handleRelations = () => { setRelationsOpen(true); };
 
-    const handleCompletionToggle = async (completed: boolean) => {
-        try {
-            const completion = await completeGoal(state.goal.id!, completed);
-            // Only update the completion status
+    const handleSmartSchedule = (type: 'event' | 'new-task-event', duration: number, eventName?: string, currentScheduledTime?: Date) => {
+        setSmartScheduleContext({ type, duration, eventName, currentScheduledTime });
+        setSmartScheduleOpen(true);
+    };
+
+    const handleSmartScheduleSuccess = (timestamp: Date) => {
+        if (!smartScheduleContext) return;
+
+        const executeScheduleUpdate = async () => {
+            if (smartScheduleContext.type === 'event') {
+                // For existing events, update their scheduled timestamp
+                if (state.goal.id && state.goal.goal_type === 'event') {
+                    const updatedEvent = await updateEvent(state.goal.id, {
+                        scheduled_timestamp: timestamp,
+                        move_reason: 'Smart scheduled'
+                    });
+                    setState({
+                        ...state,
+                        goal: updatedEvent
+                    });
+                    if (onSuccess) {
+                        onSuccess(updatedEvent);
+                    }
+                }
+            } else if (smartScheduleContext.type === 'new-task-event') {
+                // For new task events, set the timestamp and trigger the add event flow
+                setNewEventScheduled(timestamp);
+                setSmartScheduleOpen(false);
+                setSmartScheduleContext(null);
+                // Auto-trigger the add event after smart scheduling
+                setTimeout(() => {
+                    handleAddEvent();
+                }, 100);
+                return; // Don't close the dialog yet, let handleAddEvent handle it
+            }
+
+            setSmartScheduleOpen(false);
+            setSmartScheduleContext(null);
+        };
+
+        executeScheduleUpdate().catch((error: any) => {
+            console.error('Failed to smart schedule event:', error);
+
+            // Check if it's a task date validation error
+            if (isTaskDateValidationError(error)) {
+                const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
+                const eventName = smartScheduleContext.eventName || state.goal.name || 'Event';
+                showTaskDateWarning(validationError, eventName, executeScheduleUpdate);
+                return;
+            }
+
             setState({
                 ...state,
-                goal: {
-                    ...state.goal,
-                    completed: completion
-                }
+                error: 'Failed to update event schedule'
             });
+        });
+    };
 
-            if (onSuccess) {
-                onSuccess({
-                    ...state.goal,
-                    completed: completion
+    const handleSmartScheduleClose = () => {
+        setSmartScheduleOpen(false);
+        setSmartScheduleContext(null);
+    };
+
+    const handleCompletionToggle = async (completed: boolean) => {
+        try {
+            if (state.goal.goal_type === 'event') {
+                console.log('[GoalMenu] Event completion toggle - Initial state:', {
+                    id: state.goal.id,
+                    completed: state.goal.completed,
+                    newCompleted: completed
                 });
+
+                // Ensure we have a valid ID before proceeding
+                if (!state.goal.id) {
+                    setState({
+                        ...state,
+                        error: 'Cannot update event: missing event ID'
+                    });
+                    return;
+                }
+
+                // For all event completion/uncompletion, use event-specific APIs
+                if (completed) {
+                    // Completing an event - use the event completion API
+                    const response = await completeEvent(state.goal.id);
+
+                    // Update the completion status while preserving the ID
+                    setState({
+                        ...state,
+                        goal: {
+                            ...state.goal,
+                            completed: true
+                        }
+                    });
+
+                    // Check if we should prompt for task completion
+                    if (response.should_prompt_task_completion && response.parent_task_id) {
+                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
+                            // Complete the parent task
+                            await completeGoal(response.parent_task_id, true);
+                        }
+                    }
+
+                    if (onSuccess) {
+                        onSuccess({
+                            ...state.goal,
+                            completed: true
+                        });
+                    }
+                } else {
+                    // Uncompleting an event - use the event update API
+                    console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
+                    const updatedEvent = await updateEvent(state.goal.id, {
+                        completed: false
+                    });
+
+                    console.log('[GoalMenu] updateEvent response:', {
+                        id: updatedEvent.id,
+                        completed: updatedEvent.completed
+                    });
+
+                    // Ensure the ID is preserved from the original goal
+                    const safeUpdatedEvent = {
+                        ...updatedEvent,
+                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
+                    };
+
+                    console.log('[GoalMenu] Safe updated event:', {
+                        id: safeUpdatedEvent.id,
+                        completed: safeUpdatedEvent.completed
+                    });
+
+                    setState({
+                        ...state,
+                        goal: safeUpdatedEvent
+                    });
+
+                    if (onSuccess) {
+                        onSuccess(safeUpdatedEvent);
+                    }
+                }
+            } else {
+                // For all non-events, use regular completion
+                const completion = await completeGoal(state.goal.id!, completed);
+
+                // Only update the completion status
+                setState({
+                    ...state,
+                    goal: {
+                        ...state.goal,
+                        completed: completion
+                    }
+                });
+
+                if (onSuccess) {
+                    onSuccess({
+                        ...state.goal,
+                        completed: completion
+                    });
+                }
             }
         } catch (error) {
             console.error('Failed to update completion status:', error);
@@ -788,6 +1486,159 @@ const GoalMenu: GoalMenuComponent = () => {
             });
         }
     };
+
+    // Helper function to check if an error is a task date validation error
+    const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
+        try {
+            if (typeof error === 'string') {
+                const parsed = JSON.parse(error);
+                return parsed.error_type === 'task_date_range_violation';
+            }
+            return error?.error_type === 'task_date_range_violation';
+        } catch {
+            return false;
+        }
+    };
+
+    // Helper function to show task date warning dialog
+    const showTaskDateWarning = (error: TaskDateValidationError, eventName: string, retryAction: () => Promise<void>) => {
+        setTaskDateWarningDialog({
+            isOpen: true,
+            validationError: error,
+            eventName,
+            onRetry: () => { },
+            originalAction: retryAction
+        });
+    };
+
+    // Handle task date warning dialog actions
+    const handleTaskDateWarningRevert = () => {
+        setTaskDateWarningDialog({
+            isOpen: false,
+            validationError: null,
+            eventName: '',
+            onRetry: () => { },
+            originalAction: async () => { }
+        });
+        // Just close the dialog - the original action won't be retried
+    };
+
+    const handleTaskDateWarningExpand = async () => {
+        const { validationError, originalAction } = taskDateWarningDialog;
+        if (!validationError) return;
+
+        try {
+            // Expand the task date range
+            await expandTaskDateRange({
+                task_id: validationError.violation.task_start !== null || validationError.violation.task_end !== null
+                    ? (state.goal.parent_id || state.goal.id!)
+                    : state.goal.id!,
+                new_start_timestamp: validationError.violation.suggested_task_start
+                    ? new Date(validationError.violation.suggested_task_start)
+                    : undefined,
+                new_end_timestamp: validationError.violation.suggested_task_end
+                    ? new Date(validationError.violation.suggested_task_end)
+                    : undefined,
+            });
+
+            // Close the warning dialog
+            setTaskDateWarningDialog({
+                isOpen: false,
+                validationError: null,
+                eventName: '',
+                onRetry: () => { },
+                originalAction: async () => { }
+            });
+
+            // Retry the original action
+            await originalAction();
+
+        } catch (expandError) {
+            console.error('Failed to expand task date range:', expandError);
+            setState({
+                ...state,
+                error: 'Failed to expand task date range. Please try again.'
+            });
+        }
+    };
+
+    // Modify the handleAddEvent function to handle date validation errors
+    const handleAddEvent = useCallback(async () => {
+        const executeAddEvent = async () => {
+            if (!state.goal.id) {
+                // For new tasks, just add to local state
+                const newEvent: Goal = {
+                    id: 0, // Temporary ID
+                    name: state.goal.name || 'Event',
+                    goal_type: 'event',
+                    scheduled_timestamp: newEventScheduled,
+                    duration: newEventDuration,
+                    parent_id: state.goal.id,
+                    parent_type: 'task',
+                    completed: false,
+                    _tz: 'user'
+                };
+                setTaskEvents(prev => [...prev, newEvent]);
+                setTotalDuration(prev => prev + newEventDuration);
+            } else {
+                // For existing tasks, create the event via API
+                const createdEvent = await createEvent({
+                    parent_id: state.goal.id,
+                    parent_type: 'task',
+                    scheduled_timestamp: newEventScheduled,
+                    duration: newEventDuration
+                });
+                setTaskEvents(prev => [...prev, createdEvent]);
+                setTotalDuration(prev => prev + newEventDuration);
+            }
+
+            setShowAddEvent(false);
+            setNewEventScheduled(new Date());
+            setNewEventDuration(60);
+        };
+
+        try {
+            await executeAddEvent();
+        } catch (error) {
+            console.error('Failed to create event:', error);
+
+            // Check if it's a task date validation error
+            if (isTaskDateValidationError(error)) {
+                const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
+                showTaskDateWarning(validationError, `${state.goal.name} Event`, executeAddEvent);
+                return;
+            }
+
+            setState({
+                ...state,
+                error: 'Failed to create event'
+            });
+        }
+    }, [state, newEventScheduled, newEventDuration, setState]);
+
+    // Handle removing an event from the task
+    const handleRemoveEvent = useCallback(async (eventIndex: number) => {
+        const event = taskEvents[eventIndex];
+
+        if (event.id && event.id > 0) {
+            // For existing events, delete via API
+            try {
+                await deleteEvent(event.id, false);
+            } catch (error) {
+                console.error('Failed to delete event:', error);
+                setState({
+                    ...state,
+                    error: 'Failed to delete event'
+                });
+                return;
+            }
+        }
+
+        // Remove from local state
+        const removedDuration = event.duration || 0;
+        setTaskEvents(prev => prev.filter((_, index) => index !== eventIndex));
+        setTotalDuration(prev => prev - removedDuration);
+    }, [taskEvents, setState, state]);
 
     return (
         <>
@@ -810,27 +1661,141 @@ const GoalMenu: GoalMenuComponent = () => {
                             {state.error}
                         </Box>
                     )}
+                    {/* Parent Goals Display */}
+                    {parentGoals.length > 0 && (
+                        <Box sx={{ mb: 3 }}>
+                            <Typography
+                                variant="subtitle2"
+                                sx={{
+                                    mb: 1,
+                                    color: 'text.secondary',
+                                    fontSize: '0.875rem'
+                                }}
+                            >
+                                Why should I do this?
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                {parentGoals.map((parent) => (
+                                    <Box
+                                        key={parent.id}
+                                        sx={{
+                                            backgroundColor: getGoalColor(parent),
+                                            color: 'white',
+                                            padding: '6px 12px',
+                                            borderRadius: '16px',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 500,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            '&:hover': {
+                                                transform: 'translateY(-2px)',
+                                                boxShadow: 2,
+                                            }
+                                        }}
+                                        onClick={() => {
+                                            close();
+                                            setTimeout(() => {
+                                                GoalMenu.open(parent, 'view');
+                                            }, 100);
+                                        }}
+                                    >
+                                        {parent.name}
+                                    </Box>
+                                ))}
+                            </Box>
+                        </Box>
+                    )}
+                    {/* Event Parent Display */}
+                    {state.goal.goal_type === 'event' && state.goal.parent_type && state.goal.parent_id && (
+                        <Box sx={{ mb: 3 }}>
+                            <Typography
+                                variant="subtitle2"
+                                sx={{
+                                    mb: 1,
+                                    color: 'text.secondary',
+                                    fontSize: '0.875rem'
+                                }}
+                            >
+                                Event for {state.goal.parent_type}:
+                            </Typography>
+                            <Box
+                                sx={{
+                                    display: 'inline-block',
+                                    backgroundColor: (() => {
+                                        const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
+                                        return parentGoal ? getGoalColor(parentGoal) : 'action.selected';
+                                    })(),
+                                    color: (() => {
+                                        const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
+                                        return parentGoal ? 'white' : 'text.primary';
+                                    })(),
+                                    padding: '6px 12px',
+                                    borderRadius: '16px',
+                                    fontSize: '0.875rem',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    '&:hover': {
+                                        transform: 'translateY(-2px)',
+                                        boxShadow: 2,
+                                    }
+                                }}
+                                onClick={() => {
+                                    const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
+                                    if (parentGoal) {
+                                        close();
+                                        setTimeout(() => {
+                                            GoalMenu.open(parentGoal, 'view');
+                                        }, 100);
+                                    }
+                                }}
+                            >
+                                {state.goal.name?.replace(/^(Task|Routine): /, '')}
+                            </Box>
+                        </Box>
+                    )}
                     {commonFields}
+                    {parentSelectorField}
                     {renderTypeSpecificFields()}
                 </DialogContent>
                 <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
                     <Box sx={{ display: 'flex', gap: 1 }}>
                         {state.mode === 'view' && (
                             <>
-                                <Button onClick={handleCreateChild} color="secondary">
-                                    Create Child
-                                </Button>
-                                {state.goal.goal_type === 'achievement' && (
-                                    <Button onClick={handleCreateQueue} color="secondary">
-                                        Create Queue
-                                    </Button>
+                                {state.goal.goal_type !== 'event' && (
+                                    <>
+                                        <Button onClick={handleCreateChild} color="secondary">
+                                            Create Child
+                                        </Button>
+                                        {state.goal.goal_type === 'achievement' && (
+                                            <Button onClick={handleCreateQueue} color="secondary">
+                                                Create Queue
+                                            </Button>
+                                        )}
+                                        <Button onClick={handleEdit} color="primary">
+                                            Edit
+                                        </Button>
+                                        <Button onClick={handleRelations} color="secondary">
+                                            Relationships
+                                        </Button>
+                                    </>
                                 )}
-                                <Button onClick={handleEdit} color="primary">
-                                    Edit
-                                </Button>
-                                <Button onClick={handleRelations} color="secondary">
-                                    Relationships
-                                </Button>
+                                {state.goal.goal_type === 'event' && (
+                                    <>
+                                        <Button onClick={handleEdit} color="primary">
+                                            Edit
+                                        </Button>
+                                        <Button
+                                            onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
+                                            color="secondary"
+                                        >
+                                            Smart Schedule
+                                        </Button>
+                                        <Button onClick={handleSplitEvent} color="secondary">
+                                            Split Event
+                                        </Button>
+                                    </>
+                                )}
                             </>
                         )}
                         {state.mode === 'edit' && (
@@ -857,6 +1822,24 @@ const GoalMenu: GoalMenuComponent = () => {
                 </DialogActions>
             </Dialog>
             {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
+            {smartScheduleOpen && smartScheduleContext && (
+                <SmartScheduleDialog
+                    open={smartScheduleOpen}
+                    duration={smartScheduleContext.duration}
+                    eventName={smartScheduleContext.eventName}
+                    currentScheduledTime={smartScheduleContext.currentScheduledTime}
+                    onClose={handleSmartScheduleClose}
+                    onSelect={handleSmartScheduleSuccess}
+                />
+            )}
+            <TaskDateRangeWarningDialog
+                open={taskDateWarningDialog.isOpen}
+                onClose={handleTaskDateWarningRevert}
+                onRevert={handleTaskDateWarningRevert}
+                onExpand={handleTaskDateWarningExpand}
+                validationError={taskDateWarningDialog.validationError}
+                eventName={taskDateWarningDialog.eventName}
+            />
         </>
     );
 }

@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Container, Box, Paper, Typography, TextField, Button, Alert } from "@mui/material";
+import { Container, Box, Paper, Typography, TextField, Button, Alert, Divider } from "@mui/material";
 import { useAuth } from "../../shared/contexts/AuthContext";
 
-
 const Signin: React.FC = () => {
-  const { login, isAuthenticated } = useAuth();
+  const { login, googleLogin, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | React.ReactNode | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
@@ -28,9 +27,42 @@ const Signin: React.FC = () => {
     try {
       const message = await login(username, password);
       setSuccess(message);
-      navigate("/calendar");
+      navigate("/day");
     } catch (err: any) {
-      setError(err.message || "An error occurred during sign in");
+      let errorMessage = err.message || "An error occurred during sign in";
+
+      // Check for specific error messages and provide helpful guidance
+      if (errorMessage.includes("Google sign-in")) {
+        setError(
+          <div>
+            {errorMessage}
+            <br />
+            <br />
+            <Button
+              variant="outlined"
+              startIcon={<img src="https://developers.google.com/identity/images/g-logo.png" alt="Google" style={{ width: 16, height: 16 }} />}
+              onClick={handleGoogleSignin}
+              sx={{ mt: 1 }}
+            >
+              Sign in with Google instead
+            </Button>
+          </div>
+        );
+      } else {
+        setError(errorMessage);
+      }
+    }
+  };
+
+  const handleGoogleSignin = async () => {
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await googleLogin("");
+      // The googleLogin function will redirect to Google, so we won't reach here normally
+    } catch (err: any) {
+      setError(err.message || "An error occurred during Google sign in");
     }
   };
 
@@ -80,6 +112,33 @@ const Signin: React.FC = () => {
               Sign In
             </Button>
           </form>
+
+          <Divider sx={{ my: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              OR
+            </Typography>
+          </Divider>
+
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={handleGoogleSignin}
+            sx={{
+              mt: 1,
+              mb: 2,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              textTransform: 'none'
+            }}
+          >
+            <img
+              src="https://developers.google.com/identity/images/g-logo.png"
+              alt="Google logo"
+              style={{ width: 20, height: 20 }}
+            />
+            Sign in with Google
+          </Button>
         </Paper>
       </Box>
     </Container>
