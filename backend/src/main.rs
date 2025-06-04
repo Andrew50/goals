@@ -136,7 +136,7 @@ async fn create_graph_connection() -> Result<Graph, Box<dyn std::error::Error>> 
 
     println!("🔗 Connecting to Neo4j at {}...", neo4j_uri);
 
-    let config = Config::new()
+    let config = Config::default()
         .uri(&neo4j_uri)
         .user(&neo4j_user)
         .password(&neo4j_password)
