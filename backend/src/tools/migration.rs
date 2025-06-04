@@ -233,7 +233,7 @@ async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> R
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NOT NULL
-        AND NOT EXISTS((r:Goal)-[:CHILD]->(t) WHERE r.goal_type = 'routine')  // Not already migrated above
+        AND NOT EXISTS((r:Goal {goal_type: 'routine'})-[:CHILD]->(t))  // Not already migrated above
         AND coalesce(t.is_deleted, false) <> true
         WITH t,
              // Validate against task date range
@@ -285,7 +285,7 @@ async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> R
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NOT NULL
-        AND NOT EXISTS((r:Goal)-[:CHILD]->(t) WHERE r.goal_type = 'routine')
+        AND NOT EXISTS((r:Goal {goal_type: 'routine'})-[:CHILD]->(t))
         AND coalesce(t.is_deleted, false) <> true
         WITH t,
              CASE 
@@ -321,7 +321,7 @@ async fn migrate_remaining_tasks(graph: &Graph, state: &mut MigrationState) -> R
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NULL
-        AND NOT EXISTS((r:Goal)-[:CHILD]->(t) WHERE r.goal_type = 'routine')  // Not routine children
+        AND NOT EXISTS((r:Goal {goal_type: 'routine'})-[:CHILD]->(t))  // Not routine children
         AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal))  // Don't already have events
         AND coalesce(t.completed, false) <> true
         AND coalesce(t.is_deleted, false) <> true
@@ -723,7 +723,10 @@ async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
         MATCH (e:Goal)
         WHERE e.goal_type = 'event'
         AND e.parent_id IS NOT NULL
-        AND NOT EXISTS((p:Goal)-[:HAS_EVENT]->(e) WHERE id(p) = e.parent_id)
+        AND NOT EXISTS {
+            MATCH (p:Goal)-[:HAS_EVENT]->(e)
+            WHERE id(p) = e.parent_id
+        }
         AND coalesce(e.is_deleted, false) <> true
         RETURN count(e) as orphaned_events
     ";
@@ -826,7 +829,7 @@ pub async fn verify_migration_integrity(graph: &Graph) -> Result<serde_json::Val
     // Comprehensive integrity checks
     let checks = vec![
         ("scheduled_tasks_without_events", "MATCH (t:Goal) WHERE t.goal_type = 'task' AND t.scheduled_timestamp IS NOT NULL AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal)) AND coalesce(t.is_deleted, false) <> true RETURN count(t) as count"),
-        ("events_without_parents", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND e.parent_id IS NOT NULL AND NOT EXISTS((p:Goal)-[:HAS_EVENT]->(e) WHERE id(p) = e.parent_id) AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
+        ("events_without_parents", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND e.parent_id IS NOT NULL AND NOT EXISTS { MATCH (p:Goal)-[:HAS_EVENT]->(e) WHERE id(p) = e.parent_id } AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
         ("orphaned_child_relationships", "MATCH (r:Goal)-[rel:CHILD]->(t:Goal) WHERE r.goal_type = 'routine' AND t.goal_type = 'task' AND t.is_deleted = true RETURN count(rel) as count"),
         ("total_events", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
         ("total_tasks_with_events", "MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal) WHERE t.goal_type = 'task' AND e.goal_type = 'event' RETURN count(DISTINCT t) as count"),
