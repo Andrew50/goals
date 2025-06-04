@@ -1,5 +1,5 @@
 use dotenvy::dotenv;
-use neo4rs::{Config, Graph};
+use neo4rs::{ConfigBuilder, Graph};
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
@@ -136,11 +136,12 @@ async fn create_graph_connection() -> Result<Graph, Box<dyn std::error::Error>> 
 
     println!("🔗 Connecting to Neo4j at {}...", neo4j_uri);
 
-    let config = Config::default()
+    let config = ConfigBuilder::default()
         .uri(&neo4j_uri)
         .user(&neo4j_user)
         .password(&neo4j_password)
-        .db("neo4j");
+        .db("neo4j")
+        .build()?;
 
     let graph = Graph::connect(config).await?;
     println!("✅ Connected to Neo4j successfully!");
