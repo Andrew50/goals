@@ -62,3 +62,14 @@ main {
   color: #333;
   margin-bottom: 10px;
 }
+
+/* App-specific overrides and utilities */
+.App {
+  min-height: 100vh;
+  background-color: #f5f7fa;
+}
+
+/* Ensure proper spacing for content below AppBar */
+.MuiBox-root>.MuiBox-root {
+  width: 100%;
+}

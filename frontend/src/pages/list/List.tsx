@@ -1,7 +1,7 @@
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState, useMemo } from 'react';
-import { Goal, GoalType } from '../../types/goals';
+import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
@@ -22,8 +22,10 @@ const List: React.FC = () => {
     const [showFilters, setShowFilters] = useState(false);
 
     useEffect(() => {
-        privateRequest<Goal[]>('list').then(goals => {
-            setList(goals.map(goalToLocal));
+        // Expect ApiGoal[] from the API
+        privateRequest<ApiGoal[]>('list').then(apiGoals => {
+            // Now map ApiGoal[] to Goal[] using goalToLocal
+            setList(apiGoals.map(goalToLocal));
         });
     }, [refreshTrigger]);
 
@@ -318,7 +320,10 @@ const List: React.FC = () => {
                                             <td className="table-cell">{goal.description}</td>
                                             <td className="table-cell">
                                                 {goal.priority && (
-                                                    <span className="priority-badge">
+                                                    <span
+                                                        className="priority-badge"
+                                                        data-priority={goal.priority}
+                                                    >
                                                         {goal.priority}
                                                     </span>
                                                 )}

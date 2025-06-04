@@ -20,6 +20,9 @@ import GoalMenu from './shared/components/GoalMenu';
 import List from './pages/list/List';
 import Day from './pages/day/Day';
 import Query from './pages/query/Query';
+import Achievements from './pages/achievements/Achievements';
+import Stats from './pages/stats/Stats';
+import GoogleCallback from './pages/auth/GoogleCallback';
 import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 
@@ -41,6 +44,8 @@ const NavBar: React.FC = () => {
           <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
           <Button color="inherit" component={Link} to="/list">List</Button>
           <Button color="inherit" component={Link} to="/day">Day</Button>
+          <Button color="inherit" component={Link} to="/achievements">Achievements</Button>
+          <Button color="inherit" component={Link} to="/stats">Stats</Button>
           <Button color="inherit" component={Link} to="/query">Query</Button>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
@@ -84,6 +89,7 @@ const App: React.FC = () => {
                   <Routes>
                     <Route path="/signup" element={<Signup />} />
                     <Route path="/signin" element={<Signin />} />
+                    <Route path="/auth/callback" element={<GoogleCallback />} />
                     <Route path="/" element={<Root />} />
 
                     {/* Protected Routes */}
@@ -105,6 +111,16 @@ const App: React.FC = () => {
                     <Route path="/day" element={
                       <ProtectedRoute>
                         <Day />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/achievements" element={
+                      <ProtectedRoute>
+                        <Achievements />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/stats" element={
+                      <ProtectedRoute>
+                        <Stats />
                       </ProtectedRoute>
                     } />
                     <Route path="/query" element={

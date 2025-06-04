@@ -1,0 +1,106 @@
+name: E2E Tests
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'The branch, tag or SHA to checkout'
+        required: false
+        type: string
+        default: ''
+      skip_tests:
+        description: 'Parameter kept for backward compatibility - E2E tests always run'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  e2e-tests:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm i -D @types/node
+      
+      - name: Install Playwright browsers
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+      
+      - name: Install test dependencies
+        working-directory: ./frontend
+        run: npm install --save-dev jsonwebtoken @types/jsonwebtoken
+      
+      - name: Create test .env file
+        run: |
+          echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
+          echo "BACKUP_PATH=/tmp/backups" >> .env
+          echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
+          echo "REACT_APP_API_URL=http://localhost:5057" >> .env
+          echo "JWT_SECRET=test_jwt_secret" >> .env
+          echo "JWT_EXPIRATION=86400" >> .env
+      
+      - name: Start test environment
+        run: |
+          # Start the test database and backend using docker compose
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
+          
+          # Wait for services to start
+          echo "Waiting for services to start..."
+          sleep 45
+          
+          # Wait for Neo4j test database to be ready
+          echo "Waiting for Neo4j test database to be ready..."
+          for i in {1..30}; do
+            if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" &> /dev/null; then
+              echo "Neo4j test database is ready!"
+              break
+            fi
+            echo "Waiting for Neo4j test database... ($i/30)"
+            sleep 3
+          done
+          
+          # Basic healthcheck to ensure backend is up
+          curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:5057/health || echo "Backend health check failed but continuing"
+          
+          # Seed the test database with test data using the built-in cypher-shell
+          echo "Seeding test database..."
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /data/seed_test_db.sh
+      
+      - name: Run Playwright tests
+        working-directory: ./frontend
+        run: npx playwright test
+        env:
+          CI: true
+          PLAYWRIGHT_BASE_URL: http://localhost:3030
+          PLAYWRIGHT_TEST_BASE_URL: http://localhost:3030
+      
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 30
+      
+      - name: Cleanup test environment
+        if: always()
+        run: docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+      
+      - name: Mark test success
+        if: success()
+        run: |
+          echo "E2E tests passed successfully" 

@@ -6,7 +6,7 @@ services:
             dockerfile: Dockerfile.prod
         restart: unless-stopped
         expose:
-          - "5057"
+          - "5059"
         depends_on:
           - goals_db
         networks:
@@ -29,7 +29,7 @@ services:
             context: ./frontend
             dockerfile: Dockerfile.prod
         expose:
-          - "3000"
+          - "3030"
         restart: unless-stopped
         networks:
           - prod_network
