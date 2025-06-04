@@ -21,11 +21,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "migrate" => {
-                run_migration().await?;
+                let force = args.len() > 2 && args[2] == "--force";
+                run_migration(force).await?;
                 return Ok(());
             }
             "verify-migration" => {
                 verify_migration().await?;
+                return Ok(());
+            }
+            "reset-migration" => {
+                reset_migration().await?;
                 return Ok(());
             }
             "rollback-migration" => {
@@ -39,8 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => {
                 eprintln!("Unknown command: {}", args[1]);
                 eprintln!("Available commands:");
-                eprintln!("  migrate           - Run the event migration");
-                eprintln!("  verify-migration  - Verify migration integrity");
+                eprintln!("  migrate [--force]     - Run the event migration");
+                eprintln!("  verify-migration      - Verify migration integrity");
+                eprintln!("  reset-migration       - Reset migration status (for development)");
                 eprintln!("  rollback-migration <backup_file> - Rollback migration from backup");
                 std::process::exit(1);
             }
@@ -51,12 +57,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     start_server().await
 }
 
-async fn run_migration() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_migration(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Starting event migration...");
+
+    if force {
+        println!("⚠️ Force flag detected - bypassing migration status check");
+    }
 
     let graph = create_graph_connection().await?;
 
-    match tools::migration::migrate_to_events(&graph).await {
+    let result = if force {
+        tools::migration::migrate_to_events_force(&graph).await
+    } else {
+        tools::migration::migrate_to_events(&graph).await
+    };
+
+    match result {
         Ok(_) => {
             println!("✅ Migration completed successfully!");
 
@@ -125,6 +141,25 @@ async fn rollback_migration(backup_file: &str) -> Result<(), Box<dyn std::error:
     // 1. Loading the backup file
     // 2. Restoring the database state
     // 3. Verifying the rollback
+
+    Ok(())
+}
+
+async fn reset_migration() -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔄 Resetting migration status...");
+
+    let graph = create_graph_connection().await?;
+
+    match tools::migration::reset_migration_status(&graph).await {
+        Ok(_) => {
+            println!("✅ Migration status reset successfully!");
+            println!("💡 You can now run the migration again.");
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to reset migration status: {}", e);
+            std::process::exit(1);
+        }
+    }
 
     Ok(())
 }

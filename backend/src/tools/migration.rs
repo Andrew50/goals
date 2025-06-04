@@ -25,40 +25,53 @@ impl MigrationState {
 pub async fn migrate_to_events(graph: &Graph) -> Result<(), String> {
     println!("Starting migration to event-based system...");
 
+    // Check if migration has already been run
+    if check_migration_already_run(graph).await? {
+        return Err(
+            "Migration has already been completed. Use --force to override this check.".to_string(),
+        );
+    }
+
     let mut migration_state = MigrationState::new();
 
-    // Step 0: Create necessary indexes for performance FIRST
+    // Step 0: Clean up any existing events and relationships from previous migration attempts
+    cleanup_existing_events(graph).await?;
+
+    // Step 1: Create necessary indexes for performance FIRST
     create_performance_indexes(graph, &mut migration_state).await?;
 
-    // Step 1: Validate existing data before migration
+    // Step 2: Validate existing data before migration
     validate_pre_migration_data(graph).await?;
 
-    // Step 2: Migrate tasks that are children of routines to events
+    // Step 3: Migrate tasks that are children of routines to events
     migrate_routine_child_tasks(graph, &mut migration_state).await?;
 
-    // Step 3: Migrate standalone scheduled tasks to events
+    // Step 4: Migrate standalone scheduled tasks to events
     migrate_scheduled_tasks(graph, &mut migration_state).await?;
 
-    // Step 4: Migrate remaining standalone tasks to events (if they should be schedulable)
+    // Step 5: Migrate remaining standalone tasks to events (if they should be schedulable)
     migrate_remaining_tasks(graph, &mut migration_state).await?;
 
-    // Step 5: Handle existing CHILD relationships properly
+    // Step 6: Handle existing CHILD relationships properly
     migrate_existing_child_relationships(graph, &mut migration_state).await?;
 
-    // Step 6: Generate initial routine events (for future occurrences)
+    // Step 7: Generate initial routine events (for future occurrences)
     generate_routine_events(graph, &mut migration_state).await?;
 
-    // Step 7: Update relationships and clean up orphaned data
+    // Step 8: Update relationships and clean up orphaned data
     update_relationships(graph, &mut migration_state).await?;
 
-    // Step 8: Create EventMove tracking infrastructure
+    // Step 9: Create EventMove tracking infrastructure
     create_event_move_tracking(graph, &mut migration_state).await?;
 
-    // Step 9: Add bidirectional completion logic
+    // Step 10: Add bidirectional completion logic
     add_bidirectional_completion_logic(graph).await?;
 
-    // Step 10: Validate post-migration data integrity
+    // Step 11: Validate post-migration data integrity
     validate_post_migration_data(graph).await?;
+
+    // Step 12: Mark migration as completed
+    mark_migration_completed(graph).await?;
 
     println!("Migration completed successfully!");
     println!("Migration summary:");
@@ -75,6 +88,206 @@ pub async fn migrate_to_events(graph: &Graph) -> Result<(), String> {
         migration_state.created_indexes.len()
     );
 
+    Ok(())
+}
+
+// Force migration that bypasses the status check
+pub async fn migrate_to_events_force(graph: &Graph) -> Result<(), String> {
+    println!("Starting FORCED migration to event-based system...");
+    println!("⚠️ Bypassing migration status check as requested");
+
+    let mut migration_state = MigrationState::new();
+
+    // Step 0: Clean up any existing events and relationships from previous migration attempts
+    cleanup_existing_events(graph).await?;
+
+    // Step 1: Create necessary indexes for performance FIRST
+    create_performance_indexes(graph, &mut migration_state).await?;
+
+    // Step 2: Validate existing data before migration
+    validate_pre_migration_data(graph).await?;
+
+    // Step 3: Migrate tasks that are children of routines to events
+    migrate_routine_child_tasks(graph, &mut migration_state).await?;
+
+    // Step 4: Migrate standalone scheduled tasks to events
+    migrate_scheduled_tasks(graph, &mut migration_state).await?;
+
+    // Step 5: Migrate remaining standalone tasks to events (if they should be schedulable)
+    migrate_remaining_tasks(graph, &mut migration_state).await?;
+
+    // Step 6: Handle existing CHILD relationships properly
+    migrate_existing_child_relationships(graph, &mut migration_state).await?;
+
+    // Step 7: Generate initial routine events (for future occurrences)
+    generate_routine_events(graph, &mut migration_state).await?;
+
+    // Step 8: Update relationships and clean up orphaned data
+    update_relationships(graph, &mut migration_state).await?;
+
+    // Step 9: Create EventMove tracking infrastructure
+    create_event_move_tracking(graph, &mut migration_state).await?;
+
+    // Step 10: Add bidirectional completion logic
+    add_bidirectional_completion_logic(graph).await?;
+
+    // Step 11: Validate post-migration data integrity
+    validate_post_migration_data(graph).await?;
+
+    // Step 12: Mark migration as completed
+    mark_migration_completed(graph).await?;
+
+    println!("FORCED migration completed successfully!");
+    println!("Migration summary:");
+    println!(
+        "  - Created {} events",
+        migration_state.created_events.len()
+    );
+    println!(
+        "  - Modified {} tasks",
+        migration_state.modified_tasks.len()
+    );
+    println!(
+        "  - Created {} indexes",
+        migration_state.created_indexes.len()
+    );
+
+    Ok(())
+}
+
+async fn check_migration_already_run(graph: &Graph) -> Result<bool, String> {
+    println!("Checking if migration has already been run...");
+
+    let check_query = "
+        MATCH (m:MigrationStatus {migration_name: 'event_system_migration'})
+        WHERE m.completed = true
+        RETURN count(m) as migration_count, m.completed_at as completed_at
+    ";
+
+    let mut result = graph
+        .execute(query(check_query))
+        .await
+        .map_err(|e| format!("Failed to check migration status: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let migration_count: i64 = row.get("migration_count").unwrap_or(0);
+        if migration_count > 0 {
+            let completed_at: Option<i64> = row.get("completed_at").ok();
+            if let Some(timestamp) = completed_at {
+                let datetime = chrono::DateTime::from_timestamp(timestamp / 1000, 0)
+                    .unwrap_or_else(|| chrono::Utc::now());
+                println!(
+                    "Migration was already completed on: {}",
+                    datetime.format("%Y-%m-%d %H:%M:%S UTC")
+                );
+            }
+            return Ok(true);
+        }
+    }
+
+    println!("No previous migration found, proceeding...");
+    Ok(false)
+}
+
+async fn mark_migration_completed(graph: &Graph) -> Result<(), String> {
+    println!("Marking migration as completed...");
+
+    let completed_timestamp = chrono::Utc::now().timestamp_millis();
+
+    let mark_query = query(
+        "MERGE (m:MigrationStatus {migration_name: 'event_system_migration'})
+         SET m.completed = true,
+             m.completed_at = $timestamp,
+             m.version = '1.0.0'
+         RETURN m.migration_name as name",
+    )
+    .param("timestamp", completed_timestamp);
+
+    let mut result = graph
+        .execute(mark_query)
+        .await
+        .map_err(|e| format!("Failed to mark migration as completed: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let name: String = row.get("name").unwrap_or_default();
+        println!(
+            "Migration '{}' marked as completed at timestamp {}",
+            name, completed_timestamp
+        );
+    }
+
+    Ok(())
+}
+
+// Function to force reset migration status (for development/testing)
+#[allow(dead_code)]
+pub async fn reset_migration_status(graph: &Graph) -> Result<(), String> {
+    println!("Resetting migration status...");
+
+    let reset_query = "
+        MATCH (m:MigrationStatus {migration_name: 'event_system_migration'})
+        DELETE m
+        RETURN count(m) as deleted_count
+    ";
+
+    let mut result = graph
+        .execute(query(reset_query))
+        .await
+        .map_err(|e| format!("Failed to reset migration status: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let deleted_count: i64 = row.get("deleted_count").unwrap_or(0);
+        println!("Deleted {} migration status records", deleted_count);
+    }
+
+    Ok(())
+}
+
+async fn cleanup_existing_events(graph: &Graph) -> Result<(), String> {
+    println!("Cleaning up existing events from previous migration attempts...");
+
+    // Remove all existing events and their relationships, but preserve MigrationStatus nodes
+    let cleanup_query = "
+        MATCH (e:Goal {goal_type: 'event'})
+        DETACH DELETE e
+        RETURN count(e) as deleted_count
+    ";
+
+    let mut result = graph
+        .execute(query(cleanup_query))
+        .await
+        .map_err(|e| format!("Failed to cleanup existing events: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let deleted_count: i64 = row.get("deleted_count").unwrap_or(0);
+        if deleted_count > 0 {
+            println!("Cleaned up {} existing events", deleted_count);
+        }
+    }
+
+    // Also remove any orphaned HAS_EVENT relationships, but not relationships to MigrationStatus
+    let cleanup_relationships_query = "
+        MATCH ()-[r:HAS_EVENT]->()
+        DELETE r
+        RETURN count(r) as deleted_relationships
+    ";
+
+    let mut result = graph
+        .execute(query(cleanup_relationships_query))
+        .await
+        .map_err(|e| format!("Failed to cleanup HAS_EVENT relationships: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let deleted_count: i64 = row.get("deleted_relationships").unwrap_or(0);
+        if deleted_count > 0 {
+            println!(
+                "Cleaned up {} orphaned HAS_EVENT relationships",
+                deleted_count
+            );
+        }
+    }
+
+    println!("Cleanup completed (MigrationStatus preserved)");
     Ok(())
 }
 
@@ -233,7 +446,9 @@ async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> R
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NOT NULL
-        AND NOT EXISTS((r:Goal {goal_type: 'routine'})-[:CHILD]->(t))  // Not already migrated above
+        AND NOT EXISTS {
+            MATCH (r:Goal {goal_type: 'routine'})-[:CHILD]->(t)
+        }
         AND coalesce(t.is_deleted, false) <> true
         WITH t,
              // Validate against task date range
@@ -285,7 +500,9 @@ async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> R
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NOT NULL
-        AND NOT EXISTS((r:Goal {goal_type: 'routine'})-[:CHILD]->(t))
+        AND NOT EXISTS {
+            MATCH (r:Goal {goal_type: 'routine'})-[:CHILD]->(t)
+        }
         AND coalesce(t.is_deleted, false) <> true
         WITH t,
              CASE 
@@ -294,6 +511,7 @@ async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> R
                 ELSE 'valid'
              END as validation_status
         WHERE validation_status <> 'valid'
+        SET t.scheduled_timestamp = null  // Clear invalid scheduled timestamps
         RETURN count(t) as invalid_count, collect(t.name) as invalid_names
     ";
 
@@ -306,7 +524,10 @@ async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> R
         let invalid_count: i64 = row.get("invalid_count").unwrap_or(0);
         if invalid_count > 0 {
             let invalid_names: Vec<String> = row.get("invalid_names").unwrap_or_default();
-            println!("Warning: {} tasks have scheduled timestamps outside their date ranges and were not migrated: {:?}", invalid_count, invalid_names);
+            println!(
+                "Cleared scheduled timestamps for {} tasks with invalid date ranges: {:?}",
+                invalid_count, invalid_names
+            );
         }
     }
 
@@ -321,7 +542,9 @@ async fn migrate_remaining_tasks(graph: &Graph, state: &mut MigrationState) -> R
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NULL
-        AND NOT EXISTS((r:Goal {goal_type: 'routine'})-[:CHILD]->(t))  // Not routine children
+        AND NOT EXISTS {
+            MATCH (r:Goal {goal_type: 'routine'})-[:CHILD]->(t)
+        }
         AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal))  // Don't already have events
         AND coalesce(t.completed, false) <> true
         AND coalesce(t.is_deleted, false) <> true
@@ -468,7 +691,7 @@ async fn create_routine_events_in_db(
                      goal_type: 'event',
                      scheduled_timestamp: $timestamp,
                      duration: r.duration,
-                     parent_id: id(r),
+                     parent_id: $routine_id,
                      parent_type: 'routine',
                      routine_instance_id: $instance_id,
                      user_id: r.user_id,
@@ -520,7 +743,7 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
             current_time + (30 * ms_per_day)
         }
         _ => {
-            // Try to parse custom frequency like "every 2 days"
+            // Try to parse custom frequency like "every 2 days" or "1D", "2W", etc.
             if frequency.starts_with("every ") {
                 let parts: Vec<&str> = frequency.split_whitespace().collect();
                 if parts.len() >= 3 {
@@ -536,6 +759,30 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                 } else {
                     return Err(format!("Invalid frequency format: {}", frequency));
                 }
+            } else if frequency.chars().last() == Some('D') || frequency.chars().last() == Some('d')
+            {
+                // Handle formats like "1D", "2d", etc.
+                let number_str = &frequency[..frequency.len() - 1];
+                let number = number_str
+                    .parse::<i64>()
+                    .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
+                current_time + (number * ms_per_day)
+            } else if frequency.chars().last() == Some('W') || frequency.chars().last() == Some('w')
+            {
+                // Handle formats like "1W", "2w", etc.
+                let number_str = &frequency[..frequency.len() - 1];
+                let number = number_str
+                    .parse::<i64>()
+                    .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
+                current_time + (number * 7 * ms_per_day)
+            } else if frequency.chars().last() == Some('M') || frequency.chars().last() == Some('m')
+            {
+                // Handle formats like "1M", "2m", etc.
+                let number_str = &frequency[..frequency.len() - 1];
+                let number = number_str
+                    .parse::<i64>()
+                    .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
+                current_time + (number * 30 * ms_per_day) // Simplified monthly calculation
             } else {
                 return Err(format!("Unknown frequency: {}", frequency));
             }
@@ -723,12 +970,12 @@ async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
         MATCH (e:Goal)
         WHERE e.goal_type = 'event'
         AND e.parent_id IS NOT NULL
-        AND NOT EXISTS {
-            MATCH (p:Goal)-[:HAS_EVENT]->(e)
-            WHERE id(p) = e.parent_id
-        }
         AND coalesce(e.is_deleted, false) <> true
-        RETURN count(e) as orphaned_events
+        OPTIONAL MATCH (p:Goal)-[:HAS_EVENT]->(e)
+        WHERE id(p) = e.parent_id
+        WITH e, p
+        WHERE p IS NULL
+        RETURN count(e) as orphaned_events, collect(e.name)[0..5] as sample_names, collect(e.parent_id)[0..5] as sample_parent_ids
     ";
 
     let mut result = graph
@@ -739,9 +986,11 @@ async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
     if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
         let orphaned_count: i64 = row.get("orphaned_events").unwrap_or(0);
         if orphaned_count > 0 {
+            let sample_names: Vec<String> = row.get("sample_names").unwrap_or_default();
+            let sample_parent_ids: Vec<i64> = row.get("sample_parent_ids").unwrap_or_default();
             return Err(format!(
-                "Migration validation failed: {} events have invalid parent relationships",
-                orphaned_count
+                "Migration validation failed: {} events have invalid parent relationships. Sample events: {:?}, Sample parent IDs: {:?}",
+                orphaned_count, sample_names, sample_parent_ids
             ));
         }
     }
@@ -829,7 +1078,7 @@ pub async fn verify_migration_integrity(graph: &Graph) -> Result<serde_json::Val
     // Comprehensive integrity checks
     let checks = vec![
         ("scheduled_tasks_without_events", "MATCH (t:Goal) WHERE t.goal_type = 'task' AND t.scheduled_timestamp IS NOT NULL AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal)) AND coalesce(t.is_deleted, false) <> true RETURN count(t) as count"),
-        ("events_without_parents", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND e.parent_id IS NOT NULL AND NOT EXISTS { MATCH (p:Goal)-[:HAS_EVENT]->(e) WHERE id(p) = e.parent_id } AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
+        ("events_without_parents", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND e.parent_id IS NOT NULL AND NOT EXISTS { MATCH (p:Goal)-[:HAS_EVENT]->(ev:Goal) WHERE id(p) = e.parent_id AND id(ev) = id(e) } AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
         ("orphaned_child_relationships", "MATCH (r:Goal)-[rel:CHILD]->(t:Goal) WHERE r.goal_type = 'routine' AND t.goal_type = 'task' AND t.is_deleted = true RETURN count(rel) as count"),
         ("total_events", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
         ("total_tasks_with_events", "MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal) WHERE t.goal_type = 'task' AND e.goal_type = 'event' RETURN count(DISTINCT t) as count"),
