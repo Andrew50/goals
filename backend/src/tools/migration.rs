@@ -366,7 +366,7 @@ async fn migrate_remaining_tasks(graph: &Graph, state: &mut MigrationState) -> R
 
 async fn migrate_existing_child_relationships(
     graph: &Graph,
-    state: &mut MigrationState,
+    _state: &mut MigrationState,
 ) -> Result<(), String> {
     println!("Migrating existing CHILD relationships...");
 
