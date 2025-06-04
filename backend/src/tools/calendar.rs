@@ -10,9 +10,9 @@ use crate::tools::goal::{Goal, GOAL_RETURN_QUERY};
 pub struct CalendarData {
     events: Vec<Goal>,
     unscheduled_tasks: Vec<Goal>,
-    routines: Vec<Goal>,  // Keep for reference if needed
-    achievements: Vec<Goal>,  // Keep for reference if needed
-    parents: Vec<Goal>,  // Parent tasks/routines for events
+    routines: Vec<Goal>,     // Keep for reference if needed
+    achievements: Vec<Goal>, // Keep for reference if needed
+    parents: Vec<Goal>,      // Parent tasks/routines for events
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +34,7 @@ pub struct UnscheduledTask {
     description: Option<String>,
 }
 
+#[allow(dead_code)]
 async fn execute_query<T>(
     graph: &Graph,
     mut query: neo4rs::Query,
@@ -90,7 +91,7 @@ pub async fn get_calendar_data(
     let now = Utc::now();
     let start_timestamp = (now - Duration::days(30)).timestamp_millis();
     let end_timestamp = (now + Duration::days(60)).timestamp_millis();
-    
+
     // Simply fetch all events in range - no more dynamic generation
     let events_query_str = format!(
         "MATCH (g:Goal)
@@ -103,22 +104,22 @@ pub async fn get_calendar_data(
         ORDER BY g.scheduled_timestamp ASC",
         GOAL_RETURN_QUERY
     );
-    
+
     let events_query = query(&events_query_str)
         .param("user_id", user_id)
         .param("start_timestamp", start_timestamp)
         .param("end_timestamp", end_timestamp);
-    
+
     let mut events_result = graph.execute(events_query).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to fetch events: {}", e),
         )
     })?;
-    
+
     let mut events = Vec::new();
     let mut parent_ids = Vec::new();
-    
+
     while let Some(row) = events_result.next().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -131,13 +132,13 @@ pub async fn get_calendar_data(
                 format!("Error deserializing event: {}", e),
             )
         })?;
-        
+
         if let Some(parent_id) = event.parent_id {
             parent_ids.push(parent_id);
         }
         events.push(event);
     }
-    
+
     // Fetch parent goals for the events
     let parents = if !parent_ids.is_empty() {
         let parent_query_str = format!(
@@ -146,17 +147,16 @@ pub async fn get_calendar_data(
             {}",
             GOAL_RETURN_QUERY
         );
-        
-        let parent_query = query(&parent_query_str)
-            .param("parent_ids", parent_ids);
-        
+
+        let parent_query = query(&parent_query_str).param("parent_ids", parent_ids);
+
         let mut parent_result = graph.execute(parent_query).await.map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to fetch parent goals: {}", e),
             )
         })?;
-        
+
         let mut parents = Vec::new();
         while let Some(row) = parent_result.next().await.map_err(|e| {
             (
@@ -176,7 +176,7 @@ pub async fn get_calendar_data(
     } else {
         Vec::new()
     };
-    
+
     // Fetch all non-completed tasks
     let unscheduled_query_str = format!(
         "MATCH (g:Goal)
@@ -188,17 +188,16 @@ pub async fn get_calendar_data(
         ORDER BY g.priority DESC, g.name ASC",
         GOAL_RETURN_QUERY
     );
-    
-    let unscheduled_query = query(&unscheduled_query_str)
-        .param("user_id", user_id);
-    
+
+    let unscheduled_query = query(&unscheduled_query_str).param("user_id", user_id);
+
     let mut unscheduled_result = graph.execute(unscheduled_query).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to fetch unscheduled tasks: {}", e),
         )
     })?;
-    
+
     let mut unscheduled_tasks = Vec::new();
     while let Some(row) = unscheduled_result.next().await.map_err(|e| {
         (
@@ -214,7 +213,7 @@ pub async fn get_calendar_data(
         })?;
         unscheduled_tasks.push(task);
     }
-    
+
     // Optionally fetch routines for reference (if needed by UI)
     let routines_query_str = format!(
         "MATCH (g:Goal)
@@ -225,18 +224,18 @@ pub async fn get_calendar_data(
         ORDER BY g.name ASC",
         GOAL_RETURN_QUERY
     );
-    
+
     let routines_query = query(&routines_query_str)
         .param("user_id", user_id)
         .param("now", Utc::now().timestamp_millis());
-    
+
     let mut routines_result = graph.execute(routines_query).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to fetch routines: {}", e),
         )
     })?;
-    
+
     let mut routines = Vec::new();
     while let Some(row) = routines_result.next().await.map_err(|e| {
         (
@@ -252,12 +251,12 @@ pub async fn get_calendar_data(
         })?;
         routines.push(routine);
     }
-    
+
     Ok(Json(CalendarData {
         events,
         unscheduled_tasks,
         routines,
-        achievements: vec![],  // Keep empty for now, can populate if needed
+        achievements: vec![], // Keep empty for now, can populate if needed
         parents,
     }))
 }

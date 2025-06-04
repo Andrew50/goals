@@ -13,7 +13,10 @@ use crate::server::auth::Claims;
 
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, Response> {
     // Get the token either from Authorization header or query parameter for WebSocket
-    let token = get_token_from_request(&request)?;
+    let token = match get_token_from_request(&request) {
+        Ok(token) => token,
+        Err(boxed_response) => return Err(*boxed_response),
+    };
 
     // Get JWT secret from environment variables or use a default
     let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
@@ -45,7 +48,7 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
 }
 
 // Extract token from request (either from Authorization header or query parameter)
-fn get_token_from_request(request: &Request) -> Result<String, Response> {
+fn get_token_from_request(request: &Request) -> Result<String, Box<Response>> {
     // First try to get token from Authorization header
     if let Some(auth_header) = request
         .headers()
@@ -70,11 +73,13 @@ fn get_token_from_request(request: &Request) -> Result<String, Response> {
                         Ok(decoded_token) => return Ok(decoded_token.into_owned()),
                         Err(e) => {
                             error!("Failed to URL decode token from query parameter: {}", e);
-                            return Err((
-                                axum::http::StatusCode::BAD_REQUEST,
-                                "Invalid token encoding",
-                            )
-                                .into_response());
+                            return Err(Box::new(
+                                (
+                                    axum::http::StatusCode::BAD_REQUEST,
+                                    "Invalid token encoding",
+                                )
+                                    .into_response(),
+                            ));
                         }
                     }
                 }
@@ -84,5 +89,7 @@ fn get_token_from_request(request: &Request) -> Result<String, Response> {
 
     // No token found by either method
     warn!("No token found in Authorization header or query parameters");
-    Err((axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response())
+    Err(Box::new(
+        (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
+    ))
 }

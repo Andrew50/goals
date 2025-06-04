@@ -4,8 +4,8 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header, Validation};
 use neo4rs::{Graph, Query};
 use oauth2::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenResponse,
-    basic::BasicClient, reqwest::async_http_client, AuthUrl, TokenUrl,
+    basic::BasicClient, reqwest::async_http_client, AuthUrl, AuthorizationCode, ClientId,
+    ClientSecret, CsrfToken, RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -17,6 +17,7 @@ pub struct AuthPayload {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct GoogleAuthPayload {
     pub code: String,
     pub state: String,
@@ -43,6 +44,7 @@ pub struct Claims {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GoogleUserInfo {
     pub id: String,
     pub email: String,
@@ -72,10 +74,10 @@ pub struct AuthMethod {
 
 // OAuth client setup
 pub fn create_google_oauth_client() -> Result<BasicClient, String> {
-    let google_client_id = env::var("GOOGLE_CLIENT_ID")
-        .map_err(|_| "GOOGLE_CLIENT_ID must be set")?;
-    let google_client_secret = env::var("GOOGLE_CLIENT_SECRET")
-        .map_err(|_| "GOOGLE_CLIENT_SECRET must be set")?;
+    let google_client_id =
+        env::var("GOOGLE_CLIENT_ID").map_err(|_| "GOOGLE_CLIENT_ID must be set")?;
+    let google_client_secret =
+        env::var("GOOGLE_CLIENT_SECRET").map_err(|_| "GOOGLE_CLIENT_SECRET must be set")?;
     let redirect_url = env::var("GOOGLE_REDIRECT_URL")
         .unwrap_or_else(|_| "http://localhost:3030/auth/callback".to_string());
 
@@ -96,7 +98,8 @@ pub fn create_google_oauth_client() -> Result<BasicClient, String> {
 }
 
 // Generate Google OAuth authorization URL
-pub async fn generate_google_auth_url() -> Result<Json<GoogleAuthUrlResponse>, (StatusCode, Json<AuthResponse>)> {
+pub async fn generate_google_auth_url(
+) -> Result<Json<GoogleAuthUrlResponse>, (StatusCode, Json<AuthResponse>)> {
     let client = create_google_oauth_client().map_err(|e| {
         eprintln!("OAuth client creation error: {}", e);
         (
@@ -128,7 +131,10 @@ pub async fn handle_google_callback(
     state: String,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<AuthResponse>)> {
     eprintln!("🔄 Starting Google OAuth callback processing...");
-    eprintln!("📄 Received code: {}", &code[..std::cmp::min(code.len(), 50)]);
+    eprintln!(
+        "📄 Received code: {}",
+        &code[..std::cmp::min(code.len(), 50)]
+    );
     eprintln!("🔑 Received state: {}", state);
 
     let client = create_google_oauth_client().map_err(|e| {
@@ -167,7 +173,8 @@ pub async fn handle_google_callback(
 
     // Get user info from Google
     eprintln!("🔄 Fetching user info from Google...");
-    let user_info = get_google_user_info(token_result.access_token().secret()).await
+    let user_info = get_google_user_info(token_result.access_token().secret())
+        .await
         .map_err(|e| {
             eprintln!("❌ Failed to get user info: {}", e);
             (
@@ -180,11 +187,15 @@ pub async fn handle_google_callback(
             )
         })?;
 
-    eprintln!("✅ Successfully fetched user info: email={}, name={}", user_info.email, user_info.name);
+    eprintln!(
+        "✅ Successfully fetched user info: email={}, name={}",
+        user_info.email, user_info.name
+    );
 
     // Create or get user in database using improved function
     eprintln!("🔄 Creating or retrieving user in database...");
-    let user_id = improved_create_or_get_google_user(&graph, &user_info).await
+    let user_id = improved_create_or_get_google_user(&graph, &user_info)
+        .await
         .map_err(|e| {
             eprintln!("❌ Database error: {}", e);
             (
@@ -197,7 +208,10 @@ pub async fn handle_google_callback(
             )
         })?;
 
-    eprintln!("✅ Successfully created/retrieved user with ID: {}", user_id);
+    eprintln!(
+        "✅ Successfully created/retrieved user with ID: {}",
+        user_id
+    );
 
     // Create JWT token
     eprintln!("🔄 Creating JWT token...");
@@ -226,7 +240,10 @@ pub async fn handle_google_callback(
     })?;
 
     eprintln!("✅ Successfully created JWT token");
-    eprintln!("🎉 Google OAuth callback completed successfully for user: {}", user_info.email);
+    eprintln!(
+        "🎉 Google OAuth callback completed successfully for user: {}",
+        user_info.email
+    );
 
     Ok(Json(AuthResponse {
         message: "Google sign-in successful".to_string(),
@@ -257,35 +274,35 @@ pub async fn get_google_user_info(access_token: &str) -> Result<GoogleUserInfo, 
         return Err(error_msg);
     }
 
-    let user_info: GoogleUserInfo = response
-        .json()
-        .await
-        .map_err(|e| {
-            eprintln!("❌ Failed to parse Google API response: {}", e);
-            format!("Failed to parse response: {}", e)
-        })?;
+    let user_info: GoogleUserInfo = response.json().await.map_err(|e| {
+        eprintln!("❌ Failed to parse Google API response: {}", e);
+        format!("Failed to parse response: {}", e)
+    })?;
 
     eprintln!("✅ Successfully parsed user info from Google API");
     Ok(user_info)
 }
 
 // Create or get user from Google OAuth
-async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) -> Result<i64, String> {
+#[allow(dead_code)]
+async fn create_or_get_google_user(
+    graph: &Graph,
+    user_info: &GoogleUserInfo,
+) -> Result<i64, String> {
     println!("🔄 Starting Google user creation/lookup process");
     eprintln!("🔄 Checking if user exists by Google ID: {}", user_info.id);
-    
+
     // First, check if user exists by Google ID
     println!("🔍 Querying database for existing user by Google ID...");
-    let check_google_query = Query::new(
-        "MATCH (u:User {google_id: $google_id}) RETURN id(u) as user_id".to_string()
-    )
-    .param("google_id", user_info.id.clone());
+    let check_google_query =
+        Query::new("MATCH (u:User {google_id: $google_id}) RETURN id(u) as user_id".to_string())
+            .param("google_id", user_info.id.clone());
 
     let mut result = match graph.execute(check_google_query).await {
         Ok(result) => {
             println!("✅ Successfully executed Google ID lookup query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during Google ID lookup: {:?}", e);
             eprintln!("❌ Database query failed (Google ID check): {}", e);
@@ -301,7 +318,10 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
     }
 
     println!("🔍 User not found by Google ID, checking by email...");
-    eprintln!("🔄 User not found by Google ID, checking by email: {}", user_info.email);
+    eprintln!(
+        "🔄 User not found by Google ID, checking by email: {}",
+        user_info.email
+    );
 
     // Check if user exists by email (for existing users who want to link Google)
     println!("🔍 Querying database for existing user by email...");
@@ -315,7 +335,7 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
         Ok(result) => {
             println!("✅ Successfully executed email lookup query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during email lookup: {:?}", e);
             eprintln!("❌ Database query failed (email check): {}", e);
@@ -325,23 +345,25 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
 
     if let Ok(Some(record)) = result.next().await {
         let user_id: i64 = record.get("user_id").unwrap();
-        let existing_google_id: Option<String> = record.get("existing_google_id").ok();
-        let password_hash: Option<String> = record.get("password_hash").ok();
-        
+        let _existing_google_id: Option<String> = record.get("existing_google_id").ok();
+        let _password_hash: Option<String> = record.get("password_hash").ok();
+
         println!("✅ Found existing user by email: {}", user_id);
         eprintln!("✅ Found existing user by email: {}", user_id);
-        
+
         // Check if this user already has a different Google ID linked
-        if let Some(existing_id) = existing_google_id {
+        if let Some(existing_id) = _existing_google_id {
             if existing_id != user_info.id {
                 println!("⚠️  User already has a different Google account linked");
-                return Err("This email is already associated with a different Google account".to_string());
+                return Err(
+                    "This email is already associated with a different Google account".to_string(),
+                );
             } else {
                 // Same Google ID, just return the user_id
                 return Ok(user_id);
             }
         }
-        
+
         // Link Google account to existing user
         println!("🔄 Updating existing user with Google information...");
         let update_query = Query::new(
@@ -351,7 +373,8 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
                  u.display_name = COALESCE(u.display_name, $display_name),
                  u.is_email_verified = true,
                  u.updated_at = timestamp()
-             RETURN id(u) as user_id".to_string()
+             RETURN id(u) as user_id"
+                .to_string(),
         )
         .param("user_id", user_id)
         .param("google_id", user_info.id.clone())
@@ -363,7 +386,7 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
                 println!("✅ Successfully updated existing user with Google info");
                 eprintln!("✅ Successfully updated existing user with Google info");
                 return Ok(user_id);
-            },
+            }
             Err(e) => {
                 println!("❌ Failed to update existing user: {:?}", e);
                 eprintln!("❌ Failed to update existing user: {}", e);
@@ -387,7 +410,8 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
             is_email_verified: true,
             created_at: timestamp(),
             updated_at: timestamp()
-        }) RETURN id(u) as user_id".to_string()
+        }) RETURN id(u) as user_id"
+            .to_string(),
     )
     .param("email", user_info.email.clone())
     .param("google_id", user_info.id.clone())
@@ -398,7 +422,7 @@ async fn create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) ->
         Ok(result) => {
             println!("✅ Successfully executed user creation query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during user creation: {:?}", e);
             eprintln!("❌ Failed to create new user: {}", e);
@@ -427,7 +451,7 @@ pub async fn sign_up(
     password: String,
 ) -> Result<(StatusCode, Json<AuthResponse>), (StatusCode, Json<AuthResponse>)> {
     println!("🔄 Starting sign-up process for user: {}", username);
-    
+
     // Check if user already exists
     println!("🔍 Checking if user already exists in database...");
     let check_query = Query::new("MATCH (u:User {username: $username}) RETURN u".to_string())
@@ -437,7 +461,7 @@ pub async fn sign_up(
         Ok(result) => {
             println!("✅ Successfully executed user existence check query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error checking user existence: {:?}", e);
             eprintln!("Database error checking user: {:?}", e);
@@ -472,7 +496,7 @@ pub async fn sign_up(
         Ok(hash) => {
             println!("✅ Password hashed successfully");
             hash
-        },
+        }
         Err(e) => {
             println!("❌ Error hashing password: {:?}", e);
             eprintln!("Error hashing password: {:?}", e);
@@ -507,7 +531,7 @@ pub async fn sign_up(
                     username: None,
                 }),
             ))
-        },
+        }
         Err(e) => {
             println!("❌ Error creating user in database: {:?}", e);
             eprintln!("Error creating user: {:?}", e);
@@ -529,8 +553,11 @@ pub async fn enhanced_sign_in(
     username: String,
     password: String,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<AuthResponse>)> {
-    println!("🔄 Starting enhanced sign-in process for user: {}", username);
-    
+    println!(
+        "🔄 Starting enhanced sign-in process for user: {}",
+        username
+    );
+
     println!("🔍 Querying user from database...");
     let query = Query::new(
         "MATCH (u:User {username: $username}) 
@@ -546,7 +573,7 @@ pub async fn enhanced_sign_in(
         Ok(result) => {
             println!("✅ Successfully executed user lookup query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during sign-in: {:?}", e);
             return Err((
@@ -563,18 +590,18 @@ pub async fn enhanced_sign_in(
     if let Ok(Some(record)) = result.next().await {
         println!("✅ User found in database");
         let user_id: i64 = record.get("user_id").unwrap();
-        let password_hash: Option<String> = record.get("password_hash").ok();
+        let _password_hash: Option<String> = record.get("password_hash").ok();
         let google_id: Option<String> = record.get("google_id").ok();
         let display_name: Option<String> = record.get("display_name").ok();
 
         // Check if user has password authentication
-        if let Some(hash) = password_hash {
+        if let Some(hash) = _password_hash {
             println!("🔍 Verifying password...");
             let is_valid = match verify(&password, &hash) {
                 Ok(valid) => {
                     println!("✅ Password verification completed: {}", valid);
                     valid
-                },
+                }
                 Err(e) => {
                     println!("❌ Password verification error: {:?}", e);
                     return Err((
@@ -596,8 +623,8 @@ pub async fn enhanced_sign_in(
                     exp: (Utc::now() + Duration::hours(24)).timestamp() as usize,
                 };
 
-                let jwt_secret = env::var("JWT_SECRET")
-                    .unwrap_or_else(|_| "default_secret".to_string());
+                let jwt_secret =
+                    env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
 
                 let token = encode(
                     &Header::default(),
@@ -702,7 +729,9 @@ pub async fn get_user_account(graph: &Graph, user_id: i64) -> Result<UserAccount
     )
     .param("user_id", user_id);
 
-    let mut result = graph.execute(query).await
+    let mut result = graph
+        .execute(query)
+        .await
         .map_err(|e| format!("Database query failed: {}", e))?;
 
     if let Ok(Some(record)) = result.next().await {
@@ -710,14 +739,14 @@ pub async fn get_user_account(graph: &Graph, user_id: i64) -> Result<UserAccount
         let email: Option<String> = record.get("email").ok();
         let display_name: Option<String> = record.get("display_name").ok();
         let google_id: Option<String> = record.get("google_id").ok();
-        let password_hash: Option<String> = record.get("password_hash").ok();
+        let _password_hash: Option<String> = record.get("password_hash").ok();
         let created_via: Option<String> = record.get("created_via").ok();
         let is_email_verified: bool = record.get("is_email_verified").unwrap_or(false);
 
         let mut auth_methods = Vec::new();
-        
+
         // Add password auth method if exists
-        if password_hash.is_some() {
+        if _password_hash.is_some() {
             auth_methods.push(AuthMethod {
                 method_type: "password".to_string(),
                 is_primary: created_via.as_deref() != Some("google"),
@@ -725,7 +754,7 @@ pub async fn get_user_account(graph: &Graph, user_id: i64) -> Result<UserAccount
                 last_used: None,
             });
         }
-        
+
         // Add Google auth method if exists
         if google_id.is_some() {
             auth_methods.push(AuthMethod {
@@ -767,7 +796,9 @@ pub async fn link_google_account(
     .param("google_id", google_info.id.clone())
     .param("user_id", user_id);
 
-    let mut result = graph.execute(check_query).await
+    let mut result = graph
+        .execute(check_query)
+        .await
         .map_err(|e| format!("Database query failed: {}", e))?;
 
     if result.next().await.is_ok() && result.next().await.is_ok() {
@@ -792,7 +823,9 @@ pub async fn link_google_account(
     .param("google_email", google_info.email.clone())
     .param("display_name", google_info.name.clone());
 
-    graph.run(update_query).await
+    graph
+        .run(update_query)
+        .await
         .map_err(|e| format!("Failed to link Google account: {}", e))?;
 
     Ok(())
@@ -808,13 +841,17 @@ pub async fn unlink_google_account(graph: &Graph, user_id: i64) -> Result<(), St
     )
     .param("user_id", user_id);
 
-    let mut result = graph.execute(check_query).await
+    let mut result = graph
+        .execute(check_query)
+        .await
         .map_err(|e| format!("Database query failed: {}", e))?;
 
     if let Ok(Some(record)) = result.next().await {
-        let password_hash: Option<String> = record.get("password_hash").ok();
-        if password_hash.is_none() {
-            return Err("Cannot unlink Google account: no password set. Set a password first.".to_string());
+        let _password_hash: Option<String> = record.get("password_hash").ok();
+        if _password_hash.is_none() {
+            return Err(
+                "Cannot unlink Google account: no password set. Set a password first.".to_string(),
+            );
         }
     } else {
         return Err("User not found".to_string());
@@ -833,7 +870,9 @@ pub async fn unlink_google_account(graph: &Graph, user_id: i64) -> Result<(), St
     )
     .param("user_id", user_id);
 
-    graph.run(update_query).await
+    graph
+        .run(update_query)
+        .await
         .map_err(|e| format!("Failed to unlink Google account: {}", e))?;
 
     Ok(())
@@ -858,7 +897,9 @@ pub async fn set_password_for_user(
     .param("user_id", user_id)
     .param("password_hash", hashed_password);
 
-    graph.run(update_query).await
+    graph
+        .run(update_query)
+        .await
         .map_err(|e| format!("Failed to set password: {}", e))?;
 
     Ok(())
@@ -877,22 +918,24 @@ pub async fn sign_in(
 }
 
 // Improved Google user creation/lookup
-async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUserInfo) -> Result<i64, String> {
+async fn improved_create_or_get_google_user(
+    graph: &Graph,
+    user_info: &GoogleUserInfo,
+) -> Result<i64, String> {
     println!("🔄 Starting improved Google user creation/lookup process");
     eprintln!("🔄 Checking if user exists by Google ID: {}", user_info.id);
-    
+
     // First, check if user exists by Google ID
     println!("🔍 Querying database for existing user by Google ID...");
-    let check_google_query = Query::new(
-        "MATCH (u:User {google_id: $google_id}) RETURN id(u) as user_id".to_string()
-    )
-    .param("google_id", user_info.id.clone());
+    let check_google_query =
+        Query::new("MATCH (u:User {google_id: $google_id}) RETURN id(u) as user_id".to_string())
+            .param("google_id", user_info.id.clone());
 
     let mut result = match graph.execute(check_google_query).await {
         Ok(result) => {
             println!("✅ Successfully executed Google ID lookup query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during Google ID lookup: {:?}", e);
             eprintln!("❌ Database query failed (Google ID check): {}", e);
@@ -908,7 +951,10 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
     }
 
     println!("🔍 User not found by Google ID, checking by email...");
-    eprintln!("🔄 User not found by Google ID, checking by email: {}", user_info.email);
+    eprintln!(
+        "🔄 User not found by Google ID, checking by email: {}",
+        user_info.email
+    );
 
     // Check if user exists by email (for existing users who want to link Google)
     println!("🔍 Querying database for existing user by email...");
@@ -922,7 +968,7 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
         Ok(result) => {
             println!("✅ Successfully executed email lookup query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during email lookup: {:?}", e);
             eprintln!("❌ Database query failed (email check): {}", e);
@@ -932,23 +978,25 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
 
     if let Ok(Some(record)) = result.next().await {
         let user_id: i64 = record.get("user_id").unwrap();
-        let existing_google_id: Option<String> = record.get("existing_google_id").ok();
-        let password_hash: Option<String> = record.get("password_hash").ok();
-        
+        let _existing_google_id: Option<String> = record.get("existing_google_id").ok();
+        let _password_hash: Option<String> = record.get("password_hash").ok();
+
         println!("✅ Found existing user by email: {}", user_id);
         eprintln!("✅ Found existing user by email: {}", user_id);
-        
+
         // Check if this user already has a different Google ID linked
-        if let Some(existing_id) = existing_google_id {
+        if let Some(existing_id) = _existing_google_id {
             if existing_id != user_info.id {
                 println!("⚠️  User already has a different Google account linked");
-                return Err("This email is already associated with a different Google account".to_string());
+                return Err(
+                    "This email is already associated with a different Google account".to_string(),
+                );
             } else {
                 // Same Google ID, just return the user_id
                 return Ok(user_id);
             }
         }
-        
+
         // Link Google account to existing user
         println!("🔄 Updating existing user with Google information...");
         let update_query = Query::new(
@@ -958,7 +1006,8 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
                  u.display_name = COALESCE(u.display_name, $display_name),
                  u.is_email_verified = true,
                  u.updated_at = timestamp()
-             RETURN id(u) as user_id".to_string()
+             RETURN id(u) as user_id"
+                .to_string(),
         )
         .param("user_id", user_id)
         .param("google_id", user_info.id.clone())
@@ -970,7 +1019,7 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
                 println!("✅ Successfully updated existing user with Google info");
                 eprintln!("✅ Successfully updated existing user with Google info");
                 return Ok(user_id);
-            },
+            }
             Err(e) => {
                 println!("❌ Failed to update existing user: {:?}", e);
                 eprintln!("❌ Failed to update existing user: {}", e);
@@ -994,7 +1043,8 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
             is_email_verified: true,
             created_at: timestamp(),
             updated_at: timestamp()
-        }) RETURN id(u) as user_id".to_string()
+        }) RETURN id(u) as user_id"
+            .to_string(),
     )
     .param("email", user_info.email.clone())
     .param("google_id", user_info.id.clone())
@@ -1005,7 +1055,7 @@ async fn improved_create_or_get_google_user(graph: &Graph, user_info: &GoogleUse
         Ok(result) => {
             println!("✅ Successfully executed user creation query");
             result
-        },
+        }
         Err(e) => {
             println!("❌ Database error during user creation: {:?}", e);
             eprintln!("❌ Failed to create new user: {}", e);
@@ -1038,6 +1088,7 @@ pub struct SetPasswordPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct LinkAccountPayload {
     pub google_code: String,
     pub google_state: String,

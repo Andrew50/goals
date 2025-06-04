@@ -199,7 +199,7 @@ pub async fn get_year_stats(
 
                 daily_events
                     .entry(date)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((completed, priority));
             }
 

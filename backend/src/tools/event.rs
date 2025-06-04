@@ -1,5 +1,5 @@
 use axum::{http::StatusCode, Json};
-use chrono::{Datelike, Duration, NaiveTime, Timelike, Utc};
+use chrono::{Datelike, Duration, Timelike, Utc};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 
@@ -186,7 +186,7 @@ pub async fn create_event_handler(
                             "starts at {}",
                             violation
                                 .task_start
-                                .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts))
+                                .and_then(chrono::DateTime::from_timestamp_millis)
                                 .map(|dt| dt.format("%Y-%m-%d").to_string())
                                 .unwrap_or_else(|| "unknown date".to_string())
                         ),
@@ -194,7 +194,7 @@ pub async fn create_event_handler(
                             "ends at {}",
                             violation
                                 .task_end
-                                .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts))
+                                .and_then(chrono::DateTime::from_timestamp_millis)
                                 .map(|dt| dt.format("%Y-%m-%d").to_string())
                                 .unwrap_or_else(|| "unknown date".to_string())
                         ),
@@ -290,10 +290,12 @@ pub async fn complete_event_handler(
         "MATCH (e:Goal)
          WHERE id(e) = $event_id
          AND e.goal_type = 'event'
-         SET e.completed = true
+         SET e.completed = true,
+             e.completion_date = $completion_date
          RETURN e",
     )
-    .param("event_id", event_id);
+    .param("event_id", event_id)
+    .param("completion_date", chrono::Utc::now().timestamp());
 
     let mut result = graph
         .execute(complete_query)
@@ -354,6 +356,192 @@ pub async fn complete_event_handler(
     } else {
         // This shouldn't happen since we already verified the event exists
         Err((StatusCode::NOT_FOUND, "Event not found".to_string()))
+    }
+}
+
+// New function to handle task completion and sync with events
+pub async fn complete_task_handler(
+    graph: Graph,
+    task_id: i64,
+    user_id: i64,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Mark the task as completed
+    let complete_task_query = query(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         AND t.user_id = $user_id
+         AND t.goal_type = 'task'
+         SET t.completed = true,
+             t.completion_date = $completion_date
+         RETURN t",
+    )
+    .param("task_id", task_id)
+    .param("user_id", user_id)
+    .param("completion_date", chrono::Utc::now().timestamp());
+
+    let mut result = graph
+        .execute(complete_task_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let _task_row = result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Task not found".to_string()))?;
+
+    // Complete all non-deleted events of this task
+    let complete_events_query = query(
+        "MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal)
+         WHERE id(t) = $task_id
+         AND e.goal_type = 'event'
+         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+         SET e.completed = true,
+             e.completion_date = $completion_date
+         RETURN count(e) as completed_events",
+    )
+    .param("task_id", task_id)
+    .param("completion_date", chrono::Utc::now().timestamp());
+
+    let mut events_result = graph
+        .execute(complete_events_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let completed_events = if let Some(row) = events_result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        row.get::<i64>("completed_events").unwrap_or(0)
+    } else {
+        0
+    };
+
+    Ok(Json(serde_json::json!({
+        "task_completed": true,
+        "completed_events": completed_events
+    })))
+}
+
+// New function to handle task incompletion and sync with events
+pub async fn uncomplete_task_handler(
+    graph: Graph,
+    task_id: i64,
+    user_id: i64,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Mark the task as not completed
+    let uncomplete_task_query = query(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         AND t.user_id = $user_id
+         AND t.goal_type = 'task'
+         SET t.completed = false,
+             t.completion_date = null
+         RETURN t",
+    )
+    .param("task_id", task_id)
+    .param("user_id", user_id);
+
+    let mut result = graph
+        .execute(uncomplete_task_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let _task_row = result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Task not found".to_string()))?;
+
+    // Uncomplete all events of this task
+    let uncomplete_events_query = query(
+        "MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal)
+         WHERE id(t) = $task_id
+         AND e.goal_type = 'event'
+         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+         SET e.completed = false,
+             e.completion_date = null
+         RETURN count(e) as uncompleted_events",
+    )
+    .param("task_id", task_id);
+
+    let mut events_result = graph
+        .execute(uncomplete_events_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let uncompleted_events = if let Some(row) = events_result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        row.get::<i64>("uncompleted_events").unwrap_or(0)
+    } else {
+        0
+    };
+
+    Ok(Json(serde_json::json!({
+        "task_uncompleted": true,
+        "uncompleted_events": uncompleted_events
+    })))
+}
+
+// New function to check task completion status based on events
+pub async fn check_task_completion_status(
+    graph: Graph,
+    task_id: i64,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let status_query = query(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         AND t.goal_type = 'task'
+         OPTIONAL MATCH (t)-[:HAS_EVENT]->(e:Goal)
+         WHERE e.goal_type = 'event'
+         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+         WITH t, 
+              count(e) as total_events,
+              count(CASE WHEN e.completed = true THEN 1 END) as completed_events
+         RETURN t.name as task_name,
+                t.completed as task_completed,
+                total_events,
+                completed_events,
+                CASE 
+                    WHEN total_events = 0 THEN false
+                    WHEN completed_events = total_events THEN true
+                    ELSE false
+                END as all_events_completed",
+    )
+    .param("task_id", task_id);
+
+    let mut result = graph
+        .execute(status_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        let task_name: String = row
+            .get("task_name")
+            .unwrap_or_else(|_| "Unknown".to_string());
+        let task_completed: bool = row.get("task_completed").unwrap_or(false);
+        let total_events: i64 = row.get("total_events").unwrap_or(0);
+        let completed_events: i64 = row.get("completed_events").unwrap_or(0);
+        let all_events_completed: bool = row.get("all_events_completed").unwrap_or(false);
+
+        Ok(Json(serde_json::json!({
+            "task_name": task_name,
+            "task_completed": task_completed,
+            "total_events": total_events,
+            "completed_events": completed_events,
+            "all_events_completed": all_events_completed,
+            "should_suggest_task_completion": !task_completed && all_events_completed && total_events > 0
+        })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Task not found".to_string()))
     }
 }
 
@@ -597,15 +785,19 @@ pub async fn update_event_handler(
                                 .unwrap_or_else(|| "invalid timestamp".to_string()),
                             violation.violation_type.as_str().replace("_", " "),
                             match violation.violation_type.as_str() {
-                                "before_start" => format!("starts at {}", 
-                                    violation.task_start
-                                        .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts))
+                                "before_start" => format!(
+                                    "starts at {}",
+                                    violation
+                                        .task_start
+                                        .and_then(chrono::DateTime::from_timestamp_millis)
                                         .map(|dt| dt.format("%Y-%m-%d").to_string())
                                         .unwrap_or_else(|| "unknown date".to_string())
                                 ),
-                                "after_end" => format!("ends at {}", 
-                                    violation.task_end
-                                        .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts))
+                                "after_end" => format!(
+                                    "ends at {}",
+                                    violation
+                                        .task_end
+                                        .and_then(chrono::DateTime::from_timestamp_millis)
                                         .map(|dt| dt.format("%Y-%m-%d").to_string())
                                         .unwrap_or_else(|| "unknown date".to_string())
                                 ),
@@ -713,7 +905,7 @@ pub async fn update_event_handler(
 
 pub async fn update_routine_event_handler(
     graph: Graph,
-    user_id: i64,
+    _user_id: i64,
     event_id: i64,
     request: UpdateRoutineEventRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
@@ -943,6 +1135,7 @@ pub async fn get_smart_schedule_options_handler(
 }
 
 // Shared scheduling algorithm for both reschedule and smart schedule
+#[allow(clippy::too_many_arguments)]
 async fn generate_schedule_suggestions(
     graph: &Graph,
     user_id: i64,
@@ -1071,7 +1264,7 @@ async fn generate_schedule_suggestions(
 
         // Skip weekends if user doesn't typically schedule on weekends
         let weekday = day_start.weekday();
-        if (weekday == chrono::Weekday::Sat || weekday == chrono::Weekday::Sun) {
+        if weekday == chrono::Weekday::Sat || weekday == chrono::Weekday::Sun {
             let weekend_events = historical_hours
                 .iter()
                 .enumerate()

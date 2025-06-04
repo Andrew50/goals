@@ -56,7 +56,11 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
     Ok(hierarchy)
 }
 
-pub async fn query_parent_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, neo4rs::Error> {
+#[allow(dead_code)]
+pub async fn query_parent_hierarchy(
+    graph: Graph,
+    goal_id: i64,
+) -> Result<Vec<Goal>, neo4rs::Error> {
     // Query to recursively get all parent goals with full information
     let query = query(
         "MATCH path = (parent:Goal)-[:CHILD*]->(g:Goal) \
@@ -70,7 +74,7 @@ pub async fn query_parent_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Go
                 node.priority AS priority, \
                 node.completed AS completed, \
                 id(node) AS id \
-         ORDER BY length((node)-[:CHILD*]->(g)) DESC"
+         ORDER BY length((node)-[:CHILD*]->(g)) DESC",
     )
     .param("goal_id", goal_id);
 
@@ -87,16 +91,10 @@ pub async fn query_parent_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Go
         let goal_type_str = row
             .get::<String>("goal_type")
             .map_err(|_| neo4rs::Error::ConversionError)?;
-        let description = row
-            .get::<Option<String>>("description")
-            .unwrap_or(None);
-        let priority = row
-            .get::<Option<String>>("priority")
-            .unwrap_or(None);
-        let completed = row
-            .get::<Option<bool>>("completed")
-            .unwrap_or(None);
-        
+        let description = row.get::<Option<String>>("description").unwrap_or(None);
+        let priority = row.get::<Option<String>>("priority").unwrap_or(None);
+        let completed = row.get::<Option<bool>>("completed").unwrap_or(None);
+
         let goal_type = match goal_type_str.as_str() {
             "directive" => GoalType::Directive,
             "project" => GoalType::Project,
