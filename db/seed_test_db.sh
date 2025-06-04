@@ -2,14 +2,14 @@
 set -e
 
 # Variables
-NEO4J_URI=${NEO4J_URI:-bolt://localhost:7688}
+NEO4J_URI=${NEO4J_URI:-bolt://localhost:7687}
 NEO4J_USER=${NEO4J_USER:-neo4j}
 NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123}
 
 # Wait for Neo4j to be available
 echo "Waiting for Neo4j to be available..."
 for i in {1..30}; do
-  if cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "RETURN 1;" &> /dev/null; then
+  if /var/lib/neo4j/bin/cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "RETURN 1;" &> /dev/null; then
     echo "Neo4j is available!"
     break
   fi
@@ -19,11 +19,11 @@ done
 
 # Clear existing data
 echo "Clearing existing data..."
-cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "MATCH (n) DETACH DELETE n;"
+/var/lib/neo4j/bin/cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "MATCH (n) DETACH DELETE n;"
 
 # Create test user
 echo "Creating test user..."
-cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "
+/var/lib/neo4j/bin/cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "
 CREATE (u:User {
   id: 1,
   username: 'testuser',
@@ -35,7 +35,7 @@ RETURN u;
 
 # Create some test goals
 echo "Creating test calendar items..."
-cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "
+/var/lib/neo4j/bin/cypher-shell -a $NEO4J_URI -u $NEO4J_USER -p $NEO4J_PASSWORD "
 // Create a few tasks
 CREATE (g1:Goal {
   id: 101,

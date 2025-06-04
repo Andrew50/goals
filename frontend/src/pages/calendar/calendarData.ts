@@ -1,4 +1,4 @@
-import { Goal, CalendarResponse, CalendarEvent, CalendarTask, ApiGoal } from '../../types/goals';
+import { CalendarResponse, CalendarEvent, CalendarTask, ApiGoal } from '../../types/goals';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import { getGoalColor } from '../../shared/styles/colors';
@@ -16,11 +16,6 @@ interface DateRange {
 
 export const fetchCalendarData = async (dateRange?: DateRange): Promise<TransformedCalendarData> => {
     try {
-        // If no date range is provided, use current date and load one month
-        const currentDate = new Date();
-        const start = dateRange?.start || new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
-        const end = dateRange?.end || new Date(currentDate.getFullYear(), currentDate.getMonth() + 2, 0);
-
         // Make API request to calendar endpoint
         const response = await privateRequest<CalendarResponse>('calendar');
 

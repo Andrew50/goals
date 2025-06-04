@@ -5,7 +5,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import Fuse from 'fuse.js';
-import { Goal, ApiGoal, NetworkNode, NetworkEdge, RelationshipType } from '../../types/goals';
+import { Goal, ApiGoal, NetworkNode, NetworkEdge } from '../../types/goals';
 import { privateRequest, createRelationship, deleteRelationship } from '../utils/api';
 import { goalToLocal } from '../utils/time';
 import { getGoalColor } from '../styles/colors';
@@ -122,7 +122,7 @@ const GoalRelations: React.FC<GoalRelationsProps> = ({ goal, onClose, onUpdate }
           <TextField label="Add Parent" value={parentQuery} onChange={e => setParentQuery(e.target.value)} fullWidth />
           <IconButton onClick={() => setParentQuery('')}><CloseIcon /></IconButton>
         </div>
-        {parentResults.slice(0,5).map(g => (
+        {parentResults.slice(0, 5).map(g => (
           <ListItem key={`parent-add-${g.id}`} button onClick={() => addRelation(g, 'parent')}>
             <ListItemText primary={g.name} />
             <AddIcon />
@@ -132,7 +132,7 @@ const GoalRelations: React.FC<GoalRelationsProps> = ({ goal, onClose, onUpdate }
           <TextField label="Add Child" value={childQuery} onChange={e => setChildQuery(e.target.value)} fullWidth />
           <IconButton onClick={() => setChildQuery('')}><CloseIcon /></IconButton>
         </div>
-        {childResults.slice(0,5).map(g => (
+        {childResults.slice(0, 5).map(g => (
           <ListItem key={`child-add-${g.id}`} button onClick={() => addRelation(g, 'child')}>
             <ListItemText primary={g.name} />
             <AddIcon />

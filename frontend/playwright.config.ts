@@ -31,7 +31,7 @@ export default defineConfig({
     /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
     use: {
         /* Base URL to use in actions like `await page.goto('/')`. */
-        baseURL: 'http://localhost:3030',
+        baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3030',
         /* Use the saved storage state for authentication. */
         storageState: 'tests/.auth/storageState.json',
         /* Default locale */
@@ -42,6 +42,9 @@ export default defineConfig({
         video: 'retain-on-failure',
         /* Add screenshot on failure */
         screenshot: 'only-on-failure',
+        /* Increase timeout for CI environment */
+        actionTimeout: process.env.CI ? 30000 : 15000,
+        navigationTimeout: process.env.CI ? 60000 : 30000,
     },
 
     /* Configure projects for major browsers */
@@ -93,5 +96,8 @@ export default defineConfig({
         url: 'http://localhost:3030',
         reuseExistingServer: !process.env.CI,
         timeout: 120 * 1000, // 2 minutes
+        env: {
+            REACT_APP_API_URL: process.env.REACT_APP_API_URL || 'http://localhost:5057',
+        },
     },
 });

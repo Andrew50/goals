@@ -1,4 +1,3 @@
-use axum::extract::ws::WebSocketUpgrade;
 use axum::{
     extract::{Extension, Json, Path, Query},
     http::StatusCode,
@@ -7,9 +6,10 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use futures_util::{sink::SinkExt, stream::StreamExt};
 use neo4rs::Graph;
 use oauth2::TokenResponse;
+use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -74,6 +74,15 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .route("/smart-schedule", post(handle_get_smart_schedule_options))
         .route("/task/:task_id", get(handle_get_task_events));
 
+    // Task completion routes with event synchronization
+    let task_routes = Router::new()
+        .route("/:id/complete", put(handle_complete_task))
+        .route("/:id/uncomplete", put(handle_uncomplete_task))
+        .route(
+            "/:id/completion-status",
+            get(handle_check_task_completion_status),
+        );
+
     let network_routes = Router::new()
         .route("/", get(handle_get_network_data))
         .route("/:id/position", put(handle_update_node_position));
@@ -104,13 +113,16 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .route("/event-moves", post(handle_record_event_move));
 
     // Add migration route (should be protected or removed after migration)
-    let migration_routes =
-        Router::new().route("/migrate-to-events", post(handle_migrate_to_events));
+    let migration_routes = Router::new()
+        .route("/migrate-to-events", post(handle_migrate_to_events))
+        .route("/run", post(handle_run_migration))
+        .route("/verify", get(handle_verify_migration));
 
     // Protected routes with auth middleware
     let api_routes = Router::new()
         .nest("/goals", goals_routes)
         .nest("/events", event_routes)
+        .nest("/tasks", task_routes)
         .nest("/network", network_routes)
         .nest("/traversal", traversal_routes)
         .nest("/calendar", calendar_routes)
@@ -424,6 +436,30 @@ async fn handle_complete_event(
     event::complete_event_handler(graph, id).await
 }
 
+// New task completion handlers
+async fn handle_complete_task(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::complete_task_handler(graph, id, user_id).await
+}
+
+async fn handle_uncomplete_task(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::uncomplete_task_handler(graph, id, user_id).await
+}
+
+async fn handle_check_task_completion_status(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    event::check_task_completion_status(graph, id).await
+}
+
 async fn handle_delete_event(
     Extension(graph): Extension<Graph>,
     Path(id): Path<i64>,
@@ -638,4 +674,35 @@ async fn handle_expand_task_date_range(
     Json(request): Json<crate::tools::goal::ExpandTaskDateRangeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     crate::tools::goal::expand_task_date_range_handler(graph, user_id, request).await
+}
+
+// Migration management handlers
+async fn handle_run_migration(
+    Extension(graph): Extension<Graph>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match migration::migrate_to_events(&graph).await {
+        Ok(_) => Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "success",
+                "message": "Migration completed successfully"
+            })),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Migration failed: {}", e),
+        )),
+    }
+}
+
+async fn handle_verify_migration(
+    Extension(graph): Extension<Graph>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match migration::verify_migration_integrity(&graph).await {
+        Ok(result) => Ok((StatusCode::OK, Json(result))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Migration verification failed: {}", e),
+        )),
+    }
 }

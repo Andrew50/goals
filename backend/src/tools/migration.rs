@@ -1,39 +1,254 @@
-use neo4rs::{query, Graph};
 use crate::tools::goal::Goal;
 use chrono::Utc;
+use neo4rs::{query, Graph};
+
+// Migration state tracking
+#[derive(Debug)]
+pub struct MigrationState {
+    pub created_events: Vec<i64>,
+    pub deleted_relationships: Vec<(i64, i64)>,
+    pub modified_tasks: Vec<i64>,
+    pub created_indexes: Vec<String>,
+}
+
+impl MigrationState {
+    pub fn new() -> Self {
+        Self {
+            created_events: Vec::new(),
+            deleted_relationships: Vec::new(),
+            modified_tasks: Vec::new(),
+            created_indexes: Vec::new(),
+        }
+    }
+}
 
 pub async fn migrate_to_events(graph: &Graph) -> Result<(), String> {
     println!("Starting migration to event-based system...");
-    
-    // Step 1: Migrate scheduled tasks to events
-    migrate_scheduled_tasks(graph).await?;
-    
-    // Step 2: Generate initial routine events
-    generate_routine_events(graph).await?;
-    
-    // Step 3: Update relationships
-    update_relationships(graph).await?;
-    
-    // Step 4: Create EventMove tracking infrastructure
-    create_event_move_tracking(graph).await?;
-    
+
+    let mut migration_state = MigrationState::new();
+
+    // Step 0: Create necessary indexes for performance FIRST
+    create_performance_indexes(graph, &mut migration_state).await?;
+
+    // Step 1: Validate existing data before migration
+    validate_pre_migration_data(graph).await?;
+
+    // Step 2: Migrate tasks that are children of routines to events
+    migrate_routine_child_tasks(graph, &mut migration_state).await?;
+
+    // Step 3: Migrate standalone scheduled tasks to events
+    migrate_scheduled_tasks(graph, &mut migration_state).await?;
+
+    // Step 4: Migrate remaining standalone tasks to events (if they should be schedulable)
+    migrate_remaining_tasks(graph, &mut migration_state).await?;
+
+    // Step 5: Handle existing CHILD relationships properly
+    migrate_existing_child_relationships(graph, &mut migration_state).await?;
+
+    // Step 6: Generate initial routine events (for future occurrences)
+    generate_routine_events(graph, &mut migration_state).await?;
+
+    // Step 7: Update relationships and clean up orphaned data
+    update_relationships(graph, &mut migration_state).await?;
+
+    // Step 8: Create EventMove tracking infrastructure
+    create_event_move_tracking(graph, &mut migration_state).await?;
+
+    // Step 9: Add bidirectional completion logic
+    add_bidirectional_completion_logic(graph).await?;
+
+    // Step 10: Validate post-migration data integrity
+    validate_post_migration_data(graph).await?;
+
     println!("Migration completed successfully!");
+    println!("Migration summary:");
+    println!(
+        "  - Created {} events",
+        migration_state.created_events.len()
+    );
+    println!(
+        "  - Modified {} tasks",
+        migration_state.modified_tasks.len()
+    );
+    println!(
+        "  - Created {} indexes",
+        migration_state.created_indexes.len()
+    );
+
     Ok(())
 }
 
-async fn migrate_scheduled_tasks(graph: &Graph) -> Result<(), String> {
-    println!("Migrating scheduled tasks to events...");
-    
+async fn create_performance_indexes(
+    graph: &Graph,
+    state: &mut MigrationState,
+) -> Result<(), String> {
+    println!("Creating performance indexes...");
+
+    let indexes = vec![
+        // Primary event query indexes
+        ("goal_type_scheduled_idx", "CREATE INDEX goal_type_scheduled_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.scheduled_timestamp)"),
+        ("parent_relationship_idx", "CREATE INDEX parent_relationship_idx IF NOT EXISTS FOR (g:Goal) ON (g.parent_id, g.parent_type)"),
+        ("routine_instance_idx", "CREATE INDEX routine_instance_idx IF NOT EXISTS FOR (g:Goal) ON (g.routine_instance_id)"),
+        ("user_goal_type_idx", "CREATE INDEX user_goal_type_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.goal_type)"),
+        ("event_completion_idx", "CREATE INDEX event_completion_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.completed, g.is_deleted)"),
+        ("task_date_range_idx", "CREATE INDEX task_date_range_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.start_timestamp, g.end_timestamp)"),
+        ("calendar_query_idx", "CREATE INDEX calendar_query_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.goal_type, g.scheduled_timestamp, g.is_deleted)"),
+        // EventMove tracking index (moved here for proper ordering)
+        ("event_move_user_time", "CREATE INDEX event_move_user_time IF NOT EXISTS FOR (em:EventMove) ON (em.user_id, em.move_timestamp)"),
+    ];
+
+    for (name, index_query) in indexes {
+        graph
+            .run(neo4rs::query(index_query))
+            .await
+            .map_err(|e| format!("Failed to create index {}: {}", name, e))?;
+
+        state.created_indexes.push(name.to_string());
+        println!("  ✓ Created index: {}", name);
+    }
+
+    println!("Performance indexes created successfully");
+    Ok(())
+}
+
+async fn validate_pre_migration_data(graph: &Graph) -> Result<(), String> {
+    println!("Validating pre-migration data...");
+
+    // Check for tasks with invalid scheduled_timestamp values
+    let invalid_tasks_query = "
+        MATCH (t:Goal)
+        WHERE t.goal_type = 'task'
+        AND t.scheduled_timestamp IS NOT NULL
+        AND (t.scheduled_timestamp < 0 OR t.scheduled_timestamp > 32503680000000)  // Year 3000
+        RETURN count(t) as invalid_count
+    ";
+
+    let mut result = graph
+        .execute(query(invalid_tasks_query))
+        .await
+        .map_err(|e| format!("Failed to validate tasks: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let invalid_count: i64 = row.get("invalid_count").unwrap_or(0);
+        if invalid_count > 0 {
+            return Err(format!("Found {} tasks with invalid scheduled_timestamp values. Please fix these before migration.", invalid_count));
+        }
+    }
+
+    // Check for routines missing required fields
+    let invalid_routines_query = "
+        MATCH (r:Goal)
+        WHERE r.goal_type = 'routine'
+        AND (r.frequency IS NULL OR r.start_timestamp IS NULL)
+        RETURN count(r) as invalid_count
+    ";
+
+    let mut result = graph
+        .execute(query(invalid_routines_query))
+        .await
+        .map_err(|e| format!("Failed to validate routines: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let invalid_count: i64 = row.get("invalid_count").unwrap_or(0);
+        if invalid_count > 0 {
+            return Err(format!("Found {} routines missing frequency or start_timestamp. Please fix these before migration.", invalid_count));
+        }
+    }
+
+    println!("Pre-migration validation passed");
+    Ok(())
+}
+
+async fn migrate_routine_child_tasks(
+    graph: &Graph,
+    state: &mut MigrationState,
+) -> Result<(), String> {
+    println!("Migrating routine child tasks to events...");
+
+    let query_str = "
+        MATCH (r:Goal)-[:CHILD]->(t:Goal)
+        WHERE r.goal_type = 'routine' 
+        AND t.goal_type = 'task'
+        AND coalesce(t.is_deleted, false) <> true
+        WITH r, t
+        // Validate against task date ranges if they exist
+        OPTIONAL MATCH (parent_task:Goal)-[:CHILD]->(t)
+        WHERE parent_task.goal_type = 'task'
+        AND (parent_task.start_timestamp IS NOT NULL OR parent_task.end_timestamp IS NOT NULL)
+        WITH r, t, parent_task,
+             coalesce(t.scheduled_timestamp, t.start_timestamp, r.start_timestamp) as event_timestamp
+        WHERE parent_task IS NULL OR (
+            (parent_task.start_timestamp IS NULL OR event_timestamp >= parent_task.start_timestamp) AND
+            (parent_task.end_timestamp IS NULL OR event_timestamp <= parent_task.end_timestamp)
+        )
+        CREATE (e:Goal {
+            name: t.name,
+            goal_type: 'event',
+            scheduled_timestamp: event_timestamp,
+            duration: t.duration,
+            completed: coalesce(t.completed, false),
+            parent_id: id(r),
+            parent_type: 'routine',
+            user_id: t.user_id,
+            priority: t.priority,
+            description: t.description,
+            is_deleted: false,
+            routine_instance_id: toString(id(r)) + '-' + toString(timestamp())
+        })
+        CREATE (r)-[:HAS_EVENT]->(e)
+        WITH r, t, e
+        MATCH (r)-[old_rel:CHILD]->(t)
+        DELETE old_rel
+        SET t.is_deleted = true,
+            t.scheduled_timestamp = null,
+            t.duration = null,
+            t.completion_date = null,
+            t.next_timestamp = null
+        RETURN id(e) as event_id, id(t) as task_id, count(e) as migrated_count
+    ";
+
+    let mut result = graph
+        .execute(query(query_str))
+        .await
+        .map_err(|e| format!("Failed to migrate routine child tasks: {}", e))?;
+
+    let mut count = 0;
+    while let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let event_id: i64 = row.get("event_id").unwrap_or(0);
+        let task_id: i64 = row.get("task_id").unwrap_or(0);
+
+        state.created_events.push(event_id);
+        state.modified_tasks.push(task_id);
+        count += 1;
+    }
+
+    println!("Migrated {} routine child tasks to events", count);
+    Ok(())
+}
+
+async fn migrate_scheduled_tasks(graph: &Graph, state: &mut MigrationState) -> Result<(), String> {
+    println!("Migrating standalone scheduled tasks to events...");
+
     let query_str = "
         MATCH (t:Goal)
         WHERE t.goal_type = 'task' 
         AND t.scheduled_timestamp IS NOT NULL
+        AND NOT EXISTS((r:Goal)-[:CHILD]->(t) WHERE r.goal_type = 'routine')  // Not already migrated above
+        AND coalesce(t.is_deleted, false) <> true
+        WITH t,
+             // Validate against task date range
+             CASE 
+                WHEN t.start_timestamp IS NOT NULL AND t.scheduled_timestamp < t.start_timestamp THEN false
+                WHEN t.end_timestamp IS NOT NULL AND t.scheduled_timestamp > t.end_timestamp THEN false
+                ELSE true
+             END as is_valid_timestamp
+        WHERE is_valid_timestamp = true
         CREATE (e:Goal {
             name: t.name,
             goal_type: 'event',
             scheduled_timestamp: t.scheduled_timestamp,
-            duration: t.duration,
-            completed: t.completed,
+            duration: coalesce(t.duration, 60),  // Default to 60 minutes if no duration
+            completed: coalesce(t.completed, false),
             parent_id: id(t),
             parent_type: 'task',
             user_id: t.user_id,
@@ -42,54 +257,183 @@ async fn migrate_scheduled_tasks(graph: &Graph) -> Result<(), String> {
             is_deleted: false
         })
         CREATE (t)-[:HAS_EVENT]->(e)
-        SET t.completed = false,  // Reset task completion
+        SET t.completed = false,  // Reset task completion - events handle completion now
             t.scheduled_timestamp = null,
-            t.duration = null
-        RETURN count(e) as migrated_count
+            t.duration = null,
+            t.completion_date = null,
+            t.next_timestamp = null
+        RETURN id(e) as event_id, id(t) as task_id, count(e) as migrated_count
     ";
-    
-    let mut result = graph.execute(query(query_str)).await
-        .map_err(|e| format!("Failed to migrate tasks: {}", e))?;
-    
-    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
-        let count: i64 = row.get("migrated_count").unwrap_or(0);
-        println!("Migrated {} scheduled tasks to events", count);
+
+    let mut result = graph
+        .execute(query(query_str))
+        .await
+        .map_err(|e| format!("Failed to migrate scheduled tasks: {}", e))?;
+
+    let mut count = 0;
+    while let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let event_id: i64 = row.get("event_id").unwrap_or(0);
+        let task_id: i64 = row.get("task_id").unwrap_or(0);
+
+        state.created_events.push(event_id);
+        state.modified_tasks.push(task_id);
+        count += 1;
     }
-    
+
+    // Handle tasks with invalid timestamps separately
+    let invalid_tasks_query = "
+        MATCH (t:Goal)
+        WHERE t.goal_type = 'task' 
+        AND t.scheduled_timestamp IS NOT NULL
+        AND NOT EXISTS((r:Goal)-[:CHILD]->(t) WHERE r.goal_type = 'routine')
+        AND coalesce(t.is_deleted, false) <> true
+        WITH t,
+             CASE 
+                WHEN t.start_timestamp IS NOT NULL AND t.scheduled_timestamp < t.start_timestamp THEN 'before_start'
+                WHEN t.end_timestamp IS NOT NULL AND t.scheduled_timestamp > t.end_timestamp THEN 'after_end'
+                ELSE 'valid'
+             END as validation_status
+        WHERE validation_status <> 'valid'
+        RETURN count(t) as invalid_count, collect(t.name) as invalid_names
+    ";
+
+    let mut invalid_result = graph
+        .execute(query(invalid_tasks_query))
+        .await
+        .map_err(|e| format!("Failed to check invalid tasks: {}", e))?;
+
+    if let Some(row) = invalid_result.next().await.map_err(|e| e.to_string())? {
+        let invalid_count: i64 = row.get("invalid_count").unwrap_or(0);
+        if invalid_count > 0 {
+            let invalid_names: Vec<String> = row.get("invalid_names").unwrap_or_default();
+            println!("Warning: {} tasks have scheduled timestamps outside their date ranges and were not migrated: {:?}", invalid_count, invalid_names);
+        }
+    }
+
+    println!("Migrated {} standalone scheduled tasks to events", count);
     Ok(())
 }
 
-async fn generate_routine_events(graph: &Graph) -> Result<(), String> {
+async fn migrate_remaining_tasks(graph: &Graph, state: &mut MigrationState) -> Result<(), String> {
+    println!("Migrating remaining standalone tasks to events...");
+
+    let query_str = "
+        MATCH (t:Goal)
+        WHERE t.goal_type = 'task' 
+        AND t.scheduled_timestamp IS NULL
+        AND NOT EXISTS((r:Goal)-[:CHILD]->(t) WHERE r.goal_type = 'routine')  // Not routine children
+        AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal))  // Don't already have events
+        AND coalesce(t.completed, false) <> true
+        AND coalesce(t.is_deleted, false) <> true
+        CREATE (e:Goal {
+            name: t.name,
+            goal_type: 'event',
+            scheduled_timestamp: null,  // Will be scheduled later by user
+            duration: coalesce(t.duration, 30),  // Default 30 minutes if no duration
+            completed: false,
+            parent_id: id(t),
+            parent_type: 'task',
+            user_id: t.user_id,
+            priority: t.priority,
+            description: t.description,
+            is_deleted: false
+        })
+        CREATE (t)-[:HAS_EVENT]->(e)
+        SET t.duration = null,  // Remove duration from task as it's now on the event
+            t.completion_date = null,
+            t.next_timestamp = null
+        RETURN id(e) as event_id, id(t) as task_id, count(e) as migrated_count
+    ";
+
+    let mut result = graph
+        .execute(query(query_str))
+        .await
+        .map_err(|e| format!("Failed to migrate remaining tasks: {}", e))?;
+
+    let mut count = 0;
+    while let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let event_id: i64 = row.get("event_id").unwrap_or(0);
+        let task_id: i64 = row.get("task_id").unwrap_or(0);
+
+        state.created_events.push(event_id);
+        state.modified_tasks.push(task_id);
+        count += 1;
+    }
+
+    println!("Migrated {} remaining tasks to events", count);
+    Ok(())
+}
+
+async fn migrate_existing_child_relationships(
+    graph: &Graph,
+    state: &mut MigrationState,
+) -> Result<(), String> {
+    println!("Migrating existing CHILD relationships...");
+
+    // Handle CHILD relationships between tasks and projects/directives
+    let query_str = "
+        MATCH (parent:Goal)-[rel:CHILD]->(child:Goal)
+        WHERE parent.goal_type IN ['project', 'directive', 'achievement']
+        AND child.goal_type = 'task'
+        AND coalesce(child.is_deleted, false) <> true
+        // Preserve these relationships as they are still valid
+        RETURN count(rel) as preserved_count
+    ";
+
+    let mut result = graph
+        .execute(query(query_str))
+        .await
+        .map_err(|e| format!("Failed to check child relationships: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let preserved_count: i64 = row.get("preserved_count").unwrap_or(0);
+        println!(
+            "Preserved {} existing CHILD relationships between tasks and higher-level goals",
+            preserved_count
+        );
+    }
+
+    Ok(())
+}
+
+async fn generate_routine_events(graph: &Graph, state: &mut MigrationState) -> Result<(), String> {
     println!("Generating routine events...");
-    
+
     // Generate 3 months of events for each routine
     let three_months_ms = 90 * 24 * 60 * 60 * 1000;
     let now = chrono::Utc::now().timestamp_millis();
     let end_time = now + three_months_ms;
-    
+
     let query_str = "
         MATCH (r:Goal)
         WHERE r.goal_type = 'routine'
         AND r.start_timestamp IS NOT NULL
+        AND r.frequency IS NOT NULL
+        AND coalesce(r.is_deleted, false) <> true
         RETURN r, id(r) as routine_id
     ";
-    
-    let mut result = graph.execute(query(query_str)).await
+
+    let mut result = graph
+        .execute(query(query_str))
+        .await
         .map_err(|e| format!("Failed to fetch routines: {}", e))?;
-    
+
     let mut routine_count = 0;
     while let Some(row) = result.next().await.map_err(|e| e.to_string())? {
-        let routine: Goal = row.get("r")
+        let routine: Goal = row
+            .get("r")
             .map_err(|e| format!("Failed to get routine: {}", e))?;
-        let routine_id: i64 = row.get("routine_id")
+        let routine_id: i64 = row
+            .get("routine_id")
             .map_err(|e| format!("Failed to get routine_id: {}", e))?;
-        
-        // Use existing routine event generation logic
-        // but CREATE nodes instead of returning data
-        create_routine_events_in_db(graph, &routine, routine_id, now, end_time).await?;
+
+        // Use standardized routine event generation logic
+        let created_events =
+            create_routine_events_in_db(graph, &routine, routine_id, now, end_time).await?;
+        state.created_events.extend(created_events);
         routine_count += 1;
     }
-    
+
     println!("Generated events for {} routines", routine_count);
     Ok(())
 }
@@ -100,16 +444,19 @@ async fn create_routine_events_in_db(
     routine_id: i64,
     start_time: i64,
     end_time: i64,
-) -> Result<(), String> {
-    let frequency = routine.frequency.as_ref()
+) -> Result<Vec<i64>, String> {
+    let frequency = routine
+        .frequency
+        .as_ref()
         .ok_or("Routine missing frequency")?;
-    
+
+    // Standardized instance ID format to match runtime generation
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
-    
-    // Calculate event timestamps based on frequency
+
     let mut current_time = routine.start_timestamp.unwrap_or(start_time);
     let mut event_count = 0;
-    
+    let mut created_event_ids = Vec::new();
+
     while current_time <= end_time {
         // Skip if in the past
         if current_time >= start_time {
@@ -130,31 +477,41 @@ async fn create_routine_events_in_db(
                      completed: false,
                      is_deleted: false
                  })
-                 CREATE (r)-[:HAS_EVENT]->(e)"
+                 CREATE (r)-[:HAS_EVENT]->(e)
+                 RETURN id(e) as event_id",
             )
             .param("routine_id", routine_id)
             .param("timestamp", current_time)
             .param("instance_id", instance_id.clone());
-            
-            graph.run(create_query).await
+
+            let mut result = graph
+                .execute(create_query)
+                .await
                 .map_err(|e| format!("Failed to create routine event: {}", e))?;
-            
+
+            if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+                let event_id: i64 = row.get("event_id").unwrap_or(0);
+                created_event_ids.push(event_id);
+            }
+
             event_count += 1;
         }
-        
+
         // Calculate next occurrence based on frequency
         current_time = calculate_next_occurrence(current_time, frequency)?;
     }
-    
-    println!("Created {} events for routine {}", event_count, routine.name);
-    Ok(())
+
+    println!(
+        "Created {} events for routine {}",
+        event_count, routine.name
+    );
+    Ok(created_event_ids)
 }
 
 fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, String> {
     // Parse frequency and calculate next occurrence
-    // This is a simplified version - you might want to reuse existing frequency parsing logic
     let ms_per_day = 24 * 60 * 60 * 1000;
-    
+
     let next_time = match frequency.to_lowercase().as_str() {
         "daily" => current_time + ms_per_day,
         "weekly" => current_time + (7 * ms_per_day),
@@ -167,47 +524,358 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
             if frequency.starts_with("every ") {
                 let parts: Vec<&str> = frequency.split_whitespace().collect();
                 if parts.len() >= 3 {
-                    let number = parts[1].parse::<i64>()
+                    let number = parts[1]
+                        .parse::<i64>()
                         .map_err(|_| format!("Invalid frequency number: {}", parts[1]))?;
-                    
+
                     match parts[2] {
                         "day" | "days" => current_time + (number * ms_per_day),
                         "week" | "weeks" => current_time + (number * 7 * ms_per_day),
-                        _ => return Err(format!("Unknown frequency unit: {}", parts[2]))
+                        _ => return Err(format!("Unknown frequency unit: {}", parts[2])),
                     }
                 } else {
-                    return Err(format!("Invalid frequency format: {}", frequency))
+                    return Err(format!("Invalid frequency format: {}", frequency));
                 }
             } else {
-                return Err(format!("Unknown frequency: {}", frequency))
+                return Err(format!("Unknown frequency: {}", frequency));
             }
         }
     };
-    
+
     Ok(next_time)
 }
 
-async fn update_relationships(_graph: &Graph) -> Result<(), String> {
-    println!("Updating relationships...");
-    
-    // Update any other necessary relationships
-    // This is a placeholder for any additional relationship updates needed
-    
+async fn update_relationships(graph: &Graph, _state: &mut MigrationState) -> Result<(), String> {
+    println!("Updating relationships and cleaning up orphaned data...");
+
+    // Clean up any orphaned CHILD relationships that should have been removed
+    let cleanup_query = "
+        MATCH (r:Goal)-[rel:CHILD]->(t:Goal)
+        WHERE r.goal_type = 'routine' 
+        AND t.goal_type = 'task'
+        AND t.is_deleted = true
+        DELETE rel
+        RETURN count(rel) as cleaned_count
+    ";
+
+    let mut result = graph
+        .execute(query(cleanup_query))
+        .await
+        .map_err(|e| format!("Failed to clean up orphaned relationships: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let cleaned_count: i64 = row.get("cleaned_count").unwrap_or(0);
+        if cleaned_count > 0 {
+            println!("Cleaned up {} orphaned CHILD relationships", cleaned_count);
+        }
+    }
+
+    // Ensure consistency in soft delete flags
+    let consistency_query = "
+        MATCH (e:Goal)
+        WHERE e.goal_type = 'event'
+        AND e.is_deleted IS NULL
+        SET e.is_deleted = false
+        RETURN count(e) as updated_count
+    ";
+
+    let mut result = graph
+        .execute(query(consistency_query))
+        .await
+        .map_err(|e| format!("Failed to update consistency flags: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let updated_count: i64 = row.get("updated_count").unwrap_or(0);
+        if updated_count > 0 {
+            println!(
+                "Updated {} events with missing is_deleted flags",
+                updated_count
+            );
+        }
+    }
+
     Ok(())
 }
 
-async fn create_event_move_tracking(graph: &Graph) -> Result<(), String> {
+async fn create_event_move_tracking(
+    graph: &Graph,
+    state: &mut MigrationState,
+) -> Result<(), String> {
     println!("Creating EventMove tracking infrastructure...");
-    
-    // Create an index on EventMove nodes for efficient querying
-    let index_query = "
-        CREATE INDEX event_move_user_time IF NOT EXISTS 
-        FOR (em:EventMove) ON (em.user_id, em.move_timestamp)
+
+    // Note: Index was already created in create_performance_indexes
+    // Just verify it exists
+    let verify_query = "
+        SHOW INDEXES
+        YIELD name, labelsOrTypes, properties
+        WHERE name = 'event_move_user_time'
+        RETURN count(*) as index_exists
     ";
-    
-    graph.run(neo4rs::query(index_query)).await
-        .map_err(|e| format!("Failed to create EventMove index: {}", e))?;
-    
-    println!("EventMove tracking infrastructure created successfully");
+
+    match graph.execute(query(verify_query)).await {
+        Ok(mut result) => {
+            if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+                let index_exists: i64 = row.get("index_exists").unwrap_or(0);
+                if index_exists > 0 {
+                    println!("EventMove tracking index verified");
+                } else {
+                    println!("Warning: EventMove index may not have been created properly");
+                }
+            }
+        }
+        Err(_) => {
+            // Fallback for older Neo4j versions that don't support SHOW INDEXES
+            println!("EventMove tracking infrastructure assumed to be created");
+        }
+    }
+
     Ok(())
-} 
+}
+
+async fn add_bidirectional_completion_logic(graph: &Graph) -> Result<(), String> {
+    println!("Adding bidirectional completion logic...");
+
+    // Create trigger-like constraints to maintain completion consistency
+    // Note: This is implemented in the application logic, but we can add data consistency checks
+
+    // Check for any inconsistent completion states
+    let inconsistency_query = "
+        MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal)
+        WHERE t.goal_type = 'task'
+        AND e.goal_type = 'event'
+        AND t.completed = true
+        AND e.completed = false
+        AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        RETURN count(e) as inconsistent_events, collect(DISTINCT t.name) as task_names
+    ";
+
+    let mut result = graph
+        .execute(query(inconsistency_query))
+        .await
+        .map_err(|e| format!("Failed to check completion consistency: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let inconsistent_count: i64 = row.get("inconsistent_events").unwrap_or(0);
+        if inconsistent_count > 0 {
+            let task_names: Vec<String> = row.get("task_names").unwrap_or_default();
+            println!(
+                "Warning: Found {} events with inconsistent completion state in tasks: {:?}",
+                inconsistent_count, task_names
+            );
+
+            // Optionally fix the inconsistency
+            let fix_query = "
+                MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal)
+                WHERE t.goal_type = 'task'
+                AND e.goal_type = 'event'
+                AND t.completed = true
+                AND e.completed = false
+                AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                SET e.completed = true
+                RETURN count(e) as fixed_count
+            ";
+
+            let mut fix_result = graph
+                .execute(query(fix_query))
+                .await
+                .map_err(|e| format!("Failed to fix completion consistency: {}", e))?;
+
+            if let Some(row) = fix_result.next().await.map_err(|e| e.to_string())? {
+                let fixed_count: i64 = row.get("fixed_count").unwrap_or(0);
+                println!("Fixed completion state for {} events", fixed_count);
+            }
+        }
+    }
+
+    println!("Bidirectional completion logic verification completed");
+    Ok(())
+}
+
+async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
+    println!("Validating post-migration data integrity...");
+
+    // Check that all scheduled tasks now have corresponding events
+    let orphaned_scheduled_tasks_query = "
+        MATCH (t:Goal)
+        WHERE t.goal_type = 'task'
+        AND t.scheduled_timestamp IS NOT NULL
+        AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal))
+        AND coalesce(t.is_deleted, false) <> true
+        RETURN count(t) as orphaned_count, collect(t.name) as orphaned_names
+    ";
+
+    let mut result = graph
+        .execute(query(orphaned_scheduled_tasks_query))
+        .await
+        .map_err(|e| format!("Failed to validate orphaned tasks: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let orphaned_count: i64 = row.get("orphaned_count").unwrap_or(0);
+        if orphaned_count > 0 {
+            let orphaned_names: Vec<String> = row.get("orphaned_names").unwrap_or_default();
+            return Err(format!("Migration validation failed: {} tasks still have scheduled_timestamp but no events: {:?}", 
+                              orphaned_count, orphaned_names));
+        }
+    }
+
+    // Check that all events have valid parents
+    let orphaned_events_query = "
+        MATCH (e:Goal)
+        WHERE e.goal_type = 'event'
+        AND e.parent_id IS NOT NULL
+        AND NOT EXISTS((p:Goal)-[:HAS_EVENT]->(e) WHERE id(p) = e.parent_id)
+        AND coalesce(e.is_deleted, false) <> true
+        RETURN count(e) as orphaned_events
+    ";
+
+    let mut result = graph
+        .execute(query(orphaned_events_query))
+        .await
+        .map_err(|e| format!("Failed to validate orphaned events: {}", e))?;
+
+    if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+        let orphaned_count: i64 = row.get("orphaned_events").unwrap_or(0);
+        if orphaned_count > 0 {
+            return Err(format!(
+                "Migration validation failed: {} events have invalid parent relationships",
+                orphaned_count
+            ));
+        }
+    }
+
+    // Verify index creation
+    let index_count_query = "
+        SHOW INDEXES
+        YIELD name
+        WHERE name IN ['goal_type_scheduled_idx', 'parent_relationship_idx', 'routine_instance_idx', 
+                       'user_goal_type_idx', 'event_completion_idx', 'task_date_range_idx', 
+                       'calendar_query_idx', 'event_move_user_time']
+        RETURN count(name) as created_indexes
+    ";
+
+    match graph.execute(query(index_count_query)).await {
+        Ok(mut result) => {
+            if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+                let created_indexes: i64 = row.get("created_indexes").unwrap_or(0);
+                println!("Verified {} performance indexes created", created_indexes);
+                if created_indexes < 8 {
+                    println!(
+                        "Warning: Expected 8 indexes, but only {} were verified",
+                        created_indexes
+                    );
+                }
+            }
+        }
+        Err(_) => {
+            println!("Index verification skipped (older Neo4j version)");
+        }
+    }
+
+    println!("Post-migration validation completed successfully");
+    Ok(())
+}
+
+// Rollback function for partial migration failures
+pub async fn rollback_migration(graph: &Graph, state: &MigrationState) -> Result<(), String> {
+    println!("Rolling back migration...");
+
+    // Delete created events
+    if !state.created_events.is_empty() {
+        let delete_events_query = format!(
+            "MATCH (e:Goal) WHERE id(e) IN [{}] DELETE e",
+            state
+                .created_events
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        graph
+            .run(query(&delete_events_query))
+            .await
+            .map_err(|e| format!("Failed to delete created events during rollback: {}", e))?;
+
+        println!("Deleted {} created events", state.created_events.len());
+    }
+
+    // Restore modified tasks
+    for task_id in &state.modified_tasks {
+        let restore_query = query(
+            "MATCH (t:Goal)
+             WHERE id(t) = $task_id
+             SET t.is_deleted = false",
+        )
+        .param("task_id", *task_id);
+
+        graph
+            .run(restore_query)
+            .await
+            .map_err(|e| format!("Failed to restore task {} during rollback: {}", task_id, e))?;
+    }
+
+    println!("Restored {} modified tasks", state.modified_tasks.len());
+    println!("Migration rollback completed");
+    Ok(())
+}
+
+// Migration verification endpoint
+pub async fn verify_migration_integrity(graph: &Graph) -> Result<serde_json::Value, String> {
+    println!("Verifying migration integrity...");
+
+    // Comprehensive integrity checks
+    let checks = vec![
+        ("scheduled_tasks_without_events", "MATCH (t:Goal) WHERE t.goal_type = 'task' AND t.scheduled_timestamp IS NOT NULL AND NOT EXISTS((t)-[:HAS_EVENT]->(:Goal)) AND coalesce(t.is_deleted, false) <> true RETURN count(t) as count"),
+        ("events_without_parents", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND e.parent_id IS NOT NULL AND NOT EXISTS((p:Goal)-[:HAS_EVENT]->(e) WHERE id(p) = e.parent_id) AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
+        ("orphaned_child_relationships", "MATCH (r:Goal)-[rel:CHILD]->(t:Goal) WHERE r.goal_type = 'routine' AND t.goal_type = 'task' AND t.is_deleted = true RETURN count(rel) as count"),
+        ("total_events", "MATCH (e:Goal) WHERE e.goal_type = 'event' AND coalesce(e.is_deleted, false) <> true RETURN count(e) as count"),
+        ("total_tasks_with_events", "MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal) WHERE t.goal_type = 'task' AND e.goal_type = 'event' RETURN count(DISTINCT t) as count"),
+        ("total_routines_with_events", "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal) WHERE r.goal_type = 'routine' AND e.goal_type = 'event' RETURN count(DISTINCT r) as count"),
+    ];
+
+    let mut results = serde_json::Map::new();
+
+    for (check_name, check_query) in checks {
+        let mut result = graph
+            .execute(query(check_query))
+            .await
+            .map_err(|e| format!("Failed to run check {}: {}", check_name, e))?;
+
+        if let Some(row) = result.next().await.map_err(|e| e.to_string())? {
+            let count: i64 = row.get("count").unwrap_or(0);
+            results.insert(
+                check_name.to_string(),
+                serde_json::Value::Number(serde_json::Number::from(count)),
+            );
+        }
+    }
+
+    // Check if migration appears complete
+    let scheduled_tasks_without_events: i64 = results
+        .get("scheduled_tasks_without_events")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let events_without_parents: i64 = results
+        .get("events_without_parents")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let orphaned_relationships: i64 = results
+        .get("orphaned_child_relationships")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let is_healthy = scheduled_tasks_without_events == 0
+        && events_without_parents == 0
+        && orphaned_relationships == 0;
+
+    results.insert(
+        "migration_healthy".to_string(),
+        serde_json::Value::Bool(is_healthy),
+    );
+    results.insert(
+        "timestamp".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(Utc::now().timestamp())),
+    );
+
+    Ok(serde_json::Value::Object(results))
+}

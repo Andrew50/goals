@@ -314,7 +314,7 @@ const Calendar: React.FC = () => {
     if (!debugMode) return;
 
     const handleGlobalClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
+      // Remove unused target assignment
     };
 
     document.addEventListener('click', handleGlobalClick);
@@ -414,7 +414,6 @@ const Calendar: React.FC = () => {
     }
 
     const event = info.event.extendedProps?.goal;
-    const parent = info.event.extendedProps?.parent;
 
     if (event) {
       // Open GoalMenu for all goal types, including events
@@ -430,7 +429,6 @@ const Calendar: React.FC = () => {
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
-      const parent = info.event.extendedProps?.parent;
 
       if (goal) {
         // Use GoalMenu for all goal types on right-click

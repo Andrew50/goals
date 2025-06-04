@@ -68,7 +68,7 @@ pub async fn get_day_tasks(
         } as event
         ORDER BY e.scheduled_timestamp";
 
-    let query = query(&query_str)
+    let query = query(query_str)
         .param("user_id", user_id)
         .param("start_timestamp", start_timestamp)
         .param("end_timestamp", end_timestamp);

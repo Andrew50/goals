@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -54,14 +54,7 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
     const [preferredTimeEnd, setPreferredTimeEnd] = useState<number>(18);
     const [suggestAfterCurrent, setSuggestAfterCurrent] = useState<boolean>(true);
 
-    // Load initial suggestions when dialog opens
-    useEffect(() => {
-        if (open) {
-            loadSuggestions();
-        }
-    }, [open]);
-
-    const loadSuggestions = async (additionalDays?: number) => {
+    const loadSuggestions = useCallback(async (additionalDays?: number) => {
         setLoading(true);
         setError('');
 
@@ -77,9 +70,11 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
 
             if (additionalDays) {
                 // Add to existing suggestions, removing duplicates
-                const existingTimestamps = new Set(suggestions.map(s => s.timestamp.getTime()));
-                const newSuggestions = result.suggestions.filter(s => !existingTimestamps.has(s.timestamp.getTime()));
-                setSuggestions(prev => [...prev, ...newSuggestions]);
+                setSuggestions(prev => {
+                    const existingTimestamps = new Set(prev.map(s => s.timestamp.getTime()));
+                    const newSuggestions = result.suggestions.filter(s => !existingTimestamps.has(s.timestamp.getTime()));
+                    return [...prev, ...newSuggestions];
+                });
                 setLookAheadDays(days);
             } else {
                 setSuggestions(result.suggestions);
@@ -90,7 +85,14 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
         } finally {
             setLoading(false);
         }
-    };
+    }, [duration, lookAheadDays, preferredTimeStart, preferredTimeEnd, currentScheduledTime, suggestAfterCurrent]);
+
+    // Load initial suggestions when dialog opens
+    useEffect(() => {
+        if (open) {
+            loadSuggestions();
+        }
+    }, [open, loadSuggestions]);
 
     const handleLoadMore = () => {
         loadSuggestions(lookAheadDays + 7);
