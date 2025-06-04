@@ -13,12 +13,18 @@ interface TaskListProps {
   onTaskUpdate: (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => void;
 }
 
+interface TaskWithEventInfo extends CalendarTask {
+  eventCount: number;
+  completedEventCount: number;
+  nextEventDate?: Date;
+}
+
 /**
  * Represents a single Task item that FullCalendar will see
  * as an external event via the .external-event class.
  */
 const DraggableTask: React.FC<{
-  task: CalendarTask;
+  task: TaskWithEventInfo;
   onTaskUpdate: TaskListProps['onTaskUpdate'];
 }> = ({ task, onTaskUpdate }) => {
   const { goal } = task;
@@ -70,29 +76,81 @@ const DraggableTask: React.FC<{
         color: '#ffffff',
         cursor: 'grab',
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between'
+        flexDirection: 'column',
+        gap: '8px'
       }}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
     >
-      <span>{task.title}</span>
-      <div
-        style={{
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+      }}>
+        <span style={{ fontWeight: 500 }}>{task.title}</span>
+        <span style={{
           fontSize: '0.85em',
           opacity: 0.9,
-          marginLeft: '8px',
+          textTransform: 'capitalize'
+        }}>
+          {goal?.goal_type}
+        </span>
+      </div>
+
+      {/* Event Progress */}
+      {task.eventCount > 0 && (
+        <div style={{
+          fontSize: '0.85em',
+          opacity: 0.9,
           display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          whiteSpace: 'nowrap'
-        }}
-      >
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <span>
+            {task.completedEventCount}/{task.eventCount} events complete
+          </span>
+          {task.completedEventCount > 0 && task.eventCount > 0 && (
+            <div style={{
+              flex: 1,
+              height: '4px',
+              backgroundColor: 'rgba(255, 255, 255, 0.3)',
+              borderRadius: '2px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${(task.completedEventCount / task.eventCount) * 100}%`,
+                height: '100%',
+                backgroundColor: 'rgba(255, 255, 255, 0.8)'
+              }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Task dates and next event */}
+      <div style={{
+        fontSize: '0.85em',
+        opacity: 0.9,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px'
+      }}>
+        {task.eventCount === 0 && (
+          <span style={{
+            color: '#ffeb3b',
+            fontWeight: 500
+          }}>
+            ⚠️ No events scheduled
+          </span>
+        )}
+        {task.nextEventDate && (
+          <span>Next: {formatDate(task.nextEventDate)}</span>
+        )}
         {goal?.start_timestamp && (
-          <span>Start {formatDate(goal.start_timestamp)}</span>
+          <span>Start: {formatDate(goal.start_timestamp)}</span>
         )}
         {goal?.end_timestamp && (
-          <span>Due {formatDate(goal.end_timestamp)}</span>
+          <span>Due: {formatDate(goal.end_timestamp)}</span>
         )}
       </div>
     </div>
@@ -101,7 +159,7 @@ const DraggableTask: React.FC<{
 
 /**
  * Main TaskList component that:
- * - Renders the unscheduled tasks
+ * - Renders all active (non-completed) tasks
  * - Provides an "Add Task" button
  * - Allows dropping scheduled events from the Calendar
  *   back into the TaskList (i.e., "unscheduling" them)
@@ -146,14 +204,41 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       }
     });
 
-    // Sort tasks by some criterion, e.g., earliest due date at the top, or descending
-    const sortedTasks = useMemo(() => {
-      return [...tasks].sort((a, b) => {
-        const aDue = a.goal?.end_timestamp?.getTime() || 0;
-        const bDue = b.goal?.end_timestamp?.getTime() || 0;
-        return aDue - bDue; // earliest due date first
+    // Calculate task event info
+    const tasksWithInfo: TaskWithEventInfo[] = useMemo(() => {
+      return tasks.map(task => {
+        const taskEvents = events.filter(e =>
+          e.goal.parent_id === task.goal.id &&
+          !e.goal.is_deleted
+        );
+
+        const completedEvents = taskEvents.filter(e => e.goal.completed);
+        const futureEvents = taskEvents
+          .filter(e => !e.goal.completed && e.start > new Date())
+          .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        return {
+          ...task,
+          eventCount: taskEvents.length,
+          completedEventCount: completedEvents.length,
+          nextEventDate: futureEvents[0]?.start
+        };
       });
-    }, [tasks]);
+    }, [tasks, events]);
+
+    // Sort tasks by priority/status
+    const sortedTasks = useMemo(() => {
+      return [...tasksWithInfo].sort((a, b) => {
+        // Tasks with no events first
+        if (a.eventCount === 0 && b.eventCount > 0) return -1;
+        if (b.eventCount === 0 && a.eventCount > 0) return 1;
+
+        // Then by due date
+        const aDue = a.goal?.end_timestamp?.getTime() || Infinity;
+        const bDue = b.goal?.end_timestamp?.getTime() || Infinity;
+        return aDue - bDue;
+      });
+    }, [tasksWithInfo]);
 
     // Debug or introspection
     useEffect(() => {
@@ -192,7 +277,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             fontWeight: 600
           }}
         >
-          Unscheduled Tasks
+          Active Tasks
         </h3>
 
         <button

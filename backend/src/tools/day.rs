@@ -3,8 +3,6 @@ use chrono::{TimeZone, Utc};
 use neo4rs::{query, Graph};
 use serde_json::Value;
 
-use crate::tools::goal::GOAL_RETURN_QUERY;
-
 // Business logic functions with regular parameters
 pub async fn get_day_tasks(
     graph: Graph,
@@ -46,40 +44,29 @@ pub async fn get_day_tasks(
         Utc.timestamp_millis_opt(end_timestamp).unwrap()
     );
 
-    // Debug query to show tasks near our range
-    let debug_query = query(
-        "MATCH (g:Goal) 
-         WHERE g.user_id = $user_id 
-         AND g.goal_type = 'task'
-         AND g.scheduled_timestamp >= $range_start
-         AND g.scheduled_timestamp <= $range_end
-         RETURN g.name, g.scheduled_timestamp, 
-                datetime({ epochMillis: g.scheduled_timestamp }) as scheduled_date
-         ORDER BY g.scheduled_timestamp",
-    )
-    .param("user_id", user_id)
-    .param("range_start", start_timestamp)
-    .param("range_end", end_timestamp);
-
-    println!("\nTasks around the target date range:");
-    if let Ok(mut result) = graph.execute(debug_query).await {
-        while let Ok(Some(row)) = result.next().await {
-            let timestamp = row.get::<i64>("g.scheduled_timestamp").unwrap_or(0);
-            let name = row.get::<String>("g.name").unwrap_or_default();
-            let date = row.get::<String>("scheduled_date").unwrap_or_default();
-            println!("Task: {} - {} ({})", name, timestamp, date);
-        }
-    }
-
-    let query_str = format!(
-        "MATCH (g:Goal) 
-         WHERE g.user_id = $user_id 
-         AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
-         AND g.scheduled_timestamp >= $start_timestamp 
-         AND g.scheduled_timestamp <= $end_timestamp
-         {}",
-        GOAL_RETURN_QUERY
-    );
+    // Query Events (Goal nodes with goal_type='event') that are linked to tasks or achievements
+    let query_str = "
+        MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
+        WHERE e.goal_type = 'event'
+        AND g.user_id = $user_id 
+        AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
+        AND e.scheduled_timestamp >= $start_timestamp 
+        AND e.scheduled_timestamp <= $end_timestamp
+        AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        RETURN {
+            id: id(e),
+            name: e.name,
+            description: e.description,
+            goal_type: g.goal_type,
+            priority: COALESCE(e.priority, g.priority, 'medium'),
+            color: COALESCE(e.color, g.color),
+            completed: COALESCE(e.completed, false),
+            scheduled_timestamp: e.scheduled_timestamp,
+            goal_id: id(g),
+            parent_type: e.parent_type,
+            routine_instance_id: e.routine_instance_id
+        } as event
+        ORDER BY e.scheduled_timestamp";
 
     let query = query(&query_str)
         .param("user_id", user_id)
@@ -88,20 +75,20 @@ pub async fn get_day_tasks(
 
     match graph.execute(query).await {
         Ok(mut result) => {
-            let mut tasks = Vec::new();
+            let mut events = Vec::new();
             while let Ok(Some(row)) = result.next().await {
-                if let Ok(goal) = row.get::<serde_json::Value>("g") {
-                    tasks.push(goal);
+                if let Ok(event) = row.get::<serde_json::Value>("event") {
+                    events.push(event);
                 }
             }
-            println!("Found {} tasks", tasks.len());
-            Ok(Json(tasks))
+            println!("Found {} events", events.len());
+            Ok(Json(events))
         }
         Err(e) => {
-            eprintln!("Error fetching day tasks: {}", e);
+            eprintln!("Error fetching day events: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch tasks: {}", e),
+                format!("Failed to fetch events: {}", e),
             ))
         }
     }
@@ -113,12 +100,14 @@ pub async fn toggle_complete_task(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let now = Utc::now().timestamp();
 
+    // Toggle completion on the Event (Goal node with goal_type='event')
     let query = query(
-        "MATCH (g:Goal) 
-         WHERE id(g) = $id 
-         SET g.completed = CASE WHEN g.completed = true THEN false ELSE true END,
-             g.completion_date = CASE WHEN g.completed = true THEN null ELSE $completion_date END
-         RETURN g",
+        "MATCH (e:Goal) 
+         WHERE id(e) = $id 
+         AND e.goal_type = 'event'
+         SET e.completed = CASE WHEN e.completed = true THEN false ELSE true END,
+             e.completion_date = CASE WHEN e.completed = true THEN null ELSE $completion_date END
+         RETURN e",
     )
     .param("id", id)
     .param("completion_date", now);
@@ -126,10 +115,10 @@ pub async fn toggle_complete_task(
     match graph.run(query).await {
         Ok(_) => Ok(StatusCode::OK),
         Err(e) => {
-            eprintln!("Error toggling task completion: {}", e);
+            eprintln!("Error toggling event completion: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to toggle task completion: {}", e),
+                format!("Failed to toggle event completion: {}", e),
             ))
         }
     }

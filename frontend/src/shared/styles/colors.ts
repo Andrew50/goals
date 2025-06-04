@@ -6,7 +6,8 @@ export const getGoalColor = (goal: Goal): string => {
         project: '#4682B4',    // steel blue
         achievement: '#CD5C5C', // indian red
         routine: '#DAA520',    // goldenrod
-        task: '#81c784'        // lighter green
+        task: '#81c784',       // lighter green
+        event: '#FF8C00'       // dark orange
     };
 
     // If completed, return a muted/grayed out version of the color
