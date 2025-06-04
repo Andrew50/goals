@@ -20,6 +20,85 @@ pub struct YearStats {
     pub daily_stats: Vec<DailyStats>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PeriodStats {
+    pub period: String, // "2024-W01", "2024-01", "2024"
+    pub completion_rate: f64, // 0.0 to 1.0
+    pub total_events: i32,
+    pub completed_events: i32,
+    pub days_with_tasks: i32,
+    pub days_with_no_tasks_complete: i32,
+    pub weighted_total: f64,
+    pub weighted_completed: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExtendedStats {
+    pub year: i32,
+    pub daily_stats: Vec<DailyStats>,
+    pub weekly_stats: Vec<PeriodStats>,
+    pub monthly_stats: Vec<PeriodStats>,
+    pub yearly_stats: PeriodStats,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoutineStats {
+    pub routine_id: i64,
+    pub routine_name: String,
+    pub completion_rate: f64,
+    pub total_events: i32,
+    pub completed_events: i32,
+    pub smoothed_completion: Vec<SmoothedPoint>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SmoothedPoint {
+    pub date: String,
+    pub completion_rate: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoutineSearchResult {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EventReschedulingStats {
+    pub total_reschedules: i32,
+    pub avg_reschedule_distance_hours: f64,
+    pub reschedule_frequency_by_month: Vec<MonthlyRescheduleStats>,
+    pub most_rescheduled_events: Vec<RescheduledEventInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MonthlyRescheduleStats {
+    pub month: String, // "2024-01"
+    pub reschedule_count: i32,
+    pub total_events: i32,
+    pub reschedule_rate: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RescheduledEventInfo {
+    pub event_name: String,
+    pub reschedule_count: i32,
+    pub parent_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EventMove {
+    pub id: Option<i64>,
+    pub event_id: i64,
+    pub user_id: i64,
+    pub old_timestamp: i64,
+    pub new_timestamp: i64,
+    pub move_type: String, // "reschedule", "cancel", "complete_early"
+    pub move_timestamp: i64,
+    pub reason: Option<String>,
+}
+
 pub async fn get_year_stats(
     graph: Graph,
     user_id: i64,
@@ -143,4 +222,507 @@ pub async fn get_year_stats(
             ))
         }
     }
+}
+
+pub async fn get_extended_stats(
+    graph: Graph,
+    user_id: i64,
+    year: Option<i32>,
+) -> Result<Json<ExtendedStats>, (StatusCode, String)> {
+    // First get the daily stats
+    let year_stats_result = get_year_stats(graph.clone(), user_id, year).await?;
+    let year_stats = year_stats_result.0;
+    
+    // Aggregate into weekly and monthly stats
+    let weekly_stats = aggregate_weekly_stats(&year_stats.daily_stats, year_stats.year);
+    let monthly_stats = aggregate_monthly_stats(&year_stats.daily_stats, year_stats.year);
+    let yearly_stats = aggregate_yearly_stats(&year_stats.daily_stats, year_stats.year);
+    
+    Ok(Json(ExtendedStats {
+        year: year_stats.year,
+        daily_stats: year_stats.daily_stats,
+        weekly_stats,
+        monthly_stats,
+        yearly_stats,
+    }))
+}
+
+pub async fn search_routines(
+    graph: Graph,
+    user_id: i64,
+    search_term: String,
+) -> Result<Json<Vec<RoutineSearchResult>>, (StatusCode, String)> {
+    let query_str = "
+        MATCH (r:Goal)
+        WHERE r.user_id = $user_id 
+        AND r.goal_type = 'routine'
+        AND (toLower(r.name) CONTAINS toLower($search_term) 
+             OR toLower(COALESCE(r.description, '')) CONTAINS toLower($search_term))
+        RETURN id(r) as id, r.name as name, r.description as description
+        ORDER BY r.name
+        LIMIT 20
+    ";
+
+    let query = query(query_str)
+        .param("user_id", user_id)
+        .param("search_term", search_term);
+
+    match graph.execute(query).await {
+        Ok(mut result) => {
+            let mut routines = Vec::new();
+            
+            while let Ok(Some(row)) = result.next().await {
+                let id = row.get::<i64>("id").unwrap_or(0);
+                let name = row.get::<String>("name").unwrap_or_default();
+                let description = row.get::<String>("description").ok();
+                
+                routines.push(RoutineSearchResult {
+                    id,
+                    name,
+                    description,
+                });
+            }
+            
+            Ok(Json(routines))
+        }
+        Err(e) => {
+            eprintln!("Error searching routines: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to search routines: {}", e),
+            ))
+        }
+    }
+}
+
+pub async fn get_routine_stats(
+    graph: Graph,
+    user_id: i64,
+    routine_ids: Vec<i64>,
+    year: Option<i32>,
+) -> Result<Json<Vec<RoutineStats>>, (StatusCode, String)> {
+    let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
+    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
+    
+    let start_timestamp = start_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+    let end_timestamp = end_date.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp_millis();
+
+    let mut routine_stats = Vec::new();
+
+    for routine_id in routine_ids {
+        let query_str = "
+            MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+            WHERE id(r) = $routine_id
+            AND r.user_id = $user_id
+            AND e.goal_type = 'event'
+            AND e.scheduled_timestamp >= $start_timestamp
+            AND e.scheduled_timestamp <= $end_timestamp
+            AND (e.is_deleted IS NULL OR e.is_deleted = false)
+            WITH r, e
+            ORDER BY e.scheduled_timestamp
+            RETURN r.name as routine_name,
+                   collect({
+                       date: e.scheduled_timestamp,
+                       completed: COALESCE(e.completed, false)
+                   }) as events
+        ";
+
+        let query = query(query_str)
+            .param("routine_id", routine_id)
+            .param("user_id", user_id)
+            .param("start_timestamp", start_timestamp)
+            .param("end_timestamp", end_timestamp);
+
+        match graph.execute(query).await {
+            Ok(mut result) => {
+                if let Ok(Some(row)) = result.next().await {
+                    let routine_name = row.get::<String>("routine_name").unwrap_or_default();
+                    let events: Vec<serde_json::Value> = row.get("events").unwrap_or_default();
+                    
+                    let mut total_events = 0;
+                    let mut completed_events = 0;
+                    let mut daily_completion: HashMap<String, (i32, i32)> = HashMap::new();
+                    
+                    for event in events {
+                        if let (Some(timestamp), Some(completed)) = (
+                            event.get("date").and_then(|v| v.as_i64()),
+                            event.get("completed").and_then(|v| v.as_bool()),
+                        ) {
+                            total_events += 1;
+                            if completed {
+                                completed_events += 1;
+                            }
+                            
+                            // Group by date for smoothing
+                            let date = Utc.timestamp_millis_opt(timestamp)
+                                .single()
+                                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                                .unwrap_or_default();
+                            
+                            let entry = daily_completion.entry(date).or_insert((0, 0));
+                            entry.0 += 1; // total
+                            if completed {
+                                entry.1 += 1; // completed
+                            }
+                        }
+                    }
+                    
+                    let completion_rate = if total_events > 0 {
+                        completed_events as f64 / total_events as f64
+                    } else {
+                        0.0
+                    };
+                    
+                    // Create smoothed completion data
+                    let smoothed_completion = create_smoothed_completion(&daily_completion, &start_date, &end_date);
+                    
+                    routine_stats.push(RoutineStats {
+                        routine_id,
+                        routine_name,
+                        completion_rate,
+                        total_events,
+                        completed_events,
+                        smoothed_completion,
+                    });
+                }
+            }
+            Err(e) => {
+                eprintln!("Error fetching routine stats for routine {}: {}", routine_id, e);
+            }
+        }
+    }
+
+    Ok(Json(routine_stats))
+}
+
+pub async fn get_rescheduling_stats(
+    graph: Graph,
+    user_id: i64,
+    year: Option<i32>,
+) -> Result<Json<EventReschedulingStats>, (StatusCode, String)> {
+    let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
+    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
+    
+    let start_timestamp = start_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+    let end_timestamp = end_date.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp_millis();
+
+    // Query event moves
+    let query_str = "
+        MATCH (em:EventMove)
+        WHERE em.user_id = $user_id
+        AND em.move_timestamp >= $start_timestamp
+        AND em.move_timestamp <= $end_timestamp
+        AND em.move_type = 'reschedule'
+        OPTIONAL MATCH (e:Goal)
+        WHERE id(e) = em.event_id
+        RETURN em.event_id as event_id,
+               em.old_timestamp as old_timestamp,
+               em.new_timestamp as new_timestamp,
+               em.move_timestamp as move_timestamp,
+               e.name as event_name,
+               e.parent_type as parent_type
+        ORDER BY em.move_timestamp
+    ";
+
+    let query = query(query_str)
+        .param("user_id", user_id)
+        .param("start_timestamp", start_timestamp)
+        .param("end_timestamp", end_timestamp);
+
+    match graph.execute(query).await {
+        Ok(mut result) => {
+            let mut reschedules = Vec::new();
+            let mut total_distance_hours = 0.0;
+            let mut monthly_counts: HashMap<String, i32> = HashMap::new();
+            let mut event_reschedule_counts: HashMap<String, (String, i32)> = HashMap::new();
+            
+            while let Ok(Some(row)) = result.next().await {
+                let old_timestamp = row.get::<i64>("old_timestamp").unwrap_or(0);
+                let new_timestamp = row.get::<i64>("new_timestamp").unwrap_or(0);
+                let move_timestamp = row.get::<i64>("move_timestamp").unwrap_or(0);
+                let event_name = row.get::<String>("event_name").unwrap_or_default();
+                let parent_type = row.get::<String>("parent_type").unwrap_or_default();
+                
+                // Calculate distance in hours
+                let distance_hours = (new_timestamp - old_timestamp).abs() as f64 / (1000.0 * 60.0 * 60.0);
+                total_distance_hours += distance_hours;
+                
+                // Group by month
+                let month = Utc.timestamp_millis_opt(move_timestamp)
+                    .single()
+                    .map(|dt| dt.format("%Y-%m").to_string())
+                    .unwrap_or_default();
+                *monthly_counts.entry(month).or_insert(0) += 1;
+                
+                // Count reschedules per event
+                let entry = event_reschedule_counts.entry(event_name.clone()).or_insert((parent_type.clone(), 0));
+                entry.1 += 1;
+                
+                reschedules.push((old_timestamp, new_timestamp, move_timestamp));
+            }
+            
+            let total_reschedules = reschedules.len() as i32;
+            let avg_reschedule_distance_hours = if total_reschedules > 0 {
+                total_distance_hours / total_reschedules as f64
+            } else {
+                0.0
+            };
+            
+            // Create monthly stats
+            let mut reschedule_frequency_by_month = Vec::new();
+            for (month, count) in monthly_counts {
+                reschedule_frequency_by_month.push(MonthlyRescheduleStats {
+                    month,
+                    reschedule_count: count,
+                    total_events: 100, // TODO: Calculate actual total events for the month
+                    reschedule_rate: count as f64 / 100.0, // TODO: Use actual total
+                });
+            }
+            
+            // Get most rescheduled events
+            let mut most_rescheduled_events: Vec<_> = event_reschedule_counts
+                .into_iter()
+                .map(|(name, (parent_type, count))| RescheduledEventInfo {
+                    event_name: name,
+                    reschedule_count: count,
+                    parent_type,
+                })
+                .collect();
+            most_rescheduled_events.sort_by(|a, b| b.reschedule_count.cmp(&a.reschedule_count));
+            most_rescheduled_events.truncate(10);
+            
+            Ok(Json(EventReschedulingStats {
+                total_reschedules,
+                avg_reschedule_distance_hours,
+                reschedule_frequency_by_month,
+                most_rescheduled_events,
+            }))
+        }
+        Err(e) => {
+            eprintln!("Error fetching rescheduling stats: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch rescheduling stats: {}", e),
+            ))
+        }
+    }
+}
+
+pub async fn record_event_move(
+    graph: Graph,
+    event_move: EventMove,
+) -> Result<Json<EventMove>, (StatusCode, String)> {
+    let query_str = "
+        CREATE (em:EventMove {
+            event_id: $event_id,
+            user_id: $user_id,
+            old_timestamp: $old_timestamp,
+            new_timestamp: $new_timestamp,
+            move_type: $move_type,
+            move_timestamp: $move_timestamp,
+            reason: $reason
+        })
+        RETURN id(em) as id
+    ";
+
+    let query = query(query_str)
+        .param("event_id", event_move.event_id)
+        .param("user_id", event_move.user_id)
+        .param("old_timestamp", event_move.old_timestamp)
+        .param("new_timestamp", event_move.new_timestamp)
+        .param("move_type", event_move.move_type.clone())
+        .param("move_timestamp", event_move.move_timestamp)
+        .param("reason", event_move.reason.clone());
+
+    match graph.execute(query).await {
+        Ok(mut result) => {
+            let mut created_move = event_move;
+            if let Ok(Some(row)) = result.next().await {
+                created_move.id = Some(row.get::<i64>("id").unwrap_or(0));
+            }
+            Ok(Json(created_move))
+        }
+        Err(e) => {
+            eprintln!("Error recording event move: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to record event move: {}", e),
+            ))
+        }
+    }
+}
+
+// Helper functions
+
+fn aggregate_weekly_stats(daily_stats: &[DailyStats], _year: i32) -> Vec<PeriodStats> {
+    let mut weekly_stats = HashMap::new();
+    
+    for day_stat in daily_stats {
+        if let Ok(date) = NaiveDate::parse_from_str(&day_stat.date, "%Y-%m-%d") {
+            let iso_week = date.iso_week();
+            let week_key = format!("{}-W{:02}", iso_week.year(), iso_week.week());
+            
+            let entry = weekly_stats.entry(week_key.clone()).or_insert(PeriodStats {
+                period: week_key,
+                completion_rate: 0.0,
+                total_events: 0,
+                completed_events: 0,
+                days_with_tasks: 0,
+                days_with_no_tasks_complete: 0,
+                weighted_total: 0.0,
+                weighted_completed: 0.0,
+            });
+            
+            entry.total_events += day_stat.total_events;
+            entry.completed_events += day_stat.completed_events;
+            entry.weighted_total += day_stat.weighted_total;
+            entry.weighted_completed += day_stat.weighted_completed;
+            
+            if day_stat.total_events > 0 {
+                entry.days_with_tasks += 1;
+                if day_stat.completed_events == 0 {
+                    entry.days_with_no_tasks_complete += 1;
+                }
+            }
+        }
+    }
+    
+    // Calculate completion rates
+    for stat in weekly_stats.values_mut() {
+        stat.completion_rate = if stat.weighted_total > 0.0 {
+            stat.weighted_completed / stat.weighted_total
+        } else {
+            0.0
+        };
+    }
+    
+    let mut result: Vec<_> = weekly_stats.into_values().collect();
+    result.sort_by(|a, b| a.period.cmp(&b.period));
+    result
+}
+
+fn aggregate_monthly_stats(daily_stats: &[DailyStats], _year: i32) -> Vec<PeriodStats> {
+    let mut monthly_stats = HashMap::new();
+    
+    for day_stat in daily_stats {
+        if let Ok(date) = NaiveDate::parse_from_str(&day_stat.date, "%Y-%m-%d") {
+            let month_key = format!("{}-{:02}", date.year(), date.month());
+            
+            let entry = monthly_stats.entry(month_key.clone()).or_insert(PeriodStats {
+                period: month_key,
+                completion_rate: 0.0,
+                total_events: 0,
+                completed_events: 0,
+                days_with_tasks: 0,
+                days_with_no_tasks_complete: 0,
+                weighted_total: 0.0,
+                weighted_completed: 0.0,
+            });
+            
+            entry.total_events += day_stat.total_events;
+            entry.completed_events += day_stat.completed_events;
+            entry.weighted_total += day_stat.weighted_total;
+            entry.weighted_completed += day_stat.weighted_completed;
+            
+            if day_stat.total_events > 0 {
+                entry.days_with_tasks += 1;
+                if day_stat.completed_events == 0 {
+                    entry.days_with_no_tasks_complete += 1;
+                }
+            }
+        }
+    }
+    
+    // Calculate completion rates
+    for stat in monthly_stats.values_mut() {
+        stat.completion_rate = if stat.weighted_total > 0.0 {
+            stat.weighted_completed / stat.weighted_total
+        } else {
+            0.0
+        };
+    }
+    
+    let mut result: Vec<_> = monthly_stats.into_values().collect();
+    result.sort_by(|a, b| a.period.cmp(&b.period));
+    result
+}
+
+fn aggregate_yearly_stats(daily_stats: &[DailyStats], year: i32) -> PeriodStats {
+    let mut yearly_stat = PeriodStats {
+        period: year.to_string(),
+        completion_rate: 0.0,
+        total_events: 0,
+        completed_events: 0,
+        days_with_tasks: 0,
+        days_with_no_tasks_complete: 0,
+        weighted_total: 0.0,
+        weighted_completed: 0.0,
+    };
+    
+    for day_stat in daily_stats {
+        yearly_stat.total_events += day_stat.total_events;
+        yearly_stat.completed_events += day_stat.completed_events;
+        yearly_stat.weighted_total += day_stat.weighted_total;
+        yearly_stat.weighted_completed += day_stat.weighted_completed;
+        
+        if day_stat.total_events > 0 {
+            yearly_stat.days_with_tasks += 1;
+            if day_stat.completed_events == 0 {
+                yearly_stat.days_with_no_tasks_complete += 1;
+            }
+        }
+    }
+    
+    yearly_stat.completion_rate = if yearly_stat.weighted_total > 0.0 {
+        yearly_stat.weighted_completed / yearly_stat.weighted_total
+    } else {
+        0.0
+    };
+    
+    yearly_stat
+}
+
+fn create_smoothed_completion(
+    daily_completion: &HashMap<String, (i32, i32)>,
+    start_date: &NaiveDate,
+    end_date: &NaiveDate,
+) -> Vec<SmoothedPoint> {
+    let mut points = Vec::new();
+    let window_size = 7; // 7-day smoothing window
+    
+    let mut current_date = *start_date;
+    while current_date <= *end_date {
+        let date_str = current_date.format("%Y-%m-%d").to_string();
+        
+        // Calculate smoothed completion rate using surrounding days
+        let mut total_events = 0;
+        let mut completed_events = 0;
+        
+        for i in -(window_size/2)..=(window_size/2) {
+            let check_date = current_date + Duration::days(i);
+            let check_date_str = check_date.format("%Y-%m-%d").to_string();
+            
+            if let Some((total, completed)) = daily_completion.get(&check_date_str) {
+                total_events += total;
+                completed_events += completed;
+            }
+        }
+        
+        let completion_rate = if total_events > 0 {
+            completed_events as f64 / total_events as f64
+        } else {
+            0.0
+        };
+        
+        points.push(SmoothedPoint {
+            date: date_str,
+            completion_rate,
+        });
+        
+        current_date += Duration::days(1);
+    }
+    
+    points
 } 

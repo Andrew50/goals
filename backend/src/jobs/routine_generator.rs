@@ -1,4 +1,4 @@
-use chrono::{Utc, Duration, TimeZone};
+use chrono::{Utc, Duration, TimeZone, Datelike};
 use neo4rs::{query, Graph};
 use crate::tools::goal::Goal;
 
@@ -65,6 +65,13 @@ async fn generate_events_for_routine(
     let mut event_count = 0;
     
     while current_time <= until {
+        // Apply routine_time to the current timestamp
+        let scheduled_timestamp = if let Some(routine_time) = routine.routine_time {
+            set_time_of_day(current_time, routine_time)
+        } else {
+            current_time
+        };
+
         // Create event at this timestamp
         let create_query = query(
             "MATCH (r:Goal)
@@ -86,7 +93,7 @@ async fn generate_events_for_routine(
              CREATE (r)-[:HAS_EVENT]->(e)"
         )
         .param("routine_id", routine_id)
-        .param("timestamp", current_time)
+        .param("timestamp", scheduled_timestamp)
         .param("instance_id", instance_id.clone());
         
         graph.run(create_query).await
@@ -104,57 +111,84 @@ async fn generate_events_for_routine(
     Ok(())
 }
 
+fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
+    let day_in_ms: i64 = 24 * 60 * 60 * 1000;
+    let start_of_day = (base_timestamp / day_in_ms) * day_in_ms;
+
+    // Extract just the minutes since midnight from the timestamp
+    let minutes_since_midnight = (time_of_day % day_in_ms) / (60 * 1000);
+    let time_of_day_ms = minutes_since_midnight * 60 * 1000;
+
+    start_of_day + time_of_day_ms
+}
+
 fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, String> {
-    let ms_per_day = 24 * 60 * 60 * 1000;
+    // Use the same logic as in routine.rs
+    let current_dt = Utc
+        .timestamp_millis_opt(current_time)
+        .earliest()
+        .ok_or("Invalid timestamp")?;
+
+    // frequency pattern: {multiplier}{unit}[:days]
+    let parts: Vec<&str> = frequency.split(':').collect();
+    let freq_part = parts[0];
     
-    // Parse frequency format: "ND" where N is number and D is unit (D/W/M/Y)
-    // or special cases like "daily", "weekly", "monthly"
-    let next_time = match frequency.to_lowercase().as_str() {
-        "daily" => current_time + ms_per_day,
-        "weekly" => current_time + (7 * ms_per_day),
-        "monthly" => {
-            // Use chrono for proper month calculation
-            let current = Utc.timestamp_millis_opt(current_time)
-                .single()
-                .ok_or("Invalid timestamp")?;
-            let next = current + Duration::days(30); // Simplified - could be improved
-            next.timestamp_millis()
-        }
-        _ => {
-            // Parse format like "1D", "2W", "3M"
-            if let Some(captures) = regex::Regex::new(r"^(\d+)([DWMY])$")
-                .unwrap()
-                .captures(frequency) 
-            {
-                let number: i64 = captures[1].parse()
-                    .map_err(|_| format!("Invalid frequency number: {}", &captures[1]))?;
-                
-                match &captures[2] {
-                    "D" => current_time + (number * ms_per_day),
-                    "W" => current_time + (number * 7 * ms_per_day),
-                    "M" => {
-                        let current = Utc.timestamp_millis_opt(current_time)
-                            .single()
-                            .ok_or("Invalid timestamp")?;
-                        let next = current + Duration::days(30 * number); // Simplified
-                        next.timestamp_millis()
+    if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
+        let multiplier: i64 = freq_part[..unit_pos].parse()
+            .map_err(|_| format!("Invalid frequency multiplier: {}", &freq_part[..unit_pos]))?;
+        let unit = &freq_part[unit_pos..];
+
+        // Calculate next date
+        let next_date = match unit {
+            "D" => current_dt.date_naive() + Duration::days(multiplier),
+            "W" => {
+                if let Some(days) = parts.get(1) {
+                    // Get selected days as numbers (0-6)
+                    let selected_days: Vec<u32> =
+                        days.split(',').filter_map(|d| d.parse().ok()).collect();
+
+                    if selected_days.is_empty() {
+                        // Fallback if no days specified
+                        current_dt.date_naive() + Duration::weeks(multiplier)
+                    } else {
+                        let mut next_dt = current_dt + Duration::days(1);
+
+                        // Find the next occurrence of any selected day
+                        while !selected_days.contains(&next_dt.weekday().num_days_from_sunday()) {
+                            next_dt += Duration::days(1);
+                        }
+
+                        // If multiplier > 1, add additional weeks after finding next day
+                        if multiplier > 1 {
+                            next_dt += Duration::weeks(multiplier - 1);
+                        }
+
+                        next_dt.date_naive()
                     }
-                    "Y" => {
-                        let current = Utc.timestamp_millis_opt(current_time)
-                            .single()
-                            .ok_or("Invalid timestamp")?;
-                        let next = current + Duration::days(365 * number); // Simplified
-                        next.timestamp_millis()
-                    }
-                    _ => return Err(format!("Unknown frequency unit: {}", &captures[2]))
+                } else {
+                    current_dt.date_naive() + Duration::weeks(multiplier)
                 }
-            } else {
-                return Err(format!("Unknown frequency format: {}", frequency))
             }
-        }
-    };
-    
-    Ok(next_time)
+            "M" => current_dt.date_naive() + Duration::days(multiplier * 30),
+            "Y" => current_dt.date_naive() + Duration::days(multiplier * 365),
+            _ => current_dt.date_naive() + Duration::days(multiplier),
+        };
+
+        // Return timestamp with time set to beginning of day (routine_time would be applied elsewhere)
+        Ok(next_date
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis())
+    } else {
+        // Default to daily if format is invalid
+        let next_date = current_dt.date_naive() + Duration::days(1);
+        Ok(next_date
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis())
+    }
 }
 
 // This function can be called periodically (e.g., daily) by a scheduler

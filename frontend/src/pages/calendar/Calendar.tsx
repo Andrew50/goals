@@ -1,12 +1,25 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
 import TaskList from './TaskList';
 import { useHistoryState } from '../../shared/hooks/useHistoryState';
 import './Calendar.css';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Typography,
+  Box,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
+  FormControl
+} from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -21,6 +34,14 @@ interface CalendarState {
     start: Date;
     end: Date;
   };
+}
+
+interface RoutineRescheduleDialogState {
+  isOpen: boolean;
+  eventId: number | null;
+  eventName: string;
+  newTimestamp: Date | null;
+  eventInfo: any; // FullCalendar event info for reverting
 }
 
 const Calendar: React.FC = () => {
@@ -44,6 +65,14 @@ const Calendar: React.FC = () => {
 
   const [error, setError] = useState<string | null>(null);
   const [dataLoadAttempts, setDataLoadAttempts] = useState(0);
+  const [routineRescheduleDialog, setRoutineRescheduleDialog] = useState<RoutineRescheduleDialogState>({
+    isOpen: false,
+    eventId: null,
+    eventName: '',
+    newTimestamp: null,
+    eventInfo: null
+  });
+  const [selectedUpdateScope, setSelectedUpdateScope] = useState<'single' | 'all' | 'future'>('single');
   const calendarRef = useRef<FullCalendar | null>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
   const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -314,7 +343,16 @@ const Calendar: React.FC = () => {
       }
 
       const goal = task.goal;
-      const duration = goal.duration || 60;
+
+      // Handle duration based on whether it was dropped in all-day section
+      let duration: number;
+      if (info.event.allDay) {
+        // Event was dropped in all-day section - set duration to 1440 minutes (24 hours)
+        duration = 1440;
+      } else {
+        // Event was dropped in timed section - use task's duration or default to 60 minutes
+        duration = goal.duration || 60;
+      }
 
       // Create an event instead of updating the task
       await createEvent({
@@ -337,9 +375,33 @@ const Calendar: React.FC = () => {
     try {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
       if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
-        // Update event timestamp
+        // Check if this is a routine event
+        if (existingEvent.goal.parent_type === 'routine') {
+          // Show dialog for routine event rescheduling
+          setRoutineRescheduleDialog({
+            isOpen: true,
+            eventId: existingEvent.goal.id!,
+            eventName: existingEvent.goal.name,
+            newTimestamp: info.event.start,
+            eventInfo: info
+          });
+          return; // Don't proceed with immediate update
+        }
+
+        // For non-routine events, proceed with normal update
         const updates = { ...existingEvent.goal };
         updates.scheduled_timestamp = info.event.start;
+
+        // Handle duration changes when moving between all-day and timed sections
+        if (info.event.allDay) {
+          // Event was dropped in all-day section - set duration to 1440 minutes (24 hours)
+          updates.duration = 1440;
+        } else if (existingEvent.goal.duration === 1440) {
+          // Event was moved from all-day to timed section - restore reasonable duration
+          // Use 60 minutes as default (same as GoalMenu does when unchecking "All Day")
+          updates.duration = 60;
+        }
+        // If duration is not 1440 and not moving to all-day, keep existing duration
 
         await updateGoal(existingEvent.goal.id, updates);
         loadCalendarData();
@@ -352,6 +414,55 @@ const Calendar: React.FC = () => {
       info.revert();
       setError('Failed to move event. Please try again.');
     }
+  };
+
+  const handleRoutineRescheduleConfirm = async () => {
+    try {
+      if (!routineRescheduleDialog.eventId || !routineRescheduleDialog.newTimestamp) {
+        return;
+      }
+
+      await updateRoutineEvent(
+        routineRescheduleDialog.eventId,
+        routineRescheduleDialog.newTimestamp,
+        selectedUpdateScope
+      );
+
+      // Close dialog and reload data
+      setRoutineRescheduleDialog({
+        isOpen: false,
+        eventId: null,
+        eventName: '',
+        newTimestamp: null,
+        eventInfo: null
+      });
+      setSelectedUpdateScope('single');
+      loadCalendarData();
+    } catch (error) {
+      console.error('Failed to update routine event:', error);
+      setError('Failed to update routine event. Please try again.');
+      // Revert the drag operation
+      if (routineRescheduleDialog.eventInfo) {
+        routineRescheduleDialog.eventInfo.revert();
+      }
+      handleRoutineRescheduleCancel();
+    }
+  };
+
+  const handleRoutineRescheduleCancel = () => {
+    // Revert the drag operation
+    if (routineRescheduleDialog.eventInfo) {
+      routineRescheduleDialog.eventInfo.revert();
+    }
+
+    setRoutineRescheduleDialog({
+      isOpen: false,
+      eventId: null,
+      eventName: '',
+      newTimestamp: null,
+      eventInfo: null
+    });
+    setSelectedUpdateScope('single');
   };
 
   const handleEventResize = async (info: any) => {
@@ -507,6 +618,61 @@ const Calendar: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* Routine Reschedule Dialog */}
+      <Dialog
+        open={routineRescheduleDialog.isOpen}
+        onClose={handleRoutineRescheduleCancel}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Reschedule Routine Event
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body1" sx={{ mb: 2 }}>
+              You're rescheduling the routine event "{routineRescheduleDialog.eventName}".
+              What would you like to update?
+            </Typography>
+
+            <FormControl component="fieldset">
+              <RadioGroup
+                value={selectedUpdateScope}
+                onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
+              >
+                <FormControlLabel
+                  value="single"
+                  control={<Radio />}
+                  label="Only this occurrence"
+                />
+                <FormControlLabel
+                  value="future"
+                  control={<Radio />}
+                  label="This and all future occurrences"
+                />
+                <FormControlLabel
+                  value="all"
+                  control={<Radio />}
+                  label="All occurrences of this routine"
+                />
+              </RadioGroup>
+            </FormControl>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleRoutineRescheduleCancel}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleRoutineRescheduleConfirm}
+            color="primary"
+            variant="contained"
+          >
+            Update
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
   );
 };

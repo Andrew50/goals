@@ -76,17 +76,12 @@ export function validateGoal(goal: Goal): string[] {
                 if (!goal.start_timestamp) {
                     validationErrors.push('Start Date is required');
                 }
-                if (!goal.routine_type) {
-                    validationErrors.push('Routine type is required');
-                }
-                if (goal.routine_type === "task" && !goal.duration) {
-                    validationErrors.push('Duration is required')
-                }
-                break;
-            case 'task':
                 if (!goal.duration) {
                     validationErrors.push('Duration is required');
                 }
+                break;
+            case 'task':
+                // Duration is no longer required for tasks - it will be calculated from child events
                 break;
             case 'project':
             case 'achievement':

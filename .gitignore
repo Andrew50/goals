@@ -2,7 +2,10 @@ backend/target/
 .env
 backups/
 
-
+# Sensitive credential files (general patterns for security)
+**/*credentials*.json
+**/*secret*.json
+**/*private*.json
 
 ##frontend
 # dependencies

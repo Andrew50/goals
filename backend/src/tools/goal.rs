@@ -232,9 +232,7 @@ pub async fn create_goal_handler(
             }
         }
         GoalType::Task => {
-            if goal.duration.is_none() {
-                validation_errors.push("Duration is required for task goals");
-            }
+            // Duration is no longer required for tasks - it will be calculated from child events
         }
         GoalType::Event => {
             if goal.parent_id.is_none() {
