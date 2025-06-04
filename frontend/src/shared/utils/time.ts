@@ -1,193 +1,177 @@
-import { Goal } from "../../types/goals";
+// time.ts  — v2  (instants ⇄ Date objects, same function names)
+// -----------------------------------------------------------------
+import { Goal, ApiGoal } from '../../types/goals';
 
-export const toLocalTimestamp = (timestamp?: number | null): number | undefined => {
-    if (!timestamp) return undefined;
+/* ────────────────────────────────────────────────────────── *
+ *  1.  Low-level helpers                                     *
+ * ────────────────────────────────────────────────────────── */
 
-    // Log the conversion for debugging
-    const originalTimestamp = timestamp;
-    const offset = new Date().getTimezoneOffset() * 60 * 1000;
-    const convertedTimestamp = timestamp - offset;
+/** Wrap a UTC ms value (or undefined) into a Date in local zone. */
+const msToDate = (ms?: number | null): Date | undefined =>
+  ms == null ? undefined : new Date(ms);
 
-    //console.log(`Converting UTC timestamp ${originalTimestamp} to local: ${convertedTimestamp} (offset: ${offset})`);
-    return convertedTimestamp;
+/** Extract UTC ms from a Date (or undefined). */
+const dateToMs = (d?: Date | null): number | undefined =>
+  d == null ? undefined : d.getTime();
+
+/* ────────────────────────────────────────────────────────── *
+ *  2.  Former "timestamp conversion" API                     *
+ *      (names kept for drop-in compatibility)                *
+ * ────────────────────────────────────────────────────────── */
+
+/**
+ * API → frontend : UTC ms ➜ Date   (was "toLocalTimestamp").
+ */
+export const toLocalTimestamp = <T extends number | null | undefined>(
+  timestamp?: T
+): T extends number ? Date : undefined => {
+  // @ts-expect-error  (generic return for drop-in)
+  return msToDate(timestamp);
 };
 
-export const toUTCTimestamp = (timestamp?: number | null): number | undefined => {
-    if (!timestamp) return undefined;
-
-    // Log the conversion for debugging
-    const originalTimestamp = timestamp;
-    const offset = new Date().getTimezoneOffset() * 60 * 1000;
-    const convertedTimestamp = timestamp + offset;
-
-    //console.log(`Converting local timestamp ${originalTimestamp} to UTC: ${convertedTimestamp} (offset: ${offset})`);
-    return convertedTimestamp;
+/**
+ * frontend → API : Date ➜ UTC ms   (was "toUTCTimestamp").
+ */
+export const toUTCTimestamp = <T extends Date | number | null | undefined>(
+  value?: T
+): number | undefined => {
+  // accept either Date (new flow) or legacy number
+  if (value == null) return undefined;
+  return value instanceof Date ? value.getTime() : value;
 };
 
-// Goal conversion utilities
-export const goalToLocal = (goal: Goal): Goal => {
-    if (goal._tz === 'user') {
-        throw new Error('Goal is already in user timezone');
-    }
+/* ────────────────────────────────────────────────────────── *
+ *  3.  Goal-level helpers                                    *
+ * ────────────────────────────────────────────────────────── */
 
-    return {
-        ...goal,
-        start_timestamp: toLocalTimestamp(goal.start_timestamp),
-        end_timestamp: toLocalTimestamp(goal.end_timestamp),
-        next_timestamp: toLocalTimestamp(goal.next_timestamp),
-        scheduled_timestamp: toLocalTimestamp(goal.scheduled_timestamp),
-        routine_time: toLocalTimestamp(goal.routine_time),
-        _tz: 'user'
-    };
-};
+// Define a type for the API representation of a Goal with numeric timestamps
 
-export const goalToUTC = (goal: Goal): Goal => {
-    if (goal._tz === undefined || goal._tz === 'utc') {
-        throw new Error('Goal is already in UTC timezone');
-    }
 
-    return {
-        ...goal,
-        start_timestamp: toUTCTimestamp(goal.start_timestamp),
-        end_timestamp: toUTCTimestamp(goal.end_timestamp),
-        next_timestamp: toUTCTimestamp(goal.next_timestamp),
-        scheduled_timestamp: toUTCTimestamp(goal.scheduled_timestamp),
-        routine_time: toUTCTimestamp(goal.routine_time),
-        _tz: 'utc'
-    };
-};
+/** Converts a Goal-like object from API (numeric timestamps) to frontend Goal (Date objects). */
+export const goalToLocal = (apiGoal: ApiGoal): Goal => ({
+  ...apiGoal,
+  start_timestamp: msToDate(apiGoal.start_timestamp),
+  end_timestamp: msToDate(apiGoal.end_timestamp),
+  next_timestamp: msToDate(apiGoal.next_timestamp),
+  scheduled_timestamp: msToDate(apiGoal.scheduled_timestamp),
+  routine_time: msToDate(apiGoal.routine_time),
+  due_date: msToDate(apiGoal.due_date),
+  start_date: msToDate(apiGoal.start_date),
+});
 
-// Convert a Date object to a UTC timestamp (milliseconds)
-export const dateToTimestamp = (date: Date): number => {
-    return Date.UTC(
-        date.getFullYear(),
-        date.getMonth(),
-        date.getDate(),
-        date.getHours(),
-        date.getMinutes(),
-        date.getSeconds()
-    );
-};
+/** Converts a frontend Goal (Date objects) to an API Goal representation (numeric timestamps). */
+export const goalToUTC = (goal: Goal): ApiGoal => ({
+  ...goal,
+  start_timestamp: dateToMs(goal.start_timestamp),
+  end_timestamp: dateToMs(goal.end_timestamp),
+  next_timestamp: dateToMs(goal.next_timestamp),
+  scheduled_timestamp: dateToMs(goal.scheduled_timestamp),
+  routine_time: dateToMs(goal.routine_time),
+  due_date: dateToMs(goal.due_date),
+  start_date: dateToMs(goal.start_date),
+});
 
-// Convert a timestamp to a Date object (preserving UTC)
-export const timestampToDate = (timestamp: number): Date => {
-    return new Date(timestamp);
-};
+/* ────────────────────────────────────────────────────────── *
+ *  4.  Miscellaneous utilities                               *
+ * ────────────────────────────────────────────────────────── */
 
-// Format a timestamp for datetime-local input (YYYY-MM-DDTHH:mm)
+export const dateToTimestamp = (date: Date): number => date.getTime();
+
+export const timestampToDate = (ts: number | Date): Date =>
+  ts instanceof Date ? ts : new Date(ts);
+
+/** Format for HTML inputs – accepts Date or ms. */
 export const timestampToInputString = (
-    timestamp: number | undefined | null,
-    format: 'date' | 'datetime' | 'time'
+  value: number | Date | null | undefined,
+  format: 'date' | 'datetime' | 'time'
 ): string => {
-    if (!timestamp) return '';
+  if (value == null) return '';
+  const d = value instanceof Date ? value : new Date(value);
 
-    // Create a date from the timestamp (which should already be in the correct timezone based on _tz)
-    // Note: We don't adjust for timezone here since that should already be handled
-    const date = new Date(timestamp);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
 
-    // Log for debugging
-    //console.log(`timestampToInputString: input timestamp=${timestamp}, format=${format}, date=${date.toString()}`);
-
-    // Format the date according to the required format
-    let result = '';
-
-    switch (format) {
-        case 'date':
-            result = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-            break;
-        case 'time':
-            result = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-            break;
-        default: // datetime
-            result = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    }
-
-    //console.log(`timestampToInputString: output=${result}`);
-    return result;
+  switch (format) {
+    case 'date':
+      return `${y}-${m}-${day}`;
+    case 'time':
+      return `${hh}:${mm}`;
+    default:
+      return `${y}-${m}-${day}T${hh}:${mm}`;
+  }
 };
 
-// Parse a datetime-local input string to timestamp
+/** Parse value from input fields – always returns *local* Date. */
 export const inputStringToTimestamp = (
-    dateString: string,
-    format: 'date' | 'datetime' | 'time' | 'end-date'
-): number => {
-    if (!dateString) return 0;
+  str: string,
+  format: 'date' | 'datetime' | 'time' | 'end-date'
+): Date => {
+  // Return Epoch date for empty/invalid string instead of 0
+  if (!str) return new Date(0);
+  const today = new Date();
 
-    //console.log(`inputStringToTimestamp: input dateString=${dateString}, format=${format}`);
-
-    const date = new Date();
-
+  try {
+    let d = new Date(today); // start from today to preserve Y-M-D when parsing 'time'
     switch (format) {
-        case 'date':
-            // Set just the date part, keep time at 00:00:00
-            const [dateYear, dateMonth, dateDay] = dateString.split('-').map(Number);
-            date.setFullYear(dateYear, dateMonth - 1, dateDay);
-            date.setHours(0, 0, 0, 0);
-            break;
-
-        case 'end-date':
-            // Set date to end of day (23:59:59.999)
-            const [endYear, endMonth, endDay] = dateString.split('-').map(Number);
-            date.setFullYear(endYear, endMonth - 1, endDay);
-            date.setHours(23, 59, 59, 999);
-            break;
-
-        case 'time':
-            // Set just the time part, keep date as is
-            const [hours, minutes] = dateString.split(':').map(Number);
-            date.setHours(hours, minutes, 0, 0);
-            break;
-
-        case 'datetime':
-            // Parse the full datetime string
-            const [datePart, timePart] = dateString.split('T');
-            const [dtYear, dtMonth, dtDay] = datePart.split('-').map(Number);
-            const [dtHours, dtMinutes] = timePart.split(':').map(Number);
-
-            date.setFullYear(dtYear, dtMonth - 1, dtDay);
-            date.setHours(dtHours, dtMinutes, 0, 0);
-            break;
+      case 'date': {
+        const [y, m, dd] = str.split('-').map(Number);
+        d = new Date(y, m - 1, dd, 0, 0, 0, 0);
+        break;
+      }
+      case 'end-date': {
+        const [y, m, dd] = str.split('-').map(Number);
+        d = new Date(y, m - 1, dd, 23, 59, 59, 999);
+        break;
+      }
+      case 'time': {
+        const [hh, mm] = str.split(':').map(Number);
+        d.setHours(hh, mm, 0, 0);
+        break;
+      }
+      case 'datetime':
+      default: {
+        const [datePart, timePart] = str.split('T');
+        const [y, m, dd] = datePart.split('-').map(Number);
+        const [hh, mm] = timePart.split(':').map(Number);
+        d = new Date(y, m - 1, dd, hh, mm, 0, 0);
+      }
     }
-
-    // Get timestamp directly from the date without any timezone adjustments
-    // since we're already working in the local timezone
-    const timestamp = date.getTime();
-
-    //console.log(`inputStringToTimestamp: output timestamp=${timestamp}, date=${date.toString()}`);
-    return timestamp;
+    console.log(d)
+    console.log(typeof d)
+    // Ensure the parsed date is valid before returning
+    return isNaN(d.getTime()) ? new Date(0) : d;
+  } catch (e) {
+    console.error(e)
+    // Return Epoch date on parsing error
+    return new Date(0);
+  }
 };
 
-// Format timestamp for display (using UTC)
-export const timestampToDisplayString = (timestamp?: number | null, format: 'date' | 'datetime' | 'time' = 'datetime'): string => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
+/** Localised display helper – unchanged semantics. */
+export const timestampToDisplayString = (
+  value?: number | Date | null,
+  format: 'date' | 'datetime' | 'time' = 'datetime'
+): string => {
+  if (value == null) return '';
+  const d = value instanceof Date ? value : new Date(value);
 
-    const options: Intl.DateTimeFormatOptions = {
-        timeZone: 'UTC',
-        hour12: true,
-    };
+  const opts: Intl.DateTimeFormatOptions =
+    format === 'time'
+      ? { hour: 'numeric', minute: '2-digit' }
+      : format === 'date'
+        ? { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }
+        : {
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        };
 
-    switch (format) {
-        case 'date':
-            options.weekday = 'short';
-            options.year = 'numeric';
-            options.month = 'short';
-            options.day = 'numeric';
-            break;
-        case 'time':
-            options.hour = 'numeric';
-            options.minute = '2-digit';
-            break;
-        default: // datetime
-            options.weekday = 'short';
-            options.year = 'numeric';
-            options.month = 'short';
-            options.day = 'numeric';
-            options.hour = 'numeric';
-            options.minute = '2-digit';
-    }
-
-    return date.toLocaleString('en-US', options);
+  return d.toLocaleString(undefined, opts);
 };
-
 

@@ -1,57 +1,182 @@
-mod auth;
-mod calendar;
-mod day;
-mod db;
-mod goal;
-mod http_handler;
-mod list;
-mod middleware;
-mod network;
-mod query;
-mod routine;
-mod traversal;
-
 use dotenvy::dotenv;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
-use tracing::Level;
-use tracing_subscriber;
+use neo4rs::{ConfigBuilder, Graph};
+use std::env;
 
-type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
+mod ai;
+mod jobs;
+mod server;
+mod tools;
 
 #[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load environment variables
     dotenv().ok();
 
-    let pool = match db::create_pool().await {
-        Ok(pool) => pool,
-        Err(e) => {
-            eprintln!("Error creating database pool: {}", e);
-            return;
+    // Check for command line arguments
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "migrate" => {
+                let force = args.len() > 2 && args[2] == "--force";
+                run_migration(force).await?;
+                return Ok(());
+            }
+            "verify-migration" => {
+                verify_migration().await?;
+                return Ok(());
+            }
+            "reset-migration" => {
+                reset_migration().await?;
+                return Ok(());
+            }
+            "rollback-migration" => {
+                if args.len() < 3 {
+                    eprintln!("Usage: cargo run rollback-migration <backup_file>");
+                    std::process::exit(1);
+                }
+                rollback_migration(&args[2]).await?;
+                return Ok(());
+            }
+            _ => {
+                eprintln!("Unknown command: {}", args[1]);
+                eprintln!("Available commands:");
+                eprintln!("  migrate [--force]     - Run the event migration");
+                eprintln!("  verify-migration      - Verify migration integrity");
+                eprintln!("  reset-migration       - Reset migration status (for development)");
+                eprintln!("  rollback-migration <backup_file> - Rollback migration from backup");
+                std::process::exit(1);
+            }
         }
+    }
+
+    // Default: Start the server (delegate to server/main.rs)
+    server::main::start_server().await
+}
+
+async fn run_migration(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚀 Starting event migration...");
+
+    if force {
+        println!("⚠️ Force flag detected - bypassing migration status check");
+    }
+
+    let graph = create_graph_connection().await?;
+
+    let result = if force {
+        tools::migration::migrate_to_events_force(&graph).await
+    } else {
+        tools::migration::migrate_to_events(&graph).await
     };
 
-    println!("Database connection pool created successfully");
+    match result {
+        Ok(_) => {
+            println!("✅ Migration completed successfully!");
 
-    let cors = CorsLayer::new()
-        .allow_origin([
-            "http://localhost:3000".parse().unwrap(),
-            "https://goals.atlantis.trading".parse().unwrap(),
-        ])
-        .allow_methods(Any)
-        .allow_headers(Any);
+            // Automatically run verification
+            println!("🔍 Running verification...");
+            match tools::migration::verify_migration_integrity(&graph).await {
+                Ok(result) => {
+                    println!("✅ Migration verification completed!");
+                    println!("📊 Verification results:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Migration verification failed: {}", e);
+                    eprintln!("Migration completed but data integrity issues detected.");
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Migration failed: {}", e);
+            eprintln!("Please check the error details and try again.");
+            std::process::exit(1);
+        }
+    }
 
-    let user_locks: UserLocks = Arc::new(Mutex::new(HashMap::new()));
+    Ok(())
+}
 
-    let app = http_handler::create_routes(pool.clone(), user_locks.clone()).layer(cors);
+async fn verify_migration() -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔍 Verifying migration integrity...");
 
-    let listener = TcpListener::bind("0.0.0.0:5057").await.unwrap();
-    println!("Listening on 0.0.0.0:5057");
-    axum::serve(listener, app.into_make_service())
-        .await
-        .unwrap();
+    let graph = create_graph_connection().await?;
+
+    match tools::migration::verify_migration_integrity(&graph).await {
+        Ok(result) => {
+            println!("✅ Migration verification completed!");
+            println!("📊 Verification results:");
+            println!("{}", serde_json::to_string_pretty(&result)?);
+
+            let is_healthy = result
+                .get("migration_healthy")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if !is_healthy {
+                println!("⚠️ Warning: Migration issues detected. Please review the results above.");
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Migration verification failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn rollback_migration(backup_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("⏪ Rolling back migration...");
+    eprintln!("❌ Rollback from backup file not implemented yet.");
+    eprintln!("Note: Rollback should be implemented based on your backup strategy.");
+    eprintln!("Backup file specified: {}", backup_file);
+
+    // TODO: Implement rollback from backup
+    // This would involve:
+    // 1. Loading the backup file
+    // 2. Restoring the database state
+    // 3. Verifying the rollback
+
+    Ok(())
+}
+
+async fn reset_migration() -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔄 Resetting migration status...");
+
+    let graph = create_graph_connection().await?;
+
+    match tools::migration::reset_migration_status(&graph).await {
+        Ok(_) => {
+            println!("✅ Migration status reset successfully!");
+            println!("💡 You can now run the migration again.");
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to reset migration status: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn create_graph_connection() -> Result<Graph, Box<dyn std::error::Error>> {
+    let neo4j_uri = env::var("NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string());
+    let neo4j_user = env::var("NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
+    let neo4j_password = env::var("NEO4J_PASSWORD").unwrap_or_else(|_| "password".to_string());
+
+    println!("🔗 Connecting to Neo4j at {}...", neo4j_uri);
+
+    let config = ConfigBuilder::default()
+        .uri(&neo4j_uri)
+        .user(&neo4j_user)
+        .password(&neo4j_password)
+        .db("neo4j")
+        .build()?;
+
+    let graph = Graph::connect(config).await?;
+    println!("✅ Connected to Neo4j successfully!");
+
+    Ok(graph)
 }

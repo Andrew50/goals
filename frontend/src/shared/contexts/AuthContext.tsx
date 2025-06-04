@@ -4,6 +4,12 @@ import { publicRequest, privateRequest, updateRoutines } from "../utils/api";
 interface SigninResponse {
     token: string;
     message: string;
+    username?: string;
+}
+
+interface GoogleAuthUrlResponse {
+    auth_url: string;
+    state: string;
 }
 
 interface AuthContextType {
@@ -13,6 +19,8 @@ interface AuthContextType {
     setIsAuthenticated: (value: boolean) => void;
     scheduleRoutineUpdate: () => void;
     login: (username: string, password: string) => Promise<string>;
+    googleLogin: (googleToken: string) => Promise<string>;
+    handleGoogleCallback: (code: string, state: string) => Promise<string>;
     logout: () => void;
 }
 
@@ -23,6 +31,8 @@ export const AuthContext = createContext<AuthContextType>({
     setIsAuthenticated: () => { },
     scheduleRoutineUpdate: () => { },
     login: async () => '',
+    googleLogin: async () => '',
+    handleGoogleCallback: async () => '',
     logout: () => { },
 });
 
@@ -147,6 +157,106 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return response.message;
     }, [scheduleRoutineUpdate]);
 
+    const googleLogin = useCallback(async (googleToken: string): Promise<string> => {
+        // For our backend OAuth flow, we need to:
+        // 1. Get the auth URL from our backend
+        // 2. Redirect user to Google
+        // 3. Handle the callback from our backend
+
+        try {
+            // Get Google OAuth URL from our backend
+            const authUrlResponse = await publicRequest<GoogleAuthUrlResponse>(
+                'auth/google',
+                'GET'
+            );
+
+            // Store the state for verification
+            localStorage.setItem('google_oauth_state', authUrlResponse.state);
+
+            // Redirect to Google OAuth
+            window.location.href = authUrlResponse.auth_url;
+
+            // This function won't return normally as we're redirecting
+            return 'Redirecting to Google...';
+        } catch (error: any) {
+            console.error('Google OAuth initiation failed:', error);
+            throw new Error(error.message || 'Failed to initiate Google login');
+        }
+    }, []);
+
+    // Add a method to handle the OAuth callback
+    const handleGoogleCallback = useCallback(async (code: string, state: string): Promise<string> => {
+        console.log('🔄 [AUTH] Starting Google OAuth callback processing...');
+        console.log('📄 [AUTH] Received code:', code?.substring(0, 50) + '...');
+        console.log('🔑 [AUTH] Received state:', state);
+
+        try {
+            // Verify state matches what we stored
+            const storedState = localStorage.getItem('google_oauth_state');
+            console.log('🔍 [AUTH] Stored state:', storedState);
+            console.log('🔍 [AUTH] Received state:', state);
+
+            if (state !== storedState) {
+                console.error('❌ [AUTH] State mismatch! Stored:', storedState, 'Received:', state);
+                throw new Error('Invalid state parameter');
+            }
+
+            console.log('✅ [AUTH] State verification passed');
+
+            // Exchange code for token with our backend
+            const url = `auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+            console.log('🌐 [AUTH] Making request to:', url);
+
+            const response = await publicRequest<SigninResponse>(url, 'GET');
+
+            console.log('✅ [AUTH] Successfully received response from backend');
+            console.log('📋 [AUTH] Response message:', response.message);
+            console.log('👤 [AUTH] Username from response:', response.username);
+
+            // Store token and update auth state
+            localStorage.setItem('authToken', response.token);
+
+            // Extract username from the response
+            const username = response.username || 'Google User';
+            localStorage.setItem('username', username);
+
+            setUsername(username);
+            setIsAuthenticated(true);
+
+            console.log('✅ [AUTH] Updated local auth state');
+
+            // Clean up OAuth state
+            localStorage.removeItem('google_oauth_state');
+            console.log('🧹 [AUTH] Cleaned up OAuth state');
+
+            // Update routines
+            try {
+                console.log('🔄 [AUTH] Updating routines...');
+                await updateRoutines();
+                console.log('✅ [AUTH] Routines updated successfully');
+            } catch (error) {
+                console.error('❌ [AUTH] Failed to update routines on Google login:', error);
+            }
+
+            scheduleRoutineUpdate();
+            console.log('⏰ [AUTH] Scheduled routine update');
+
+            console.log('🎉 [AUTH] Google OAuth callback completed successfully');
+            return response.message;
+        } catch (error: any) {
+            console.error('❌ [AUTH] Google OAuth callback failed:', error);
+            console.error('❌ [AUTH] Error details:', {
+                message: error.message,
+                response: error.response?.data,
+                status: error.response?.status,
+                statusText: error.response?.statusText
+            });
+
+            localStorage.removeItem('google_oauth_state');
+            throw new Error(error.message || 'Google login failed');
+        }
+    }, [scheduleRoutineUpdate]);
+
     return (
         <AuthContext.Provider value={{
             isAuthenticated,
@@ -155,6 +265,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsAuthenticated,
             scheduleRoutineUpdate,
             login,
+            googleLogin,
+            handleGoogleCallback,
             logout
         }}>
             {children}
