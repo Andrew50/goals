@@ -22,7 +22,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, expandTaskDateRange, TaskDateValidationError } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -32,6 +32,7 @@ import {
 import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
+import SmartScheduleDialog from "./SmartScheduleDialog";
 import { getGoalColor } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
@@ -49,6 +50,98 @@ interface GoalMenuState {
     error: string;
     mode: Mode;
 }
+
+// Task Date Range Warning Dialog Component
+interface TaskDateRangeWarningDialogProps {
+    open: boolean;
+    onClose: () => void;
+    onRevert: () => void;
+    onExpand: () => void;
+    validationError: TaskDateValidationError | null;
+    eventName: string;
+}
+
+const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
+    open,
+    onClose,
+    onRevert,
+    onExpand,
+    validationError,
+    eventName
+}) => {
+    if (!validationError) return null;
+
+    const { violation } = validationError;
+    const eventDate = new Date(violation.event_timestamp);
+    const taskStartDate = violation.task_start ? new Date(violation.task_start) : null;
+    const taskEndDate = violation.task_end ? new Date(violation.task_end) : null;
+    const suggestedStartDate = violation.suggested_task_start ? new Date(violation.suggested_task_start) : null;
+    const suggestedEndDate = violation.suggested_task_end ? new Date(violation.suggested_task_end) : null;
+
+    const formatDate = (date: Date | null) => {
+        return date ? date.toLocaleDateString() : 'Not set';
+    };
+
+    const getExpandMessage = () => {
+        if (violation.violation_type === 'before_start') {
+            return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
+        } else {
+            return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
+        }
+    };
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle sx={{ color: 'warning.main' }}>
+                ⚠️ Event Outside Task Date Range
+            </DialogTitle>
+            <DialogContent>
+                <Typography variant="body1" sx={{ mb: 2 }}>
+                    The event "{eventName}" is scheduled for <strong>{eventDate.toLocaleDateString()}</strong>,
+                    which is {violation.violation_type === 'before_start' ? 'before' : 'after'} the task's date range.
+                </Typography>
+
+                <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
+                    <Typography variant="body2">
+                        Start: {formatDate(taskStartDate)}
+                        <br />
+                        End: {formatDate(taskEndDate)}
+                    </Typography>
+                </Box>
+
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                    What would you like to do?
+                </Typography>
+
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <Box>
+                        <strong>Option 1: Revert the change</strong>
+                        <br />
+                        <Typography variant="body2" color="text.secondary">
+                            Cancel scheduling this event and keep the task dates as they are.
+                        </Typography>
+                    </Box>
+                    <Box>
+                        <strong>Option 2: Expand task date range</strong>
+                        <br />
+                        <Typography variant="body2" color="text.secondary">
+                            {getExpandMessage()}
+                        </Typography>
+                    </Box>
+                </Box>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={onRevert} color="secondary">
+                    Revert
+                </Button>
+                <Button onClick={onExpand} color="primary" variant="contained">
+                    Expand Task Dates
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
 
 const GoalMenu: GoalMenuComponent = () => {
     const [isOpen, setIsOpen] = useState(false);
@@ -83,6 +176,30 @@ const GoalMenu: GoalMenuComponent = () => {
     const [showAddEvent, setShowAddEvent] = useState<boolean>(false);
     const [newEventScheduled, setNewEventScheduled] = useState<Date>(new Date());
     const [newEventDuration, setNewEventDuration] = useState<number>(60);
+
+    // Smart schedule dialog management
+    const [smartScheduleOpen, setSmartScheduleOpen] = useState<boolean>(false);
+    const [smartScheduleContext, setSmartScheduleContext] = useState<{
+        type: 'event' | 'new-task-event';
+        duration: number;
+        eventName?: string;
+        currentScheduledTime?: Date;
+    } | null>(null);
+
+    // Task date range warning dialog state
+    const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
+        isOpen: boolean;
+        validationError: TaskDateValidationError | null;
+        eventName: string;
+        onRetry: () => void;
+        originalAction: () => Promise<void>;
+    }>({
+        isOpen: false,
+        validationError: null,
+        eventName: '',
+        onRetry: () => { },
+        originalAction: async () => { }
+    });
 
     // Fetch task events
     const fetchTaskEvents = useCallback(async (taskId: number) => {
@@ -173,6 +290,8 @@ const GoalMenu: GoalMenuComponent = () => {
             setShowAddEvent(false);
             setNewEventScheduled(new Date());
             setNewEventDuration(60);
+            setSmartScheduleOpen(false);
+            setSmartScheduleContext(null);
         }, 100);
     }, [setState]);
 
@@ -1158,6 +1277,14 @@ const GoalMenu: GoalMenuComponent = () => {
                                         </Button>
                                         <Button
                                             size="small"
+                                            onClick={() => handleSmartSchedule('new-task-event', newEventDuration, state.goal.name)}
+                                            variant="outlined"
+                                            color="secondary"
+                                        >
+                                            Smart Schedule
+                                        </Button>
+                                        <Button
+                                            size="small"
                                             onClick={() => setShowAddEvent(false)}
                                         >
                                             Cancel
@@ -1190,37 +1317,149 @@ const GoalMenu: GoalMenuComponent = () => {
     };
     const handleRelations = () => { setRelationsOpen(true); };
 
+    const handleSmartSchedule = (type: 'event' | 'new-task-event', duration: number, eventName?: string, currentScheduledTime?: Date) => {
+        setSmartScheduleContext({ type, duration, eventName, currentScheduledTime });
+        setSmartScheduleOpen(true);
+    };
+
+    const handleSmartScheduleSuccess = (timestamp: Date) => {
+        if (!smartScheduleContext) return;
+
+        const executeScheduleUpdate = async () => {
+            if (smartScheduleContext.type === 'event') {
+                // For existing events, update their scheduled timestamp
+                if (state.goal.id && state.goal.goal_type === 'event') {
+                    const updatedEvent = await updateEvent(state.goal.id, {
+                        scheduled_timestamp: timestamp,
+                        move_reason: 'Smart scheduled'
+                    });
+                    setState({
+                        ...state,
+                        goal: updatedEvent
+                    });
+                    if (onSuccess) {
+                        onSuccess(updatedEvent);
+                    }
+                }
+            } else if (smartScheduleContext.type === 'new-task-event') {
+                // For new task events, set the timestamp and trigger the add event flow
+                setNewEventScheduled(timestamp);
+                setSmartScheduleOpen(false);
+                setSmartScheduleContext(null);
+                // Auto-trigger the add event after smart scheduling
+                setTimeout(() => {
+                    handleAddEvent();
+                }, 100);
+                return; // Don't close the dialog yet, let handleAddEvent handle it
+            }
+
+            setSmartScheduleOpen(false);
+            setSmartScheduleContext(null);
+        };
+
+        executeScheduleUpdate().catch((error: any) => {
+            console.error('Failed to smart schedule event:', error);
+
+            // Check if it's a task date validation error
+            if (isTaskDateValidationError(error)) {
+                const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
+                const eventName = smartScheduleContext.eventName || state.goal.name || 'Event';
+                showTaskDateWarning(validationError, eventName, executeScheduleUpdate);
+                return;
+            }
+
+            setState({
+                ...state,
+                error: 'Failed to update event schedule'
+            });
+        });
+    };
+
+    const handleSmartScheduleClose = () => {
+        setSmartScheduleOpen(false);
+        setSmartScheduleContext(null);
+    };
+
     const handleCompletionToggle = async (completed: boolean) => {
         try {
-            if (state.goal.goal_type === 'event' && !state.goal.completed && completed) {
-                // For events being completed, use the event-specific completion API
-                const response = await completeEvent(state.goal.id!);
-
-                // Update the completion status
-                setState({
-                    ...state,
-                    goal: {
-                        ...state.goal,
-                        completed: true
-                    }
+            if (state.goal.goal_type === 'event') {
+                console.log('[GoalMenu] Event completion toggle - Initial state:', {
+                    id: state.goal.id,
+                    completed: state.goal.completed,
+                    newCompleted: completed
                 });
 
-                // Check if we should prompt for task completion
-                if (response.should_prompt_task_completion && response.parent_task_id) {
-                    if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
-                        // Complete the parent task
-                        await completeGoal(response.parent_task_id, true);
-                    }
+                // Ensure we have a valid ID before proceeding
+                if (!state.goal.id) {
+                    setState({
+                        ...state,
+                        error: 'Cannot update event: missing event ID'
+                    });
+                    return;
                 }
 
-                if (onSuccess) {
-                    onSuccess({
-                        ...state.goal,
-                        completed: true
+                // For all event completion/uncompletion, use event-specific APIs
+                if (completed) {
+                    // Completing an event - use the event completion API
+                    const response = await completeEvent(state.goal.id);
+
+                    // Update the completion status while preserving the ID
+                    setState({
+                        ...state,
+                        goal: {
+                            ...state.goal,
+                            completed: true
+                        }
                     });
+
+                    // Check if we should prompt for task completion
+                    if (response.should_prompt_task_completion && response.parent_task_id) {
+                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
+                            // Complete the parent task
+                            await completeGoal(response.parent_task_id, true);
+                        }
+                    }
+
+                    if (onSuccess) {
+                        onSuccess({
+                            ...state.goal,
+                            completed: true
+                        });
+                    }
+                } else {
+                    // Uncompleting an event - use the event update API
+                    console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
+                    const updatedEvent = await updateEvent(state.goal.id, {
+                        completed: false
+                    });
+
+                    console.log('[GoalMenu] updateEvent response:', {
+                        id: updatedEvent.id,
+                        completed: updatedEvent.completed
+                    });
+
+                    // Ensure the ID is preserved from the original goal
+                    const safeUpdatedEvent = {
+                        ...updatedEvent,
+                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
+                    };
+
+                    console.log('[GoalMenu] Safe updated event:', {
+                        id: safeUpdatedEvent.id,
+                        completed: safeUpdatedEvent.completed
+                    });
+
+                    setState({
+                        ...state,
+                        goal: safeUpdatedEvent
+                    });
+
+                    if (onSuccess) {
+                        onSuccess(safeUpdatedEvent);
+                    }
                 }
             } else {
-                // For all other cases (non-events or uncompleting), use regular completion
+                // For all non-events, use regular completion
                 const completion = await completeGoal(state.goal.id!, completed);
 
                 // Only update the completion status
@@ -1248,26 +1487,101 @@ const GoalMenu: GoalMenuComponent = () => {
         }
     };
 
-    // Handle adding a new event to the task
+    // Helper function to check if an error is a task date validation error
+    const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
+        try {
+            if (typeof error === 'string') {
+                const parsed = JSON.parse(error);
+                return parsed.error_type === 'task_date_range_violation';
+            }
+            return error?.error_type === 'task_date_range_violation';
+        } catch {
+            return false;
+        }
+    };
+
+    // Helper function to show task date warning dialog
+    const showTaskDateWarning = (error: TaskDateValidationError, eventName: string, retryAction: () => Promise<void>) => {
+        setTaskDateWarningDialog({
+            isOpen: true,
+            validationError: error,
+            eventName,
+            onRetry: () => { },
+            originalAction: retryAction
+        });
+    };
+
+    // Handle task date warning dialog actions
+    const handleTaskDateWarningRevert = () => {
+        setTaskDateWarningDialog({
+            isOpen: false,
+            validationError: null,
+            eventName: '',
+            onRetry: () => { },
+            originalAction: async () => { }
+        });
+        // Just close the dialog - the original action won't be retried
+    };
+
+    const handleTaskDateWarningExpand = async () => {
+        const { validationError, originalAction } = taskDateWarningDialog;
+        if (!validationError) return;
+
+        try {
+            // Expand the task date range
+            await expandTaskDateRange({
+                task_id: validationError.violation.task_start !== null || validationError.violation.task_end !== null
+                    ? (state.goal.parent_id || state.goal.id!)
+                    : state.goal.id!,
+                new_start_timestamp: validationError.violation.suggested_task_start
+                    ? new Date(validationError.violation.suggested_task_start)
+                    : undefined,
+                new_end_timestamp: validationError.violation.suggested_task_end
+                    ? new Date(validationError.violation.suggested_task_end)
+                    : undefined,
+            });
+
+            // Close the warning dialog
+            setTaskDateWarningDialog({
+                isOpen: false,
+                validationError: null,
+                eventName: '',
+                onRetry: () => { },
+                originalAction: async () => { }
+            });
+
+            // Retry the original action
+            await originalAction();
+
+        } catch (expandError) {
+            console.error('Failed to expand task date range:', expandError);
+            setState({
+                ...state,
+                error: 'Failed to expand task date range. Please try again.'
+            });
+        }
+    };
+
+    // Modify the handleAddEvent function to handle date validation errors
     const handleAddEvent = useCallback(async () => {
-        if (!state.goal.id) {
-            // For new tasks, just add to local state
-            const newEvent: Goal = {
-                id: 0, // Temporary ID
-                name: state.goal.name || 'Event',
-                goal_type: 'event',
-                scheduled_timestamp: newEventScheduled,
-                duration: newEventDuration,
-                parent_id: state.goal.id,
-                parent_type: 'task',
-                completed: false,
-                _tz: 'user'
-            };
-            setTaskEvents(prev => [...prev, newEvent]);
-            setTotalDuration(prev => prev + newEventDuration);
-        } else {
-            // For existing tasks, create the event via API
-            try {
+        const executeAddEvent = async () => {
+            if (!state.goal.id) {
+                // For new tasks, just add to local state
+                const newEvent: Goal = {
+                    id: 0, // Temporary ID
+                    name: state.goal.name || 'Event',
+                    goal_type: 'event',
+                    scheduled_timestamp: newEventScheduled,
+                    duration: newEventDuration,
+                    parent_id: state.goal.id,
+                    parent_type: 'task',
+                    completed: false,
+                    _tz: 'user'
+                };
+                setTaskEvents(prev => [...prev, newEvent]);
+                setTotalDuration(prev => prev + newEventDuration);
+            } else {
+                // For existing tasks, create the event via API
                 const createdEvent = await createEvent({
                     parent_id: state.goal.id,
                     parent_type: 'task',
@@ -1276,19 +1590,30 @@ const GoalMenu: GoalMenuComponent = () => {
                 });
                 setTaskEvents(prev => [...prev, createdEvent]);
                 setTotalDuration(prev => prev + newEventDuration);
-            } catch (error) {
-                console.error('Failed to create event:', error);
-                setState({
-                    ...state,
-                    error: 'Failed to create event'
-                });
+            }
+
+            setShowAddEvent(false);
+            setNewEventScheduled(new Date());
+            setNewEventDuration(60);
+        };
+
+        try {
+            await executeAddEvent();
+        } catch (error) {
+            console.error('Failed to create event:', error);
+
+            // Check if it's a task date validation error
+            if (isTaskDateValidationError(error)) {
+                const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
+                showTaskDateWarning(validationError, `${state.goal.name} Event`, executeAddEvent);
                 return;
             }
-        }
 
-        setShowAddEvent(false);
-        setNewEventScheduled(new Date());
-        setNewEventDuration(60);
+            setState({
+                ...state,
+                error: 'Failed to create event'
+            });
+        }
     }, [state, newEventScheduled, newEventDuration, setState]);
 
     // Handle removing an event from the task
@@ -1460,6 +1785,12 @@ const GoalMenu: GoalMenuComponent = () => {
                                         <Button onClick={handleEdit} color="primary">
                                             Edit
                                         </Button>
+                                        <Button
+                                            onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
+                                            color="secondary"
+                                        >
+                                            Smart Schedule
+                                        </Button>
                                         <Button onClick={handleSplitEvent} color="secondary">
                                             Split Event
                                         </Button>
@@ -1491,6 +1822,24 @@ const GoalMenu: GoalMenuComponent = () => {
                 </DialogActions>
             </Dialog>
             {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
+            {smartScheduleOpen && smartScheduleContext && (
+                <SmartScheduleDialog
+                    open={smartScheduleOpen}
+                    duration={smartScheduleContext.duration}
+                    eventName={smartScheduleContext.eventName}
+                    currentScheduledTime={smartScheduleContext.currentScheduledTime}
+                    onClose={handleSmartScheduleClose}
+                    onSelect={handleSmartScheduleSuccess}
+                />
+            )}
+            <TaskDateRangeWarningDialog
+                open={taskDateWarningDialog.isOpen}
+                onClose={handleTaskDateWarningRevert}
+                onRevert={handleTaskDateWarningRevert}
+                onExpand={handleTaskDateWarningExpand}
+                validationError={taskDateWarningDialog.validationError}
+                eventName={taskDateWarningDialog.eventName}
+            />
         </>
     );
 }

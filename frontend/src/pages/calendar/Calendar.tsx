@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { fetchCalendarData } from './calendarData';
@@ -44,6 +44,98 @@ interface RoutineRescheduleDialogState {
   eventInfo: any; // FullCalendar event info for reverting
 }
 
+// Task Date Range Warning Dialog Component
+interface TaskDateRangeWarningDialogProps {
+  open: boolean;
+  onClose: () => void;
+  onRevert: () => void;
+  onExpand: () => void;
+  validationError: TaskDateValidationError | null;
+  eventName: string;
+}
+
+const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
+  open,
+  onClose,
+  onRevert,
+  onExpand,
+  validationError,
+  eventName
+}) => {
+  if (!validationError) return null;
+
+  const { violation } = validationError;
+  const eventDate = new Date(violation.event_timestamp);
+  const taskStartDate = violation.task_start ? new Date(violation.task_start) : null;
+  const taskEndDate = violation.task_end ? new Date(violation.task_end) : null;
+  const suggestedStartDate = violation.suggested_task_start ? new Date(violation.suggested_task_start) : null;
+  const suggestedEndDate = violation.suggested_task_end ? new Date(violation.suggested_task_end) : null;
+
+  const formatDate = (date: Date | null) => {
+    return date ? date.toLocaleDateString() : 'Not set';
+  };
+
+  const getExpandMessage = () => {
+    if (violation.violation_type === 'before_start') {
+      return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
+    } else {
+      return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ color: 'warning.main' }}>
+        ⚠️ Event Outside Task Date Range
+      </DialogTitle>
+      <DialogContent>
+        <Typography variant="body1" sx={{ mb: 2 }}>
+          The event "{eventName}" is scheduled for <strong>{eventDate.toLocaleDateString()}</strong>,
+          which is {violation.violation_type === 'before_start' ? 'before' : 'after'} the task's date range.
+        </Typography>
+
+        <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
+          <Typography variant="body2">
+            Start: {formatDate(taskStartDate)}
+            <br />
+            End: {formatDate(taskEndDate)}
+          </Typography>
+        </Box>
+
+        <Typography variant="body2" sx={{ mb: 2 }}>
+          What would you like to do?
+        </Typography>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box>
+            <strong>Option 1: Cancel event creation</strong>
+            <br />
+            <Typography variant="body2" color="text.secondary">
+              Don't create this event and keep the task dates as they are.
+            </Typography>
+          </Box>
+          <Box>
+            <strong>Option 2: Expand task date range</strong>
+            <br />
+            <Typography variant="body2" color="text.secondary">
+              {getExpandMessage()}
+            </Typography>
+          </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onRevert} color="secondary">
+          Cancel Event
+        </Button>
+        <Button onClick={onExpand} color="primary" variant="contained">
+          Expand Task Dates
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
 const Calendar: React.FC = () => {
   // -----------------------------
   // State and Refs
@@ -77,6 +169,23 @@ const Calendar: React.FC = () => {
   const taskListRef = useRef<HTMLDivElement>(null);
   const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Task date range warning dialog state
+  const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
+    isOpen: boolean;
+    validationError: TaskDateValidationError | null;
+    eventName: string;
+    onRetry: () => void;
+    originalAction: () => Promise<void>;
+    eventInfo: any; // For reverting the FullCalendar drag operation
+  }>({
+    isOpen: false,
+    validationError: null,
+    eventName: '',
+    onRetry: () => { },
+    originalAction: async () => { },
+    eventInfo: null
+  });
 
   // Debugging mode toggles global logs, etc.
   const [debugMode] = useState(true);
@@ -334,7 +443,7 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventReceive = async (info: any) => {
-    try {
+    const executeEventCreation = async () => {
       const task = info.event.extendedProps?.task;
       if (!task) {
         console.error('Received event has no task data:', info);
@@ -364,15 +473,31 @@ const Calendar: React.FC = () => {
 
       info.revert(); // Revert the drag since we're creating a new event
       loadCalendarData();
+    };
+
+    try {
+      await executeEventCreation();
     } catch (error) {
       console.error('Failed to create event:', error);
+
+      // Check if it's a task date validation error
+      if (isTaskDateValidationError(error)) {
+        const validationError = extractValidationError(error);
+        if (validationError) {
+          const taskName = info.event.extendedProps?.task?.goal?.name || 'Unknown Task';
+          showTaskDateWarning(validationError, `${taskName} Event`, executeEventCreation, info);
+          return;
+        }
+      }
+
+      // For other errors, show generic error and revert
       info.revert();
       setError('Failed to create event. Please try again.');
     }
   };
 
   const handleEventDrop = async (info: any) => {
-    try {
+    const executeEventMove = async () => {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
       if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
         // Check if this is a routine event
@@ -409,8 +534,24 @@ const Calendar: React.FC = () => {
         // Non-event goals shouldn't be draggable in the new system
         info.revert();
       }
+    };
+
+    try {
+      await executeEventMove();
     } catch (error) {
       console.error('Failed to move event:', error);
+
+      // Check if it's a task date validation error
+      if (isTaskDateValidationError(error)) {
+        const validationError = extractValidationError(error);
+        if (validationError) {
+          const eventName = info.event.title || 'Event';
+          showTaskDateWarning(validationError, eventName, executeEventMove, info);
+          return;
+        }
+      }
+
+      // For other errors, show generic error and revert
       info.revert();
       setError('Failed to move event. Please try again.');
     }
@@ -466,7 +607,7 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventResize = async (info: any) => {
-    try {
+    const executeEventResize = async () => {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
       if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
         const start = info.event.start;
@@ -484,8 +625,24 @@ const Calendar: React.FC = () => {
       } else {
         info.revert();
       }
+    };
+
+    try {
+      await executeEventResize();
     } catch (error) {
       console.error('Failed to resize event:', error);
+
+      // Check if it's a task date validation error
+      if (isTaskDateValidationError(error)) {
+        const validationError = extractValidationError(error);
+        if (validationError) {
+          const eventName = info.event.title || 'Event';
+          showTaskDateWarning(validationError, eventName, executeEventResize, info);
+          return;
+        }
+      }
+
+      // For other errors, show generic error and revert
       info.revert();
       setError('Failed to resize event. Please try again.');
     }
@@ -516,7 +673,8 @@ const Calendar: React.FC = () => {
   const eventsWithColors = state.events.map((evt) => {
     const goal = evt.goal;
     const parent = evt.parent;
-    const bgColor = evt.backgroundColor || getGoalColor(parent || goal) || '#999';
+    // Use the event's own completion status for color (not parent's)
+    const bgColor = evt.backgroundColor || getGoalColor(goal) || '#999';
     let txtColor = evt.textColor || '#fff';
 
     return {
@@ -535,6 +693,107 @@ const Calendar: React.FC = () => {
       }
     };
   });
+
+  // Helper function to check if an error is a task date validation error
+  const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
+    try {
+      if (error?.response?.data?.error_type === 'task_date_range_violation') {
+        return true;
+      }
+      if (typeof error?.response?.data === 'string') {
+        const parsed = JSON.parse(error.response.data);
+        return parsed.error_type === 'task_date_range_violation';
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  // Helper function to extract validation error from axios error
+  const extractValidationError = (error: any): TaskDateValidationError | null => {
+    try {
+      if (error?.response?.data?.error_type === 'task_date_range_violation') {
+        return error.response.data;
+      }
+      if (typeof error?.response?.data === 'string') {
+        return JSON.parse(error.response.data);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Helper function to show task date warning dialog
+  const showTaskDateWarning = (error: TaskDateValidationError, eventName: string, retryAction: () => Promise<void>, eventInfo: any) => {
+    setTaskDateWarningDialog({
+      isOpen: true,
+      validationError: error,
+      eventName,
+      onRetry: () => { },
+      originalAction: retryAction,
+      eventInfo
+    });
+  };
+
+  // Handle task date warning dialog actions
+  const handleTaskDateWarningRevert = () => {
+    // Revert the drag operation
+    if (taskDateWarningDialog.eventInfo) {
+      taskDateWarningDialog.eventInfo.revert();
+    }
+
+    setTaskDateWarningDialog({
+      isOpen: false,
+      validationError: null,
+      eventName: '',
+      onRetry: () => { },
+      originalAction: async () => { },
+      eventInfo: null
+    });
+  };
+
+  const handleTaskDateWarningExpand = async () => {
+    const { validationError, originalAction, eventInfo } = taskDateWarningDialog;
+    if (!validationError) return;
+
+    try {
+      // Expand the task date range
+      await expandTaskDateRange({
+        task_id: validationError.violation.task_start !== null || validationError.violation.task_end !== null
+          ? eventInfo?.event?.extendedProps?.task?.goal?.id
+          : eventInfo?.event?.extendedProps?.task?.goal?.id,
+        new_start_timestamp: validationError.violation.suggested_task_start
+          ? new Date(validationError.violation.suggested_task_start)
+          : undefined,
+        new_end_timestamp: validationError.violation.suggested_task_end
+          ? new Date(validationError.violation.suggested_task_end)
+          : undefined,
+      });
+
+      // Close the warning dialog
+      setTaskDateWarningDialog({
+        isOpen: false,
+        validationError: null,
+        eventName: '',
+        onRetry: () => { },
+        originalAction: async () => { },
+        eventInfo: null
+      });
+
+      // Retry the original action
+      await originalAction();
+
+    } catch (expandError) {
+      console.error('Failed to expand task date range:', expandError);
+      // Revert the drag operation
+      if (eventInfo) {
+        eventInfo.revert();
+      }
+      setError('Failed to expand task date range. Please try again.');
+    }
+  };
 
   // -----------------------------
   // Render
@@ -673,6 +932,16 @@ const Calendar: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Task Date Range Warning Dialog */}
+      <TaskDateRangeWarningDialog
+        open={taskDateWarningDialog.isOpen}
+        onClose={handleTaskDateWarningRevert}
+        onRevert={handleTaskDateWarningRevert}
+        onExpand={handleTaskDateWarningExpand}
+        validationError={taskDateWarningDialog.validationError}
+        eventName={taskDateWarningDialog.eventName}
+      />
     </div>
   );
 };

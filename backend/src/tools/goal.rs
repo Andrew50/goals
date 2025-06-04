@@ -30,16 +30,16 @@ pub struct Goal {
     pub routine_time: Option<i64>,
     pub position_x: Option<f64>,
     pub position_y: Option<f64>,
-    
+
     // For events only:
-    pub parent_id: Option<i64>,  // Reference to parent task/routine
-    pub parent_type: Option<String>,  // "task" or "routine"
-    pub routine_instance_id: Option<String>,  // For routine events
-    pub is_deleted: Option<bool>,  // Soft delete for routine events
-    
+    pub parent_id: Option<i64>,      // Reference to parent task/routine
+    pub parent_type: Option<String>, // "task" or "routine"
+    pub routine_instance_id: Option<String>, // For routine events
+    pub is_deleted: Option<bool>,    // Soft delete for routine events
+
     // Modified fields for tasks:
-    pub due_date: Option<i64>,  // New for tasks
-    pub start_date: Option<i64>,  // New for tasks (earliest event date)
+    pub due_date: Option<i64>,   // New for tasks
+    pub start_date: Option<i64>, // New for tasks (earliest event date)
 }
 
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
@@ -76,7 +76,7 @@ pub enum GoalType {
     Achievement,
     Routine,
     Task,
-    Event,  // NEW
+    Event, // NEW
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum RelationshipType {
@@ -122,6 +122,13 @@ pub struct Relationship {
 pub struct GoalUpdate {
     pub id: i64,
     pub completed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExpandTaskDateRangeRequest {
+    pub task_id: i64,
+    pub new_start_timestamp: Option<i64>,
+    pub new_end_timestamp: Option<i64>,
 }
 
 pub async fn delete_relationship_handler(
@@ -391,15 +398,21 @@ pub async fn update_goal_handler(
         set_clauses.push("g.start_date = $start_date");
         params.push(("start_date", start_date.into()));
     }
-     // Log the routine_time being sent in the update
+    // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
         use chrono::{TimeZone, Utc};
-        println!("[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: {} ({})",
-                 id, rt, Utc.timestamp_millis_opt(rt).unwrap());
+        println!(
+            "[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: {} ({})",
+            id,
+            rt,
+            Utc.timestamp_millis_opt(rt).unwrap()
+        );
     } else {
-         println!("[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: None", id);
+        println!(
+            "[goal.rs] update_goal_handler - Updating goal ID: {}. Sending routine_time: None",
+            id
+        );
     }
-
 
     let query_str = format!(
         "MATCH (g:Goal) WHERE id(g) = $id SET {}",
@@ -610,14 +623,117 @@ pub async fn toggle_completion(
     }
 }
 
+pub async fn expand_task_date_range_handler(
+    graph: Graph,
+    user_id: i64,
+    request: ExpandTaskDateRangeRequest,
+) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
+    // Verify the task exists and belongs to the user
+    let verify_query = query(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         AND t.user_id = $user_id
+         AND t.goal_type = 'task'
+         RETURN t",
+    )
+    .param("task_id", request.task_id)
+    .param("user_id", user_id);
+
+    let mut result = graph
+        .execute(verify_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .is_none()
+    {
+        return Err((StatusCode::NOT_FOUND, "Task not found".to_string()));
+    }
+
+    // Build update query for the new date range
+    let mut set_clauses = Vec::new();
+    let mut params = vec![(
+        "task_id",
+        neo4rs::BoltType::Integer(neo4rs::BoltInteger {
+            value: request.task_id,
+        }),
+    )];
+
+    if let Some(start) = request.new_start_timestamp {
+        set_clauses.push("t.start_timestamp = $new_start");
+        params.push((
+            "new_start",
+            neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: start }),
+        ));
+    }
+
+    if let Some(end) = request.new_end_timestamp {
+        set_clauses.push("t.end_timestamp = $new_end");
+        params.push((
+            "new_end",
+            neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: end }),
+        ));
+    }
+
+    if set_clauses.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No date changes specified".to_string(),
+        ));
+    }
+
+    let update_query = format!(
+        "MATCH (t:Goal)
+         WHERE id(t) = $task_id
+         SET {}
+         RETURN t",
+        set_clauses.join(", ")
+    );
+
+    let mut query_builder = query(&update_query);
+    for (key, value) in params {
+        query_builder = query_builder.param(key, value);
+    }
+
+    let mut update_result = graph
+        .execute(query_builder)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = update_result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        let updated_task: Goal = row
+            .get("t")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok((StatusCode::OK, Json(updated_task)))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            "Task not found after update".to_string(),
+        ))
+    }
+}
+
 impl Goal {
     pub async fn create_goal(&self, graph: &Graph) -> Result<Goal, neo4rs::Error> {
         // Enhanced logging for routine_time specifically
-        println!("[goal.rs] create_goal - Attempting to create goal. Received routine_time: {:?}", self.routine_time);
+        println!(
+            "[goal.rs] create_goal - Attempting to create goal. Received routine_time: {:?}",
+            self.routine_time
+        );
         if let Some(rt) = self.routine_time {
-             // Log the UTC interpretation of the received timestamp
-             use chrono::{TimeZone, Utc};
-             println!("[goal.rs] create_goal - Received routine_time as UTC DateTime: {}", Utc.timestamp_millis_opt(rt).unwrap());
+            // Log the UTC interpretation of the received timestamp
+            use chrono::{TimeZone, Utc};
+            println!(
+                "[goal.rs] create_goal - Received routine_time as UTC DateTime: {}",
+                Utc.timestamp_millis_opt(rt).unwrap()
+            );
         }
 
         if DEBUG_PRINTS {
@@ -704,10 +820,7 @@ impl Goal {
                 "routine_instance_id",
                 self.routine_instance_id.as_ref().map(|v| v.clone().into()),
             ),
-            (
-                "is_deleted",
-                self.is_deleted.map(|v| v.into()),
-            ),
+            ("is_deleted", self.is_deleted.map(|v| v.into())),
             (
                 "due_date",
                 self.due_date
