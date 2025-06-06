@@ -16,10 +16,11 @@ async function globalSetup(config: FullConfig) {
 
     // Define the default user for the global authenticated state
     const defaultUserId = 1;
-    const defaultUsername = `testuser${defaultUserId}`;
+    // Use the default username from the helper (which is 'testuser')
+    // Don't override it here to match the test database
 
     // Generate the storage state object using the helper
-    const storageState = generateStorageState(defaultUserId, defaultUsername, baseURL);
+    const storageState = generateStorageState(defaultUserId, undefined, baseURL);
 
     try {
         // Ensure the .auth directory exists

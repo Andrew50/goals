@@ -1,5 +1,26 @@
 import jwt from 'jsonwebtoken';
-import type { StorageState } from '@playwright/test';
+import type { Page } from '@playwright/test';
+
+// Define StorageState type locally since it's not exported from @playwright/test
+interface StorageState {
+    cookies: Array<{
+        name: string;
+        value: string;
+        domain?: string;
+        path?: string;
+        expires?: number;
+        httpOnly?: boolean;
+        secure?: boolean;
+        sameSite?: 'Strict' | 'Lax' | 'None';
+    }>;
+    origins: Array<{
+        origin: string;
+        localStorage: Array<{
+            name: string;
+            value: string;
+        }>;
+    }>;
+}
 
 /**
  * Generates a JWT test token.
@@ -9,11 +30,12 @@ import type { StorageState } from '@playwright/test';
  */
 export function generateTestToken(userId: number, username?: string): string {
     const testSecret = process.env.JWT_SECRET || 'default_secret'; // Match backend default
-    const effectiveUsername = username || `testuser${userId}`;
+    const effectiveUsername = username || 'testuser'; // Match the seeded test user
     const payload = {
         user_id: userId,
         username: effectiveUsername,
-        exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24) // Expires in 24 hours
+        exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24), // Expires in 24 hours
+        iat: Math.floor(Date.now() / 1000) // Add issued at time
     };
     return jwt.sign(payload, testSecret);
 }
@@ -26,7 +48,7 @@ export function generateTestToken(userId: number, username?: string): string {
  * @returns A Playwright StorageState object.
  */
 export function generateStorageState(userId: number, username?: string, baseURL: string = 'http://localhost:3030'): StorageState {
-    const effectiveUsername = username || `testuser${userId}`;
+    const effectiveUsername = username || 'testuser'; // Match the seeded test user
     const token = generateTestToken(userId, effectiveUsername);
 
     return {
