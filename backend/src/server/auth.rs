@@ -78,6 +78,10 @@ pub fn create_google_oauth_client() -> Result<BasicClient, String> {
         env::var("GOOGLE_CLIENT_ID").map_err(|_| "GOOGLE_CLIENT_ID must be set")?;
     let google_client_secret =
         env::var("GOOGLE_CLIENT_SECRET").map_err(|_| "GOOGLE_CLIENT_SECRET must be set")?;
+
+    // The redirect URL should always point to the frontend callback route
+    // In dev: http://localhost:3030/auth/callback
+    // In prod: https://goals.atlantis.trading/auth/callback (no /api prefix)
     let redirect_url = env::var("GOOGLE_REDIRECT_URL")
         .unwrap_or_else(|_| "http://localhost:3030/auth/callback".to_string());
 

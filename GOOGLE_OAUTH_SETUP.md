@@ -10,10 +10,12 @@ This guide will help you set up Google OAuth for your Goals application.
 - **Client ID**: `YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com` (from Google Console)
 - **Client Secret**: `YOUR_GOOGLE_CLIENT_SECRET` (from Google Console)
 - **Redirect URIs**: 
-  - Development: `http://localhost:3030/auth/callback`
-  - Production: `https://goal.atlantis.trading/auth/callback`
+  - Development: `http://localhost:3030/auth/callback` (frontend route)
+  - Production: `https://goals.atlantis.trading/auth/callback` (frontend route, no /api prefix)
 - **JWT Secret**: Secure random string generated
 - **Environment variables**: Must be configured in your `.env` file
+
+**Important**: The redirect URLs must point to the frontend callback route, not the backend API route. In production, even though API calls use the `/api` prefix, the OAuth callback goes directly to the frontend.
 
 ## Setup Instructions
 
@@ -50,9 +52,11 @@ NEO4J_PASSWORD=neo4j
 
 For production:
 1. **Set environment variables** in your hosting platform
-2. **Update GOOGLE_REDIRECT_URL** to: `https://goal.atlantis.trading/auth/callback`
+2. **Update GOOGLE_REDIRECT_URL** to: `https://goals.atlantis.trading/auth/callback` (frontend route, no /api prefix)
 3. **Generate secure JWT_SECRET** for production
 4. **Never expose credentials** in source code
+
+**Note**: In production, the frontend makes API calls to `/api/*` routes, but the Google OAuth callback goes directly to the frontend at `/auth/callback` (without the `/api` prefix).
 
 ## Features Available
 

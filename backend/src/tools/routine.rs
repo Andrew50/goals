@@ -159,7 +159,11 @@ pub async fn catch_up_routine(
             position_y: None,
             parent_id: Some(routine.id.unwrap()),
             parent_type: Some("routine".to_string()),
-            routine_instance_id: Some(format!("{}-{}", routine.id.unwrap(), Utc::now().timestamp_millis())),
+            routine_instance_id: Some(format!(
+                "{}-{}",
+                routine.id.unwrap(),
+                Utc::now().timestamp_millis()
+            )),
             is_deleted: Some(false),
             due_date: None,
             start_date: None,
@@ -193,21 +197,29 @@ pub async fn catch_up_routine(
 }
 
 // New function to calculate first occurrence correctly
-fn calculate_first_occurrence(start_timestamp: i64, frequency: &str, routine_time: Option<i64>) -> i64 {
+fn calculate_first_occurrence(
+    start_timestamp: i64,
+    frequency: &str,
+    routine_time: Option<i64>,
+) -> i64 {
     let start_dt = Utc
         .timestamp_millis_opt(start_timestamp)
         .earliest()
         .expect("Invalid timestamp");
-    
+
     let routine_time_ms = routine_time.unwrap_or(0);
-    
+
     // Calculate what time the routine should run today
     let today = start_dt.date_naive();
     let today_routine_time = set_time_of_day(
-        today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis(),
+        today
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis(),
         routine_time_ms,
     );
-    
+
     // If the routine time for today hasn't passed yet, use today
     if today_routine_time > start_timestamp {
         today_routine_time
