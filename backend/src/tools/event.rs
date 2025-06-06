@@ -981,19 +981,48 @@ pub async fn update_routine_event_handler(
             }
         }
         "all" => {
+            // First, get the routine's default time-of-day
+            let routine_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $parent_id
+                 AND r.goal_type = 'routine'
+                 RETURN r.routine_time as routine_time",
+            )
+            .param("parent_id", parent_id);
+
+            let mut routine_result = graph
+                .execute(routine_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            let routine_time_of_day = if let Some(row) = routine_result
+                .next()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            {
+                let routine_time: Option<i64> = row.get("routine_time").unwrap_or(None);
+                routine_time.map(|t| t % day_in_ms).unwrap_or(0)
+            } else {
+                0 // Default to midnight if routine not found
+            };
+
             // Update all events for this routine to the same time-of-day
+            // But only update events that still have the routine's default time-of-day
+            // This prevents updating events that have been individually moved
             let update_query = query(
                 "MATCH (e:Goal)
                  WHERE e.goal_type = 'event'
                  AND e.parent_id = $parent_id
                  AND e.parent_type = 'routine'
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 AND (e.scheduled_timestamp % $day_in_ms) = $routine_time_of_day
                  SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
                  RETURN collect(e) as events"
             )
             .param("parent_id", parent_id)
             .param("day_in_ms", day_in_ms)
-            .param("new_time_of_day", new_time_of_day);
+            .param("new_time_of_day", new_time_of_day)
+            .param("routine_time_of_day", routine_time_of_day);
 
             let mut update_result = graph
                 .execute(update_query)
@@ -1014,7 +1043,34 @@ pub async fn update_routine_event_handler(
             }
         }
         "future" => {
+            // First, get the routine's default time-of-day
+            let routine_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $parent_id
+                 AND r.goal_type = 'routine'
+                 RETURN r.routine_time as routine_time",
+            )
+            .param("parent_id", parent_id);
+
+            let mut routine_result = graph
+                .execute(routine_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            let routine_time_of_day = if let Some(row) = routine_result
+                .next()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            {
+                let routine_time: Option<i64> = row.get("routine_time").unwrap_or(None);
+                routine_time.map(|t| t % day_in_ms).unwrap_or(0)
+            } else {
+                0 // Default to midnight if routine not found
+            };
+
             // Update this event and all future events to the same time-of-day
+            // But only update events that still have the routine's default time-of-day
+            // This prevents updating events that have been individually moved
             let update_query = query(
                 "MATCH (e:Goal)
                  WHERE e.goal_type = 'event'
@@ -1022,13 +1078,15 @@ pub async fn update_routine_event_handler(
                  AND e.parent_type = 'routine'
                  AND e.scheduled_timestamp >= $current_timestamp
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 AND (e.scheduled_timestamp % $day_in_ms) = $routine_time_of_day
                  SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
                  RETURN collect(e) as events"
             )
             .param("parent_id", parent_id)
             .param("current_timestamp", current_timestamp)
             .param("day_in_ms", day_in_ms)
-            .param("new_time_of_day", new_time_of_day);
+            .param("new_time_of_day", new_time_of_day)
+            .param("routine_time_of_day", routine_time_of_day);
 
             let mut update_result = graph
                 .execute(update_query)

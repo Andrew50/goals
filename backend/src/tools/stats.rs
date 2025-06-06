@@ -160,15 +160,20 @@ pub async fn get_year_stats(
         .and_utc()
         .timestamp_millis();
 
-    // Query all events (Goal nodes with goal_type='event') linked to tasks and achievements for the year
+    // Query all events (Goal nodes with goal_type='event') linked to tasks, achievements, and routines for the year
+    // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
     let query_str = "
         MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
         WHERE e.goal_type = 'event'
         AND g.user_id = $user_id
-        AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
+        AND (g.goal_type = 'task' OR g.goal_type = 'achievement' OR g.goal_type = 'routine')
         AND e.scheduled_timestamp >= $start_timestamp
         AND e.scheduled_timestamp <= $end_timestamp
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        WITH e, g, 
+             (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
+             timestamp() as current_time
+        WHERE event_end_time <= current_time
         RETURN e.scheduled_timestamp as date,
                COALESCE(e.completed, false) as completed,
                COALESCE(e.priority, g.priority, 'medium') as priority
@@ -477,6 +482,7 @@ pub async fn get_routine_stats(
         }
 
         // Main query with time filtering
+        // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
         let query_str = "
             MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
             WHERE id(r) = $routine_id
@@ -485,7 +491,10 @@ pub async fn get_routine_stats(
             AND e.scheduled_timestamp >= $start_timestamp
             AND e.scheduled_timestamp <= $end_timestamp
             AND (e.is_deleted IS NULL OR e.is_deleted = false)
-            WITH r, e
+            WITH r, e,
+                 (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
+                 timestamp() as current_time
+            WHERE event_end_time <= current_time
             ORDER BY e.scheduled_timestamp
             RETURN r.name as routine_name,
                    collect({
@@ -607,7 +616,8 @@ pub async fn get_rescheduling_stats(
         .and_utc()
         .timestamp_millis();
 
-    // Query event moves - only for events that belong to tasks or achievements
+    // Query event moves - for events that belong to tasks, achievements, or routines
+    // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
     let query_str = "
         MATCH (em:EventMove)
         WHERE em.user_id = $user_id
@@ -618,8 +628,12 @@ pub async fn get_rescheduling_stats(
         WHERE id(e) = em.event_id
         AND e.goal_type = 'event'
         AND g.user_id = $user_id
-        AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
+        AND (g.goal_type = 'task' OR g.goal_type = 'achievement' OR g.goal_type = 'routine')
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        WITH em, e, g,
+             (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
+             timestamp() as current_time
+        WHERE event_end_time <= current_time
         RETURN em.event_id as event_id,
                em.old_timestamp as old_timestamp,
                em.new_timestamp as new_timestamp,
@@ -959,6 +973,7 @@ pub async fn get_event_analytics(
         .timestamp_millis();
 
     // Query all events with their parent information and duration
+    // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
     let query_str = "
         MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
         WHERE e.goal_type = 'event'
@@ -967,6 +982,10 @@ pub async fn get_event_analytics(
         AND e.scheduled_timestamp >= $start_timestamp
         AND e.scheduled_timestamp <= $end_timestamp
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        WITH e, g,
+             (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
+             timestamp() as current_time
+        WHERE event_end_time <= current_time
         RETURN e.scheduled_timestamp as scheduled_timestamp,
                COALESCE(e.end_timestamp, e.scheduled_timestamp + COALESCE(e.duration_minutes, 60) * 60 * 1000) as end_timestamp,
                COALESCE(e.duration_minutes, 60) as duration_minutes,
