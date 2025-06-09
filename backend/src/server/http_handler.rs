@@ -209,6 +209,13 @@ async fn handle_google_callback(
 }
 
 // Goal handlers
+async fn handle_get_goal(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    crate::tools::goal::get_goal_handler(graph, id).await
+}
+
 async fn handle_create_goal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,

@@ -156,6 +156,41 @@ pub async fn delete_relationship_handler(
     }
 }
 
+pub async fn get_goal_handler(
+    graph: Graph,
+    id: i64,
+) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
+    let query = format!(
+        "MATCH (g:Goal) WHERE g.id = $id {}",
+        GOAL_RETURN_QUERY
+    );
+    
+    let mut result = graph
+        .execute(neo4rs::query(&query).param("id", id))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = result.next().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+        let goal_data: serde_json::Value = row.get("goal").map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error getting goal data: {}", e),
+            )
+        })?;
+
+        let goal: Goal = serde_json::from_value(goal_data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error parsing goal data: {}", e),
+            )
+        })?;
+
+        Ok((StatusCode::OK, Json(goal)))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
+    }
+}
+
 pub async fn create_goal_handler(
     graph: Graph,
     user_id: i64,
