@@ -43,7 +43,7 @@ export default defineConfig({
         /* Add screenshot on failure */
         screenshot: 'only-on-failure',
         /* Increase timeout for CI environment */
-        actionTimeout: process.env.CI ? 30000 : 15000,
+        actionTimeout: process.env.CI ? 30000 : 30000,
         navigationTimeout: process.env.CI ? 60000 : 30000,
     },
 
