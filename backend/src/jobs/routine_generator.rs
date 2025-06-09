@@ -1,12 +1,12 @@
-use chrono::{Utc, Duration, TimeZone, Datelike};
-use neo4rs::{query, Graph};
 use crate::tools::goal::Goal;
+use chrono::{Datelike, Duration, TimeZone, Utc};
+use neo4rs::{query, Graph};
 
 pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String> {
     let now = Utc::now().timestamp_millis();
     let three_months = Duration::days(90).num_milliseconds();
     let horizon = now + three_months;
-    
+
     // Find routines that need more events generated
     let query_str = "
         MATCH (r:Goal)
@@ -19,31 +19,34 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
         WHERE last_event_time < $horizon OR last_event_time IS NULL
         RETURN r, id(r) as routine_id, last_event_time
     ";
-    
-    let mut result = graph.execute(
-        query(query_str)
-            .param("now", now)
-            .param("horizon", horizon)
-    ).await
+
+    let mut result = graph
+        .execute(query(query_str).param("now", now).param("horizon", horizon))
+        .await
         .map_err(|e| format!("Failed to query routines: {}", e))?;
-    
+
     let mut routine_count = 0;
-    while let Some(row) = result.next().await
-        .map_err(|e| format!("Error fetching row: {}", e))? {
-        let routine: Goal = row.get("r")
+    while let Some(row) = result
+        .next()
+        .await
+        .map_err(|e| format!("Error fetching row: {}", e))?
+    {
+        let routine: Goal = row
+            .get("r")
             .map_err(|e| format!("Failed to get routine: {}", e))?;
-        let routine_id: i64 = row.get("routine_id")
+        let routine_id: i64 = row
+            .get("routine_id")
             .map_err(|e| format!("Failed to get routine_id: {}", e))?;
         let last_event_time: Option<i64> = row.get("last_event_time").ok();
-        
+
         let start_from = last_event_time
             .map(|t| t + 86400000) // Start from day after last event
             .unwrap_or_else(|| routine.start_timestamp.unwrap_or(now));
-        
+
         generate_events_for_routine(graph, &routine, routine_id, start_from, horizon).await?;
         routine_count += 1;
     }
-    
+
     println!("Generated future events for {} routines", routine_count);
     Ok(())
 }
@@ -55,15 +58,17 @@ async fn generate_events_for_routine(
     start_from: i64,
     until: i64,
 ) -> Result<(), String> {
-    let frequency = routine.frequency.as_ref()
+    let frequency = routine
+        .frequency
+        .as_ref()
         .ok_or("Routine missing frequency")?;
-    
+
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
-    
+
     // Calculate event timestamps based on frequency
     let mut current_time = start_from;
     let mut event_count = 0;
-    
+
     while current_time <= until {
         // Apply routine_time to the current timestamp
         let scheduled_timestamp = if let Some(routine_time) = routine.routine_time {
@@ -90,23 +95,28 @@ async fn generate_events_for_routine(
                  completed: false,
                  is_deleted: false
              })
-             CREATE (r)-[:HAS_EVENT]->(e)"
+             CREATE (r)-[:HAS_EVENT]->(e)",
         )
         .param("routine_id", routine_id)
         .param("timestamp", scheduled_timestamp)
         .param("instance_id", instance_id.clone());
-        
-        graph.run(create_query).await
+
+        graph
+            .run(create_query)
+            .await
             .map_err(|e| format!("Failed to create routine event: {}", e))?;
-        
+
         event_count += 1;
-        
+
         // Calculate next occurrence based on frequency
         current_time = calculate_next_occurrence(current_time, frequency)?;
     }
-    
+
     if event_count > 0 {
-        println!("Created {} new events for routine '{}'", event_count, routine.name);
+        println!(
+            "Created {} new events for routine '{}'",
+            event_count, routine.name
+        );
     }
     Ok(())
 }
@@ -132,9 +142,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
     // frequency pattern: {multiplier}{unit}[:days]
     let parts: Vec<&str> = frequency.split(':').collect();
     let freq_part = parts[0];
-    
+
     if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
-        let multiplier: i64 = freq_part[..unit_pos].parse()
+        let multiplier: i64 = freq_part[..unit_pos]
+            .parse()
             .map_err(|_| format!("Invalid frequency multiplier: {}", &freq_part[..unit_pos]))?;
         let unit = &freq_part[unit_pos..];
 
@@ -194,9 +205,9 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
 // This function can be called periodically (e.g., daily) by a scheduler
 pub async fn run_routine_generator(graph: Graph) {
     println!("Starting routine event generation job...");
-    
+
     match generate_future_routine_events(&graph).await {
         Ok(_) => println!("Routine event generation completed successfully"),
         Err(e) => eprintln!("Error generating routine events: {}", e),
     }
-} 
+}

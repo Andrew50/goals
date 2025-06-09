@@ -44,12 +44,12 @@ pub async fn get_day_tasks(
         Utc.timestamp_millis_opt(end_timestamp).unwrap()
     );
 
-    // Query Events (Goal nodes with goal_type='event') that are linked to tasks or achievements
+    // Query Events (Goal nodes with goal_type='event') that are linked to tasks, achievements, or routines
     let query_str = "
         MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
         WHERE e.goal_type = 'event'
         AND g.user_id = $user_id 
-        AND (g.goal_type = 'task' OR g.goal_type = 'achievement')
+        AND (g.goal_type = 'task' OR g.goal_type = 'achievement' OR g.goal_type = 'routine')
         AND e.scheduled_timestamp >= $start_timestamp 
         AND e.scheduled_timestamp <= $end_timestamp
         AND (e.is_deleted IS NULL OR e.is_deleted = false)

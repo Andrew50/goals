@@ -18,11 +18,14 @@ import {
     List,
     ListItem,
     ListItemText,
-    ListItemSecondaryAction
+    ListItemSecondaryAction,
+    Radio,
+    RadioGroup,
+    FormControl
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, expandTaskDateRange, TaskDateValidationError } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -49,6 +52,15 @@ interface GoalMenuState {
     goal: Goal;
     error: string;
     mode: Mode;
+}
+
+// Routine Reschedule Dialog State
+interface RoutineRescheduleDialogState {
+    isOpen: boolean;
+    eventId: number | null;
+    eventName: string;
+    originalGoal: Goal | null;
+    updatedGoal: Goal | null;
 }
 
 // Task Date Range Warning Dialog Component
@@ -165,10 +177,11 @@ const GoalMenu: GoalMenuComponent = () => {
     );
     const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
-    const [relationshipMode, setRelationshipMode] = useState<{ type: 'child' | 'queue', parentId: number } | null>(null);
     const [allGoals, setAllGoals] = useState<Goal[]>([]);
-    const [selectedParent, setSelectedParent] = useState<Goal | null>(null);
+    const [selectedParents, setSelectedParents] = useState<Goal[]>([]);
     const [parentSearchQuery, setParentSearchQuery] = useState('');
+    const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>('child');
+    const [originalGoal, setOriginalGoal] = useState<Goal | null>(null); // Track original goal for routine event comparison
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -185,6 +198,16 @@ const GoalMenu: GoalMenuComponent = () => {
         eventName?: string;
         currentScheduledTime?: Date;
     } | null>(null);
+
+    // Routine reschedule dialog management
+    const [routineRescheduleDialog, setRoutineRescheduleDialog] = useState<RoutineRescheduleDialogState>({
+        isOpen: false,
+        eventId: null,
+        eventName: '',
+        originalGoal: null,
+        updatedGoal: null
+    });
+    const [selectedUpdateScope, setSelectedUpdateScope] = useState<'single' | 'all' | 'future'>('single');
 
     // Task date range warning dialog state
     const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
@@ -230,7 +253,7 @@ const GoalMenu: GoalMenuComponent = () => {
         }
 
         //queue relationships can only between achievements, default to achievement and force achievemnt in ui
-        if (relationshipMode?.type === 'queue') {
+        if (selectedParents.length > 0 && relationshipType === 'queue') {
             goalCopy.goal_type = 'achievement';
         }
 
@@ -246,19 +269,11 @@ const GoalMenu: GoalMenuComponent = () => {
             'view': 'View Goal'
         }[actualMode]);
         setIsOpen(true);
-
-        // If in relationship mode, set the parent
-        if (relationshipMode) {
-            // Find the parent goal from allGoals
-            const parent = allGoals.find(g => g.id === relationshipMode.parentId);
-            setSelectedParent(parent || null);
-        } else {
-            setSelectedParent(null);
-        }
+        setOriginalGoal(goalCopy);
 
         // Fetch parent goals if we have a goal ID
         if (goal.id) {
-            fetchParentGoals(goal.id);
+            fetchParentGoals(goal.id, actualMode);
 
             // Fetch task events if this is a task
             if (goal.goal_type === 'task') {
@@ -269,7 +284,7 @@ const GoalMenu: GoalMenuComponent = () => {
             setTaskEvents([]);
             setTotalDuration(0);
         }
-    }, [relationshipMode, setState, allGoals, fetchTaskEvents]);
+    }, [selectedParents, setState, relationshipType, fetchTaskEvents]);
 
     const close = useCallback(() => {
         setIsOpen(false);
@@ -281,10 +296,10 @@ const GoalMenu: GoalMenuComponent = () => {
             });
             setOnSuccess(undefined);
             setTitle('');
-            setRelationshipMode(null);
-            setParentGoals([]);
-            setSelectedParent(null);
+            setSelectedParents([]);
             setParentSearchQuery('');
+            setRelationshipType('child');
+            setOriginalGoal(null);
             setTaskEvents([]);
             setTotalDuration(0);
             setShowAddEvent(false);
@@ -292,6 +307,14 @@ const GoalMenu: GoalMenuComponent = () => {
             setNewEventDuration(60);
             setSmartScheduleOpen(false);
             setSmartScheduleContext(null);
+            setRoutineRescheduleDialog({
+                isOpen: false,
+                eventId: null,
+                eventName: '',
+                originalGoal: null,
+                updatedGoal: null
+            });
+            setSelectedUpdateScope('single');
         }, 100);
     }, [setState]);
 
@@ -335,8 +358,13 @@ const GoalMenu: GoalMenuComponent = () => {
                 return g.goal_type === 'task' || g.goal_type === 'routine';
             }
 
+            // Special handling for queue relationships - only achievements can be in queues
+            if (relationshipType === 'queue') {
+                return g.goal_type === 'achievement';
+            }
+
             // For non-events, validate the relationship
-            const error = validateRelationship(g, state.goal, 'child');
+            const error = validateRelationship(g, state.goal, relationshipType);
             return !error;
         });
 
@@ -348,7 +376,7 @@ const GoalMenu: GoalMenuComponent = () => {
         }
 
         return validGoals.slice(0, 10); // Limit to 10 results
-    }, [allGoals, state.goal, parentSearchQuery, fuse]);
+    }, [allGoals, state.goal, parentSearchQuery, fuse, relationshipType]);
 
     const handleChange = (newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server
@@ -367,11 +395,93 @@ const GoalMenu: GoalMenuComponent = () => {
             newGoal.routine_type = 'task';
         }
 
-        // For all other changes, update the local state
+        // For all changes, update the local state (no immediate prompting for routine events)
         setState({
             ...state,
             goal: newGoal
         });
+    };
+
+    // Handle routine reschedule dialog actions
+    const handleRoutineRescheduleConfirm = async () => {
+        try {
+            if (!routineRescheduleDialog.eventId || !routineRescheduleDialog.updatedGoal || !routineRescheduleDialog.originalGoal) {
+                return;
+            }
+
+            const originalGoal = routineRescheduleDialog.originalGoal;
+            const updatedGoal = routineRescheduleDialog.updatedGoal;
+
+            // Check if timestamp changed
+            const timestampChanged = updatedGoal.scheduled_timestamp?.getTime() !== originalGoal.scheduled_timestamp?.getTime();
+
+            // Check if other fields changed
+            const otherChanges = (
+                updatedGoal.name !== originalGoal.name ||
+                updatedGoal.description !== originalGoal.description ||
+                updatedGoal.priority !== originalGoal.priority ||
+                updatedGoal.duration !== originalGoal.duration ||
+                updatedGoal.completed !== originalGoal.completed
+            );
+
+            let finalUpdatedGoal = updatedGoal;
+
+            // Handle timestamp changes with routine scope
+            if (timestampChanged && updatedGoal.scheduled_timestamp) {
+                await updateRoutineEvent(
+                    routineRescheduleDialog.eventId,
+                    updatedGoal.scheduled_timestamp,
+                    selectedUpdateScope
+                );
+            }
+
+            // Handle other changes using regular updateGoal (these only affect this specific event)
+            if (otherChanges) {
+                finalUpdatedGoal = await updateGoal(routineRescheduleDialog.eventId, updatedGoal);
+            }
+
+            // Close dialog and reset state
+            setRoutineRescheduleDialog({
+                isOpen: false,
+                eventId: null,
+                eventName: '',
+                originalGoal: null,
+                updatedGoal: null
+            });
+            setSelectedUpdateScope('single');
+
+            // Call onSuccess if provided and close the GoalMenu
+            if (onSuccess) {
+                onSuccess(finalUpdatedGoal);
+            }
+            close(); // Close the GoalMenu instead of staying in edit mode
+        } catch (error) {
+            console.error('Failed to update routine event:', error);
+            setState({
+                ...state,
+                error: 'Failed to update routine event. Please try again.'
+            });
+            handleRoutineRescheduleCancel();
+        }
+    };
+
+    const handleRoutineRescheduleCancel = () => {
+        // Revert to original timestamp
+        if (routineRescheduleDialog.originalGoal) {
+            setState({
+                ...state,
+                goal: routineRescheduleDialog.originalGoal
+            });
+        }
+
+        setRoutineRescheduleDialog({
+            isOpen: false,
+            eventId: null,
+            eventName: '',
+            originalGoal: null,
+            updatedGoal: null
+        });
+        setSelectedUpdateScope('single');
     };
 
     const handleSubmit = async (another: boolean = false) => {
@@ -390,27 +500,55 @@ const GoalMenu: GoalMenuComponent = () => {
         }
 
         // Validate parent relationship if selected
-        if (selectedParent && state.mode === 'create' && state.goal.goal_type !== 'event') {
-            const relationshipError = validateRelationship(selectedParent, state.goal, 'child');
-            if (relationshipError) {
-                setState({
-                    ...state,
-                    error: relationshipError
-                });
-                return;
+        if (selectedParents.length > 0 && (state.mode === 'create' || state.mode === 'edit') && state.goal.goal_type !== 'event') {
+            // Special validation for queue relationships
+            if (relationshipType === 'queue') {
+                if (selectedParents.some(parent => parent.goal_type !== 'achievement')) {
+                    setState({
+                        ...state,
+                        error: 'Queue relationships can only be created from achievements'
+                    });
+                    return;
+                }
+                if (state.goal.goal_type !== 'achievement') {
+                    setState({
+                        ...state,
+                        error: 'Queue relationships can only be created to achievements'
+                    });
+                    return;
+                }
+            }
+
+            // Check each parent for validation errors
+            for (const parent of selectedParents) {
+                const relationshipError = validateRelationship(parent, state.goal, relationshipType);
+                if (relationshipError) {
+                    setState({
+                        ...state,
+                        error: relationshipError
+                    });
+                    return;
+                }
             }
         }
 
         // Special validation for events
         if (state.goal.goal_type === 'event' && state.mode === 'create') {
-            if (!selectedParent) {
+            if (selectedParents.length === 0) {
                 setState({
                     ...state,
-                    error: 'Events must have a parent task or routine'
+                    error: 'Events must have at least one parent task or routine'
                 });
                 return;
             }
-            if (selectedParent.goal_type !== 'task' && selectedParent.goal_type !== 'routine') {
+            if (selectedParents.length > 1) {
+                setState({
+                    ...state,
+                    error: 'Events can only have one parent task or routine'
+                });
+                return;
+            }
+            if (selectedParents.some(parent => parent.goal_type !== 'task' && parent.goal_type !== 'routine')) {
                 setState({
                     ...state,
                     error: 'Events can only be created for tasks or routines'
@@ -419,14 +557,44 @@ const GoalMenu: GoalMenuComponent = () => {
             }
         }
 
+        // Check if this is a routine event being edited and show dialog if changes detected
+        if (state.mode === 'edit' &&
+            state.goal.goal_type === 'event' &&
+            state.goal.parent_type === 'routine' &&
+            state.goal.id &&
+            originalGoal) {
+
+            // Check if any changes were made to the routine event
+            const hasChanges = (
+                state.goal.name !== originalGoal.name ||
+                state.goal.description !== originalGoal.description ||
+                state.goal.priority !== originalGoal.priority ||
+                state.goal.duration !== originalGoal.duration ||
+                state.goal.scheduled_timestamp?.getTime() !== originalGoal.scheduled_timestamp?.getTime() ||
+                state.goal.completed !== originalGoal.completed
+            );
+
+            if (hasChanges) {
+                // Show routine reschedule dialog
+                setRoutineRescheduleDialog({
+                    isOpen: true,
+                    eventId: state.goal.id,
+                    eventName: state.goal.name || 'Routine Event',
+                    originalGoal: originalGoal,
+                    updatedGoal: state.goal
+                });
+                return; // Don't proceed with immediate update
+            }
+        }
+
         try {
             let updatedGoal: Goal;
             if (state.mode === 'create') {
-                if (state.goal.goal_type === 'event' && selectedParent) {
+                if (state.goal.goal_type === 'event') {
                     // Use createEvent API for events
                     updatedGoal = await createEvent({
-                        parent_id: selectedParent.id!,
-                        parent_type: selectedParent.goal_type,
+                        parent_id: selectedParents[0].id!,
+                        parent_type: selectedParents[0].goal_type,
                         scheduled_timestamp: state.goal.scheduled_timestamp || new Date(),
                         duration: state.goal.duration || 60
                     });
@@ -452,23 +620,48 @@ const GoalMenu: GoalMenuComponent = () => {
                         }
                     }
 
-                    // Create parent relationship if selected (prioritize selectedParent over relationshipMode)
-                    if (selectedParent) {
+                    // Create parent relationships if selected
+                    for (const parent of selectedParents) {
                         await createRelationship(
-                            selectedParent.id!,
+                            parent.id!,
                             updatedGoal.id!,
-                            'child'
-                        );
-                    } else if (relationshipMode) {
-                        await createRelationship(
-                            relationshipMode.parentId,
-                            updatedGoal.id!,
-                            relationshipMode.type
+                            relationshipType
                         );
                     }
                 }
             } else if (state.mode === 'edit' && state.goal.id) {
                 updatedGoal = await updateGoal(state.goal.id, state.goal);
+
+                // Handle parent relationships in edit mode (for non-events)
+                if (state.goal.goal_type !== 'event') {
+                    // Get current parent IDs
+                    const currentParentIds = new Set(parentGoals.map(p => p.id!));
+                    const selectedParentIds = new Set(selectedParents.map(p => p.id!));
+
+                    // Find relationships to add (selected but not current)
+                    const parentsToAdd = selectedParents.filter(p => !currentParentIds.has(p.id!));
+
+                    // Find relationships to remove (current but not selected)
+                    const parentsToRemove = parentGoals.filter(p => !selectedParentIds.has(p.id!));
+
+                    // Add new relationships
+                    for (const parent of parentsToAdd) {
+                        await createRelationship(
+                            parent.id!,
+                            state.goal.id!,
+                            relationshipType
+                        );
+                    }
+
+                    // Remove old relationships
+                    for (const parent of parentsToRemove) {
+                        await deleteRelationship(
+                            parent.id!,
+                            state.goal.id!,
+                            relationshipType
+                        );
+                    }
+                }
             } else {
                 throw new Error('Invalid mode or missing goal ID');
             }
@@ -544,44 +737,23 @@ const GoalMenu: GoalMenuComponent = () => {
 
         close();
         setTimeout(() => {
-            open(newGoal, 'create', async (createdGoal: Goal) => {
-                try {
-                    await createRelationship(parentGoal.id!, createdGoal.id!, 'child');
-                    if (onSuccess) {
-                        onSuccess(parentGoal);
-                    }
-                } catch (error) {
-                    console.error('Failed to create child relationship:', error);
-                    setState({
-                        ...state,
-                        error: 'Failed to create child relationship'
-                    });
-                }
-            });
-            setRelationshipMode({ type: 'child', parentId: parentGoal.id! });
+            // Set the parent goal and relationship type, then open the dialog
+            setSelectedParents([parentGoal]);
+            setRelationshipType('child');
+            open(newGoal, 'create', onSuccess);
         }, 100);
     };
 
     const handleCreateQueue = () => {
         const previousGoal = state.goal;
         const newGoal: Goal = { goal_type: 'achievement' } as Goal;
+
         close();
         setTimeout(() => {
-            open(newGoal, 'create', async (createdGoal: Goal) => {
-                try {
-                    await createRelationship(previousGoal.id!, createdGoal.id!, 'queue');
-                    if (onSuccess) {
-                        onSuccess(previousGoal);
-                    }
-                } catch (error) {
-                    console.error('Failed to create queue relationship:', error);
-                    setState({
-                        ...state,
-                        error: 'Failed to create queue relationship'
-                    });
-                }
-            });
-            setRelationshipMode({ type: 'queue', parentId: previousGoal.id! });
+            // Set the parent goal and relationship type, then open the dialog
+            setSelectedParents([previousGoal]);
+            setRelationshipType('queue');
+            open(newGoal, 'create', onSuccess);
         }, 100);
     };
 
@@ -615,7 +787,7 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     // Fetch parent goals using traversal API
-    const fetchParentGoals = async (goalId: number) => {
+    const fetchParentGoals = async (goalId: number, mode: Mode) => {
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
             // Filter to only get parent goals (those that have a child relationship to current goal)
@@ -630,9 +802,17 @@ const GoalMenu: GoalMenuComponent = () => {
 
             // Sort by hierarchy level (furthest parents first)
             setParentGoals(parents);
+
+            // In edit mode, also populate selectedParents so they show in the selector
+            if (mode === 'edit') {
+                setSelectedParents(parents);
+            }
         } catch (error) {
             console.error('Failed to fetch parent goals:', error);
             setParentGoals([]);
+            if (mode === 'edit') {
+                setSelectedParents([]);
+            }
         }
     };
 
@@ -988,8 +1168,8 @@ const GoalMenu: GoalMenuComponent = () => {
                 margin="dense"
                 required={state.goal.goal_type !== 'event'}
                 disabled={isViewOnly}
-                placeholder={state.goal.goal_type === 'event' && selectedParent ? `Event: ${selectedParent.name}` : ''}
-                helperText={state.goal.goal_type === 'event' ? 'Name will be auto-generated from parent goal' : ''}
+                placeholder={state.goal.goal_type === 'event' && selectedParents.length > 0 ? `Event: ${selectedParents[0].name}` : ''}
+                helperText={state.goal.goal_type === 'event' ? 'Name will be auto-generated from parent goals' : ''}
                 inputProps={{
                     spellCheck: 'false',
                     // Explicitly allow all characters
@@ -1052,13 +1232,14 @@ const GoalMenu: GoalMenuComponent = () => {
         </>
     );
 
-    // Parent selector field (only in create mode, not shown for events in view mode as they have special display)
-    const parentSelectorField = state.mode === 'create' ? (
+    // Parent selector field (available in create and edit modes, not shown for events in view mode as they have special display)
+    const parentSelectorField = (state.mode === 'create' || state.mode === 'edit') ? (
         <Box sx={{ mt: 2, mb: 2 }}>
             <Autocomplete
-                value={selectedParent}
+                multiple
+                value={selectedParents}
                 onChange={(event, newValue) => {
-                    setSelectedParent(newValue);
+                    setSelectedParents(newValue as Goal[]);
                 }}
                 inputValue={parentSearchQuery}
                 onInputChange={(event, newInputValue) => {
@@ -1084,18 +1265,43 @@ const GoalMenu: GoalMenuComponent = () => {
                         </Box>
                     </Box>
                 )}
+                renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                        <Chip
+                            variant="outlined"
+                            label={option.name}
+                            size="small"
+                            sx={{
+                                backgroundColor: getGoalColor(option),
+                                color: 'white',
+                                '& .MuiChip-deleteIcon': {
+                                    color: 'white'
+                                }
+                            }}
+                            {...getTagProps({ index })}
+                        />
+                    ))
+                }
                 renderInput={(params) => (
                     <TextField
                         {...params}
-                        label={state.goal.goal_type === 'event' ? "Parent Goal (Required)" : "Parent Goal (Optional)"}
-                        placeholder="Search for a parent goal..."
+                        label={
+                            state.goal.goal_type === 'event'
+                                ? "Parent Goal (Required)"
+                                : relationshipType === 'queue'
+                                    ? "Previous Goals in Queue (Required)"
+                                    : "Parent Goals (Optional)"
+                        }
+                        placeholder="Search for parent goals..."
                         helperText={
                             state.goal.goal_type === 'event'
-                                ? "Events must be associated with a task or routine"
-                                : "Select a parent goal to create a relationship"
+                                ? "Events must be associated with one task or routine"
+                                : relationshipType === 'queue'
+                                    ? "Select the achievements that should come before these ones"
+                                    : "Select parent goals to create relationships"
                         }
-                        required={state.goal.goal_type === 'event'}
-                        error={state.goal.goal_type === 'event' && !selectedParent}
+                        required={state.goal.goal_type === 'event' || relationshipType === 'queue'}
+                        error={(state.goal.goal_type === 'event' || relationshipType === 'queue') && selectedParents.length === 0}
                     />
                 )}
                 fullWidth
@@ -1832,6 +2038,62 @@ const GoalMenu: GoalMenuComponent = () => {
                     onSelect={handleSmartScheduleSuccess}
                 />
             )}
+
+            {/* Routine Reschedule Dialog */}
+            <Dialog
+                open={routineRescheduleDialog.isOpen}
+                onClose={handleRoutineRescheduleCancel}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>
+                    Update Routine Event
+                </DialogTitle>
+                <DialogContent>
+                    <Box sx={{ mb: 2 }}>
+                        <Typography variant="body1" sx={{ mb: 2 }}>
+                            You're updating the routine event "{routineRescheduleDialog.eventName}".
+                            How would you like to apply these changes?
+                        </Typography>
+
+                        <FormControl component="fieldset">
+                            <RadioGroup
+                                value={selectedUpdateScope}
+                                onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
+                            >
+                                <FormControlLabel
+                                    value="single"
+                                    control={<Radio />}
+                                    label="Only this occurrence"
+                                />
+                                <FormControlLabel
+                                    value="future"
+                                    control={<Radio />}
+                                    label="This and all future occurrences"
+                                />
+                                <FormControlLabel
+                                    value="all"
+                                    control={<Radio />}
+                                    label="All occurrences of this routine"
+                                />
+                            </RadioGroup>
+                        </FormControl>
+                    </Box>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleRoutineRescheduleCancel}>
+                        Cancel
+                    </Button>
+                    <Button
+                        onClick={handleRoutineRescheduleConfirm}
+                        color="primary"
+                        variant="contained"
+                    >
+                        Update
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
             <TaskDateRangeWarningDialog
                 open={taskDateWarningDialog.isOpen}
                 onClose={handleTaskDateWarningRevert}
