@@ -23,56 +23,44 @@ use crate::tools::goal::{Goal, GoalUpdate, Relationship};
 use crate::tools::list;
 use crate::tools::migration;
 use crate::tools::network;
-use crate::tools::routine;
 use crate::tools::stats;
 use crate::tools::traversal;
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
-pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
+pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let auth_routes = Router::new()
-        .route("/signup", post(handle_signup))
         .route("/signin", post(handle_signin))
-        .route("/validate", get(handle_validate_token))
+        .route("/signup", post(handle_signup))
         .route("/google", get(handle_google_auth))
         .route("/callback", get(handle_google_callback))
-        .layer(Extension(graph.clone()));
+        .route("/validate", get(handle_validate_token));
 
-    // Account management routes (require authentication)
-    let account_routes = Router::new()
-        .route("/", get(handle_get_user_account))
-        .route("/set-password", post(handle_set_password))
-        .route("/link-google", post(handle_link_google_account))
-        .route("/unlink-google", post(handle_unlink_google_account));
-
-    let goals_routes = Router::new()
+    let goal_routes = Router::new()
         .route("/create", post(handle_create_goal))
+        .route("/:id", get(handle_get_goal))
         .route("/:id", put(handle_update_goal))
         .route("/:id", delete(handle_delete_goal))
         .route("/relationship", post(handle_create_relationship))
-        .route(
-            "/relationship/:from_id/:to_id",
-            delete(handle_delete_relationship),
-        )
-        .route("/:id/complete", put(handle_toggle_completion))
+        .route("/relationship", delete(handle_delete_relationship))
+        .route("/:id/complete", put(handle_complete_goal))
         .route("/expand-date-range", post(handle_expand_task_date_range));
 
     let event_routes = Router::new()
         .route("/", post(handle_create_event))
-        .route("/:id/update", put(handle_update_event))
-        .route("/:id/routine-update", put(handle_update_routine_event))
         .route("/:id/complete", put(handle_complete_event))
         .route("/:id/delete", delete(handle_delete_event))
         .route("/:id/split", post(handle_split_event))
+        .route("/task/:id", get(handle_get_task_events))
+        .route("/:id/update", put(handle_update_event))
+        .route("/:id/routine-update", put(handle_update_routine_event))
         .route(
             "/:id/reschedule-options",
             get(handle_get_reschedule_options),
         )
-        .route("/smart-schedule", post(handle_get_smart_schedule_options))
-        .route("/task/:task_id", get(handle_get_task_events));
+        .route("/smart-schedule", post(handle_get_smart_schedule_options));
 
-    // Task completion routes with event synchronization
     let task_routes = Router::new()
         .route("/:id/complete", put(handle_complete_task))
         .route("/:id/uncomplete", put(handle_uncomplete_task))
@@ -95,8 +83,6 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .route("/", get(handle_get_day_tasks))
         .route("/complete/:id", put(handle_toggle_complete_task));
 
-    let routine_routes = Router::new().route("/:timestamp", post(handle_process_user_routines));
-
     let query_routes = Router::new().route("/ws", get(query::handle_query_ws));
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
@@ -117,8 +103,8 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .route("/verify", get(handle_verify_migration));
 
     // Protected routes with auth middleware
-    let api_routes = Router::new()
-        .nest("/goals", goals_routes)
+    let protected_routes = Router::new()
+        .nest("/goals", goal_routes)
         .nest("/events", event_routes)
         .nest("/tasks", task_routes)
         .nest("/network", network_routes)
@@ -126,22 +112,17 @@ pub fn create_routes(graph: Graph, user_locks: UserLocks) -> Router {
         .nest("/calendar", calendar_routes)
         .nest("/list", list_routes)
         .nest("/day", day_routes)
-        .nest("/routine", routine_routes)
         .nest("/query", query_routes)
         .nest("/achievements", achievements_routes)
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
-        .nest("/account", account_routes)
-        .route_layer(from_fn(middleware::auth_middleware))
-        .layer(Extension(graph.clone()))
-        .layer(Extension(user_locks));
+        .layer(from_fn(middleware::auth_middleware));
 
-    // Combine auth routes with the rest of the API
     Router::new()
         .nest("/auth", auth_routes)
-        .merge(api_routes)
-        // Add health check endpoint that doesn't require auth
-        .route("/health", get(handle_health_check))
+        .merge(protected_routes)
+        .layer(Extension(pool))
+        .layer(Extension(user_locks))
 }
 
 // Auth handlers
@@ -227,130 +208,6 @@ async fn handle_google_callback(
     result
 }
 
-// New account management handlers
-async fn handle_get_user_account(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    match auth::get_user_account(&graph, user_id).await {
-        Ok(account) => Ok(Json(account)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(auth::AuthResponse {
-                message: format!("Failed to get account info: {}", e),
-                token: "".to_string(),
-                username: None,
-            }),
-        )),
-    }
-}
-
-async fn handle_set_password(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Json(payload): Json<auth::SetPasswordPayload>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    match auth::set_password_for_user(&graph, user_id, payload.password).await {
-        Ok(()) => Ok(Json(auth::AccountLinkResponse {
-            message: "Password set successfully".to_string(),
-            success: true,
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(auth::AccountLinkResponse {
-                message: format!("Failed to set password: {}", e),
-                success: false,
-            }),
-        )),
-    }
-}
-
-async fn handle_link_google_account(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Json(payload): Json<auth::LinkAccountPayload>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    // First, exchange the Google code for user info
-    let client = match auth::create_google_oauth_client() {
-        Ok(client) => client,
-        Err(e) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(auth::AccountLinkResponse {
-                    message: format!("OAuth configuration error: {}", e),
-                    success: false,
-                }),
-            ));
-        }
-    };
-
-    // Exchange the code with a token
-    let token_result = match client
-        .exchange_code(oauth2::AuthorizationCode::new(payload.google_code))
-        .request_async(oauth2::reqwest::async_http_client)
-        .await
-    {
-        Ok(token) => token,
-        Err(e) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(auth::AccountLinkResponse {
-                    message: format!("Failed to exchange authorization code: {:?}", e),
-                    success: false,
-                }),
-            ));
-        }
-    };
-
-    // Get user info from Google
-    let user_info = match auth::get_google_user_info(token_result.access_token().secret()).await {
-        Ok(info) => info,
-        Err(e) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(auth::AccountLinkResponse {
-                    message: format!("Failed to get Google user info: {}", e),
-                    success: false,
-                }),
-            ));
-        }
-    };
-
-    // Link the Google account to the current user
-    match auth::link_google_account(&graph, user_id, &user_info).await {
-        Ok(()) => Ok(Json(auth::AccountLinkResponse {
-            message: "Google account linked successfully".to_string(),
-            success: true,
-        })),
-        Err(e) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(auth::AccountLinkResponse {
-                message: format!("Failed to link Google account: {}", e),
-                success: false,
-            }),
-        )),
-    }
-}
-
-async fn handle_unlink_google_account(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    match auth::unlink_google_account(&graph, user_id).await {
-        Ok(()) => Ok(Json(auth::AccountLinkResponse {
-            message: "Google account unlinked successfully".to_string(),
-            success: true,
-        })),
-        Err(e) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(auth::AccountLinkResponse {
-                message: format!("Failed to unlink Google account: {}", e),
-                success: false,
-            }),
-        )),
-    }
-}
-
 // Goal handlers
 async fn handle_create_goal(
     Extension(graph): Extension<Graph>,
@@ -393,7 +250,7 @@ async fn handle_delete_relationship(
     crate::tools::goal::delete_relationship_handler(graph, from_id, to_id).await
 }
 
-async fn handle_toggle_completion(
+async fn handle_complete_goal(
     Extension(graph): Extension<Graph>,
     Json(update): Json<GoalUpdate>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -560,16 +417,6 @@ async fn handle_toggle_complete_task(
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     day::toggle_complete_task(graph, id).await
-}
-
-// Routine handlers
-async fn handle_process_user_routines(
-    Path(user_eod_timestamp): Path<i64>,
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Extension(user_locks): Extension<UserLocks>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    routine::process_user_routines(user_eod_timestamp, graph, user_id, user_locks).await
 }
 
 // Achievements handlers

@@ -227,10 +227,11 @@ const NetworkView: React.FC = () => {
         const formattedData = await buildHierarchy({ nodes: formattedNodes, edges: response.edges });
 
         // Create DataSets for nodes and edges (used by vis‑network)
+        // Always create DataSets even if empty to ensure network functionality
         nodesDataSetRef.current = new DataSet(formattedData.nodes);
         edgesDataSetRef.current = new DataSet(formattedData.edges);
 
-        // Create the network instance
+        // Create the network instance - always create it even with empty data
         if (networkContainer.current) {
           networkRef.current = new VisNetwork(
             networkContainer.current,
@@ -285,6 +286,16 @@ const NetworkView: React.FC = () => {
         }
       } catch (error) {
         console.error('Error initializing network:', error);
+        // Even if there's an error, try to create an empty network so buttons work
+        if (networkContainer.current && !networkRef.current) {
+          nodesDataSetRef.current = new DataSet([]);
+          edgesDataSetRef.current = new DataSet([]);
+          networkRef.current = new VisNetwork(
+            networkContainer.current,
+            { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
+            options
+          );
+        }
       }
     };
 
