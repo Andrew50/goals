@@ -2,7 +2,7 @@ import { privateRequest } from '../../shared/utils/api';
 import { timestampToDisplayString } from '../../shared/utils/time';
 import React, { useEffect, useState } from 'react';
 import { getGoalColor } from '../../shared/styles/colors';
-import GoalMenu from '../../shared/components/GoalMenu';
+import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
@@ -25,6 +25,7 @@ interface DayEvent {
 }
 
 const Day: React.FC = () => {
+    const { openGoalMenu } = useGoalMenu();
     const [events, setEvents] = useState<DayEvent[]>([]);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
 
@@ -153,8 +154,7 @@ const Day: React.FC = () => {
             scheduled_timestamp: new Date(event.scheduled_timestamp),
         };
 
-        GoalMenu.open(goalFormat as any, 'view', (updatedGoal) => {
-            // After goal update, refresh the events list for current date
+        openGoalMenu(goalFormat as any, 'view', (updatedGoal) => {
             fetchEventsForDate(currentDate);
         });
     };
@@ -172,8 +172,7 @@ const Day: React.FC = () => {
             scheduled_timestamp: new Date(event.scheduled_timestamp),
         };
 
-        GoalMenu.open(goalFormat as any, 'edit', (updatedGoal) => {
-            // After goal update, refresh the events list for current date
+        openGoalMenu(goalFormat as any, 'edit', (updatedGoal) => {
             fetchEventsForDate(currentDate);
         });
     };
@@ -203,11 +202,10 @@ const Day: React.FC = () => {
     const handleCreateGoal = () => {
         const { start } = getDayBounds(currentDate);
 
-        GoalMenu.open(
+        openGoalMenu(
             { scheduled_timestamp: start, goal_type: 'task' } as any,
             'create',
             (newGoal) => {
-                // After creating a goal, refresh the events list for current date
                 fetchEventsForDate(currentDate);
             }
         );

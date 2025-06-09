@@ -43,12 +43,12 @@
     "test:ci": "react-scripts test --watchAll=false --coverage --passWithNoTests --ci",
     "eject": "react-scripts eject",
     "dev": "react-scripts start",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:calendar": "playwright test calendar-interactions.spec.ts",
-    "test:timezone": "playwright test timestamp-e2e.spec.ts",
-    "test:calendar:debug": "playwright test calendar-interactions.spec.ts --debug",
-    "test:all-e2e": "playwright test"
+    "test:e2e": "WDS_SOCKET_PORT=0 playwright test",
+    "test:e2e:ui": "WDS_SOCKET_PORT=0 playwright test --ui",
+    "test:calendar": "WDS_SOCKET_PORT=0 playwright test calendar-interactions.spec.ts",
+    "test:timezone": "WDS_SOCKET_PORT=0 playwright test timestamp-e2e.spec.ts",
+    "test:calendar:debug": "WDS_SOCKET_PORT=0 playwright test calendar-interactions.spec.ts --debug",
+    "test:all-e2e": "WDS_SOCKET_PORT=0 playwright test"
   },
   "eslintConfig": {
     "extends": [

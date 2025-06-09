@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
 import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
-import GoalMenu from '../../shared/components/GoalMenu';
+import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import TaskList from './TaskList';
 import { useHistoryState } from '../../shared/hooks/useHistoryState';
@@ -137,6 +137,7 @@ const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
 };
 
 const Calendar: React.FC = () => {
+  const { openGoalMenu } = useGoalMenu();
   // -----------------------------
   // State and Refs
   // -----------------------------
@@ -391,35 +392,25 @@ const Calendar: React.FC = () => {
   const handleDateClick = (arg: any) => {
     const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
 
-    // Create a new goal with the clicked date pre-populated for tasks
     const newGoal: Goal = {
       id: 0,
       name: '',
-      goal_type: 'task', // Default to task
+      goal_type: 'task',
       description: '',
       priority: 'medium',
-      scheduled_timestamp: clickedDate, // Pre-populate scheduled date
-      duration: 60 // Default duration
+      scheduled_timestamp: clickedDate,
+      duration: 60
     };
 
-    // Open GoalMenu in create mode
-    GoalMenu.open(newGoal, 'create', async () => {
+    openGoalMenu(newGoal, 'create', () => {
       loadCalendarData();
     });
   };
 
   const handleEventClick = (info: any) => {
-    if (debugMode) {
-      console.log('[DEBUG] Event clicked:', info.event.title, info.event.id);
-    }
-
     const event = info.event.extendedProps?.goal;
-
     if (event) {
-      // Open GoalMenu for all goal types, including events
-      // GoalMenu will handle view/edit mode and all actions internally
-      GoalMenu.open(event, 'view', async () => {
-        // This callback is called when the goal is updated/deleted/split
+      openGoalMenu(event, 'view', () => {
         loadCalendarData();
       });
     }
@@ -429,11 +420,8 @@ const Calendar: React.FC = () => {
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
-
       if (goal) {
-        // Use GoalMenu for all goal types on right-click
-        // For events, it will open in view mode by default
-        GoalMenu.open(goal, goal.goal_type === 'event' ? 'view' : 'edit', async () => {
+        openGoalMenu(goal, goal.goal_type === 'event' ? 'view' : 'edit', () => {
           loadCalendarData();
         });
       }
@@ -658,7 +646,7 @@ const Calendar: React.FC = () => {
       priority: 'medium'
     };
 
-    GoalMenu.open(tempGoal, 'create', async () => {
+    openGoalMenu(tempGoal, 'create', () => {
       loadCalendarData();
     });
   };

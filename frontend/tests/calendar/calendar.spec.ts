@@ -40,7 +40,16 @@ test.describe('Combined Calendar Tests', () => {
     });
 
     test('should switch to week view', async ({ page }) => {
-      await page.locator('.fc-timeGridWeek-button').click();
+      // Check for and dismiss webpack dev server overlay if present
+      const overlay = page.locator('#webpack-dev-server-client-overlay');
+      if (await overlay.isVisible()) {
+        await page.evaluate(() => {
+          const iframe = document.getElementById('webpack-dev-server-client-overlay');
+          if (iframe) iframe.remove();
+        });
+      }
+
+      await page.locator('.fc-timeGridWeek-button').click({ force: true });
       await expect(page.locator('.fc-timeGridWeek-view')).toBeVisible();
     });
 
@@ -62,14 +71,29 @@ test.describe('Combined Calendar Tests', () => {
   // ----------------------
   test.describe('Calendar UI Interactions', () => {
     test('left-clicking an event opens GoalMenu in view mode', async ({ page }) => {
+      // Create a task to ensure an event exists
+      await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
+      await expect(page.locator('div[role="dialog"]')).toBeVisible();
+      const testEventName = `Test Event Left Click ${Date.now()}`;
+      await page.locator('label:has-text("Name") + div input').fill(testEventName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
+
+      // Wait for the dialog to close before proceeding
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
+
       // Switch to week view where events are more reliably visible
       await page.locator('.fc-timeGridWeek-button').click();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(2000);
 
-      const calendarEvent = page.locator('.fc-event').first();
-      await expect(calendarEvent).toBeVisible();
+      const calendarEvent = page.locator('.fc-event', { hasText: testEventName });
+      await expect(calendarEvent).toBeVisible({ timeout: 10000 });
+
+      // Click on the event
       await calendarEvent.click();
 
+      // Verify the GoalMenu opens in view mode
       await expect(page.locator('div[role="dialog"]')).toBeVisible();
       await expect(page.locator('button:has-text("Edit")')).toBeVisible();
       await expect(page.locator('button:has-text("Close")')).toBeVisible();
@@ -79,12 +103,27 @@ test.describe('Combined Calendar Tests', () => {
     });
 
     test('right-clicking an event opens GoalMenu in edit mode', async ({ page }) => {
+      // First, create an event to ensure we have something to click
+      await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
+      await expect(page.locator('div[role="dialog"]')).toBeVisible();
+
+      const testEventName = `Test Event Right Click ${Date.now()}`;
+      await page.locator('label:has-text("Name") + div input').fill(testEventName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
+
+      // Wait for dialog to close and event to be created
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
+      await page.waitForTimeout(1000);
+
       // Switch to week view where events are more reliably visible
       await page.locator('.fc-timeGridWeek-button').click();
       await page.waitForTimeout(1000);
 
-      const calendarEvent = page.locator('.fc-event').first();
-      await expect(calendarEvent).toBeVisible();
+      // Now look for our created event
+      const calendarEvent = page.locator('.fc-event', { hasText: testEventName });
+      await expect(calendarEvent).toBeVisible({ timeout: 10000 });
       await calendarEvent.click({ button: 'right' });
 
       await expect(page.locator('div[role="dialog"]')).toBeVisible();
@@ -95,22 +134,38 @@ test.describe('Combined Calendar Tests', () => {
     });
 
     test('clicking calendar background opens GoalMenu in create mode', async ({ page }) => {
-      await page.locator('.fc-day:not(.fc-day-past)').first().click();
-      await expect(page.locator('div[role="dialog"]')).toBeVisible();
+      // Use force: true to ensure the click is registered, even if another element is technically on top
+      await page.locator('.fc-day:not(.fc-day-past)').first().click({ force: true });
+
+      await expect(page.locator('div[role="dialog"]')).toBeVisible({ timeout: 10000 });
       await expect(page.locator('div[role="dialog"]')).toContainText('Create New Goal');
 
-      await page.locator('input[placeholder="Name"]').fill('Test Task Created From Calendar');
+      await page.locator('label:has-text("Name") + div input').fill('Test Task Created From Calendar');
       await expect(page.locator('input[type="datetime-local"]')).toBeVisible();
       await page.locator('button:has-text("Cancel")').click();
     });
 
     test('dragging event to a new date updates the event', async ({ page }) => {
+      // First, create an event to ensure we have something to drag
+      await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
+      await expect(page.locator('div[role="dialog"]')).toBeVisible();
+
+      const testEventName = `Drag Test Event ${Date.now()}`;
+      await page.locator('label:has-text("Name") + div input').fill(testEventName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
+
+      // Wait for dialog to close and event to be created
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
+      await page.waitForTimeout(1000);
+
       // Switch to week view for better event visibility and interaction
       await page.locator('.fc-timeGridWeek-button').click();
       await page.waitForTimeout(1000);
 
-      const firstEvent = page.locator('.fc-event').first();
-      await expect(firstEvent).toBeVisible();
+      const firstEvent = page.locator('.fc-event', { hasText: testEventName });
+      await expect(firstEvent).toBeVisible({ timeout: 10000 });
       const initialTitle = await firstEvent.textContent();
       const targetDay = page.locator('.fc-day:not(.fc-day-past)').nth(2);
 
@@ -127,16 +182,31 @@ test.describe('Combined Calendar Tests', () => {
     });
 
     test('resizing event from bottom changes duration', async ({ page }) => {
+      // First, create a timed event to ensure we have something to resize
       await page.locator('.fc-timeGridWeek-button').click();
       await page.waitForTimeout(1000);
 
-      const event = page.locator('.fc-timegrid-event').first();
-      await expect(event).toBeVisible();
+      // Click on a time slot to create a timed event (not all-day)
+      await page.locator('.fc-timegrid-slot').filter({ hasText: '9:00' }).click();
+      await expect(page.locator('div[role="dialog"]')).toBeVisible();
+
+      const testEventName = `Resize Test Event ${Date.now()}`;
+      await page.locator('label:has-text("Name") + div input').fill(testEventName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
+
+      // Wait for dialog to close and event to be created
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
+      await page.waitForTimeout(1000);
+
+      const event = page.locator('.fc-timegrid-event', { hasText: testEventName });
+      await expect(event).toBeVisible({ timeout: 10000 });
 
       const initialBounds = await event.boundingBox();
       if (!initialBounds) throw new Error('Could not get event bounds');
 
-      const resizeHandle = page.locator('.fc-timegrid-event .fc-event-resizer-end').first();
+      const resizeHandle = event.locator('.fc-event-resizer-end');
       await expect(resizeHandle).toBeVisible();
       await resizeHandle.dragTo(event, {
         targetPosition: { x: 0, y: initialBounds.height + 50 },
@@ -152,23 +222,38 @@ test.describe('Combined Calendar Tests', () => {
       await page.locator('.fc-timeGridWeek-button').click();
       await page.waitForTimeout(1000);
 
-      const eventAfterReload = page.locator('.fc-timegrid-event').first();
+      const eventAfterReload = page.locator('.fc-timegrid-event', { hasText: testEventName });
       const reloadedBounds = await eventAfterReload.boundingBox();
       if (!reloadedBounds) throw new Error('Could not get reloaded event bounds');
       expect(reloadedBounds.height).toBeGreaterThan(initialBounds.height);
     });
 
     test('resizing event from top changes start time and preserves duration', async ({ page }) => {
+      // First, create a timed event to ensure we have something to resize
       await page.locator('.fc-timeGridWeek-button').click();
       await page.waitForTimeout(1000);
 
-      const event = page.locator('.fc-timegrid-event').first();
-      await expect(event).toBeVisible();
+      // Click on a time slot to create a timed event (not all-day)
+      await page.locator('.fc-timegrid-slot').filter({ hasText: '10:00' }).click();
+      await expect(page.locator('div[role="dialog"]')).toBeVisible();
+
+      const testEventName = `Top Resize Test Event ${Date.now()}`;
+      await page.locator('label:has-text("Name") + div input').fill(testEventName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
+
+      // Wait for dialog to close and event to be created
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
+      await page.waitForTimeout(1000);
+
+      const event = page.locator('.fc-timegrid-event', { hasText: testEventName });
+      await expect(event).toBeVisible({ timeout: 10000 });
 
       const initialBounds = await event.boundingBox();
       if (!initialBounds) throw new Error('Could not get event bounds');
 
-      const topResizeHandle = page.locator('.fc-timegrid-event .fc-event-resizer-start').first();
+      const topResizeHandle = event.locator('.fc-event-resizer-start');
       await expect(topResizeHandle).toBeVisible();
       await topResizeHandle.dragTo(event, { targetPosition: { x: 0, y: -25 } });
 
@@ -184,22 +269,25 @@ test.describe('Combined Calendar Tests', () => {
 
       await expect(page.locator('div[role="dialog"]')).toBeVisible();
       const taskName = `Test Task ${Date.now()}`;
-      await page.locator('input[placeholder="Name"]').fill(taskName);
-      await page.locator('select[name="goal_type"]').selectOption('task');
-      await page.locator('button:has-text("Create")').click();
+      await page.locator('label:has-text("Name") + div input').fill(taskName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
 
-      await expect(page.locator('div[role="dialog"]')).not.toBeVisible();
-      await expect(page.locator('.task-item').filter({ hasText: taskName })).toBeVisible();
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
+      await expect(page.locator('.external-event').filter({ hasText: taskName })).toBeVisible();
     });
 
     test('drag unscheduled task to calendar', async ({ page }) => {
       const taskName = `Drag Test ${Date.now()}`;
       await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
-      await page.locator('input[placeholder="Name"]').fill(taskName);
-      await page.locator('select[name="goal_type"]').selectOption('task');
-      await page.locator('button:has-text("Create")').click();
+      await page.locator('label:has-text("Name") + div input').fill(taskName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
+      await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
 
-      const taskItem = page.locator('.task-item', { hasText: taskName });
+      const taskItem = page.locator('.external-event', { hasText: taskName });
       await expect(taskItem).toBeVisible();
 
       await page.locator('.fc-timeGridWeek-button').click();
@@ -221,11 +309,12 @@ test.describe('Combined Calendar Tests', () => {
     test('drag scheduled event back to task list', async ({ page }) => {
       const taskName = `Return to List ${Date.now()}`;
       await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
-      await page.locator('input[placeholder="Name"]').fill(taskName);
-      await page.locator('select[name="goal_type"]').selectOption('task');
-      await page.locator('button:has-text("Create")').click();
+      await page.locator('label:has-text("Name") + div input').fill(taskName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
 
-      const taskItem = page.locator('.task-item', { hasText: taskName });
+      const taskItem = page.locator('.external-event', { hasText: taskName });
       await expect(taskItem).toBeVisible();
 
       await page.locator('.fc-timeGridWeek-button').click();
@@ -240,12 +329,12 @@ test.describe('Combined Calendar Tests', () => {
       await calendarEvent.dragTo(taskListContainer);
 
       await page.waitForTimeout(500);
-      await expect(page.locator('.task-item', { hasText: taskName })).toBeVisible();
+      await expect(page.locator('.external-event', { hasText: taskName })).toBeVisible();
       await expect(calendarEvent).not.toBeVisible();
 
       await page.reload();
       await page.waitForSelector('.calendar-container');
-      await expect(page.locator('.task-item', { hasText: taskName })).toBeVisible();
+      await expect(page.locator('.external-event', { hasText: taskName })).toBeVisible();
       await expect(page.locator('.fc-event', { hasText: taskName })).not.toBeVisible();
     });
 
@@ -254,9 +343,10 @@ test.describe('Combined Calendar Tests', () => {
 
       const longName =
         'This is a very long event name that should be truncated in month view but fully visible in week view';
-      await page.locator('input[placeholder="Name"]').fill(longName);
-      await page.locator('select[name="goal_type"]').selectOption('task');
-      await page.locator('button:has-text("Create")').click();
+      await page.locator('label:has-text("Name") + div input').fill(longName);
+      await page.locator('label:has-text("Goal Type") + div').click();
+      await page.locator('li:has-text("Task")').click();
+      await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
 
       const monthViewEvent = page.locator('.fc-event', {
         hasText: longName.substring(0, 10),

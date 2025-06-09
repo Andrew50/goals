@@ -24,35 +24,24 @@ test.describe('Goal Date Consistency - Core Functionality', () => {
         await page.locator('.calendar-sidebar button:has-text("Add Task")').click();
         await expect(page.locator('div[role="dialog"]')).toBeVisible();
 
-        // Fill in goal details
-        const nameInput = page.locator('div[role="dialog"] input').first();
-        await nameInput.fill(testGoalName);
+        // Fill in goal details using Material-UI selectors
+        await page.locator('label:has-text("Name") + div input').fill(testGoalName);
+
+        // Set goal type to Task if not already set
+        await page.locator('label:has-text("Goal Type") + div').click();
+        await page.locator('li:has-text("Task")').click();
 
         // Set start date
-        const startDateInput = page.locator('input[type="date"]').first();
-        await startDateInput.fill(testStartDate);
+        await page.locator('label:has-text("Start Date") + div input').fill(testStartDate);
 
         // Set end date
-        const endDateInput = page.locator('input[type="date"]').nth(1);
-        await endDateInput.fill(testEndDate);
+        await page.locator('label:has-text("End Date") + div input').fill(testEndDate);
 
         // Create the goal
-        await page.locator('button:has-text("Create")').first().click();
+        await page.locator('button:has-text("Create"):not(:has-text("Another"))').click();
 
-        // Wait for dialog to close (with generous timeout)
-        await page.waitForTimeout(5000);
-
-        // Check if dialog is still open and handle it
-        const dialogStillOpen = await page.locator('div[role="dialog"]').isVisible();
-        if (dialogStillOpen) {
-            console.log('Dialog still open, checking for errors...');
-            const dialogContent = await page.locator('div[role="dialog"]').textContent();
-            console.log('Dialog content:', dialogContent);
-
-            // Try to close it
-            await page.locator('button:has-text("Cancel")').click();
-            await page.waitForTimeout(1000);
-        }
+        // Wait for dialog to close using the same method as working tests
+        await page.waitForFunction(() => !document.querySelector('div[role="dialog"]'), { timeout: 10000 });
 
         console.log('Goal creation attempted');
 
@@ -134,11 +123,13 @@ test.describe('Goal Date Consistency - Core Functionality', () => {
             await editTaskItem.click({ button: 'right' });
 
             await expect(page.locator('div[role="dialog"]')).toBeVisible();
-            await expect(page.locator('div[role="dialog"]')).toContainText('Edit Goal');
+            // Verify we're in edit mode by checking for Save button and form fields
+            await expect(page.locator('button:has-text("Save")')).toBeVisible();
+            await expect(page.locator('button:has-text("Delete")')).toBeVisible();
 
-            // Verify the input fields have the correct values
-            await expect(page.locator('input[type="date"]').first()).toHaveValue(testStartDate);
-            await expect(page.locator('input[type="date"]').nth(1)).toHaveValue(testEndDate);
+            // Verify the input fields have the correct values  
+            await expect(page.locator('label:has-text("Start Date") + div input')).toHaveValue(testStartDate);
+            await expect(page.locator('label:has-text("End Date") + div input')).toHaveValue(testEndDate);
 
             await page.locator('button:has-text("Cancel")').click();
             await expect(page.locator('div[role="dialog"]')).not.toBeVisible();

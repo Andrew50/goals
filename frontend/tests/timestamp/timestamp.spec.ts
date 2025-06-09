@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { generateStorageState } from '../helpers/auth'; // Import the new helper
+import { generateStorageState, generateTestToken } from '../helpers/auth'; // Import the new helper
 
 /**
  * Timestamp E2E Tests
@@ -218,7 +218,9 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         // browser with a different timezone or use timezone emulation features.
 
         // For this example, we'll use Playwright's built-in timezone emulation
-        const newContext = await context.browser().newContext({
+        const browser = context.browser();
+        if (!browser) throw new Error('Browser not available');
+        const newContext = await browser.newContext({
             timezoneId: 'America/New_York', // Eastern Time
             locale: 'en-US'
         });
@@ -231,12 +233,19 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         const userId = 1; // Or the specific user needed for this test
         const username = `testuser${userId}`;
         // Use the baseURL from the config if possible, or default
-        const baseURL = context.browser()?.browserType().name() === 'chromium' // Example check, adjust as needed
-                       ? 'http://localhost:3000' // Or get from config more reliably if needed
-                       : 'http://localhost:3000'; 
+        const baseURL = 'http://localhost:3030'; // Use the correct port for tests
         const storageState = generateStorageState(userId, username, baseURL);
         await newContext.addCookies(storageState.cookies || []); // Use newContext
-        await newContext.setStorageState(storageState); // Use newContext
+        // Set localStorage items for new context
+        await newTimezonePage.addInitScript((storageState) => {
+            for (const origin of storageState.origins) {
+                if (origin.origin === window.location.origin) {
+                    for (const item of origin.localStorage) {
+                        localStorage.setItem(item.name, item.value);
+                    }
+                }
+            }
+        }, storageState);
 
         // Go to calendar
         await newTimezonePage.goto('/calendar');
@@ -251,7 +260,7 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         const newTimezoneTimeText = await eventTimeInNewTimezone.textContent() || '';
         // Assuming the original click was 3 PM Pacific (default test timezone)
         // 3 PM Pacific = 6 PM Eastern
-        expect(newTimezoneTimeText).toContain('18:00'); 
+        expect(newTimezoneTimeText).toContain('18:00');
 
         // *** ADDED VERIFICATION ***
         // Click the event in the new timezone context
@@ -288,12 +297,20 @@ test.describe('Timezone Handling in Calendar', () => {
             const username = `testuser${userId}`;
             const context = page.context(); // Get context from the page
             // Use the baseURL from the config if possible, or default
-            const baseURL = context.browser()?.browserType().name() === 'chromium' // Example check, adjust as needed
-                           ? 'http://localhost:3000' // Or get from config more reliably if needed
-                           : 'http://localhost:3000';
+            const baseURL = 'http://localhost:3030'; // Use the correct port for tests
             const storageState = generateStorageState(userId, username, baseURL);
             await context.addCookies(storageState.cookies || []);
-            await context.setStorageState(storageState);
+
+            // Set localStorage items
+            await page.addInitScript((storageState) => {
+                for (const origin of storageState.origins) {
+                    if (origin.origin === window.location.origin) {
+                        for (const item of origin.localStorage) {
+                            localStorage.setItem(item.name, item.value);
+                        }
+                    }
+                }
+            }, storageState);
 
             // Go directly to the calendar page
             await page.goto('/calendar');
@@ -316,15 +333,15 @@ test.describe('Timezone Handling in Calendar', () => {
             const scheduleInput = page.locator('input[type="datetime-local"]'); // Or potentially 'input[type="time"]'
             const prefilledTime = await scheduleInput.inputValue();
             // The datetime-local input includes the date, so we check if the time part is correct
-            expect(prefilledTime).toContain('T09:30'); 
+            expect(prefilledTime).toContain('T09:30');
             // If it were just a time input: expect(prefilledTime).toBe('09:30');
 
             // Set time to 9:30 AM local time for this timezone (if needed, might be prefilled)
             // If the input is datetime-local, we still need to ensure the date is correct
+            const today = new Date();
             if (!prefilledTime.startsWith(`${today.getFullYear()}`)) {
-                 const today = new Date();
-                 const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T09:30`;
-                 await scheduleInput.fill(dateString);
+                const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}T09:30`;
+                await scheduleInput.fill(dateString);
             }
             // If the input is just 'time', the click might already set it correctly.
 
@@ -377,19 +394,12 @@ test.describe('Timezone Handling in Calendar', () => {
             const testToken = generateTestToken(userId, username); // Pass username if helper supports it
             const context = page.context(); // Get context from the page
             await context.addCookies([]);
-            await context.setStorageState({
-                cookies: [],
-                origins: [
-                    {
-                        origin: 'http://localhost:3000', // Match the baseURL
-                        localStorage: [
-                            { name: 'authToken', value: testToken },
-                            { name: 'userId', value: String(userId) },
-                            { name: 'username', value: username }
-                        ],
-                    },
-                ],
-            });
+            // Set localStorage items
+            await page.addInitScript((authData) => {
+                localStorage.setItem('authToken', authData.token);
+                localStorage.setItem('userId', authData.userId);
+                localStorage.setItem('username', authData.username);
+            }, { token: testToken, userId: String(userId), username });
 
             // Go directly to the calendar page
             await page.goto('/calendar');

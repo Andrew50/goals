@@ -29,7 +29,7 @@ interface StorageState {
  * @returns A signed JWT token.
  */
 export function generateTestToken(userId: number, username?: string): string {
-    const testSecret = process.env.JWT_SECRET || 'default_secret'; // Match backend default
+    const testSecret = process.env.JWT_SECRET || 'GoalsApp2024SecureJWTSigningKeyRandomString789ForProduction'; // Match backend default
     const effectiveUsername = username || 'testuser'; // Match the seeded test user
     const payload = {
         user_id: userId,

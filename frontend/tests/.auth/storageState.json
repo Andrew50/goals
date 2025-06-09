@@ -6,11 +6,7 @@
       "localStorage": [
         {
           "name": "authToken",
-<<<<<<< HEAD
-          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5NTIzMDc2LCJpYXQiOjE3NDk0MzY2NzZ9.6AezbN3hAHggQ-r0MmWlydW8yzZw5j8a6uh_Yjnljsc"
-=======
-          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5NTIxMDgwLCJpYXQiOjE3NDk0MzQ2ODB9.hFLx40xDyl3sNDaGLqn-qxf9lv5qiH0QROVI5UNPnDE"
->>>>>>> bf5a003eb2882c2aee6912e5aef4c37fe63dc214
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5NTM5NzM1LCJpYXQiOjE3NDk0NTMzMzV9.m-S4PufpO4G7Vi0ooDGKinCtTpaHsDRCOdD_RbE0OU8"
         },
         {
           "name": "userId",

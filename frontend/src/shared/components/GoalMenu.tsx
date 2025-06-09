@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, ChangeEvent, useMemo } from 'react';
+import { createRoot, Root } from 'react-dom/client';
 import { useHistoryState } from '../hooks/useHistoryState';
 import {
     Dialog,
@@ -40,148 +41,38 @@ import { getGoalColor } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
 import Fuse from 'fuse.js';
-//let singletonInstance: { open: Function; close: Function } | null = null;
+
 type Mode = 'create' | 'edit' | 'view';
 
-interface GoalMenuComponent extends React.FC {
-    open: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
-    close: () => void;
-}
-
-interface GoalMenuState {
+interface GoalMenuProps {
     goal: Goal;
-    error: string;
     mode: Mode;
-}
-
-// Routine Reschedule Dialog State
-interface RoutineRescheduleDialogState {
-    isOpen: boolean;
-    eventId: number | null;
-    eventName: string;
-    originalGoal: Goal | null;
-    updatedGoal: Goal | null;
-}
-
-// Task Date Range Warning Dialog Component
-interface TaskDateRangeWarningDialogProps {
-    open: boolean;
     onClose: () => void;
-    onRevert: () => void;
-    onExpand: () => void;
-    validationError: TaskDateValidationError | null;
-    eventName: string;
+    onSuccess: (goal: Goal) => void;
 }
 
-const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
-    open,
-    onClose,
-    onRevert,
-    onExpand,
-    validationError,
-    eventName
-}) => {
-    if (!validationError) return null;
-
-    const { violation } = validationError;
-    const eventDate = new Date(violation.event_timestamp);
-    const taskStartDate = violation.task_start ? new Date(violation.task_start) : null;
-    const taskEndDate = violation.task_end ? new Date(violation.task_end) : null;
-    const suggestedStartDate = violation.suggested_task_start ? new Date(violation.suggested_task_start) : null;
-    const suggestedEndDate = violation.suggested_task_end ? new Date(violation.suggested_task_end) : null;
-
-    const formatDate = (date: Date | null) => {
-        return date ? date.toLocaleDateString() : 'Not set';
-    };
-
-    const getExpandMessage = () => {
-        if (violation.violation_type === 'before_start') {
-            return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
-        } else {
-            return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
-        }
-    };
-
-    return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle sx={{ color: 'warning.main' }}>
-                ⚠️ Event Outside Task Date Range
-            </DialogTitle>
-            <DialogContent>
-                <Typography variant="body1" sx={{ mb: 2 }}>
-                    The event "{eventName}" is scheduled for <strong>{eventDate.toLocaleDateString()}</strong>,
-                    which is {violation.violation_type === 'before_start' ? 'before' : 'after'} the task's date range.
-                </Typography>
-
-                <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
-                    <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
-                    <Typography variant="body2">
-                        Start: {formatDate(taskStartDate)}
-                        <br />
-                        End: {formatDate(taskEndDate)}
-                    </Typography>
-                </Box>
-
-                <Typography variant="body2" sx={{ mb: 2 }}>
-                    What would you like to do?
-                </Typography>
-
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <Box>
-                        <strong>Option 1: Revert the change</strong>
-                        <br />
-                        <Typography variant="body2" color="text.secondary">
-                            Cancel scheduling this event and keep the task dates as they are.
-                        </Typography>
-                    </Box>
-                    <Box>
-                        <strong>Option 2: Expand task date range</strong>
-                        <br />
-                        <Typography variant="body2" color="text.secondary">
-                            {getExpandMessage()}
-                        </Typography>
-                    </Box>
-                </Box>
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={onRevert} color="secondary">
-                    Revert
-                </Button>
-                <Button onClick={onExpand} color="primary" variant="contained">
-                    Expand Task Dates
-                </Button>
-            </DialogActions>
-        </Dialog>
-    );
-};
-
-const GoalMenu: GoalMenuComponent = () => {
-    const [isOpen, setIsOpen] = useState(false);
+const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess }) => {
+    const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
-    const [state, setState] = useHistoryState<GoalMenuState>(
+    const [state, setState] = useHistoryState<{ goal: Goal; error: string; mode: Mode; }>(
         {
-            goal: {} as Goal,
+            goal: initialGoal,
             error: '',
-            mode: 'view'
+            mode: initialMode
         },
         {
             hotkeyScope: 'goalMenu',
-            onUndo: (newState) => {
-                //console.log('Undid goal menu change');
-            },
-            onRedo: (newState) => {
-                //console.log('Redid goal menu change');
-            }
+            onUndo: (newState) => { },
+            onRedo: (newState) => { }
         }
     );
-    const [onSuccess, setOnSuccess] = useState<((goal: Goal) => void) | undefined>();
     const [title, setTitle] = useState<string>('');
     const [allGoals, setAllGoals] = useState<Goal[]>([]);
     const [selectedParents, setSelectedParents] = useState<Goal[]>([]);
     const [parentSearchQuery, setParentSearchQuery] = useState('');
     const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>('child');
-    const [originalGoal, setOriginalGoal] = useState<Goal | null>(null); // Track original goal for routine event comparison
+    const [originalGoal, setOriginalGoal] = useState<Goal | null>(null);
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -198,31 +89,6 @@ const GoalMenu: GoalMenuComponent = () => {
         eventName?: string;
         currentScheduledTime?: Date;
     } | null>(null);
-
-    // Routine reschedule dialog management
-    const [routineRescheduleDialog, setRoutineRescheduleDialog] = useState<RoutineRescheduleDialogState>({
-        isOpen: false,
-        eventId: null,
-        eventName: '',
-        originalGoal: null,
-        updatedGoal: null
-    });
-    const [selectedUpdateScope, setSelectedUpdateScope] = useState<'single' | 'all' | 'future'>('single');
-
-    // Task date range warning dialog state
-    const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
-        isOpen: boolean;
-        validationError: TaskDateValidationError | null;
-        eventName: string;
-        onRetry: () => void;
-        originalAction: () => Promise<void>;
-    }>({
-        isOpen: false,
-        validationError: null,
-        eventName: '',
-        onRetry: () => { },
-        originalAction: async () => { }
-    });
 
     // Fetch task events
     const fetchTaskEvents = useCallback(async (taskId: number) => {
@@ -262,7 +128,6 @@ const GoalMenu: GoalMenuComponent = () => {
             mode: actualMode,
             error: ''
         });
-        setOnSuccess(() => onSuccess);
         setTitle({
             'create': 'Create New Goal',
             'edit': 'Edit Goal',
@@ -294,7 +159,6 @@ const GoalMenu: GoalMenuComponent = () => {
                 error: '',
                 mode: 'view'
             });
-            setOnSuccess(undefined);
             setTitle('');
             setSelectedParents([]);
             setParentSearchQuery('');
@@ -307,23 +171,16 @@ const GoalMenu: GoalMenuComponent = () => {
             setNewEventDuration(60);
             setSmartScheduleOpen(false);
             setSmartScheduleContext(null);
-            setRoutineRescheduleDialog({
-                isOpen: false,
-                eventId: null,
-                eventName: '',
-                originalGoal: null,
-                updatedGoal: null
-            });
-            setSelectedUpdateScope('single');
         }, 100);
     }, [setState]);
 
     const isViewOnly = state.mode === 'view';
 
     useEffect(() => {
-        GoalMenu.open = open;
-        GoalMenu.close = close;
-    }, [open, close]);
+        if (!isOpen) {
+            onClose();
+        }
+    }, [isOpen, onClose]);
 
     // Fetch all goals when dialog opens
     useEffect(() => {
@@ -402,88 +259,6 @@ const GoalMenu: GoalMenuComponent = () => {
         });
     };
 
-    // Handle routine reschedule dialog actions
-    const handleRoutineRescheduleConfirm = async () => {
-        try {
-            if (!routineRescheduleDialog.eventId || !routineRescheduleDialog.updatedGoal || !routineRescheduleDialog.originalGoal) {
-                return;
-            }
-
-            const originalGoal = routineRescheduleDialog.originalGoal;
-            const updatedGoal = routineRescheduleDialog.updatedGoal;
-
-            // Check if timestamp changed
-            const timestampChanged = updatedGoal.scheduled_timestamp?.getTime() !== originalGoal.scheduled_timestamp?.getTime();
-
-            // Check if other fields changed
-            const otherChanges = (
-                updatedGoal.name !== originalGoal.name ||
-                updatedGoal.description !== originalGoal.description ||
-                updatedGoal.priority !== originalGoal.priority ||
-                updatedGoal.duration !== originalGoal.duration ||
-                updatedGoal.completed !== originalGoal.completed
-            );
-
-            let finalUpdatedGoal = updatedGoal;
-
-            // Handle timestamp changes with routine scope
-            if (timestampChanged && updatedGoal.scheduled_timestamp) {
-                await updateRoutineEvent(
-                    routineRescheduleDialog.eventId,
-                    updatedGoal.scheduled_timestamp,
-                    selectedUpdateScope
-                );
-            }
-
-            // Handle other changes using regular updateGoal (these only affect this specific event)
-            if (otherChanges) {
-                finalUpdatedGoal = await updateGoal(routineRescheduleDialog.eventId, updatedGoal);
-            }
-
-            // Close dialog and reset state
-            setRoutineRescheduleDialog({
-                isOpen: false,
-                eventId: null,
-                eventName: '',
-                originalGoal: null,
-                updatedGoal: null
-            });
-            setSelectedUpdateScope('single');
-
-            // Call onSuccess if provided and close the GoalMenu
-            if (onSuccess) {
-                onSuccess(finalUpdatedGoal);
-            }
-            close(); // Close the GoalMenu instead of staying in edit mode
-        } catch (error) {
-            console.error('Failed to update routine event:', error);
-            setState({
-                ...state,
-                error: 'Failed to update routine event. Please try again.'
-            });
-            handleRoutineRescheduleCancel();
-        }
-    };
-
-    const handleRoutineRescheduleCancel = () => {
-        // Revert to original timestamp
-        if (routineRescheduleDialog.originalGoal) {
-            setState({
-                ...state,
-                goal: routineRescheduleDialog.originalGoal
-            });
-        }
-
-        setRoutineRescheduleDialog({
-            isOpen: false,
-            eventId: null,
-            eventName: '',
-            originalGoal: null,
-            updatedGoal: null
-        });
-        setSelectedUpdateScope('single');
-    };
-
     const handleSubmit = async (another: boolean = false) => {
         if (another && state.mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
@@ -557,35 +332,8 @@ const GoalMenu: GoalMenuComponent = () => {
             }
         }
 
-        // Check if this is a routine event being edited and show dialog if changes detected
-        if (state.mode === 'edit' &&
-            state.goal.goal_type === 'event' &&
-            state.goal.parent_type === 'routine' &&
-            state.goal.id &&
-            originalGoal) {
-
-            // Check if any changes were made to the routine event
-            const hasChanges = (
-                state.goal.name !== originalGoal.name ||
-                state.goal.description !== originalGoal.description ||
-                state.goal.priority !== originalGoal.priority ||
-                state.goal.duration !== originalGoal.duration ||
-                state.goal.scheduled_timestamp?.getTime() !== originalGoal.scheduled_timestamp?.getTime() ||
-                state.goal.completed !== originalGoal.completed
-            );
-
-            if (hasChanges) {
-                // Show routine reschedule dialog
-                setRoutineRescheduleDialog({
-                    isOpen: true,
-                    eventId: state.goal.id,
-                    eventName: state.goal.name || 'Routine Event',
-                    originalGoal: originalGoal,
-                    updatedGoal: state.goal
-                });
-                return; // Don't proceed with immediate update
-            }
-        }
+        // For routine events, we just proceed with the update
+        // The parent component (Calendar) can handle any routine-specific rescheduling logic
 
         try {
             let updatedGoal: Goal;
@@ -758,31 +506,19 @@ const GoalMenu: GoalMenuComponent = () => {
     };
 
     const handleSplitEvent = async () => {
-        if (!state.goal.id || state.goal.goal_type !== 'event') {
-            setState({
-                ...state,
-                error: 'Can only split events'
-            });
-            return;
-        }
+        if (!state.goal.id || !state.goal.scheduled_timestamp) return;
 
         try {
-            const splitEvents = await splitEvent(state.goal.id);
-
-            if (onSuccess) {
-                onSuccess(state.goal);
-            }
-
-            close();
-
-            // Optionally show a success message
-            console.log(`Event split into ${splitEvents.length} parts`);
+            const newEvents = await splitEvent(state.goal.id);
+            onSuccess(newEvents[0]); // Return the first new event
+            setIsOpen(false);
         } catch (error) {
             console.error('Failed to split event:', error);
-            setState({
-                ...state,
-                error: error instanceof Error ? error.message : 'Failed to split event'
-            });
+            if (isTaskDateValidationError(error)) {
+                showTaskDateWarning(error, `New event for "${state.goal.name}"`, handleSplitEvent);
+            } else {
+                setState({ ...state, error: 'Failed to split event' });
+            }
         }
     };
 
@@ -1693,114 +1429,47 @@ const GoalMenu: GoalMenuComponent = () => {
         }
     };
 
-    // Helper function to check if an error is a task date validation error
-    const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
-        try {
-            if (typeof error === 'string') {
-                const parsed = JSON.parse(error);
-                return parsed.error_type === 'task_date_range_violation';
-            }
-            return error?.error_type === 'task_date_range_violation';
-        } catch {
-            return false;
-        }
+    // This logic should now be handled in the parent component
+    // by passing appropriate callbacks to the GoalMenu.
+    // For now, we'll just log the error.
+    const showTaskDateWarning = (error: TaskDateValidationError, eventName: string, retryAction: () => Promise<void>) => {
+        console.error("Task date validation error:", error);
     };
 
-    // Helper function to show task date warning dialog
-    const showTaskDateWarning = (error: TaskDateValidationError, eventName: string, retryAction: () => Promise<void>) => {
-        setTaskDateWarningDialog({
-            isOpen: true,
-            validationError: error,
-            eventName,
-            onRetry: () => { },
-            originalAction: retryAction
-        });
+    const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
+        return error && error.error_code === 'task_date_range_violation';
     };
 
     // Handle task date warning dialog actions
     const handleTaskDateWarningRevert = () => {
-        setTaskDateWarningDialog({
-            isOpen: false,
-            validationError: null,
-            eventName: '',
-            onRetry: () => { },
-            originalAction: async () => { }
-        });
         // Just close the dialog - the original action won't be retried
     };
 
     const handleTaskDateWarningExpand = async () => {
-        const { validationError, originalAction } = taskDateWarningDialog;
-        if (!validationError) return;
-
-        try {
-            // Expand the task date range
-            await expandTaskDateRange({
-                task_id: validationError.violation.task_start !== null || validationError.violation.task_end !== null
-                    ? (state.goal.parent_id || state.goal.id!)
-                    : state.goal.id!,
-                new_start_timestamp: validationError.violation.suggested_task_start
-                    ? new Date(validationError.violation.suggested_task_start)
-                    : undefined,
-                new_end_timestamp: validationError.violation.suggested_task_end
-                    ? new Date(validationError.violation.suggested_task_end)
-                    : undefined,
-            });
-
-            // Close the warning dialog
-            setTaskDateWarningDialog({
-                isOpen: false,
-                validationError: null,
-                eventName: '',
-                onRetry: () => { },
-                originalAction: async () => { }
-            });
-
-            // Retry the original action
-            await originalAction();
-
-        } catch (expandError) {
-            console.error('Failed to expand task date range:', expandError);
-            setState({
-                ...state,
-                error: 'Failed to expand task date range. Please try again.'
-            });
-        }
+        // This method is no longer used
     };
 
     // Modify the handleAddEvent function to handle date validation errors
     const handleAddEvent = useCallback(async () => {
         const executeAddEvent = async () => {
-            if (!state.goal.id) {
-                // For new tasks, just add to local state
-                const newEvent: Goal = {
-                    id: 0, // Temporary ID
-                    name: state.goal.name || 'Event',
-                    goal_type: 'event',
-                    scheduled_timestamp: newEventScheduled,
-                    duration: newEventDuration,
-                    parent_id: state.goal.id,
-                    parent_type: 'task',
-                    completed: false,
-                    _tz: 'user'
-                };
-                setTaskEvents(prev => [...prev, newEvent]);
-                setTotalDuration(prev => prev + newEventDuration);
-            } else {
-                // For existing tasks, create the event via API
-                const createdEvent = await createEvent({
-                    parent_id: state.goal.id,
+            if (!state.goal.id) return;
+            try {
+                await createEvent({
+                    parent_id: state.goal.id!,
                     parent_type: 'task',
                     scheduled_timestamp: newEventScheduled,
                     duration: newEventDuration
                 });
-                setTaskEvents(prev => [...prev, createdEvent]);
-                setTotalDuration(prev => prev + newEventDuration);
+                fetchTaskEvents(state.goal.id);
+                setShowAddEvent(false);
+            } catch (error) {
+                console.error('Failed to add event:', error);
+                if (isTaskDateValidationError(error)) {
+                    showTaskDateWarning(error, "New Event", executeAddEvent);
+                } else {
+                    setState({ ...state, error: 'Failed to add event' });
+                }
             }
-
-            setShowAddEvent(false);
-            setNewEventScheduled(new Date());
-            setNewEventDuration(60);
         };
 
         try {
@@ -1811,7 +1480,7 @@ const GoalMenu: GoalMenuComponent = () => {
             // Check if it's a task date validation error
             if (isTaskDateValidationError(error)) {
                 const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
-                showTaskDateWarning(validationError, `${state.goal.name} Event`, executeAddEvent);
+                showTaskDateWarning(validationError, "New Event", executeAddEvent);
                 return;
             }
 
@@ -1847,186 +1516,184 @@ const GoalMenu: GoalMenuComponent = () => {
     }, [taskEvents, setState, state]);
 
     return (
-        <>
-            <Dialog
-                open={isOpen}
-                onClose={close}
-                maxWidth="sm"
-                fullWidth
-                onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>) => {
-                    if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
-                        event.preventDefault();
-                        handleSubmit();
-                    }
-                }}
-            >
-                <DialogTitle>{title}</DialogTitle>
-                <DialogContent>
-                    {state.error && (
-                        <Box sx={{ color: 'error.main', mb: 2 }}>
-                            {state.error}
-                        </Box>
-                    )}
-                    {/* Parent Goals Display */}
-                    {parentGoals.length > 0 && (
-                        <Box sx={{ mb: 3 }}>
-                            <Typography
-                                variant="subtitle2"
-                                sx={{
-                                    mb: 1,
-                                    color: 'text.secondary',
-                                    fontSize: '0.875rem'
-                                }}
-                            >
-                                Why should I do this?
-                            </Typography>
-                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                                {parentGoals.map((parent) => (
-                                    <Box
-                                        key={parent.id}
-                                        sx={{
-                                            backgroundColor: getGoalColor(parent),
-                                            color: 'white',
-                                            padding: '6px 12px',
-                                            borderRadius: '16px',
-                                            fontSize: '0.875rem',
-                                            fontWeight: 500,
-                                            cursor: 'pointer',
-                                            transition: 'all 0.2s',
-                                            '&:hover': {
-                                                transform: 'translateY(-2px)',
-                                                boxShadow: 2,
-                                            }
-                                        }}
-                                        onClick={() => {
-                                            close();
-                                            setTimeout(() => {
-                                                GoalMenu.open(parent, 'view');
-                                            }, 100);
-                                        }}
-                                    >
-                                        {parent.name}
-                                    </Box>
-                                ))}
-                            </Box>
-                        </Box>
-                    )}
-                    {/* Event Parent Display */}
-                    {state.goal.goal_type === 'event' && state.goal.parent_type && state.goal.parent_id && (
-                        <Box sx={{ mb: 3 }}>
-                            <Typography
-                                variant="subtitle2"
-                                sx={{
-                                    mb: 1,
-                                    color: 'text.secondary',
-                                    fontSize: '0.875rem'
-                                }}
-                            >
-                                Event for {state.goal.parent_type}:
-                            </Typography>
-                            <Box
-                                sx={{
-                                    display: 'inline-block',
-                                    backgroundColor: (() => {
-                                        const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
-                                        return parentGoal ? getGoalColor(parentGoal) : 'action.selected';
-                                    })(),
-                                    color: (() => {
-                                        const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
-                                        return parentGoal ? 'white' : 'text.primary';
-                                    })(),
-                                    padding: '6px 12px',
-                                    borderRadius: '16px',
-                                    fontSize: '0.875rem',
-                                    fontWeight: 500,
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s',
-                                    '&:hover': {
-                                        transform: 'translateY(-2px)',
-                                        boxShadow: 2,
-                                    }
-                                }}
-                                onClick={() => {
-                                    const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
-                                    if (parentGoal) {
+        <Dialog
+            open={isOpen}
+            onClose={close}
+            maxWidth="sm"
+            fullWidth
+            onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>) => {
+                if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
+                    event.preventDefault();
+                    handleSubmit();
+                }
+            }}
+        >
+            <DialogTitle>{title}</DialogTitle>
+            <DialogContent>
+                {state.error && (
+                    <Box sx={{ color: 'error.main', mb: 2 }}>
+                        {state.error}
+                    </Box>
+                )}
+                {/* Parent Goals Display */}
+                {parentGoals.length > 0 && (
+                    <Box sx={{ mb: 3 }}>
+                        <Typography
+                            variant="subtitle2"
+                            sx={{
+                                mb: 1,
+                                color: 'text.secondary',
+                                fontSize: '0.875rem'
+                            }}
+                        >
+                            Why should I do this?
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                            {parentGoals.map((parent) => (
+                                <Box
+                                    key={parent.id}
+                                    sx={{
+                                        backgroundColor: getGoalColor(parent),
+                                        color: 'white',
+                                        padding: '6px 12px',
+                                        borderRadius: '16px',
+                                        fontSize: '0.875rem',
+                                        fontWeight: 500,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        '&:hover': {
+                                            transform: 'translateY(-2px)',
+                                            boxShadow: 2,
+                                        }
+                                    }}
+                                    onClick={() => {
                                         close();
                                         setTimeout(() => {
-                                            GoalMenu.open(parentGoal, 'view');
+                                            open(parent, 'view');
                                         }, 100);
-                                    }
-                                }}
-                            >
-                                {state.goal.name?.replace(/^(Task|Routine): /, '')}
-                            </Box>
+                                    }}
+                                >
+                                    {parent.name}
+                                </Box>
+                            ))}
                         </Box>
+                    </Box>
+                )}
+                {/* Event Parent Display */}
+                {state.goal.goal_type === 'event' && state.goal.parent_type && state.goal.parent_id && (
+                    <Box sx={{ mb: 3 }}>
+                        <Typography
+                            variant="subtitle2"
+                            sx={{
+                                mb: 1,
+                                color: 'text.secondary',
+                                fontSize: '0.875rem'
+                            }}
+                        >
+                            Event for {state.goal.parent_type}:
+                        </Typography>
+                        <Box
+                            sx={{
+                                display: 'inline-block',
+                                backgroundColor: (() => {
+                                    const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
+                                    return parentGoal ? getGoalColor(parentGoal) : 'action.selected';
+                                })(),
+                                color: (() => {
+                                    const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
+                                    return parentGoal ? 'white' : 'text.primary';
+                                })(),
+                                padding: '6px 12px',
+                                borderRadius: '16px',
+                                fontSize: '0.875rem',
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                '&:hover': {
+                                    transform: 'translateY(-2px)',
+                                    boxShadow: 2,
+                                }
+                            }}
+                            onClick={() => {
+                                const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
+                                if (parentGoal) {
+                                    close();
+                                    setTimeout(() => {
+                                        open(parentGoal, 'view');
+                                    }, 100);
+                                }
+                            }}
+                        >
+                            {state.goal.name?.replace(/^(Task|Routine): /, '')}
+                        </Box>
+                    </Box>
+                )}
+                {commonFields}
+                {parentSelectorField}
+                {renderTypeSpecificFields()}
+            </DialogContent>
+            <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                    {state.mode === 'view' && (
+                        <>
+                            {state.goal.goal_type !== 'event' && (
+                                <>
+                                    <Button onClick={handleCreateChild} color="secondary">
+                                        Create Child
+                                    </Button>
+                                    {state.goal.goal_type === 'achievement' && (
+                                        <Button onClick={handleCreateQueue} color="secondary">
+                                            Create Queue
+                                        </Button>
+                                    )}
+                                    <Button onClick={handleEdit} color="primary">
+                                        Edit
+                                    </Button>
+                                    <Button onClick={handleRelations} color="secondary">
+                                        Relationships
+                                    </Button>
+                                </>
+                            )}
+                            {state.goal.goal_type === 'event' && (
+                                <>
+                                    <Button onClick={handleEdit} color="primary">
+                                        Edit
+                                    </Button>
+                                    <Button
+                                        onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
+                                        color="secondary"
+                                    >
+                                        Smart Schedule
+                                    </Button>
+                                    <Button onClick={handleSplitEvent} color="secondary">
+                                        Split Event
+                                    </Button>
+                                </>
+                            )}
+                        </>
                     )}
-                    {commonFields}
-                    {parentSelectorField}
-                    {renderTypeSpecificFields()}
-                </DialogContent>
-                <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                        {state.mode === 'view' && (
-                            <>
-                                {state.goal.goal_type !== 'event' && (
-                                    <>
-                                        <Button onClick={handleCreateChild} color="secondary">
-                                            Create Child
-                                        </Button>
-                                        {state.goal.goal_type === 'achievement' && (
-                                            <Button onClick={handleCreateQueue} color="secondary">
-                                                Create Queue
-                                            </Button>
-                                        )}
-                                        <Button onClick={handleEdit} color="primary">
-                                            Edit
-                                        </Button>
-                                        <Button onClick={handleRelations} color="secondary">
-                                            Relationships
-                                        </Button>
-                                    </>
-                                )}
-                                {state.goal.goal_type === 'event' && (
-                                    <>
-                                        <Button onClick={handleEdit} color="primary">
-                                            Edit
-                                        </Button>
-                                        <Button
-                                            onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
-                                            color="secondary"
-                                        >
-                                            Smart Schedule
-                                        </Button>
-                                        <Button onClick={handleSplitEvent} color="secondary">
-                                            Split Event
-                                        </Button>
-                                    </>
-                                )}
-                            </>
-                        )}
-                        {state.mode === 'edit' && (
-                            <Button onClick={handleDelete} color="error">
-                                Delete
-                            </Button>
-                        )}
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button onClick={close}>
-                            {isViewOnly ? 'Close' : 'Cancel'}
+                    {state.mode === 'edit' && (
+                        <Button onClick={handleDelete} color="error">
+                            Delete
                         </Button>
-                        {!isViewOnly && (
-                            <Button onClick={() => handleSubmit()} color="primary">
-                                {state.mode === 'create' ? 'Create' : 'Save'}
-                            </Button>
-                        )}
-                        {state.mode === 'create' && (
-                            <Button onClick={() => handleSubmit(true)} color="primary">
-                                Create Another
-                            </Button>
-                        )}
-                    </Box>
-                </DialogActions>
-            </Dialog>
+                    )}
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button onClick={close}>
+                        {isViewOnly ? 'Close' : 'Cancel'}
+                    </Button>
+                    {!isViewOnly && (
+                        <Button onClick={() => handleSubmit()} color="primary">
+                            {state.mode === 'create' ? 'Create' : 'Save'}
+                        </Button>
+                    )}
+                    {state.mode === 'create' && (
+                        <Button onClick={() => handleSubmit(true)} color="primary">
+                            Create Another
+                        </Button>
+                    )}
+                </Box>
+            </DialogActions>
             {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
             {smartScheduleOpen && smartScheduleContext && (
                 <SmartScheduleDialog
@@ -2038,80 +1705,58 @@ const GoalMenu: GoalMenuComponent = () => {
                     onSelect={handleSmartScheduleSuccess}
                 />
             )}
-
-            {/* Routine Reschedule Dialog */}
-            <Dialog
-                open={routineRescheduleDialog.isOpen}
-                onClose={handleRoutineRescheduleCancel}
-                maxWidth="sm"
-                fullWidth
-            >
-                <DialogTitle>
-                    Update Routine Event
-                </DialogTitle>
-                <DialogContent>
-                    <Box sx={{ mb: 2 }}>
-                        <Typography variant="body1" sx={{ mb: 2 }}>
-                            You're updating the routine event "{routineRescheduleDialog.eventName}".
-                            How would you like to apply these changes?
-                        </Typography>
-
-                        <FormControl component="fieldset">
-                            <RadioGroup
-                                value={selectedUpdateScope}
-                                onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
-                            >
-                                <FormControlLabel
-                                    value="single"
-                                    control={<Radio />}
-                                    label="Only this occurrence"
-                                />
-                                <FormControlLabel
-                                    value="future"
-                                    control={<Radio />}
-                                    label="This and all future occurrences"
-                                />
-                                <FormControlLabel
-                                    value="all"
-                                    control={<Radio />}
-                                    label="All occurrences of this routine"
-                                />
-                            </RadioGroup>
-                        </FormControl>
-                    </Box>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={handleRoutineRescheduleCancel}>
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleRoutineRescheduleConfirm}
-                        color="primary"
-                        variant="contained"
-                    >
-                        Update
-                    </Button>
-                </DialogActions>
-            </Dialog>
-
-            <TaskDateRangeWarningDialog
-                open={taskDateWarningDialog.isOpen}
-                onClose={handleTaskDateWarningRevert}
-                onRevert={handleTaskDateWarningRevert}
-                onExpand={handleTaskDateWarningExpand}
-                validationError={taskDateWarningDialog.validationError}
-                eventName={taskDateWarningDialog.eventName}
-            />
-        </>
+        </Dialog>
     );
+};
+
+// Static methods for opening the modal
+let currentInstance: (() => void) | null = null;
+let currentRoot: Root | null = null;
+
+interface GoalMenuComponent extends React.FC<GoalMenuProps> {
+    open: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
+    close: () => void;
 }
 
-GoalMenu.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
-    console.warn('GoalMenu not yet initialized');
-}
+const GoalMenuBase = GoalMenu;
+const GoalMenuWithStatic = GoalMenuBase as GoalMenuComponent;
 
-GoalMenu.close = () => {
-    console.warn('GoalMenu not yet initialized');
-}
+GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
 
-export default GoalMenu; 
+    const cleanup = () => {
+        if (currentRoot) {
+            currentRoot.unmount();
+            currentRoot = null;
+        }
+        document.body.removeChild(container);
+        currentInstance = null;
+    };
+
+    currentInstance = cleanup;
+
+    // Use createRoot instead of ReactDOM.render
+    currentRoot = createRoot(container);
+    currentRoot.render(
+        <GoalMenuBase
+            goal={goal}
+            mode={initialMode}
+            onClose={cleanup}
+            onSuccess={(updatedGoal: Goal) => {
+                if (onSuccess) {
+                    onSuccess(updatedGoal);
+                }
+                cleanup();
+            }}
+        />
+    );
+};
+
+GoalMenuWithStatic.close = () => {
+    if (currentInstance) {
+        currentInstance();
+    }
+};
+
+export default GoalMenuWithStatic; 

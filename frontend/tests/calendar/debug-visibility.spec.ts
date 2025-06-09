@@ -6,6 +6,19 @@ test.describe('Debug Event Visibility', () => {
         await page.waitForSelector('.calendar-container');
         await page.waitForSelector('.fc-view-harness');
 
+        // Handle webpack dev server overlay if present
+        const webpackOverlay = page.locator('#webpack-dev-server-client-overlay');
+        if (await webpackOverlay.isVisible()) {
+            console.log('Webpack overlay detected, removing it...');
+            await page.evaluate(() => {
+                const overlay = document.getElementById('webpack-dev-server-client-overlay');
+                if (overlay) {
+                    overlay.remove();
+                }
+            });
+            await page.waitForTimeout(1000);
+        }
+
         // Wait for events to load
         await page.waitForTimeout(5000);
 
@@ -66,7 +79,31 @@ test.describe('Debug Event Visibility', () => {
 
         // Try different calendar views
         console.log('=== TRYING WEEK VIEW ===');
-        await page.locator('.fc-timeGridWeek-button').click();
+
+        // Check again for webpack overlay before clicking
+        const webpackOverlayBeforeClick = page.locator('#webpack-dev-server-client-overlay');
+        if (await webpackOverlayBeforeClick.isVisible()) {
+            console.log('Webpack overlay detected before week view click, removing it...');
+            await page.evaluate(() => {
+                const overlay = document.getElementById('webpack-dev-server-client-overlay');
+                if (overlay) {
+                    overlay.remove();
+                }
+            });
+            await page.waitForTimeout(1000);
+        }
+
+        // Wait for the week button to be available and click it
+        const weekButton = page.locator('.fc-timeGridWeek-button');
+        await weekButton.waitFor({ state: 'visible', timeout: 10000 });
+
+        try {
+            await weekButton.click({ timeout: 10000 });
+        } catch (error) {
+            console.log('Regular click failed, trying force click:', error.message);
+            await weekButton.click({ force: true });
+        }
+
         await page.waitForTimeout(2000);
 
         const weekEvents = await page.locator('.fc-event').count();
@@ -86,6 +123,11 @@ test.describe('Debug Event Visibility', () => {
                     const dialog = page.locator('div[role="dialog"]');
                     const dialogVisible = await dialog.isVisible();
                     console.log('Dialog visible after week event click:', dialogVisible);
+
+                    if (dialogVisible) {
+                        await page.locator('button:has-text("Close"), button:has-text("Cancel")').click();
+                        await page.waitForTimeout(500);
+                    }
 
                 } catch (error) {
                     console.log('Week event click failed:', error.message);

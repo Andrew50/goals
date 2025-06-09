@@ -2,7 +2,7 @@ import React, { useEffect, useMemo } from 'react';
 import { useDrop } from 'react-dnd';
 import { CalendarTask, CalendarEvent, Goal } from '../../types/goals';
 import { getGoalColor } from '../../shared/styles/colors';
-import GoalMenu from '../../shared/components/GoalMenu';
+import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
 
@@ -27,6 +27,7 @@ const DraggableTask: React.FC<{
   task: TaskWithEventInfo;
   onTaskUpdate: TaskListProps['onTaskUpdate'];
 }> = ({ task, onTaskUpdate }) => {
+  const { openGoalMenu } = useGoalMenu();
   const { goal } = task;
 
   const formatDate = (timestamp?: Date) => {
@@ -39,8 +40,7 @@ const DraggableTask: React.FC<{
   // Left click = view
   const handleClick = () => {
     if (!goal) return;
-    GoalMenu.open(goal, 'view', async () => {
-      // After user closes the "view" menu, reload data
+    openGoalMenu(goal, 'view', async () => {
       const data = await fetchCalendarData();
       onTaskUpdate({
         events: data.events,
@@ -53,8 +53,7 @@ const DraggableTask: React.FC<{
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     if (!goal) return;
-    GoalMenu.open(goal, 'edit', async () => {
-      // After user closes the "edit" menu, reload data
+    openGoalMenu(goal, 'edit', async () => {
       const data = await fetchCalendarData();
       onTaskUpdate({
         events: data.events,

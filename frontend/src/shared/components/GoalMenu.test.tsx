@@ -74,15 +74,8 @@ describe('GoalMenu Component', () => {
     });
 
     test('renders correctly in view mode', () => {
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
-
         // The menu is not initially visible, and is controlled via the open/close methods
-
-        // Verify the component was rendered
+        // We just verify that the static methods exist
         expect(GoalMenu.open).toBeDefined();
         expect(GoalMenu.close).toBeDefined();
     });
@@ -90,12 +83,6 @@ describe('GoalMenu Component', () => {
     test('correctly formats and displays timestamps in different timezones', async () => {
         // Mock Eastern Time timezone (UTC-5)
         const restoreOffset = mockTimezoneOffset(300);
-
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
 
         // Create a sample goal with timestamps in UTC
         const goal: Goal = {
@@ -130,12 +117,6 @@ describe('GoalMenu Component', () => {
     test('correctly converts timestamps when creating a new goal', async () => {
         // Mock Pacific Time timezone (UTC-8)
         const restoreOffset = mockTimezoneOffset(480);
-
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
 
         // Create a sample goal without timestamps
         const goal: Goal = {
@@ -183,12 +164,6 @@ describe('GoalMenu Component', () => {
     test('correctly handles timezone conversion when editing a goal', async () => {
         // Mock Central European Time (UTC+1)
         const restoreOffset = mockTimezoneOffset(-60);
-
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
 
         // Create a sample goal with UTC timestamps
         const goal: Goal = {
@@ -251,12 +226,6 @@ describe('GoalMenu Component', () => {
         // Mock US Pacific timezone (UTC-8)
         const restoreOffset = mockTimezoneOffset(480);
 
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
-
         // Create a new goal
         const goal: Goal = {
             id: 0,
@@ -304,12 +273,6 @@ describe('GoalMenu Component', () => {
         // Mock PST timezone
         const restoreOffset = mockTimezoneOffset(480);
 
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
-
         // Create a new goal
         const goal: Goal = {
             id: 0,
@@ -356,12 +319,6 @@ describe('GoalMenu Component', () => {
     test('correctly preserves unchanged timestamps when editing', async () => {
         // Mock Central European Time (UTC+1)
         const restoreOffset = mockTimezoneOffset(-60);
-
-        render(
-            <TestWrapper>
-                <GoalMenu />
-            </TestWrapper>
-        );
 
         // Create a sample goal with UTC timestamps
         const goal: Goal = {

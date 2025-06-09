@@ -5,6 +5,10 @@ import { theme } from './shared/styles/theme';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { HotkeysProvider } from 'react-hotkeys-hook';
+import { GoogleOAuthProvider } from '@react-oauth/google';
+import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
+import ProtectedRoute from './shared/components/ProtectedRoute';
+import { GoalMenuProvider } from './shared/contexts/GoalMenuContext';
 
 // Import CSS files in correct order
 import './index.css';
@@ -16,15 +20,12 @@ import Signup from './pages/signup/Signup';
 import Signin from './pages/signin/Signin';
 import Root from './pages/root/Root';
 import Network from './pages/network/Network';
-import GoalMenu from './shared/components/GoalMenu';
 import List from './pages/list/List';
 import Day from './pages/day/Day';
 import Query from './pages/query/Query';
 import Achievements from './pages/achievements/Achievements';
 import Stats from './pages/stats/Stats';
 import GoogleCallback from './pages/auth/GoogleCallback';
-import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
-import ProtectedRoute from './shared/components/ProtectedRoute';
 
 const NavBar: React.FC = () => {
   const { isAuthenticated, logout, username } = useAuth();
@@ -68,75 +69,78 @@ const NavBar: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <AuthProvider>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <DndProvider backend={HTML5Backend}>
-          <HotkeysProvider>
-            <Router>
-              <Box sx={{
-                minHeight: '100vh',
-                display: 'flex',
-                flexDirection: 'column',
-                bgcolor: 'background.default',
-                color: 'text.primary'
-              }}>
-                <NavBar />
-                <Box sx={{
-                  flexGrow: 1,
-                  overflow: 'auto'
-                }}>
-                  <Routes>
-                    <Route path="/signup" element={<Signup />} />
-                    <Route path="/signin" element={<Signin />} />
-                    <Route path="/auth/callback" element={<GoogleCallback />} />
-                    <Route path="/" element={<Root />} />
+    <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID || ''}>
+      <AuthProvider>
+        <GoalMenuProvider>
+          <ThemeProvider theme={theme}>
+            <CssBaseline />
+            <DndProvider backend={HTML5Backend}>
+              <HotkeysProvider>
+                <Router>
+                  <Box sx={{
+                    minHeight: '100vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    bgcolor: 'background.default',
+                    color: 'text.primary'
+                  }}>
+                    <NavBar />
+                    <Box sx={{
+                      flexGrow: 1,
+                      overflow: 'auto'
+                    }}>
+                      <Routes>
+                        <Route path="/signup" element={<Signup />} />
+                        <Route path="/signin" element={<Signin />} />
+                        <Route path="/auth/callback" element={<GoogleCallback />} />
+                        <Route path="/" element={<Root />} />
 
-                    {/* Protected Routes */}
-                    <Route path="/calendar" element={
-                      <ProtectedRoute>
-                        <Calendar />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/network" element={
-                      <ProtectedRoute>
-                        <Network />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/list" element={
-                      <ProtectedRoute>
-                        <List />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/day" element={
-                      <ProtectedRoute>
-                        <Day />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/achievements" element={
-                      <ProtectedRoute>
-                        <Achievements />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/stats" element={
-                      <ProtectedRoute>
-                        <Stats />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/query" element={
-                      <ProtectedRoute>
-                        <Query />
-                      </ProtectedRoute>
-                    } />
-                  </Routes>
-                </Box>
-                <GoalMenu />
-              </Box>
-            </Router>
-          </HotkeysProvider>
-        </DndProvider>
-      </ThemeProvider>
-    </AuthProvider>
+                        {/* Protected Routes */}
+                        <Route path="/calendar" element={
+                          <ProtectedRoute>
+                            <Calendar />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/network" element={
+                          <ProtectedRoute>
+                            <Network />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/list" element={
+                          <ProtectedRoute>
+                            <List />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/day" element={
+                          <ProtectedRoute>
+                            <Day />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/achievements" element={
+                          <ProtectedRoute>
+                            <Achievements />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/stats" element={
+                          <ProtectedRoute>
+                            <Stats />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/query" element={
+                          <ProtectedRoute>
+                            <Query />
+                          </ProtectedRoute>
+                        } />
+                      </Routes>
+                    </Box>
+                  </Box>
+                </Router>
+              </HotkeysProvider>
+            </DndProvider>
+          </ThemeProvider>
+        </GoalMenuProvider>
+      </AuthProvider>
+    </GoogleOAuthProvider>
   );
 };
 
