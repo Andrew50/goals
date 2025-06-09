@@ -30,7 +30,7 @@ jobs:
           EOF
 
       - name: Build containers
-        run: docker compose -p p -f docker-compose.prod.yaml build --no-cache
+        run: docker compose -p p -f docker-compose.prod.yaml build
 
       - name: Deploy stack
         run: docker compose -p p -f docker-compose.prod.yaml up -d
