@@ -21,23 +21,42 @@ const dateToMs = (d?: Date | null): number | undefined =>
 
 /**
  * API → frontend : UTC ms ➜ Date   (was "toLocalTimestamp").
+ * Converts a UTC timestamp to a local Date by adjusting for timezone offset.
  */
 export const toLocalTimestamp = <T extends number | null | undefined>(
   timestamp?: T
 ): T extends number ? Date : undefined => {
+  if (timestamp == null) {
+    // @ts-expect-error  (generic return for drop-in)
+    return undefined;
+  }
+
+  // Convert UTC timestamp to local time by subtracting timezone offset
+  const offsetMinutes = new Date().getTimezoneOffset();
+  const localTimestamp = timestamp - (offsetMinutes * 60 * 1000);
+
   // @ts-expect-error  (generic return for drop-in)
-  return msToDate(timestamp);
+  return new Date(localTimestamp);
 };
 
 /**
  * frontend → API : Date ➜ UTC ms   (was "toUTCTimestamp").
+ * Converts a local Date to UTC timestamp by adjusting for timezone offset.
  */
 export const toUTCTimestamp = <T extends Date | number | null | undefined>(
   value?: T
 ): number | undefined => {
-  // accept either Date (new flow) or legacy number
   if (value == null) return undefined;
-  return value instanceof Date ? value.getTime() : value;
+
+  if (value instanceof Date) {
+    // Convert local Date to UTC timestamp by adding timezone offset
+    const offsetMinutes = value.getTimezoneOffset();
+    return value.getTime() + (offsetMinutes * 60 * 1000);
+  } else {
+    // If it's already a number (legacy), add timezone offset
+    const offsetMinutes = new Date().getTimezoneOffset();
+    return (value as number) + (offsetMinutes * 60 * 1000);
+  }
 };
 
 /* ────────────────────────────────────────────────────────── *
@@ -139,12 +158,9 @@ export const inputStringToTimestamp = (
         d = new Date(y, m - 1, dd, hh, mm, 0, 0);
       }
     }
-    console.log(d)
-    console.log(typeof d)
     // Ensure the parsed date is valid before returning
     return isNaN(d.getTime()) ? new Date(0) : d;
   } catch (e) {
-    console.error(e)
     // Return Epoch date on parsing error
     return new Date(0);
   }

@@ -4,6 +4,7 @@ import { goalToLocal } from '../../shared/utils/time';
 import { Goal, ApiGoal } from '../../types/goals';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
+import { GoalMenuProvider } from '../../shared/contexts/GoalMenuContext';
 
 // Import GoalMenu
 import GoalMenu from '../../shared/components/GoalMenu';
@@ -88,18 +89,34 @@ jest.mock('./calendarData', () => ({
     })
 }));
 
-// Test wrapper component with DndProvider
+// Mock the react-hotkeys-hook dependency
+jest.mock('react-hotkeys-hook', () => ({
+    useHotkeys: jest.fn()
+}));
+
+// Mock the useHistoryState hook
+jest.mock('../../shared/hooks/useHistoryState', () => ({
+    useHistoryState: jest.fn().mockImplementation((initialState) => {
+        const React = require('react');
+        const [state, setState] = React.useState(initialState);
+        const setStateWithHistory = jest.fn((newState) => setState(newState));
+        return [state, setStateWithHistory];
+    })
+}));
+
+// Test wrapper component with DndProvider and GoalMenuProvider
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return (
         <DndProvider backend={HTML5Backend}>
-            {children}
+            <GoalMenuProvider>
+                {children}
+            </GoalMenuProvider>
         </DndProvider>
     );
 };
 
-// Import the component after mocks are set up
-// This is necessary to avoid the component trying to use the real modules during import
-const importCalendar = () => import('./Calendar').then(module => module.default);
+// Import the component directly after mocks are set up
+import Calendar from './Calendar';
 
 // Helper to mock timezone offset
 const mockTimezoneOffset = (offsetMinutes: number) => {
@@ -174,8 +191,7 @@ describe('Calendar Component', () => {
             achievements: []
         });
 
-        // Import and render the Calendar component with DndProvider
-        const Calendar = await importCalendar();
+        // Render the Calendar component with DndProvider
         render(
             <TestWrapper>
                 <Calendar />
@@ -270,8 +286,7 @@ describe('Calendar Component', () => {
             achievements: []
         });
 
-        // Import and render the Calendar component
-        const Calendar = await importCalendar();
+        // Render the Calendar component
         render(
             <TestWrapper>
                 <Calendar />
@@ -308,8 +323,7 @@ describe('Calendar Component', () => {
             achievements: []
         });
 
-        // Import and render component
-        const Calendar = await importCalendar();
+        // Render component
         render(
             <TestWrapper>
                 <Calendar />

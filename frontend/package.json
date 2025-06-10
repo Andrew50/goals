@@ -58,7 +58,7 @@
   },
   "jest": {
     "transformIgnorePatterns": [
-      "/node_modules/(?!(@?react-dnd|react-dnd-html5-backend|dnd-core|@dnd-kit|@fullcalendar)/)"
+      "/node_modules/(?!(@?react-dnd|react-dnd-html5-backend|dnd-core|@dnd-kit|@fullcalendar|@mui|vis-network)/)"
     ],
     "moduleNameMapper": {
       "\\.(css|less|scss|sass)$": "identity-obj-proxy"

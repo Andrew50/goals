@@ -41,10 +41,12 @@ describe('Time conversion utilities', () => {
             // Test with a known UTC timestamp (2023-01-01T12:00:00Z)
             const utcTimestamp = 1672574400000;
 
-            // Expected local timestamp would be 5 hours earlier
-            const expectedLocalTimestamp = utcTimestamp - (300 * 60 * 1000);
+            // Convert to local Date
+            const localDate = toLocalTimestamp(utcTimestamp);
 
-            expect(toLocalTimestamp(utcTimestamp)).toBe(expectedLocalTimestamp);
+            // Verify the conversion by checking the offset difference
+            const expectedOffset = 300 * 60 * 1000; // 5 hours in milliseconds
+            expect(utcTimestamp - localDate!.getTime()).toBe(expectedOffset);
 
             restoreOffset();
         });
