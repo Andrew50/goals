@@ -2,11 +2,11 @@
   "cookies": [],
   "origins": [
     {
-      "origin": "http://localhost:3030",
+      "origin": "http://localhost:3031",
       "localStorage": [
         {
           "name": "authToken",
-          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5NTczNzMwLCJpYXQiOjE3NDk0ODczMzB9.ZZSVGYSyu2kAit1PD_oTlnnoqNjeqk7hlip4mvo1j6M"
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5NjgzNTY3LCJpYXQiOjE3NDk1OTcxNjd9.6xhJGiiL79o8BNzCnqea3rm8e91Lghp3Rxsm8nQnyK0"
         },
         {
           "name": "userId",
@@ -15,6 +15,10 @@
         {
           "name": "username",
           "value": "testuser"
+        },
+        {
+          "name": "testMode",
+          "value": "true"
         }
       ]
     }

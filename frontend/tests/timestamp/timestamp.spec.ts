@@ -233,7 +233,7 @@ test.describe('Timestamp and Timezone E2E Tests', () => {
         const userId = 1; // Or the specific user needed for this test
         const username = `testuser${userId}`;
         // Use the baseURL from the config if possible, or default
-        const baseURL = 'http://localhost:3030'; // Use the correct port for tests
+        const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3031'; // Use the correct port for tests
         const storageState = generateStorageState(userId, username, baseURL);
         await newContext.addCookies(storageState.cookies || []); // Use newContext
         // Set localStorage items for new context
@@ -297,7 +297,7 @@ test.describe('Timezone Handling in Calendar', () => {
             const username = `testuser${userId}`;
             const context = page.context(); // Get context from the page
             // Use the baseURL from the config if possible, or default
-            const baseURL = 'http://localhost:3030'; // Use the correct port for tests
+            const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3031'; // Use the correct port for tests
             const storageState = generateStorageState(userId, username, baseURL);
             await context.addCookies(storageState.cookies || []);
 

@@ -29,7 +29,9 @@ interface StorageState {
  * @returns A signed JWT token.
  */
 export function generateTestToken(userId: number, username?: string): string {
-    const testSecret = process.env.JWT_SECRET || 'GoalsApp2024SecureJWTSigningKeyRandomString789ForProduction'; // Match backend default
+    // Use the same default secret as the backend (see backend/src/server/auth.rs)
+    // so that tokens generated in tests are accepted during validation.
+    const testSecret = process.env.JWT_SECRET || 'default_secret';
     const effectiveUsername = username || 'testuser'; // Match the seeded test user
     const payload = {
         user_id: userId,
@@ -47,7 +49,7 @@ export function generateTestToken(userId: number, username?: string): string {
  * @param baseURL The base URL of the application (needed for origin).
  * @returns A Playwright StorageState object.
  */
-export function generateStorageState(userId: number, username?: string, baseURL: string = 'http://localhost:3030'): StorageState {
+export function generateStorageState(userId: number, username?: string, baseURL: string = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3031'): StorageState {
     const effectiveUsername = username || 'testuser'; // Match the seeded test user
     const token = generateTestToken(userId, effectiveUsername);
 

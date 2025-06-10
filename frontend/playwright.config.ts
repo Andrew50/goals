@@ -31,7 +31,7 @@ export default defineConfig({
     /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
     use: {
         /* Base URL to use in actions like `await page.goto('/')`. */
-        baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3030',
+        baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3031',
         /* Use the saved storage state for authentication. */
         storageState: 'tests/.auth/storageState.json',
         /* Default locale */
@@ -93,7 +93,7 @@ export default defineConfig({
     /* Run the frontend server in CI */
     webServer: {
         command: 'npm run start',
-        url: 'http://localhost:3030',
+        url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3031',
         reuseExistingServer: true,
         timeout: 120 * 1000, // 2 minutes
         env: {

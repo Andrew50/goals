@@ -85,8 +85,8 @@ jobs:
         run: npx playwright test
         env:
           CI: true
-          PLAYWRIGHT_BASE_URL: http://localhost:3030
-          PLAYWRIGHT_TEST_BASE_URL: http://localhost:3030
+          PLAYWRIGHT_BASE_URL: http://localhost:3031
+          PLAYWRIGHT_TEST_BASE_URL: http://localhost:3031
       
       - name: Upload test report
         if: always()

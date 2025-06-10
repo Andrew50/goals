@@ -22,6 +22,12 @@ async function globalSetup(config: FullConfig) {
     // Generate the storage state object using the helper
     const storageState = generateStorageState(defaultUserId, undefined, baseURL);
 
+    // Add a test mode flag to prevent immediate token validation
+    storageState.origins[0].localStorage.push({
+        name: 'testMode',
+        value: 'true'
+    });
+
     try {
         // Ensure the .auth directory exists
         const dir = path.dirname(STORAGE_STATE_PATH);
