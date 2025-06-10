@@ -103,11 +103,11 @@ describe('Timezone scenario tests', () => {
             // January 1, 2023 at 12:00 UTC
             const utcTimestamp = Date.UTC(2023, 0, 1, 12, 0, 0);
 
-            // Should be the same in UTC
+            // Convert to local Date object
             const localTimestamp = toLocalTimestamp(utcTimestamp);
 
-            // No offset for UTC
-            expect(utcTimestamp).toBe(localTimestamp);
+            // localTimestamp should be a Date object with the same time
+            expect(localTimestamp?.getTime()).toBe(utcTimestamp);
 
             // Convert back to UTC - should get original value
             const backToUTC = toUTCTimestamp(localTimestamp);
@@ -237,8 +237,8 @@ describe('Timezone scenario tests', () => {
             const backToSecond = toLocalTimestamp(secondUTC);
 
             // Round-trip conversion should maintain values
-            expect(backToFirst).toBe(firstTime);
-            expect(backToSecond).toBe(secondTime);
+            expect(backToFirst?.getTime()).toBe(firstTime);
+            expect(backToSecond?.getTime()).toBe(secondTime);
 
             restoreMock();
         });
@@ -273,23 +273,23 @@ describe('Timezone scenario tests', () => {
             const parsedDatetime = inputStringToTimestamp(datetimeString, 'datetime');
 
             // Just verify parsedDate contains the correct date
-            const parsedDateObj = new Date(parsedDate);
-            expect(parsedDateObj.getFullYear()).toBe(2023);
-            expect(parsedDateObj.getMonth()).toBe(0); // January (0-indexed)
-            expect(parsedDateObj.getDate()).toBe(15);
+            // parsedDate is already a Date object
+            expect(parsedDate.getFullYear()).toBe(2023);
+            expect(parsedDate.getMonth()).toBe(0); // January (0-indexed)
+            expect(parsedDate.getDate()).toBe(15);
 
             // Verify time is parsed properly
-            const parsedTimeObj = new Date(parsedTime);
-            expect(parsedTimeObj.getHours()).toBeGreaterThanOrEqual(0);
-            expect(parsedTimeObj.getHours()).toBeLessThan(24);
-            expect(parsedTimeObj.getMinutes()).toBeGreaterThanOrEqual(0);
-            expect(parsedTimeObj.getMinutes()).toBeLessThan(60);
+            // parsedTime is already a Date object
+            expect(parsedTime.getHours()).toBeGreaterThanOrEqual(0);
+            expect(parsedTime.getHours()).toBeLessThan(24);
+            expect(parsedTime.getMinutes()).toBeGreaterThanOrEqual(0);
+            expect(parsedTime.getMinutes()).toBeLessThan(60);
 
             // Verify datetime
-            const parsedDatetimeObj = new Date(parsedDatetime);
-            expect(parsedDatetimeObj.getFullYear()).toBe(2023);
-            expect(parsedDatetimeObj.getMonth()).toBe(0); // January (0-indexed)
-            expect(parsedDatetimeObj.getDate()).toBe(15);
+            // parsedDatetime is already a Date object
+            expect(parsedDatetime.getFullYear()).toBe(2023);
+            expect(parsedDatetime.getMonth()).toBe(0); // January (0-indexed)
+            expect(parsedDatetime.getDate()).toBe(15);
 
             restoreMock();
 

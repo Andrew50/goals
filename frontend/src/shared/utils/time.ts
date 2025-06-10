@@ -21,7 +21,8 @@ const dateToMs = (d?: Date | null): number | undefined =>
 
 /**
  * API → frontend : UTC ms ➜ Date   (was "toLocalTimestamp").
- * Converts a UTC timestamp to a local Date by adjusting for timezone offset.
+ * Simply converts a UTC timestamp to a Date object - the Date object will 
+ * automatically display in the user's local timezone.
  */
 export const toLocalTimestamp = <T extends number | null | undefined>(
   timestamp?: T
@@ -31,17 +32,14 @@ export const toLocalTimestamp = <T extends number | null | undefined>(
     return undefined;
   }
 
-  // Convert UTC timestamp to local time by subtracting timezone offset
-  const offsetMinutes = new Date().getTimezoneOffset();
-  const localTimestamp = timestamp - (offsetMinutes * 60 * 1000);
-
+  // Simply create a Date from the UTC timestamp - no manual offset needed
   // @ts-expect-error  (generic return for drop-in)
-  return new Date(localTimestamp);
+  return new Date(timestamp);
 };
 
 /**
  * frontend → API : Date ➜ UTC ms   (was "toUTCTimestamp").
- * Converts a local Date to UTC timestamp by adjusting for timezone offset.
+ * Converts a Date to UTC timestamp using getTime().
  */
 export const toUTCTimestamp = <T extends Date | number | null | undefined>(
   value?: T
@@ -49,13 +47,11 @@ export const toUTCTimestamp = <T extends Date | number | null | undefined>(
   if (value == null) return undefined;
 
   if (value instanceof Date) {
-    // Convert local Date to UTC timestamp by adding timezone offset
-    const offsetMinutes = value.getTimezoneOffset();
-    return value.getTime() + (offsetMinutes * 60 * 1000);
+    // Date.getTime() already returns UTC milliseconds
+    return value.getTime();
   } else {
-    // If it's already a number (legacy), add timezone offset
-    const offsetMinutes = new Date().getTimezoneOffset();
-    return (value as number) + (offsetMinutes * 60 * 1000);
+    // If it's already a number, return as-is
+    return value as number;
   }
 };
 

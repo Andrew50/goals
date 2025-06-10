@@ -74,88 +74,61 @@ describe('Time conversion utilities', () => {
         });
 
         test('should handle leap year dates correctly', () => {
-            // Use the new robust mockTimezone with consistent offset of 5 hours
-            const restoreMock = mockTimezone(300); // EST: UTC-5
-
             // February 29, 2020 (leap year) at noon UTC
             const leapYearUTC = Date.UTC(2020, 1, 29, 12, 0, 0, 0);
 
-            // Convert to local time
+            // Convert to local time (should be a Date object with the same timestamp)
             const leapYearLocal = toLocalTimestamp(leapYearUTC);
 
-            // Verify local time is correct by checking the offset difference
-            // UTC-to-local conversion subtracts the timezone offset in milliseconds
-            const expectedOffset = 300 * 60 * 1000; // 5 hours in milliseconds
-            // Compare timestamps using getTime()
-            expect(leapYearUTC - leapYearLocal!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(leapYearLocal!.getTime()).toBe(leapYearUTC);
 
-            // Verify day and month are preserved
-            // No need to wrap leapYearLocal in new Date() again, it's already a Date
+            // Verify day and month are preserved (will display in local timezone)
             const localDate = leapYearLocal!;
-            expect(localDate.getMonth()).toBe(1); // February (0-indexed)
-            expect(localDate.getDate()).toBe(29);
+            expect(localDate.getUTCMonth()).toBe(1); // February (0-indexed) in UTC
+            expect(localDate.getUTCDate()).toBe(29); // 29th day in UTC
 
             // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(leapYearLocal);
             expect(backToUTC).toBe(leapYearUTC);
-
-            restoreMock();
         });
 
         test('should handle half-hour timezone offsets correctly', () => {
-            // Use the new robust mockTimezone with offset of -330 minutes (UTC+5:30)
-            const restoreMock = mockTimezone(-330); // IST: UTC+5:30
-
             // Noon UTC
             const noonUTC = Date.UTC(2023, 0, 15, 12, 0, 0, 0);
 
-            // Convert to local time (IST)
+            // Convert to local time
             const localTimestamp = toLocalTimestamp(noonUTC);
 
-            // Verify the conversion by checking the offset difference
-            // UTC-to-local conversion subtracts the timezone offset
-            const expectedOffset = -330 * 60 * 1000; // -5.5 hours in milliseconds
-            // Compare timestamps using getTime()
-            expect(noonUTC - localTimestamp!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(localTimestamp!.getTime()).toBe(noonUTC);
 
-            // Verify minutes are preserved for half-hour offset
-            // No need to wrap localTimestamp in new Date() again
-            const localDate = localTimestamp!;
-            expect(localDate.getMinutes()).toBe(30);
+            // UTC time should be preserved
+            expect(localTimestamp!.getUTCHours()).toBe(12);
+            expect(localTimestamp!.getUTCMinutes()).toBe(0);
 
             // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(localTimestamp);
             expect(backToUTC).toBe(noonUTC);
-
-            restoreMock();
         });
 
         test('should handle quarter-hour timezone offsets correctly', () => {
-            // Use the new robust mockTimezone with offset of -345 minutes (UTC+5:45)
-            const restoreMock = mockTimezone(-345); // Nepal Time: UTC+5:45
-
             // Noon UTC
             const noonUTC = Date.UTC(2023, 0, 15, 12, 0, 0, 0);
 
-            // Convert to local time (Nepal)
+            // Convert to local time
             const localTimestamp = toLocalTimestamp(noonUTC);
 
-            // Verify the conversion by checking the offset difference
-            // UTC-to-local conversion subtracts the timezone offset
-            const expectedOffset = -345 * 60 * 1000; // -5.75 hours in milliseconds
-            // Compare timestamps using getTime()
-            expect(noonUTC - localTimestamp!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(localTimestamp!.getTime()).toBe(noonUTC);
 
-            // Verify minutes are preserved for quarter-hour offset
-            // No need to wrap localTimestamp in new Date() again
-            const localDate = localTimestamp!;
-            expect(localDate.getMinutes()).toBe(45);
+            // UTC time should be preserved
+            expect(localTimestamp!.getUTCHours()).toBe(12);
+            expect(localTimestamp!.getUTCMinutes()).toBe(0);
 
             // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(localTimestamp);
             expect(backToUTC).toBe(noonUTC);
-
-            restoreMock();
         });
     });
 
