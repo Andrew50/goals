@@ -3,7 +3,6 @@
 // expect(element).toHaveTextContent(/react/i)
 // learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom';
-import React from 'react';
 
 // Polyfill for structuredClone (not available in Node.js < 17 or Jest environment)
 if (typeof global.structuredClone === 'undefined') {
@@ -36,45 +35,60 @@ if (typeof global.structuredClone === 'undefined') {
 }
 
 // Mock react-dnd modules
-jest.mock('react-dnd', () => ({
-    useDrop: jest.fn().mockReturnValue([{}, jest.fn()]),
-    useDrag: jest.fn().mockReturnValue([{}, jest.fn()]),
-    DndProvider: ({ children }: { children: React.ReactNode }) => children
-}));
+jest.mock('react-dnd', () => {
+    const React = require('react');
+    return {
+        useDrop: jest.fn().mockReturnValue([{}, jest.fn()]),
+        useDrag: jest.fn().mockReturnValue([{}, jest.fn()]),
+        DndProvider: ({ children }: { children: React.ReactNode }) => children
+    };
+});
 
 jest.mock('react-dnd-html5-backend', () => ({
     HTML5Backend: {}
 }));
 
 // Mock Material-UI components
-jest.mock('@mui/material', () => ({
-    Dialog: ({ children, ...props }: any) => React.createElement('div', { 'data-testid': 'dialog', ...props }, children),
-    DialogTitle: ({ children }: any) => React.createElement('div', { 'data-testid': 'dialog-title' }, children),
-    DialogContent: ({ children }: any) => React.createElement('div', { 'data-testid': 'dialog-content' }, children),
-    DialogActions: ({ children }: any) => React.createElement('div', { 'data-testid': 'dialog-actions' }, children),
-    Button: ({ children, onClick }: any) => React.createElement('button', { onClick }, children),
-    TextField: ({ label, value, onChange, ...props }: any) => React.createElement('input', {
-        placeholder: label,
-        value: value,
-        onChange: (e: any) => onChange?.(e),
-        ...props
-    }),
-    List: ({ children }: any) => React.createElement('ul', {}, children),
-    ListItem: ({ children, ...props }: any) => React.createElement('li', { ...props }, children),
-    ListItemText: ({ primary }: any) => React.createElement('span', {}, primary),
-    IconButton: ({ children, onClick }: any) => React.createElement('button', { onClick }, children),
-    Typography: ({ children }: any) => React.createElement('span', {}, children),
-    Box: ({ children }: any) => React.createElement('div', {}, children),
-    Radio: (props: any) => React.createElement('input', { type: 'radio', ...props }),
-    RadioGroup: ({ children }: any) => React.createElement('div', {}, children),
-    FormControlLabel: ({ children }: any) => React.createElement('label', {}, children),
-    FormControl: ({ children }: any) => React.createElement('div', {}, children),
-}));
+jest.mock('@mui/material', () => {
+    const React = require('react');
+    return {
+        Dialog: ({ children, ...props }: any) => React.createElement('div', { 'data-testid': 'dialog', ...props }, children),
+        DialogTitle: ({ children }: any) => React.createElement('div', { 'data-testid': 'dialog-title' }, children),
+        DialogContent: ({ children }: any) => React.createElement('div', { 'data-testid': 'dialog-content' }, children),
+        DialogActions: ({ children }: any) => React.createElement('div', { 'data-testid': 'dialog-actions' }, children),
+        Button: ({ children, onClick }: any) => React.createElement('button', { onClick }, children),
+        TextField: ({ label, value, onChange, ...props }: any) => React.createElement('input', {
+            placeholder: label,
+            value: value,
+            onChange: (e: any) => onChange?.(e),
+            ...props
+        }),
+        List: ({ children }: any) => React.createElement('ul', {}, children),
+        ListItem: ({ children, ...props }: any) => React.createElement('li', { ...props }, children),
+        ListItemText: ({ primary }: any) => React.createElement('span', {}, primary),
+        IconButton: ({ children, onClick }: any) => React.createElement('button', { onClick }, children),
+        Typography: ({ children }: any) => React.createElement('span', {}, children),
+        Box: ({ children }: any) => React.createElement('div', {}, children),
+        Radio: (props: any) => React.createElement('input', { type: 'radio', ...props }),
+        RadioGroup: ({ children }: any) => React.createElement('div', {}, children),
+        FormControlLabel: ({ children }: any) => React.createElement('label', {}, children),
+        FormControl: ({ children }: any) => React.createElement('div', {}, children),
+    };
+});
 
 // Mock Material-UI icons
-jest.mock('@mui/icons-material/Close', () => () => React.createElement('span', {}, '✕'));
-jest.mock('@mui/icons-material/Add', () => () => React.createElement('span', {}, '+'));
-jest.mock('@mui/icons-material/Delete', () => () => React.createElement('span', {}, '🗑'));
+jest.mock('@mui/icons-material/Close', () => {
+    const React = require('react');
+    return () => React.createElement('span', {}, '✕');
+});
+jest.mock('@mui/icons-material/Add', () => {
+    const React = require('react');
+    return () => React.createElement('span', {}, '+');
+});
+jest.mock('@mui/icons-material/Delete', () => {
+    const React = require('react');
+    return () => React.createElement('span', {}, '🗑');
+});
 
 // Mock vis-network
 jest.mock('vis-network/standalone', () => ({
