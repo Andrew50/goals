@@ -12,6 +12,12 @@ pub struct MigrationState {
     pub created_indexes: Vec<String>,
 }
 
+impl Default for MigrationState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationState {
     pub fn new() -> Self {
         Self {
