@@ -55,9 +55,26 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
+
+    // Ensure start_timestamp is set for new goals in create mode
+    const processedInitialGoal = useMemo(() => {
+        const goalCopy = { ...initialGoal };
+
+        if (goalCopy._tz === undefined) {
+            goalCopy._tz = 'user';
+        }
+
+        // Set start_timestamp for create mode if not already set
+        if (initialMode === 'create' && !goalCopy.start_timestamp) {
+            goalCopy.start_timestamp = new Date();
+        }
+
+        return goalCopy;
+    }, [initialGoal, initialMode]);
+
     const [state, setState] = useHistoryState<{ goal: Goal; error: string; mode: Mode; }>(
         {
-            goal: initialGoal,
+            goal: processedInitialGoal,
             error: '',
             mode: initialMode
         },
@@ -100,6 +117,36 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             console.error('Failed to fetch task events:', error);
             setTaskEvents([]);
             setTotalDuration(0);
+        }
+    }, []);
+
+    // Fetch parent goals using traversal API
+    const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
+        try {
+            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
+            // Filter to only get parent goals (those that have a child relationship to current goal)
+            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+            const parentIds = networkData.edges
+                .filter(e => e.relationship_type === 'child' && e.to === goalId)
+                .map(e => e.from);
+
+            const parents = hierarchyResponse
+                .filter(g => parentIds.includes(g.id!))
+                .map(goalToLocal);
+
+            // Sort by hierarchy level (furthest parents first)
+            setParentGoals(parents);
+
+            // In edit mode, also populate selectedParents so they show in the selector
+            if (mode === 'edit') {
+                setSelectedParents(parents);
+            }
+        } catch (error) {
+            console.error('Failed to fetch parent goals:', error);
+            setParentGoals([]);
+            if (mode === 'edit') {
+                setSelectedParents([]);
+            }
         }
     }, []);
 
@@ -149,7 +196,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setTaskEvents([]);
             setTotalDuration(0);
         }
-    }, [selectedParents, setState, relationshipType, fetchTaskEvents]);
+    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals]);
 
     const close = useCallback(() => {
         setIsOpen(false);
@@ -289,6 +336,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // Validation checks
         const validationErrors = validateGoal(state.goal);
+
         if (validationErrors.length > 0) {
             setState({
                 ...state,
@@ -545,36 +593,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     };
 
-    // Fetch parent goals using traversal API
-    const fetchParentGoals = async (goalId: number, mode: Mode) => {
-        try {
-            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
-            // Filter to only get parent goals (those that have a child relationship to current goal)
-            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
-            const parentIds = networkData.edges
-                .filter(e => e.relationship_type === 'child' && e.to === goalId)
-                .map(e => e.from);
-
-            const parents = hierarchyResponse
-                .filter(g => parentIds.includes(g.id!))
-                .map(goalToLocal);
-
-            // Sort by hierarchy level (furthest parents first)
-            setParentGoals(parents);
-
-            // In edit mode, also populate selectedParents so they show in the selector
-            if (mode === 'edit') {
-                setSelectedParents(parents);
-            }
-        } catch (error) {
-            console.error('Failed to fetch parent goals:', error);
-            setParentGoals([]);
-            if (mode === 'edit') {
-                setSelectedParents([]);
-            }
-        }
-    };
-
     const priorityField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Priority:</strong> {state.goal.priority ? state.goal.priority.charAt(0).toUpperCase() + state.goal.priority.slice(1) : 'Not set'}
@@ -730,9 +748,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 type="date"
                 value={timestampToInputString(state.goal.start_timestamp, 'date')}
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                    const inputValue = e.target.value;
+                    const convertedDate = inputStringToTimestamp(inputValue, "date");
+
                     handleChange({
                         ...state.goal,
-                        start_timestamp: inputStringToTimestamp(e.target.value, "date")
+                        start_timestamp: convertedDate
                     });
                 }}
                 fullWidth

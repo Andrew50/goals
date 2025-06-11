@@ -1,5 +1,9 @@
 import { Goal, RelationshipType } from '../../types/goals';
 
+function isUnsetDate(val: any) {
+    return !(val instanceof Date) || val.getTime() === 0;
+}
+
 export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipType: RelationshipType): string | null {
     // Events cannot have children
     if (relationshipType === 'child' && fromGoal.goal_type === 'event') {
@@ -48,7 +52,7 @@ export function validateGoal(goal: Goal): string[] {
                 if (!goal.parent_id) {
                     validationErrors.push('Events must have a parent task or routine');
                 }
-                if (!goal.scheduled_timestamp) {
+                if (isUnsetDate(goal.scheduled_timestamp)) {
                     validationErrors.push('Events must have a scheduled time');
                 }
                 if (!goal.duration) {
@@ -59,13 +63,12 @@ export function validateGoal(goal: Goal): string[] {
                 if (!goal.frequency) {
                     validationErrors.push('Frequency is required');
                 } else {
-                    const frequencyMatch = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
+                    const frequencyMatch = goal.frequency.match(/^\d+[DWMY](?::(.+))?$/);
                     if (!frequencyMatch) {
                         validationErrors.push('Invalid frequency format');
                     } else {
-                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                        const [unused, interval, unit, days] = frequencyMatch;
-                        if (parseInt(interval) < 1) {
+                        const [interval, unit, days] = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/) || [];
+                        if (interval && parseInt(interval) < 1) {
                             validationErrors.push('Frequency interval must be at least 1');
                         }
                         if (unit === 'W' && (!days || days.split(',').length === 0)) {
@@ -73,7 +76,7 @@ export function validateGoal(goal: Goal): string[] {
                         }
                     }
                 }
-                if (!goal.start_timestamp) {
+                if (isUnsetDate(goal.start_timestamp)) {
                     validationErrors.push('Start Date is required');
                 }
                 if (!goal.duration) {
@@ -85,7 +88,7 @@ export function validateGoal(goal: Goal): string[] {
                 break;
             case 'project':
             case 'achievement':
-                if (!goal.start_timestamp) {
+                if (isUnsetDate(goal.start_timestamp)) {
                     validationErrors.push('Start Date is required');
                 }
                 break;
