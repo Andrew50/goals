@@ -389,7 +389,7 @@ pub async fn dispatch_tool(
     tool_name: &str,
     args: &serde_json::Value,
     graph: &Graph,
-    user_locks: &UserLocks,
+    _user_locks: &UserLocks,
     user_id: i64,
 ) -> Result<serde_json::Value, String> {
     match tool_name {
@@ -516,7 +516,7 @@ fn wrap_result<T: std::fmt::Debug>(
 ) -> Result<serde_json::Value, String> {
     match base_result {
         Ok(success_payload) => {
-            // We’ll just convert the success payload to a debug string here.
+            // We'll just convert the success payload to a debug string here.
             // This provides a consistent, simple JSON structure for the LLM.
             let json_val = serde_json::json!({
                 "result": "success",

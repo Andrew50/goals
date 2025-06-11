@@ -7,7 +7,6 @@ use axum::{
     Router,
 };
 use neo4rs::Graph;
-use oauth2::TokenResponse;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -512,6 +511,7 @@ async fn handle_record_event_move(
 }
 
 // Add this function at the end of the file
+#[allow(dead_code)]
 async fn handle_health_check() -> impl IntoResponse {
     StatusCode::OK
 }

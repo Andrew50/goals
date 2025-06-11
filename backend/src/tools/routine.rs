@@ -1,15 +1,10 @@
 use axum::http::StatusCode;
-use chrono::{Datelike, Duration, TimeZone, Utc};
-use neo4rs::Graph;
 #[allow(clippy::single_component_path_imports)]
 use serde_json;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::error;
-
-use crate::tools::goal::{Goal, GoalType, GOAL_RETURN_QUERY};
 
 // Custom error type
 #[derive(Debug)]
@@ -19,6 +14,7 @@ pub enum RoutineError {
     Deserialization(neo4rs::DeError),
 }
 
+#[allow(dead_code)]
 pub type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
 impl fmt::Display for RoutineError {
@@ -53,6 +49,7 @@ impl From<RoutineError> for (StatusCode, String) {
 }
 
 // Utility function for setting time of day on timestamps
+#[allow(dead_code)]
 pub fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
     let day_in_ms: i64 = 24 * 60 * 60 * 1000;
     let start_of_day = (base_timestamp / day_in_ms) * day_in_ms;

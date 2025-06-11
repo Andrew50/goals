@@ -6,6 +6,7 @@ use neo4rs::{query, Graph};
 #[derive(Debug)]
 pub struct MigrationState {
     pub created_events: Vec<i64>,
+    #[allow(dead_code)]
     pub deleted_relationships: Vec<(i64, i64)>,
     pub modified_tasks: Vec<i64>,
     pub created_indexes: Vec<String>,
@@ -175,7 +176,7 @@ async fn check_migration_already_run(graph: &Graph) -> Result<bool, String> {
             let completed_at: Option<i64> = row.get("completed_at").ok();
             if let Some(timestamp) = completed_at {
                 let datetime = chrono::DateTime::from_timestamp(timestamp / 1000, 0)
-                    .unwrap_or_else(|| chrono::Utc::now());
+                    .unwrap_or_else(chrono::Utc::now);
                 println!(
                     "Migration was already completed on: {}",
                     datetime.format("%Y-%m-%d %H:%M:%S UTC")
@@ -759,7 +760,7 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                 } else {
                     return Err(format!("Invalid frequency format: {}", frequency));
                 }
-            } else if frequency.chars().last() == Some('D') || frequency.chars().last() == Some('d')
+            } else if frequency.ends_with('D') || frequency.ends_with('d')
             {
                 // Handle formats like "1D", "2d", etc.
                 let number_str = &frequency[..frequency.len() - 1];
@@ -767,7 +768,7 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
                 current_time + (number * ms_per_day)
-            } else if frequency.chars().last() == Some('W') || frequency.chars().last() == Some('w')
+            } else if frequency.ends_with('W') || frequency.ends_with('w')
             {
                 // Handle formats like "1W", "2w", etc.
                 let number_str = &frequency[..frequency.len() - 1];
@@ -775,7 +776,7 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
                 current_time + (number * 7 * ms_per_day)
-            } else if frequency.chars().last() == Some('M') || frequency.chars().last() == Some('m')
+            } else if frequency.ends_with('M') || frequency.ends_with('m')
             {
                 // Handle formats like "1M", "2m", etc.
                 let number_str = &frequency[..frequency.len() - 1];
@@ -846,7 +847,7 @@ async fn update_relationships(graph: &Graph, _state: &mut MigrationState) -> Res
 
 async fn create_event_move_tracking(
     graph: &Graph,
-    state: &mut MigrationState,
+    _state: &mut MigrationState,
 ) -> Result<(), String> {
     println!("Creating EventMove tracking infrastructure...");
 
@@ -1028,6 +1029,7 @@ async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
 }
 
 // Rollback function for partial migration failures
+#[allow(dead_code)]
 pub async fn rollback_migration(graph: &Graph, state: &MigrationState) -> Result<(), String> {
     println!("Rolling back migration...");
 
