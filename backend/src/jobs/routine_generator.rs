@@ -77,36 +77,60 @@ async fn generate_events_for_routine(
             current_time
         };
 
-        // Create event at this timestamp
-        let create_query = query(
-            "MATCH (r:Goal)
+        // Check if an event already exists at this timestamp for this routine
+        let check_query = query(
+            "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
              WHERE id(r) = $routine_id
-             CREATE (e:Goal {
-                 name: r.name,
-                 goal_type: 'event',
-                 scheduled_timestamp: $timestamp,
-                 duration: r.duration,
-                 parent_id: id(r),
-                 parent_type: 'routine',
-                 routine_instance_id: $instance_id,
-                 user_id: r.user_id,
-                 priority: r.priority,
-                 description: r.description,
-                 completed: false,
-                 is_deleted: false
-             })
-             CREATE (r)-[:HAS_EVENT]->(e)",
+             AND e.scheduled_timestamp = $timestamp
+             AND (e.is_deleted IS NULL OR e.is_deleted = false)
+             RETURN count(e) as existing_count"
         )
         .param("routine_id", routine_id)
-        .param("timestamp", scheduled_timestamp)
-        .param("instance_id", instance_id.clone());
+        .param("timestamp", scheduled_timestamp);
 
-        graph
-            .run(create_query)
+        let mut check_result = graph
+            .execute(check_query)
             .await
-            .map_err(|e| format!("Failed to create routine event: {}", e))?;
+            .map_err(|e| format!("Failed to check existing events: {}", e))?;
 
-        event_count += 1;
+        let existing_count: i64 = if let Some(row) = check_result.next().await.map_err(|e| e.to_string())? {
+            row.get("existing_count").unwrap_or(0)
+        } else {
+            0
+        };
+
+        // Only create event if none exists at this timestamp
+        if existing_count == 0 {
+            let create_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $routine_id
+                 CREATE (e:Goal {
+                     name: r.name,
+                     goal_type: 'event',
+                     scheduled_timestamp: $timestamp,
+                     duration: r.duration,
+                     parent_id: id(r),
+                     parent_type: 'routine',
+                     routine_instance_id: $instance_id,
+                     user_id: r.user_id,
+                     priority: r.priority,
+                     description: r.description,
+                     completed: false,
+                     is_deleted: false
+                 })
+                 CREATE (r)-[:HAS_EVENT]->(e)",
+            )
+            .param("routine_id", routine_id)
+            .param("timestamp", scheduled_timestamp)
+            .param("instance_id", instance_id.clone());
+
+            graph
+                .run(create_query)
+                .await
+                .map_err(|e| format!("Failed to create routine event: {}", e))?;
+
+            event_count += 1;
+        }
 
         // Calculate next occurrence based on frequency
         current_time = calculate_next_occurrence(current_time, frequency)?;

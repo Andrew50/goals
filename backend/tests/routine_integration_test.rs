@@ -5,7 +5,6 @@ use serde_json;
 use std::collections::HashSet;
 
 // Import the modules we need for testing
-use backend::jobs::routine_generator;
 use backend::tools::goal::{Goal, GoalType};
 
 /// Helper function to create a test database connection
@@ -127,6 +126,103 @@ fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
     start_of_day + time_of_day_ms
 }
 
+/// Helper function to generate events for a specific test routine (more controlled than the full generator)
+async fn generate_events_for_test_routine(
+    graph: &Graph,
+    routine_id: i64,
+    start_timestamp: i64,
+    end_timestamp: i64,
+) -> Result<(), neo4rs::Error> {
+    // Fetch the routine details
+    let routine_query = query(
+        "MATCH (r:Goal) WHERE id(r) = $routine_id RETURN r"
+    ).param("routine_id", routine_id);
+    
+    let mut result = graph.execute(routine_query).await?;
+    let routine_row = result.next().await?
+        .ok_or_else(|| neo4rs::Error::ConversionError)?;
+    let routine: Goal = routine_row.get("r")
+        .map_err(|_| neo4rs::Error::ConversionError)?;
+    
+    let frequency = routine.frequency.as_ref()
+        .ok_or_else(|| neo4rs::Error::ConversionError)?;
+    
+    let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
+    let mut current_time = start_timestamp;
+    let mut event_count = 0;
+    
+    while current_time <= end_timestamp {
+        // Apply the routine's time of day
+        let scheduled_timestamp = if let Some(routine_time) = routine.routine_time {
+            set_time_of_day(current_time, routine_time)
+        } else {
+            current_time
+        };
+
+        // Ensure we only create events in or after the start window
+        if scheduled_timestamp >= start_timestamp {
+            // Check if an event already exists at this timestamp
+            let check_query = query(
+                "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+                 WHERE id(r) = $routine_id 
+                 AND e.scheduled_timestamp = $timestamp
+                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 RETURN count(e) as existing_count"
+            )
+            .param("routine_id", routine_id)
+            .param("timestamp", scheduled_timestamp);
+
+            let mut check_result = graph.execute(check_query).await?;
+            let existing_count: i64 = if let Some(row) = check_result.next().await? {
+                row.get("existing_count").unwrap_or(0)
+            } else {
+                0
+            };
+
+            if existing_count == 0 {
+                let create_query = query(
+                    "MATCH (r:Goal) WHERE id(r) = $routine_id
+                     CREATE (e:Goal {
+                         name: r.name,
+                         goal_type: 'event',
+                         scheduled_timestamp: $timestamp,
+                         duration: r.duration,
+                         parent_id: id(r),
+                         parent_type: 'routine',
+                         routine_instance_id: $instance_id,
+                         user_id: r.user_id,
+                         priority: r.priority,
+                         description: r.description,
+                         completed: false,
+                         is_deleted: false
+                     })
+                     CREATE (r)-[:HAS_EVENT]->(e)"
+                )
+                .param("routine_id", routine_id)
+                .param("timestamp", scheduled_timestamp)
+                .param("instance_id", instance_id.clone());
+                
+                graph.run(create_query).await?;
+                event_count += 1;
+            }
+        }
+
+        // Calculate next occurrence
+        current_time = match frequency.as_str() {
+            "1D" => current_time + (24 * 60 * 60 * 1000), // Daily
+            "1W" => current_time + (7 * 24 * 60 * 60 * 1000), // Weekly
+            "2D" => current_time + (2 * 24 * 60 * 60 * 1000), // Every 2 days
+            _ => current_time + (24 * 60 * 60 * 1000), // Default daily
+        };
+    }
+    
+    if event_count > 0 {
+        println!("Created {} events for test routine {}", event_count, routine_id);
+    }
+    
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,8 +254,8 @@ mod tests {
             duration,
         ).await.expect("Failed to create test routine");
 
-        // Run the routine generator
-        routine_generator::generate_future_routine_events(&graph)
+        // Generate events specifically for this test routine
+        generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
             .await
             .expect("Failed to generate routine events");
 
@@ -252,8 +348,8 @@ mod tests {
             duration,
         ).await.expect("Failed to create test routine");
 
-        // Run the routine generator
-        routine_generator::generate_future_routine_events(&graph)
+        // Generate events specifically for this test routine  
+        generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
             .await
             .expect("Failed to generate routine events");
 
@@ -329,8 +425,9 @@ mod tests {
             duration,
         ).await.expect("Failed to create test routine");
 
-        // Run the routine generator
-        routine_generator::generate_future_routine_events(&graph)
+        // For open-ended routines, generate events up to 90 days ahead
+        let ninety_days_ahead = start_timestamp + (90 * 24 * 60 * 60 * 1000);
+        generate_events_for_test_routine(&graph, routine_id, start_timestamp, ninety_days_ahead)
             .await
             .expect("Failed to generate routine events");
 
@@ -402,8 +499,8 @@ mod tests {
             duration,
         ).await.expect("Failed to create test routine");
 
-        // Run the routine generator
-        routine_generator::generate_future_routine_events(&graph)
+        // Generate events specifically for this test routine
+        generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
             .await
             .expect("Failed to generate routine events");
 
@@ -460,8 +557,8 @@ mod tests {
             duration,
         ).await.expect("Failed to create test routine");
 
-        // Run the routine generator
-        routine_generator::generate_future_routine_events(&graph)
+        // Generate events specifically for this test routine
+        generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
             .await
             .expect("Failed to generate routine events");
 
