@@ -25,6 +25,7 @@ use crate::tools::migration;
 use crate::tools::network;
 use crate::tools::stats;
 use crate::tools::traversal;
+use crate::jobs::routine_generator;
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
@@ -102,6 +103,10 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/run", post(handle_run_migration))
         .route("/verify", get(handle_verify_migration));
 
+    // New route group for on-demand routine event generation
+    let routine_generation_routes = Router::new()
+        .route("/:end_timestamp", post(handle_generate_routine_events));
+
     // Protected routes with auth middleware
     let protected_routes = Router::new()
         .nest("/goals", goal_routes)
@@ -116,6 +121,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/achievements", achievements_routes)
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
+        .nest("/routine", routine_generation_routes)
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -556,5 +562,16 @@ async fn handle_verify_migration(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Migration verification failed: {}", e),
         )),
+    }
+}
+
+// Routine generation handler – triggers creation of future events for all routines.
+async fn handle_generate_routine_events(
+    Extension(graph): Extension<Graph>,
+    Path(_end_timestamp): Path<i64>, // Currently unused, generator creates events ahead automatically
+) -> Result<StatusCode, (StatusCode, String)> {
+    match routine_generator::generate_future_routine_events(&graph).await {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }
