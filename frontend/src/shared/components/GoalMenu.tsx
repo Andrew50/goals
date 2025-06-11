@@ -20,13 +20,11 @@ import {
     ListItem,
     ListItemText,
     ListItemSecondaryAction,
-    Radio,
-    RadioGroup,
-    FormControl
+
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, TaskDateValidationError } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -89,7 +87,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [selectedParents, setSelectedParents] = useState<Goal[]>([]);
     const [parentSearchQuery, setParentSearchQuery] = useState('');
     const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>('child');
-    const [originalGoal, setOriginalGoal] = useState<Goal | null>(null);
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -181,7 +178,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             'view': 'View Goal'
         }[actualMode]);
         setIsOpen(true);
-        setOriginalGoal(goalCopy);
 
         // Fetch parent goals if we have a goal ID
         if (goal.id) {
@@ -210,7 +206,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setSelectedParents([]);
             setParentSearchQuery('');
             setRelationshipType('child');
-            setOriginalGoal(null);
             setTaskEvents([]);
             setTotalDuration(0);
             setShowAddEvent(false);
@@ -1485,13 +1480,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     };
 
     // Handle task date warning dialog actions
-    const handleTaskDateWarningRevert = () => {
-        // Just close the dialog - the original action won't be retried
-    };
 
-    const handleTaskDateWarningExpand = async () => {
-        // This method is no longer used
-    };
 
     // Modify the handleAddEvent function to handle date validation errors
     const handleAddEvent = useCallback(async () => {
@@ -1533,7 +1522,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 error: 'Failed to create event'
             });
         }
-    }, [state, newEventScheduled, newEventDuration, setState]);
+    }, [state, newEventScheduled, newEventDuration, setState, fetchTaskEvents]);
 
     // Handle removing an event from the task
     const handleRemoveEvent = useCallback(async (eventIndex: number) => {

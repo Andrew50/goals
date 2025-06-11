@@ -10,7 +10,7 @@ import {
     timestampToDisplayString
 } from './time';
 import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
-import { mockTimezone } from './testUtils';
+
 
 // Old helper to mock timezone offset - kept for backward compatibility
 // eslint-disable-next-line no-extend-native

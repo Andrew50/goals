@@ -1,15 +1,12 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import { goalToLocal } from '../../shared/utils/time';
-import { Goal, ApiGoal } from '../../types/goals';
+import { render, waitFor } from '@testing-library/react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
+import { goalToLocal } from '../../shared/utils/time';
+import { Goal, ApiGoal } from '../../types/goals';
+
+import Calendar from './Calendar';
 import { GoalMenuProvider } from '../../shared/contexts/GoalMenuContext';
-
-// Import GoalMenu
-import GoalMenu from '../../shared/components/GoalMenu';
-
-// Import calendarData explicitly to reference the mock
 import { fetchCalendarData } from './calendarData';
 
 // Import the API
@@ -116,9 +113,6 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
 };
 
-// Import the component directly after mocks are set up
-import Calendar from './Calendar';
-
 // Helper to mock timezone offset
 const mockTimezoneOffset = (offsetMinutes: number) => {
     const original = Date.prototype.getTimezoneOffset;
@@ -130,7 +124,6 @@ const mockTimezoneOffset = (offsetMinutes: number) => {
 
 describe('Calendar Component', () => {
     // Save original console functionality
-    const originalLog = console.log;
     const originalWarn = console.warn;
     const originalError = console.error;
 

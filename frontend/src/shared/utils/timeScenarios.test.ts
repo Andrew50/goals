@@ -23,21 +23,11 @@
 import {
     toLocalTimestamp,
     toUTCTimestamp,
-    timestampToInputString,
-    inputStringToTimestamp
+    timestampToInputString
 } from './time';
-import { mockTimezone, mockDSTTransition } from './testUtils';
+import { mockTimezone } from './testUtils';
 
-// Legacy mock function - kept for backward compatibility
-// eslint-disable-next-line no-extend-native
-const mockTimezoneOffset = (offsetMinutes: number) => {
-    const original = Date.prototype.getTimezoneOffset;
-    // eslint-disable-next-line no-extend-native
-    Date.prototype.getTimezoneOffset = jest.fn(() => offsetMinutes);
-    return () => {
-        Date.prototype.getTimezoneOffset = original;
-    };
-};
+
 
 describe('Timezone scenario tests', () => {
     beforeEach(() => {

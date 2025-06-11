@@ -1,6 +1,6 @@
 import { privateRequest } from '../../shared/utils/api';
 import { timestampToDisplayString } from '../../shared/utils/time';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { getGoalColor } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
@@ -73,7 +73,7 @@ const Day: React.FC = () => {
     };
 
     // Function to fetch events for a specific date
-    const fetchEventsForDate = (date: Date) => {
+    const fetchEventsForDate = useCallback((date: Date) => {
         const { start, end } = getDayBounds(date);
 
         privateRequest<DayEvent[]>('day', 'GET', undefined, {
@@ -84,24 +84,24 @@ const Day: React.FC = () => {
         }).catch(error => {
             console.error('Error fetching events:', error);
         });
-    };
+    }, []);
 
     useEffect(() => {
         fetchEventsForDate(currentDate);
-    }, [currentDate]);
+    }, [currentDate, fetchEventsForDate]);
 
     // Navigation functions
-    const goToPreviousDay = () => {
+    const goToPreviousDay = useCallback(() => {
         const previousDay = new Date(currentDate);
         previousDay.setDate(previousDay.getDate() - 1);
         setCurrentDate(previousDay);
-    };
+    }, [currentDate]);
 
-    const goToNextDay = () => {
+    const goToNextDay = useCallback(() => {
         const nextDay = new Date(currentDate);
         nextDay.setDate(nextDay.getDate() + 1);
         setCurrentDate(nextDay);
-    };
+    }, [currentDate]);
 
     const goToToday = () => {
         setCurrentDate(new Date());
@@ -126,7 +126,7 @@ const Day: React.FC = () => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [currentDate]);
+    }, [goToNextDay, goToPreviousDay]);
 
     const handleEventComplete = (event: DayEvent) => {
         privateRequest<void>(

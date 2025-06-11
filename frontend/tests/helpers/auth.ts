@@ -1,5 +1,4 @@
 import jwt from 'jsonwebtoken';
-import type { Page } from '@playwright/test';
 
 // Define StorageState type locally since it's not exported from @playwright/test
 interface StorageState {

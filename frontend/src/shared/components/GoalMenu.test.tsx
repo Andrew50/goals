@@ -39,7 +39,6 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 describe('GoalMenu Component', () => {
     // Save original console functionality
-    const originalLog = console.log;
     const originalWarn = console.warn;
     const originalError = console.error;
 

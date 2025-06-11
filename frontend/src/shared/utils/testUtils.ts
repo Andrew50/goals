@@ -81,6 +81,7 @@ export const mockTimezone = (fixedOffset: number) => {
     // Return cleanup function
     return () => {
         global.Date = OriginalDate;
+        // eslint-disable-next-line no-extend-native
         Date.prototype.getTimezoneOffset = originalGetTimezoneOffset;
     };
 };
@@ -144,6 +145,7 @@ export const mockDSTTransition = (
     };
 
     // Override getTimezoneOffset
+    // eslint-disable-next-line no-extend-native
     Date.prototype.getTimezoneOffset = function () {
         return isDST(this) ? dstOffset : standardOffset;
     };
@@ -172,6 +174,7 @@ export const mockDSTTransition = (
         createStandardTimeDate,
         createDSTDate,
         restore: () => {
+            // eslint-disable-next-line no-extend-native
             Date.prototype.getTimezoneOffset = originalGetTimezoneOffset;
         }
     };

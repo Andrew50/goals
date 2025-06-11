@@ -1,3 +1,10 @@
+// jest-dom adds custom jest matchers for asserting on DOM nodes.
+// allows you to do things like:
+// expect(element).toHaveTextContent(/react/i)
+// learn more: https://github.com/testing-library/jest-dom
+import '@testing-library/jest-dom';
+import React from 'react';
+
 // Polyfill for structuredClone (not available in Node.js < 17 or Jest environment)
 if (typeof global.structuredClone === 'undefined') {
     global.structuredClone = function (obj: any): any {
@@ -27,13 +34,6 @@ if (typeof global.structuredClone === 'undefined') {
         return obj;
     };
 }
-
-// jest-dom adds custom jest matchers for asserting on DOM nodes.
-// allows you to do things like:
-// expect(element).toHaveTextContent(/react/i)
-// learn more: https://github.com/testing-library/jest-dom
-import '@testing-library/jest-dom';
-import React from 'react';
 
 // Mock react-dnd modules
 jest.mock('react-dnd', () => ({

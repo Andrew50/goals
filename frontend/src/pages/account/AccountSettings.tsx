@@ -15,7 +15,7 @@ import {
     ListItemSecondaryAction,
     IconButton,
 } from "@mui/material";
-import { Google, Key, Link, LinkOff } from "@mui/icons-material";
+import { Google, Key, LinkOff } from "@mui/icons-material";
 import { privateRequest } from "../../shared/utils/api";
 
 interface AuthMethod {

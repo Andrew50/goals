@@ -20,7 +20,9 @@ export const Network = jest.fn().mockImplementation(() => ({
     selectNodes: jest.fn(),
 }));
 
-export default {
+const visNetworkMock = {
     DataSet,
     Network,
-}; 
+};
+
+export default visNetworkMock; 
