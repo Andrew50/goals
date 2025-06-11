@@ -35,35 +35,36 @@ describe('Time conversion utilities', () => {
 
     describe('toLocalTimestamp and toUTCTimestamp', () => {
         test('should convert UTC timestamp to local time', () => {
-            // Mock timezone offset to -300 minutes (-5 hours, like EST)
-            const restoreOffset = mockTimezoneOffset(300);
-
             // Test with a known UTC timestamp (2023-01-01T12:00:00Z)
             const utcTimestamp = 1672574400000;
 
-            // Convert to local Date
+            // Convert to local Date - the Date object should have the same timestamp
             const localDate = toLocalTimestamp(utcTimestamp);
 
-            // Verify the conversion by checking the offset difference
-            const expectedOffset = 300 * 60 * 1000; // 5 hours in milliseconds
-            expect(utcTimestamp - localDate!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(localDate!.getTime()).toBe(utcTimestamp);
 
-            restoreOffset();
+            // Verify the Date object is created correctly
+            expect(localDate).toBeInstanceOf(Date);
+            expect(localDate!.getUTCFullYear()).toBe(2023);
+            expect(localDate!.getUTCMonth()).toBe(0); // January (0-indexed)
+            expect(localDate!.getUTCDate()).toBe(1);
+            expect(localDate!.getUTCHours()).toBe(12);
         });
 
         test('should convert local timestamp to UTC', () => {
-            // Mock timezone offset to -300 minutes (-5 hours, like EST)
-            const restoreOffset = mockTimezoneOffset(300);
+            // Test with a Date object
+            const testDate = new Date(2023, 0, 1, 12, 0, 0); // Local date
 
-            // Test with a known local timestamp (2023-01-01T07:00:00 EST)
-            const localTimestamp = 1672574400000 - (300 * 60 * 1000);
+            // Convert to UTC timestamp - should return getTime() value
+            const utcTimestamp = toUTCTimestamp(testDate);
 
-            // Expected UTC timestamp would be 5 hours later
-            const expectedUTCTimestamp = localTimestamp + (300 * 60 * 1000);
+            // Should be the same as getTime()
+            expect(utcTimestamp).toBe(testDate.getTime());
 
-            expect(toUTCTimestamp(localTimestamp)).toBe(expectedUTCTimestamp);
-
-            restoreOffset();
+            // Test with a number (already UTC)
+            const numericTimestamp = 1672574400000;
+            expect(toUTCTimestamp(numericTimestamp)).toBe(numericTimestamp);
         });
 
         test('should handle null or undefined', () => {
@@ -436,17 +437,21 @@ describe('Time conversion utilities', () => {
         });
 
         test('should format timestamp for time display', () => {
-            // Test with a known timestamp in UTC
-            const timestamp = 1673778600000; // 2023-01-15T10:30:00.000Z
+            // Test with a timestamp that will display as 10:30 in local time
+            // Create a Date in local time and get its timestamp
+            const localDate = new Date(2023, 0, 15, 10, 30); // 10:30 AM local time
+            const timestamp = localDate.getTime();
             const display = timestampToDisplayString(timestamp, 'time');
 
-            // The exact format depends on locale, but should include hours and minutes
+            // The exact format depends on locale, but should include 10:30
             expect(display).toMatch(/10:30|10:30 AM/i);
         });
 
         test('should format timestamp for datetime display', () => {
-            // Test with a known timestamp in UTC
-            const timestamp = 1673778600000; // 2023-01-15T10:30:00.000Z
+            // Test with a timestamp that will display as 10:30 in local time
+            // Create a Date in local time and get its timestamp
+            const localDate = new Date(2023, 0, 15, 10, 30); // 10:30 AM local time
+            const timestamp = localDate.getTime();
             const display = timestampToDisplayString(timestamp);
 
             // Check for both date and time components

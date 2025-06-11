@@ -132,26 +132,73 @@ export const inputStringToTimestamp = (
     let d = new Date(today); // start from today to preserve Y-M-D when parsing 'time'
     switch (format) {
       case 'date': {
-        const [y, m, dd] = str.split('-').map(Number);
+        const parts = str.split('-');
+        if (parts.length !== 3) return new Date(0);
+        const [y, m, dd] = parts.map(Number);
+        // Validate the input values
+        if (isNaN(y) || isNaN(m) || isNaN(dd) ||
+          y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31) {
+          return new Date(0);
+        }
         d = new Date(y, m - 1, dd, 0, 0, 0, 0);
+        // Check if the date components actually match what we set
+        if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
+          return new Date(0);
+        }
         break;
       }
       case 'end-date': {
-        const [y, m, dd] = str.split('-').map(Number);
+        const parts = str.split('-');
+        if (parts.length !== 3) return new Date(0);
+        const [y, m, dd] = parts.map(Number);
+        // Validate the input values
+        if (isNaN(y) || isNaN(m) || isNaN(dd) ||
+          y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31) {
+          return new Date(0);
+        }
         d = new Date(y, m - 1, dd, 23, 59, 59, 999);
+        // Check if the date components actually match what we set
+        if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
+          return new Date(0);
+        }
         break;
       }
       case 'time': {
-        const [hh, mm] = str.split(':').map(Number);
+        const parts = str.split(':');
+        if (parts.length !== 2) return new Date(0);
+        const [hh, mm] = parts.map(Number);
+        // Validate the input values
+        if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+          return new Date(0);
+        }
         d.setHours(hh, mm, 0, 0);
         break;
       }
       case 'datetime':
       default: {
-        const [datePart, timePart] = str.split('T');
-        const [y, m, dd] = datePart.split('-').map(Number);
-        const [hh, mm] = timePart.split(':').map(Number);
+        const mainParts = str.split('T');
+        if (mainParts.length !== 2) return new Date(0);
+        const [datePart, timePart] = mainParts;
+
+        const dateParts = datePart.split('-');
+        const timeParts = timePart.split(':');
+        if (dateParts.length !== 3 || timeParts.length !== 2) return new Date(0);
+
+        const [y, m, dd] = dateParts.map(Number);
+        const [hh, mm] = timeParts.map(Number);
+
+        // Validate all values
+        if (isNaN(y) || isNaN(m) || isNaN(dd) || isNaN(hh) || isNaN(mm) ||
+          y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31 ||
+          hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+          return new Date(0);
+        }
+
         d = new Date(y, m - 1, dd, hh, mm, 0, 0);
+        // Check if the date components actually match what we set
+        if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
+          return new Date(0);
+        }
       }
     }
     // Ensure the parsed date is valid before returning

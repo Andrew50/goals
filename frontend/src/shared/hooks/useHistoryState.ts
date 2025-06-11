@@ -25,7 +25,7 @@ class HistoryManager<T> {
 
         // Add new state
         this.history.push({
-            data: structuredClone(data), // Deep clone the data
+            data: deepClone(data),
             timestamp: Date.now(),
             undoFunction,
             redoFunction
@@ -75,6 +75,18 @@ class HistoryManager<T> {
         this.history = [];
         this.currentIndex = -1;
     }
+}
+
+// Utility to deeply clone data while remaining compatible with environments that don't support the
+// structuredClone API (e.g., older Node versions or the Jest JSDOM environment used in tests).
+// It prefers native structuredClone when available and falls back to JSON serialization otherwise.
+function deepClone<V>(data: V): V {
+    if (typeof (globalThis as any).structuredClone === 'function') {
+        // @ts-ignore – the type definition might not exist in the current TS lib
+        return (globalThis as any).structuredClone(data);
+    }
+    // NOTE: This fallback will drop functions, undefined, circular refs, etc.
+    return JSON.parse(JSON.stringify(data));
 }
 
 export function useHistoryState<T>(

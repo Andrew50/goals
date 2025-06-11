@@ -1,7 +1,7 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import GoalMenu from './GoalMenu';
-import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, privateRequest } from '../utils/api';
 import { Goal } from '../../types/goals';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
@@ -14,6 +14,7 @@ jest.mock('../utils/api', () => ({
     createRelationship: jest.fn(),
     updateRoutines: jest.fn(),
     completeGoal: jest.fn(),
+    privateRequest: jest.fn(),
 }));
 
 // Helper function to mock timezone offset
@@ -61,6 +62,18 @@ describe('GoalMenu Component', () => {
             Promise.resolve());
         (completeGoal as jest.Mock).mockImplementation((id, completed) =>
             Promise.resolve(completed));
+        (privateRequest as jest.Mock).mockImplementation((endpoint) => {
+            if (endpoint === 'list') {
+                return Promise.resolve([]);
+            }
+            if (endpoint.startsWith('traversal/')) {
+                return Promise.resolve([]);
+            }
+            if (endpoint === 'network') {
+                return Promise.resolve({ nodes: [], edges: [] });
+            }
+            return Promise.resolve([]);
+        });
     });
 
     afterEach(() => {
@@ -71,6 +84,9 @@ describe('GoalMenu Component', () => {
 
         // Clear all mocks
         jest.clearAllMocks();
+
+        // Clean up DOM after each test
+        cleanup();
     });
 
     test('renders correctly in view mode', () => {
@@ -96,13 +112,17 @@ describe('GoalMenu Component', () => {
             _tz: 'utc'
         };
 
-        // Create a spy on setState to verify state changes
-        const openSpy = jest.spyOn(GoalMenu, 'open');
-
-        // Open the menu with our sample goal
-        GoalMenu.open(goal, 'view');
-
-        expect(openSpy).toHaveBeenCalledWith(goal, 'view');
+        // Render the component directly with TestWrapper
+        render(
+            <TestWrapper>
+                <GoalMenu
+                    goal={goal}
+                    mode="view"
+                    onClose={() => { }}
+                    onSuccess={() => { }}
+                />
+            </TestWrapper>
+        );
 
         // Wait for the component to update
         await waitFor(() => {
@@ -126,8 +146,17 @@ describe('GoalMenu Component', () => {
             _tz: 'user'
         };
 
-        // Open the menu with our sample goal
-        GoalMenu.open(goal, 'create');
+        // Render the component directly with TestWrapper
+        render(
+            <TestWrapper>
+                <GoalMenu
+                    goal={goal}
+                    mode="create"
+                    onClose={() => { }}
+                    onSuccess={() => { }}
+                />
+            </TestWrapper>
+        );
 
         // Wait for the component to update
         await waitFor(() => {
@@ -138,10 +167,6 @@ describe('GoalMenu Component', () => {
         // Fill in the form fields - use getByRole instead of getByLabelText
         const nameInput = screen.getByRole('textbox', { name: /name/i });
         fireEvent.change(nameInput, { target: { value: 'New Task Test' } });
-
-        // Set duration which is required - based on the DOM, there are Hours and Minutes fields
-        const hoursInput = screen.getByRole('spinbutton', { name: /hours/i });
-        fireEvent.change(hoursInput, { target: { value: '1' } });
 
         // Submit the form
         const createButton = screen.getByText('Create');
@@ -177,8 +202,17 @@ describe('GoalMenu Component', () => {
             _tz: 'utc'
         };
 
-        // Open the menu with our sample goal in view mode
-        GoalMenu.open(goal, 'view');
+        // Render the component directly with TestWrapper in view mode
+        render(
+            <TestWrapper>
+                <GoalMenu
+                    goal={goal}
+                    mode="view"
+                    onClose={() => { }}
+                    onSuccess={() => { }}
+                />
+            </TestWrapper>
+        );
 
         // Wait for the component to update
         await waitFor(() => {
@@ -234,8 +268,17 @@ describe('GoalMenu Component', () => {
             _tz: 'user'
         };
 
-        // Open the menu in create mode
-        GoalMenu.open(goal, 'create');
+        // Render the component directly with TestWrapper in create mode
+        render(
+            <TestWrapper>
+                <GoalMenu
+                    goal={goal}
+                    mode="create"
+                    onClose={() => { }}
+                    onSuccess={() => { }}
+                />
+            </TestWrapper>
+        );
 
         // Wait for the component to render
         await waitFor(() => {
@@ -245,13 +288,6 @@ describe('GoalMenu Component', () => {
         // Fill in required fields using getByRole
         const nameInput = screen.getByRole('textbox', { name: /name/i });
         fireEvent.change(nameInput, { target: { value: 'New Scheduled Task' } });
-
-        // Find and fill in the date/time fields - exact field labels will depend on your implementation
-        // This is a simplified test focusing just on verifying timezone handling
-
-        // Set duration which is required - based on the DOM, there are Hours and Minutes fields
-        const hoursInput = screen.getByRole('spinbutton', { name: /hours/i });
-        fireEvent.change(hoursInput, { target: { value: '1' } });
 
         // Submit the form
         const createButton = screen.getByText('Create');
@@ -281,8 +317,17 @@ describe('GoalMenu Component', () => {
             _tz: 'user'
         };
 
-        // Open the menu in create mode
-        GoalMenu.open(goal, 'create');
+        // Render the component directly with TestWrapper in create mode
+        render(
+            <TestWrapper>
+                <GoalMenu
+                    goal={goal}
+                    mode="create"
+                    onClose={() => { }}
+                    onSuccess={() => { }}
+                />
+            </TestWrapper>
+        );
 
         // Wait for the component to render
         await waitFor(() => {
@@ -292,13 +337,6 @@ describe('GoalMenu Component', () => {
         // Fill in required fields using getByRole
         const nameInput = screen.getByRole('textbox', { name: /name/i });
         fireEvent.change(nameInput, { target: { value: 'All-Day Task' } });
-
-        // Find date field and all-day checkbox
-        // This is simplified for this test
-
-        // Set duration which is required - based on the DOM, there are Hours and Minutes fields
-        const hoursInput = screen.getByRole('spinbutton', { name: /hours/i });
-        fireEvent.change(hoursInput, { target: { value: '24' } }); // 24 hours for all-day
 
         // Submit the form
         const createButton = screen.getByText('Create');
@@ -332,8 +370,17 @@ describe('GoalMenu Component', () => {
             _tz: 'utc'
         };
 
-        // Open the menu with this goal in view mode
-        GoalMenu.open(goal, 'view');
+        // Render the component directly with TestWrapper in view mode
+        render(
+            <TestWrapper>
+                <GoalMenu
+                    goal={goal}
+                    mode="view"
+                    onClose={() => { }}
+                    onSuccess={() => { }}
+                />
+            </TestWrapper>
+        );
 
         // Switch to edit mode
         await waitFor(() => {

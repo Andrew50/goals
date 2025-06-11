@@ -193,6 +193,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [initialMode, title]);
 
+    // Update title when mode changes
+    useEffect(() => {
+        const newTitle = {
+            'create': 'Create New Goal',
+            'edit': 'Edit Goal',
+            'view': 'View Goal'
+        }[state.mode];
+        if (newTitle !== title) {
+            setTitle(newTitle);
+        }
+    }, [state.mode, title]);
+
     // Fetch all goals when dialog opens
     useEffect(() => {
         if (isOpen) {
