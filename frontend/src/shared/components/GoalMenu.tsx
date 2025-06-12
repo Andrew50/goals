@@ -258,6 +258,24 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [isOpen]);
 
+    // NEW EFFECT: Automatically populate parentGoals and selectedParents for events once allGoals are available
+    useEffect(() => {
+        if (
+            state.goal.goal_type === 'event' &&
+            state.goal.parent_id &&
+            allGoals.length > 0
+        ) {
+            const parent = allGoals.find(g => g.id === state.goal.parent_id);
+            if (parent) {
+                // Only update if we have not already set the parent
+                setParentGoals(prev => (prev.length === 0 ? [parent] : prev));
+                if (state.mode === 'edit') {
+                    setSelectedParents(prev => (prev.length === 0 ? [parent] : prev));
+                }
+            }
+        }
+    }, [state.goal.goal_type, state.goal.parent_id, allGoals, state.mode]);
+
     // Create fuzzy search instance
     const fuse = useMemo(() => {
         return new Fuse(allGoals, {
@@ -1568,8 +1586,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {state.error}
                     </Box>
                 )}
-                {/* Parent Goals Display */}
-                {parentGoals.length > 0 && (
+                {/* Parent display (view mode only) */}
+                {state.mode === 'view' && parentGoals.length > 0 && (
                     <Box sx={{ mb: 3 }}>
                         <Typography
                             variant="subtitle2"
@@ -1579,7 +1597,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 fontSize: '0.875rem'
                             }}
                         >
-                            Why should I do this?
+                            Parent
                         </Typography>
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                             {parentGoals.map((parent) => (
@@ -1609,55 +1627,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     {parent.name}
                                 </Box>
                             ))}
-                        </Box>
-                    </Box>
-                )}
-                {/* Event Parent Display */}
-                {state.goal.goal_type === 'event' && state.goal.parent_type && state.goal.parent_id && (
-                    <Box sx={{ mb: 3 }}>
-                        <Typography
-                            variant="subtitle2"
-                            sx={{
-                                mb: 1,
-                                color: 'text.secondary',
-                                fontSize: '0.875rem'
-                            }}
-                        >
-                            Event for {state.goal.parent_type}:
-                        </Typography>
-                        <Box
-                            sx={{
-                                display: 'inline-block',
-                                backgroundColor: (() => {
-                                    const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
-                                    return parentGoal ? getGoalColor(parentGoal) : 'action.selected';
-                                })(),
-                                color: (() => {
-                                    const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
-                                    return parentGoal ? 'white' : 'text.primary';
-                                })(),
-                                padding: '6px 12px',
-                                borderRadius: '16px',
-                                fontSize: '0.875rem',
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                                transition: 'all 0.2s',
-                                '&:hover': {
-                                    transform: 'translateY(-2px)',
-                                    boxShadow: 2,
-                                }
-                            }}
-                            onClick={() => {
-                                const parentGoal = allGoals.find(g => g.id === state.goal.parent_id);
-                                if (parentGoal) {
-                                    close();
-                                    setTimeout(() => {
-                                        open(parentGoal, 'view');
-                                    }, 100);
-                                }
-                            }}
-                        >
-                            {state.goal.name?.replace(/^(Task|Routine): /, '')}
                         </Box>
                     </Box>
                 )}

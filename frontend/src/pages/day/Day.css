@@ -23,8 +23,9 @@
 
 .day-title-section {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
+    justify-content: center;
     gap: 0.5rem;
     flex: 1;
 }
@@ -50,7 +51,8 @@
 }
 
 .today-button {
-    margin-top: 0.25rem !important;
+    margin-top: 0 !important;
+    margin-left: 0.5rem !important;
     font-size: 0.875rem !important;
     padding: 0.25rem 0.75rem !important;
     border-color: #4299e1 !important;
@@ -269,6 +271,7 @@
     }
 
     .day-title-section {
+        flex-direction: row;
         gap: 0.25rem;
     }
 
@@ -279,6 +282,7 @@
     .today-button {
         font-size: 0.75rem !important;
         padding: 0.125rem 0.5rem !important;
+        margin-left: 0.5rem !important;
     }
 
     .columns-container {
