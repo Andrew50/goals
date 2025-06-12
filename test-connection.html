@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Backend Connection Test</title>
+</head>
+
+<body>
+    <h1>Backend Connection Test</h1>
+    <button onclick="testFetch()">Test Fetch API</button>
+    <button onclick="testXHR()">Test XMLHttpRequest</button>
+    <div id="results"></div>
+
+    <script>
+        const log = (message) => {
+            const div = document.getElementById('results');
+            div.innerHTML += `<p>${new Date().toISOString()}: ${message}</p>`;
+            console.log(message);
+        };
+
+        async function testFetch() {
+            log('Testing Fetch API...');
+            try {
+                const response = await fetch('http://localhost:5059/auth/google', {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                log(`Fetch success: ${response.status} ${response.statusText}`);
+                const data = await response.json();
+                log(`Response: ${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                log(`Fetch error: ${error.name} - ${error.message}`);
+            }
+        }
+
+        function testXHR() {
+            log('Testing XMLHttpRequest...');
+            const xhr = new XMLHttpRequest();
+
+            xhr.onload = function () {
+                log(`XHR success: ${xhr.status} ${xhr.statusText}`);
+                log(`Response: ${xhr.responseText}`);
+            };
+
+            xhr.onerror = function () {
+                log(`XHR error: ${xhr.status} ${xhr.statusText}`);
+            };
+
+            xhr.ontimeout = function () {
+                log('XHR timeout');
+            };
+
+            xhr.onreadystatechange = function () {
+                log(`XHR state change: readyState=${xhr.readyState}, status=${xhr.status}`);
+            };
+
+            xhr.open('GET', 'http://localhost:5059/auth/google', true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.timeout = 10000;
+            xhr.send();
+        }
+    </script>
+</body>
+
+</html>
