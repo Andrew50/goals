@@ -30,6 +30,6 @@ export NEO4J_TEST_USERNAME="neo4j"
 export NEO4J_TEST_PASSWORD="password123"
 
 echo "🧪 Running routine integration tests..."
-cargo test --test routine_integration_test -- --nocapture
+cargo test --test routine_integration_test -- --ignored --nocapture --test-threads=1
 
 echo "🎉 Integration tests completed!" 

@@ -4,7 +4,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dev
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "5059:5059"
     volumes:
       - ./backend/:/usr/src/app
       - /usr/src/app/target
@@ -12,6 +13,8 @@ services:
       - .env
     environment:
       HOST_URL: ${HOST_URL:-localhost}
+    networks:
+      - dev_network
       #    db:
       #build:
       #context: ./db

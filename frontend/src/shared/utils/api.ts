@@ -1,11 +1,33 @@
 import axios, { AxiosResponse, Method } from 'axios';
 import { Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { goalToUTC, goalToLocal } from './time';
+
 const API_URL = process.env.REACT_APP_API_URL;
 if (!API_URL) {
     throw new Error('REACT_APP_API_URL is not set');
 }
 
+// Configure axios defaults to handle connection issues
+axios.defaults.timeout = 10000; // 10 second timeout
+axios.defaults.headers.common['Accept'] = 'application/json';
+axios.defaults.headers.common['Content-Type'] = 'application/json';
+
+// Add retry logic for connection issues
+const axiosRetry = async (fn: () => Promise<any>, retries = 3): Promise<any> => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await fn();
+        } catch (error: any) {
+            if (i === retries - 1) throw error;
+            if (error.code === 'ERR_NETWORK' || error.code === 'ECONNRESET') {
+                console.log(`Network error, retrying (${i + 1}/${retries})...`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // exponential backoff
+            } else {
+                throw error; // Don't retry non-network errors
+            }
+        }
+    }
+};
 
 // Takes a frontend Goal (Date objects) and returns an ApiGoal (numeric timestamps)
 function prepareGoalForAPI(goal: Goal): ApiGoal {
@@ -63,18 +85,16 @@ export async function publicRequest<T>(
     data?: any,
     params?: any
 ): Promise<T> {
-    try {
+    return axiosRetry(async () => {
         const response: AxiosResponse<T> = await axios({
             url: `${API_URL}/${endpoint}`,
             method,
             data,
             params,
+            timeout: 10000,
         });
         return response.data;
-    } catch (error) {
-        console.error(`API request failed for ${endpoint}:`, error);
-        throw error;
-    }
+    });
 }
 
 export async function updateRoutines(to_timestamp?: number): Promise<void> {

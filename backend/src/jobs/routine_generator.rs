@@ -43,7 +43,13 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
             .map(|t| t + 86400000) // Start from day after last event
             .unwrap_or_else(|| routine.start_timestamp.unwrap_or(now));
 
-        generate_events_for_routine(graph, &routine, routine_id, start_from, horizon).await?;
+        // Respect the routine's explicit end date if it exists and is sooner than the 90-day horizon
+        let effective_until = match routine.end_timestamp {
+            Some(end_ts) if end_ts < horizon => end_ts,
+            _ => horizon,
+        };
+
+        generate_events_for_routine(graph, &routine, routine_id, start_from, effective_until).await?;
         routine_count += 1;
     }
 
@@ -76,6 +82,13 @@ async fn generate_events_for_routine(
         } else {
             current_time
         };
+
+        // If the calculated timestamp would exceed the routine's end date (when set), stop generation
+        if let Some(end_ts) = routine.end_timestamp {
+            if scheduled_timestamp > end_ts {
+                break;
+            }
+        }
 
         // Check if an event already exists at this timestamp for this routine
         let check_query = query(
