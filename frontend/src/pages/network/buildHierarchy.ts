@@ -139,7 +139,9 @@ export async function buildHierarchy(networkData: {
 
     const levels = computeBFSLevels(networkData.nodes, networkData.edges, rootId);
     const degrees = computeNodeDegrees(networkData.nodes, networkData.edges);
-    const maxDegree = Object.keys(degrees).length > 0 ? Math.max(...Object.values(degrees)) : 1;
+    const degreeValues = Object.values(degrees);
+    // Ensure maxDegree is at least 1 to avoid division-by-zero in later calculations
+    const maxDegree = degreeValues.length > 0 ? Math.max(1, ...degreeValues) : 1;
 
     // 2. Initialize positions and velocities.
     let positions = initializePositions(networkData.nodes, levels, degrees, maxDegree);
@@ -332,6 +334,11 @@ export function calculateNewNodePosition(
 // =====================================================
 export async function saveNodePosition(nodeId: number, x: number, y: number) {
     try {
+        // Validate coordinates before sending to backend
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            console.warn(`Skipping saveNodePosition for node ${nodeId}: Invalid coordinates`, { x, y });
+            return false;
+        }
         await privateRequest(`network/${nodeId}/position`, 'PUT', { x, y });
         return true;
     } catch (error) {

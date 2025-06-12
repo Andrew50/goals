@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, updateRoutines, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -25,6 +25,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction';
+import { useSearchParams } from 'react-router-dom';
 
 interface CalendarState {
   events: CalendarEvent[];
@@ -41,6 +42,7 @@ interface RoutineRescheduleDialogState {
   eventId: number | null;
   eventName: string;
   newTimestamp: Date | null;
+  originalTimestamp: Date | null;
   eventInfo: any; // FullCalendar event info for reverting
 }
 
@@ -139,6 +141,15 @@ const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
 const Calendar: React.FC = () => {
   const { openGoalMenu } = useGoalMenu();
   // -----------------------------
+  // URL Query Params
+  // -----------------------------
+  const [searchParams, setSearchParams] = useSearchParams();
+  const availableViews = ['dayGridMonth', 'timeGridWeek', 'timeGridDay'] as const;
+  const viewParam = searchParams.get('view') || '';
+  const initialCalendarView = (availableViews as readonly string[]).includes(viewParam)
+    ? (viewParam as string)
+    : 'dayGridMonth';
+  // -----------------------------
   // State and Refs
   // -----------------------------
   const [state, setState] = useHistoryState<CalendarState>(
@@ -163,6 +174,7 @@ const Calendar: React.FC = () => {
     eventId: null,
     eventName: '',
     newTimestamp: null,
+    originalTimestamp: null,
     eventInfo: null
   });
   const [selectedUpdateScope, setSelectedUpdateScope] = useState<'single' | 'all' | 'future'>('single');
@@ -343,6 +355,14 @@ const Calendar: React.FC = () => {
   // Handlers
   // -----------------------------
   const handleDatesSet = (dateInfo: any) => {
+    // Update the "view" query param so refreshes keep the current view
+    const currentViewType = dateInfo.view?.type;
+    if (currentViewType && searchParams.get('view') !== currentViewType) {
+      const params = new URLSearchParams(searchParams);
+      params.set('view', currentViewType);
+      setSearchParams(params, { replace: true });
+    }
+
     // Skip if the calendar is already loading data
     if (state.isLoading) return;
 
@@ -399,6 +419,7 @@ const Calendar: React.FC = () => {
       description: '',
       priority: 'medium',
       scheduled_timestamp: clickedDate,
+      routine_time: clickedDate,
       duration: 60
     };
 
@@ -494,6 +515,7 @@ const Calendar: React.FC = () => {
             eventId: existingEvent.goal.id!,
             eventName: existingEvent.goal.name,
             newTimestamp: info.event.start,
+            originalTimestamp: (existingEvent.goal.scheduled_timestamp as Date | undefined) ?? existingEvent.start,
             eventInfo: info
           });
           return; // Don't proceed with immediate update
@@ -549,11 +571,64 @@ const Calendar: React.FC = () => {
         return;
       }
 
+      // -----------------------------
+      // Fetch parent routine (if applicable)
+      // -----------------------------
+      const movedEvent = state.events.find((e) => e.id === String(routineRescheduleDialog.eventId!));
+      const parentRoutine = movedEvent?.parent;
+
+      // If we are changing more than a single occurrence and the routine has no
+      // default time set, set it to the ORIGINAL time first so that the backend
+      // update query matches all default-time events.
+      if (
+        selectedUpdateScope !== 'single' &&
+        parentRoutine &&
+        parentRoutine.goal_type === 'routine' &&
+        !parentRoutine.routine_time &&
+        routineRescheduleDialog.originalTimestamp
+      ) {
+        try {
+          await updateGoal(parentRoutine.id!, {
+            ...parentRoutine,
+            routine_time: routineRescheduleDialog.originalTimestamp
+          } as Goal);
+        } catch (preUpdateErr) {
+          console.warn('Failed to prime routine_time before bulk update', preUpdateErr);
+        }
+      }
+
+      // Perform the bulk/single update of events
       await updateRoutineEvent(
         routineRescheduleDialog.eventId,
         routineRescheduleDialog.newTimestamp,
         selectedUpdateScope
       );
+
+      // After events have been shifted, update the routine defaults so that new
+      // events are generated at the NEW time and (for weekly routines) correct weekday.
+      if (selectedUpdateScope !== 'single' && parentRoutine && parentRoutine.goal_type === 'routine') {
+        const routineUpdates: Partial<Goal> = {
+          routine_time: routineRescheduleDialog.newTimestamp
+        };
+
+        if (parentRoutine.frequency && parentRoutine.frequency.includes('W')) {
+          const parts = parentRoutine.frequency.split(':');
+          const intervalPart = parts[0];
+          const newDay = routineRescheduleDialog.newTimestamp.getDay();
+          routineUpdates.frequency = `${intervalPart}:${newDay}`;
+        }
+
+        try {
+          await updateGoal(parentRoutine.id!, { ...parentRoutine, ...routineUpdates } as Goal);
+        } catch (postUpdateErr) {
+          console.warn('Failed to write routine default updates', postUpdateErr);
+        }
+      }
+
+      // Regenerate routine occurrences so the calendar reflects the updated schedule
+      // This ensures that moving "all" or "future" occurrences immediately shows the
+      // expected changes without requiring a manual refresh.
+      await updateRoutines();
 
       // Close dialog and reload data
       setRoutineRescheduleDialog({
@@ -561,6 +636,7 @@ const Calendar: React.FC = () => {
         eventId: null,
         eventName: '',
         newTimestamp: null,
+        originalTimestamp: null,
         eventInfo: null
       });
       setSelectedUpdateScope('single');
@@ -587,6 +663,7 @@ const Calendar: React.FC = () => {
       eventId: null,
       eventName: '',
       newTimestamp: null,
+      originalTimestamp: null,
       eventInfo: null
     });
     setSelectedUpdateScope('single');
@@ -660,8 +737,8 @@ const Calendar: React.FC = () => {
     const goal = evt.goal;
     const parent = evt.parent;
     // Use the event's own completion status for color (not parent's)
-    const bgColor = evt.backgroundColor || getGoalColor(goal) || '#999';
-    let txtColor = evt.textColor || '#fff';
+    const bgColor = evt.backgroundColor || getGoalColor(goal) || '#4299e1';
+    let txtColor = evt.textColor || '#ffffff';
 
     return {
       id: evt.id,
@@ -672,6 +749,7 @@ const Calendar: React.FC = () => {
       backgroundColor: bgColor,
       borderColor: evt.borderColor || bgColor,
       textColor: txtColor,
+      color: bgColor, // Explicitly set color property for FullCalendar
       extendedProps: {
         ...evt,
         goal,
@@ -781,6 +859,27 @@ const Calendar: React.FC = () => {
     }
   };
 
+  // Helper to format time delta between two timestamps in a human-readable way
+  const formatTimeDelta = (ms: number): string => {
+    const sign = ms >= 0 ? '+' : '-';
+    const absMs = Math.abs(ms);
+    const oneHour = 60 * 60 * 1000;
+    const oneDay = 24 * oneHour;
+
+    if (absMs % oneDay === 0) {
+      const days = Math.round(absMs / oneDay);
+      return `${sign}${days} day${days !== 1 ? 's' : ''}`;
+    }
+
+    const hours = Math.round(absMs / oneHour);
+    if (hours > 0) {
+      return `${sign}${hours} hour${hours !== 1 ? 's' : ''}`;
+    }
+
+    const minutes = Math.round(absMs / (60 * 1000));
+    return `${sign}${minutes} minute${minutes !== 1 ? 's' : ''}`;
+  };
+
   // -----------------------------
   // Render
   // -----------------------------
@@ -824,7 +923,7 @@ const Calendar: React.FC = () => {
           <FullCalendar
             ref={calendarRef}
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-            initialView="dayGridMonth"
+            initialView={initialCalendarView}
             eventDisplay="block" //supposed to add full background color but doesnt ?
             headerToolbar={{
               left: 'prev,next today',
@@ -875,35 +974,48 @@ const Calendar: React.FC = () => {
           Reschedule Routine Event
         </DialogTitle>
         <DialogContent>
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="body1" sx={{ mb: 2 }}>
-              You're rescheduling the routine event "{routineRescheduleDialog.eventName}".
-              What would you like to update?
-            </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            You're rescheduling the routine event "{routineRescheduleDialog.eventName}".
+          </Typography>
 
-            <FormControl component="fieldset">
-              <RadioGroup
-                value={selectedUpdateScope}
-                onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
-              >
-                <FormControlLabel
-                  value="single"
-                  control={<Radio />}
-                  label="Only this occurrence"
-                />
-                <FormControlLabel
-                  value="future"
-                  control={<Radio />}
-                  label="This and all future occurrences"
-                />
-                <FormControlLabel
-                  value="all"
-                  control={<Radio />}
-                  label="All occurrences of this routine"
-                />
-              </RadioGroup>
-            </FormControl>
-          </Box>
+          {routineRescheduleDialog.originalTimestamp && routineRescheduleDialog.newTimestamp && (
+            <Box sx={{ mb: 2, p: 1, bgcolor: 'info.light', borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                Time shift:&nbsp;
+                {formatTimeDelta(
+                  routineRescheduleDialog.newTimestamp.getTime() -
+                  routineRescheduleDialog.originalTimestamp.getTime()
+                )}
+              </Typography>
+            </Box>
+          )}
+
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            What would you like to update?
+          </Typography>
+
+          <FormControl component="fieldset">
+            <RadioGroup
+              value={selectedUpdateScope}
+              onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
+            >
+              <FormControlLabel
+                value="single"
+                control={<Radio />}
+                label="Only this occurrence"
+              />
+              <FormControlLabel
+                value="future"
+                control={<Radio />}
+                label="This and all future occurrences"
+              />
+              <FormControlLabel
+                value="all"
+                control={<Radio />}
+                label="All occurrences of this routine"
+              />
+            </RadioGroup>
+          </FormControl>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineRescheduleCancel}>

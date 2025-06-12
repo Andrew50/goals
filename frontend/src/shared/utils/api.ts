@@ -259,15 +259,42 @@ export const updateRoutineEvent = async (
     newTimestamp: Date,
     updateScope: 'single' | 'all' | 'future'
 ): Promise<Goal[]> => {
-    const response = await privateRequest<ApiGoal[]>(
-        `events/${eventId}/routine-update`,
-        'PUT',
-        {
-            new_timestamp: newTimestamp.getTime(),
-            update_scope: updateScope
-        }
-    );
-    return response.map(processGoalFromAPI);
+    console.log('🔄 [API] updateRoutineEvent called with:', {
+        eventId,
+        newTimestamp: newTimestamp.toISOString(),
+        newTimestampMs: newTimestamp.getTime(),
+        updateScope
+    });
+
+    // Build query parameters in case the backend expects them in the URL. Send them in the body as well for backward-compat.
+    const query = `new_timestamp=${newTimestamp.getTime()}&update_scope=${updateScope}`;
+    const url = `events/${eventId}/routine-update?${query}`;
+
+    console.log('📡 [API] Making request to:', url);
+    console.log('📦 [API] Request body:', {
+        new_timestamp: newTimestamp.getTime(),
+        update_scope: updateScope
+    });
+
+    try {
+        const response = await privateRequest<ApiGoal[]>(
+            url,
+            'PUT',
+            {
+                // Keep the body payload to maintain compatibility with older backend versions
+                new_timestamp: newTimestamp.getTime(),
+                update_scope: updateScope
+            }
+        );
+
+        console.log('✅ [API] updateRoutineEvent response:', response);
+        const goals = response.map(processGoalFromAPI);
+        console.log('🎯 [API] Processed goals:', goals.length, 'events');
+        return goals;
+    } catch (error) {
+        console.error('❌ [API] updateRoutineEvent failed:', error);
+        throw error;
+    }
 };
 
 export const updateEvent = async (eventId: number, updates: {

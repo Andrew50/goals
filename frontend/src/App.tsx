@@ -76,7 +76,7 @@ const App: React.FC = () => {
             <CssBaseline />
             <DndProvider backend={HTML5Backend}>
               <HotkeysProvider>
-                <Router>
+                <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                   <Box sx={{
                     minHeight: '100vh',
                     display: 'flex',

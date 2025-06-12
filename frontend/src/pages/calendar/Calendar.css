@@ -247,6 +247,25 @@
     white-space: normal !important;
 }
 
+/* Ensure event colors are properly applied in month view */
+.fc-daygrid-event .fc-event-main {
+    background-color: inherit !important;
+    border-color: inherit !important;
+}
+
+.fc-daygrid-event .fc-event-title {
+    color: inherit !important;
+}
+
+/* Force event background to be visible */
+.fc-event-main {
+    background-color: inherit !important;
+}
+
+.fc-event-title-container {
+    background-color: inherit !important;
+}
+
 .fc-daygrid-more-link {
     margin: 0.25rem !important;
     padding: 0.25rem 0.5rem !important;

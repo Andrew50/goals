@@ -293,7 +293,17 @@ async fn handle_update_routine_event(
     Path(id): Path<i64>,
     Json(request): Json<event::UpdateRoutineEventRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    event::update_routine_event_handler(graph, user_id, id, request).await
+    println!("🚀 [HTTP_HANDLER] handle_update_routine_event called - event_id: {}, user_id: {}, scope: {}", id, user_id, request.update_scope);
+    println!("📥 [HTTP_HANDLER] Request body: new_timestamp: {}, update_scope: {}", request.new_timestamp, request.update_scope);
+    
+    let result = event::update_routine_event_handler(graph, user_id, id, request).await;
+    
+    match &result {
+        Ok(events) => println!("✅ [HTTP_HANDLER] Successfully updated routine events, returning {} events", events.len()),
+        Err((status, error)) => println!("❌ [HTTP_HANDLER] Failed to update routine events: {} - {}", status, error),
+    }
+    
+    result
 }
 
 async fn handle_complete_event(

@@ -475,6 +475,50 @@ pub async fn delete_goal_handler(
     graph: Graph,
     id: i64,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    // First check if this is a routine goal, and if so, delete all its events
+    let check_routine_query = query(
+        "MATCH (g:Goal) WHERE id(g) = $id 
+         RETURN g.goal_type as goal_type",
+    )
+    .param("id", id);
+
+    let mut check_result = graph.execute(check_routine_query).await.map_err(|e| {
+        eprintln!("Error checking goal type: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Error checking goal type: {}", e),
+        )
+    })?;
+
+    if let Some(row) = check_result.next().await.map_err(|e| {
+        eprintln!("Error fetching goal type: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Error fetching goal type: {}", e),
+        )
+    })? {
+        let goal_type: String = row.get("goal_type").unwrap_or_default();
+        
+        if goal_type == "routine" {
+            // Delete all events belonging to this routine first
+            let delete_events_query = query(
+                "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+                 WHERE id(r) = $id
+                 DETACH DELETE e",
+            )
+            .param("id", id);
+
+            graph.run(delete_events_query).await.map_err(|e| {
+                eprintln!("Error deleting routine events: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error deleting routine events: {}", e),
+                )
+            })?;
+        }
+    }
+
+    // Now delete the goal itself
     let query = query(
         "MATCH (g:Goal) WHERE id(g) = $id 
          DETACH DELETE g",

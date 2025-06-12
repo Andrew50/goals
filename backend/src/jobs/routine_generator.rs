@@ -1,5 +1,5 @@
 use crate::tools::goal::Goal;
-use chrono::{Datelike, Duration, TimeZone, Utc};
+use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
 use neo4rs::{query, Graph};
 
 pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String> {
@@ -176,6 +176,11 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
         .earliest()
         .ok_or("Invalid timestamp")?;
 
+    // Preserve the original time-of-day (hours, minutes, seconds) so that, in the absence of
+    // `routine_time`, subsequent events keep the same scheduled time instead of defaulting to
+    // midnight. This was the root cause for the first event having a different time-of-day.
+    let original_time_of_day = current_dt.time();
+
     // frequency pattern: {multiplier}{unit}[:days]
     let parts: Vec<&str> = frequency.split(':').collect();
     let freq_part = parts[0];
@@ -186,7 +191,7 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
             .map_err(|_| format!("Invalid frequency multiplier: {}", &freq_part[..unit_pos]))?;
         let unit = &freq_part[unit_pos..];
 
-        // Calculate next date
+        // Calculate next date (date component only for calendar calculations)
         let next_date = match unit {
             "D" => current_dt.date_naive() + Duration::days(multiplier),
             "W" => {
@@ -222,20 +227,15 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
             _ => current_dt.date_naive() + Duration::days(multiplier),
         };
 
-        // Return timestamp with time set to beginning of day (routine_time would be applied elsewhere)
+        // Combine the calculated date with the preserved time-of-day
         Ok(next_date
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
+            .and_time(original_time_of_day)
             .and_utc()
             .timestamp_millis())
     } else {
-        // Default to daily if format is invalid
-        let next_date = current_dt.date_naive() + Duration::days(1);
-        Ok(next_date
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp_millis())
+        // Default to daily if format is invalid, preserving time-of-day
+        let next_dt = current_dt + Duration::days(1);
+        Ok(next_dt.timestamp_millis())
     }
 }
 

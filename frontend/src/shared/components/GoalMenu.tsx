@@ -20,11 +20,13 @@ import {
     ListItem,
     ListItemText,
     ListItemSecondaryAction,
-
+    FormControl,
+    RadioGroup,
+    Radio,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, TaskDateValidationError } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, TaskDateValidationError } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -47,6 +49,15 @@ interface GoalMenuProps {
     mode: Mode;
     onClose: () => void;
     onSuccess: (goal: Goal) => void;
+}
+
+// Add routine update dialog state
+interface RoutineUpdateDialogState {
+    isOpen: boolean;
+    updateType: 'scheduled_time' | 'duration' | 'other';
+    originalGoal: Goal | null;
+    updatedGoal: Goal | null;
+    onConfirm: (scope: 'single' | 'all' | 'future') => Promise<void>;
 }
 
 const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess }) => {
@@ -103,6 +114,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         eventName?: string;
         currentScheduledTime?: Date;
     } | null>(null);
+
+    // Add routine update dialog state
+    const [routineUpdateDialog, setRoutineUpdateDialog] = useState<RoutineUpdateDialogState>({
+        isOpen: false,
+        updateType: 'other',
+        originalGoal: null,
+        updatedGoal: null,
+        onConfirm: async () => { }
+    });
+
+    // Add routine delete dialog state
+    const [routineDeleteDialog, setRoutineDeleteDialog] = useState<{
+        isOpen: boolean;
+        eventId: number | null;
+        eventName: string;
+        selectedScope: 'single' | 'all' | 'future';
+    }>({
+        isOpen: false,
+        eventId: null,
+        eventName: '',
+        selectedScope: 'single'
+    });
 
     // Fetch task events
     const fetchTaskEvents = useCallback(async (taskId: number) => {
@@ -165,6 +198,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //queue relationships can only between achievements, default to achievement and force achievemnt in ui
         if (selectedParents.length > 0 && relationshipType === 'queue') {
             goalCopy.goal_type = 'achievement';
+        }
+
+        // Set default routine_type if goal type is 'routine' and routine_type is undefined
+        if (goalCopy.goal_type === 'routine' && goalCopy.routine_type === undefined) {
+            goalCopy.routine_type = 'task';
+        }
+
+        // Auto-fill routine_time with the clicked calendar time (stored in scheduled_timestamp)
+        if (goalCopy.goal_type === 'routine' && goalCopy.routine_time === undefined) {
+            goalCopy.routine_time = goalCopy.scheduled_timestamp || new Date();
         }
 
         setState({
@@ -335,6 +378,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             newGoal.routine_type = 'task';
         }
 
+        // Auto-fill routine_time with the clicked calendar time (stored in scheduled_timestamp)
+        if (newGoal.goal_type === 'routine' && newGoal.routine_time === undefined) {
+            newGoal.routine_time = newGoal.scheduled_timestamp || new Date();
+        }
+
         // For all changes, update the local state (no immediate prompting for routine events)
         setState({
             ...state,
@@ -345,6 +393,33 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const handleSubmit = async (another: boolean = false) => {
         if (another && state.mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
+        }
+
+        // Check if this is a routine event being modified
+        if (state.mode === 'edit' && state.goal.goal_type === 'event' && state.goal.parent_type === 'routine') {
+            // Determine what type of change this is
+            const originalGoal = initialGoal;
+            const updatedGoal = state.goal;
+
+            let updateType: 'scheduled_time' | 'duration' | 'other' = 'other';
+
+            if (originalGoal.scheduled_timestamp !== updatedGoal.scheduled_timestamp) {
+                updateType = 'scheduled_time';
+            } else if (originalGoal.duration !== updatedGoal.duration) {
+                updateType = 'duration';
+            }
+
+            // Show routine update dialog
+            setRoutineUpdateDialog({
+                isOpen: true,
+                updateType,
+                originalGoal,
+                updatedGoal,
+                onConfirm: async (scope: 'single' | 'all' | 'future') => {
+                    await handleRoutineEventUpdate(originalGoal, updatedGoal, updateType, scope);
+                }
+            });
+            return;
         }
 
         // Validation checks
@@ -526,6 +601,74 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     };
 
+    const handleRoutineEventUpdate = async (
+        originalGoal: Goal,
+        updatedGoal: Goal,
+        updateType: 'scheduled_time' | 'duration' | 'other',
+        scope: 'single' | 'all' | 'future'
+    ) => {
+        try {
+            if (updateType === 'scheduled_time' && (scope === 'all' || scope === 'future')) {
+                // Use the routine event update API for scheduled time changes
+                const updatedEvents = await updateRoutineEvent(
+                    updatedGoal.id!,
+                    updatedGoal.scheduled_timestamp!,
+                    scope
+                );
+
+                // Update the routine's default time as well
+                if (updatedGoal.parent_id) {
+                    const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
+                    if (parentRoutine) {
+                        await updateGoal(parentRoutine.id!, {
+                            ...parentRoutine,
+                            routine_time: updatedGoal.scheduled_timestamp
+                        });
+                    }
+                }
+
+                setState({ ...state, goal: updatedEvents[0] || updatedGoal });
+            } else if (updateType === 'duration' && (scope === 'all' || scope === 'future')) {
+                // For duration changes, update multiple events manually
+                await updateMultipleRoutineEvents(updatedGoal, 'duration', scope);
+            } else {
+                // For single updates or other changes, use regular update
+                const result = await updateGoal(updatedGoal.id!, updatedGoal);
+                setState({ ...state, goal: result });
+            }
+
+            // Close the routine dialog
+            setRoutineUpdateDialog({
+                isOpen: false,
+                updateType: 'other',
+                originalGoal: null,
+                updatedGoal: null,
+                onConfirm: async () => { }
+            });
+
+            if (onSuccess) {
+                onSuccess(updatedGoal);
+            }
+            close();
+        } catch (error) {
+            console.error('Failed to update routine event:', error);
+            setState({
+                ...state,
+                error: error instanceof Error ? error.message : 'Failed to update routine event'
+            });
+        }
+    };
+
+    const updateMultipleRoutineEvents = async (
+        updatedGoal: Goal,
+        changeType: 'duration' | 'other',
+        scope: 'single' | 'all' | 'future'
+    ) => {
+        // This is a simplified approach - in a real implementation you'd want a dedicated API
+        // For now, we'll just update the single event
+        await updateGoal(updatedGoal.id!, updatedGoal);
+    };
+
     const handleDelete = async () => {
         if (!state.goal.id) {
             setState({
@@ -534,19 +677,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             });
             return;
         }
+        console.log('[GoalMenu] handleDelete called', {
+            goalId: state.goal.id,
+            goalType: state.goal.goal_type,
+            parentType: state.goal.parent_type
+        });
+
         try {
-            // Special handling for events
             if (state.goal.goal_type === 'event') {
                 if (state.goal.parent_type === 'routine') {
-                    // For routine events, ask about deleting future occurrences
-                    const deleteFuture = window.confirm('Delete only this occurrence or this and all future occurrences?\n\nOK = This and all future\nCancel = Only this occurrence');
-                    await deleteEvent(state.goal.id, deleteFuture);
+                    console.log('[GoalMenu] Deleting routine event – opening scope dialog');
+                    // Open routine delete dialog instead of immediate confirm
+                    setRoutineDeleteDialog({
+                        isOpen: true,
+                        eventId: state.goal.id!,
+                        eventName: state.goal.name,
+                        selectedScope: 'single'
+                    });
+                    return; // Wait for dialog confirmation
                 } else {
-                    // For regular events, just delete the single event
+                    console.log('[GoalMenu] Deleting single non-routine event', { eventId: state.goal.id });
+                    // Regular (non-routine) event – delete single occurrence
                     await deleteEvent(state.goal.id, false);
                 }
             } else {
-                // For non-events, use regular delete
+                console.log('[GoalMenu] Deleting non-event goal', { goalId: state.goal.id });
+                // Non-event goals
                 await deleteGoal(state.goal.id);
             }
 
@@ -1471,10 +1627,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 });
 
                 if (onSuccess) {
-                    onSuccess({
-                        ...state.goal,
-                        completed: completion
-                    });
+                    onSuccess(state.goal);
                 }
             }
         } catch (error) {
@@ -1566,6 +1719,76 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         setTotalDuration(prev => prev - removedDuration);
     }, [taskEvents, setState, state]);
 
+    // Add handlers for routine delete dialog
+    const handleRoutineDeleteConfirm = async () => {
+        console.log('[GoalMenu] handleRoutineDeleteConfirm', routineDeleteDialog);
+        if (!routineDeleteDialog.eventId) return;
+
+        try {
+            if (routineDeleteDialog.selectedScope === 'all') {
+                console.log('[GoalMenu] Delete scope = ALL');
+
+                // Delete the parent routine - backend will cascade delete all events
+                const parentRoutineId = state.goal.parent_id;
+                if (!parentRoutineId) {
+                    console.warn('[GoalMenu] No parentRoutineId found, cannot delete all events');
+                    throw new Error('Cannot find parent routine to delete all events');
+                }
+
+                console.log('[GoalMenu] Deleting parent routine goal (will cascade to all events)', { parentRoutineId });
+                await deleteGoal(parentRoutineId);
+
+                // Force refresh of routines to clean up any cached state
+                console.log('[GoalMenu] Calling updateRoutines() after routine deletion');
+                await updateRoutines();
+            } else {
+                const deleteFuture = routineDeleteDialog.selectedScope === 'future';
+                console.log('[GoalMenu] Delete scope =', routineDeleteDialog.selectedScope, { deleteFuture });
+                await deleteEvent(routineDeleteDialog.eventId, deleteFuture);
+
+                // Refresh routines so calendar updates when deleting future occurrences
+                if (deleteFuture) {
+                    console.log('[GoalMenu] Calling updateRoutines() after deletion');
+                    try {
+                        await updateRoutines();
+                    } catch (e) {
+                        console.warn('Routine update after delete failed', e);
+                    }
+                }
+            }
+
+            // Close dialog and menu upon success
+            setRoutineDeleteDialog({
+                isOpen: false,
+                eventId: null,
+                eventName: '',
+                selectedScope: 'single'
+            });
+            if (onSuccess) {
+                onSuccess(state.goal);
+            }
+            close();
+        } catch (error) {
+            console.error('Failed to delete routine event:', error);
+            setState({
+                ...state,
+                error: error instanceof Error ? error.message : 'Failed to delete routine event'
+            });
+        }
+    };
+
+    const handleRoutineDeleteCancel = () => {
+        setRoutineDeleteDialog({
+            isOpen: false,
+            eventId: null,
+            eventName: '',
+            selectedScope: 'single'
+        });
+    };
+
+    // --------------------
+    // Render
+    // --------------------
     return (
         <Dialog
             open={isOpen}
@@ -1579,24 +1802,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
             }}
         >
+            {/* ---- Dialog Title ---- */}
             <DialogTitle>{title}</DialogTitle>
+            {/* ---- Dialog Content ---- */}
             <DialogContent>
                 {state.error && (
-                    <Box sx={{ color: 'error.main', mb: 2 }}>
-                        {state.error}
-                    </Box>
+                    <Box sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
                 )}
                 {/* Parent display (view mode only) */}
                 {state.mode === 'view' && parentGoals.length > 0 && (
                     <Box sx={{ mb: 3 }}>
-                        <Typography
-                            variant="subtitle2"
-                            sx={{
-                                mb: 1,
-                                color: 'text.secondary',
-                                fontSize: '0.875rem'
-                            }}
-                        >
+                        <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
                             Parent
                         </Typography>
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -1606,7 +1822,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     sx={{
                                         backgroundColor: getGoalColor(parent),
                                         color: 'white',
-                                        padding: '6px 12px',
+                                        px: 1.5,
+                                        py: 0.75,
                                         borderRadius: '16px',
                                         fontSize: '0.875rem',
                                         fontWeight: 500,
@@ -1614,15 +1831,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         transition: 'all 0.2s',
                                         '&:hover': {
                                             transform: 'translateY(-2px)',
-                                            boxShadow: 2,
+                                            boxShadow: 2
                                         }
                                     }}
-                                    onClick={() => {
-                                        close();
-                                        setTimeout(() => {
-                                            open(parent, 'view');
-                                        }, 100);
-                                    }}
+                                    onClick={() => open(parent, 'view')}
                                 >
                                     {parent.name}
                                 </Box>
@@ -1634,68 +1846,45 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 {parentSelectorField}
                 {renderTypeSpecificFields()}
             </DialogContent>
+            {/* ---- Dialog Actions ---- */}
             <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     {state.mode === 'view' && (
                         <>
                             {state.goal.goal_type !== 'event' && (
                                 <>
-                                    <Button onClick={handleCreateChild} color="secondary">
-                                        Create Child
-                                    </Button>
+                                    <Button onClick={handleCreateChild} color="secondary">Create Child</Button>
                                     {state.goal.goal_type === 'achievement' && (
-                                        <Button onClick={handleCreateQueue} color="secondary">
-                                            Create Queue
-                                        </Button>
+                                        <Button onClick={handleCreateQueue} color="secondary">Create Queue</Button>
                                     )}
-                                    <Button onClick={handleEdit} color="primary">
-                                        Edit
-                                    </Button>
-                                    <Button onClick={handleRelations} color="secondary">
-                                        Relationships
-                                    </Button>
+                                    <Button onClick={handleEdit} color="primary">Edit</Button>
+                                    <Button onClick={handleRelations} color="secondary">Relationships</Button>
                                 </>
                             )}
                             {state.goal.goal_type === 'event' && (
                                 <>
-                                    <Button onClick={handleEdit} color="primary">
-                                        Edit
-                                    </Button>
-                                    <Button
-                                        onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
-                                        color="secondary"
-                                    >
-                                        Smart Schedule
-                                    </Button>
-                                    <Button onClick={handleSplitEvent} color="secondary">
-                                        Split Event
-                                    </Button>
+                                    <Button onClick={handleEdit} color="primary">Edit</Button>
+                                    <Button onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)} color="secondary">Smart Schedule</Button>
+                                    <Button onClick={handleSplitEvent} color="secondary">Split Event</Button>
                                 </>
                             )}
                         </>
                     )}
                     {state.mode === 'edit' && (
-                        <Button onClick={handleDelete} color="error">
-                            Delete
-                        </Button>
+                        <Button onClick={handleDelete} color="error">Delete</Button>
                     )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button onClick={close}>
-                        {isViewOnly ? 'Close' : 'Cancel'}
-                    </Button>
+                    <Button onClick={close}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary">
-                            {state.mode === 'create' ? 'Create' : 'Save'}
-                        </Button>
+                        <Button onClick={() => handleSubmit()} color="primary">{state.mode === 'create' ? 'Create' : 'Save'}</Button>
                     )}
                     {state.mode === 'create' && (
-                        <Button onClick={() => handleSubmit(true)} color="primary">
-                            Create Another
-                        </Button>
+                        <Button onClick={() => handleSubmit(true)} color="primary">Create Another</Button>
                     )}
                 </Box>
             </DialogActions>
+            {/* ---- Nested Dialogs ---- */}
             {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
             {smartScheduleOpen && smartScheduleContext && (
                 <SmartScheduleDialog
@@ -1707,11 +1896,73 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     onSelect={handleSmartScheduleSuccess}
                 />
             )}
+            {/* Routine Update Scope Dialog */}
+            <Dialog
+                open={routineUpdateDialog.isOpen}
+                onClose={() => setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false })}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Update Routine Event</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body1" sx={{ mb: 2 }}>
+                        You're modifying a routine event. What scope would you like to apply this change to?
+                    </Typography>
+                    {routineUpdateDialog.updateType === 'scheduled_time' && (
+                        <Typography variant="body2" sx={{ mb: 2, color: 'info.main' }}>
+                            This will change the scheduled time for the selected events.
+                        </Typography>
+                    )}
+                    {routineUpdateDialog.updateType === 'duration' && (
+                        <Typography variant="body2" sx={{ mb: 2, color: 'info.main' }}>
+                            This will change the duration for the selected events.
+                        </Typography>
+                    )}
+                    <FormControl component="fieldset">
+                        <RadioGroup defaultValue="single" onChange={(e) => routineUpdateDialog.onConfirm(e.target.value as 'single' | 'all' | 'future')}>
+                            <FormControlLabel value="single" control={<Radio />} label="Only this occurrence" />
+                            <FormControlLabel value="future" control={<Radio />} label="This and all future occurrences" />
+                            <FormControlLabel value="all" control={<Radio />} label="All occurrences of this routine" />
+                        </RadioGroup>
+                    </FormControl>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false })}>Cancel</Button>
+                </DialogActions>
+            </Dialog>
+            {/* Routine Delete Dialog */}
+            <Dialog open={routineDeleteDialog.isOpen} onClose={handleRoutineDeleteCancel} maxWidth="sm" fullWidth>
+                <DialogTitle>Delete Routine Event</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body1" sx={{ mb: 2 }}>
+                        You're deleting the routine event "{routineDeleteDialog.eventName}".
+                    </Typography>
+                    <Typography variant="body1" sx={{ mb: 2 }}>
+                        What would you like to delete?
+                    </Typography>
+                    <FormControl component="fieldset">
+                        <RadioGroup
+                            value={routineDeleteDialog.selectedScope}
+                            onChange={(e) => setRoutineDeleteDialog({ ...routineDeleteDialog, selectedScope: e.target.value as 'single' | 'all' | 'future' })}
+                        >
+                            <FormControlLabel value="single" control={<Radio />} label="Only this occurrence" />
+                            <FormControlLabel value="future" control={<Radio />} label="This and all future occurrences" />
+                            <FormControlLabel value="all" control={<Radio />} label="All occurrences of this routine" />
+                        </RadioGroup>
+                    </FormControl>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleRoutineDeleteCancel}>Cancel</Button>
+                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">Delete</Button>
+                </DialogActions>
+            </Dialog>
         </Dialog>
     );
 };
 
-// Static methods for opening the modal
+// --------------------
+// Static helpers to open/close GoalMenu imperatively
+// --------------------
 let currentInstance: (() => void) | null = null;
 let currentRoot: Root | null = null;
 
@@ -1738,7 +1989,6 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
 
     currentInstance = cleanup;
 
-    // Use createRoot instead of ReactDOM.render
     currentRoot = createRoot(container);
     currentRoot.render(
         <GoalMenuBase
@@ -1756,9 +2006,7 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
 };
 
 GoalMenuWithStatic.close = () => {
-    if (currentInstance) {
-        currentInstance();
-    }
+    if (currentInstance) currentInstance();
 };
 
-export default GoalMenuWithStatic; 
+export default GoalMenuWithStatic;
