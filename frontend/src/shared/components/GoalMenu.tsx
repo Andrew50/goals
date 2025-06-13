@@ -23,9 +23,13 @@ import {
     FormControl,
     RadioGroup,
     Radio,
+    Card,
+    CardContent,
+    Grid,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import AssessmentIcon from '@mui/icons-material/Assessment';
 import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
@@ -49,6 +53,29 @@ interface GoalMenuProps {
     mode: Mode;
     onClose: () => void;
     onSuccess: (goal: Goal) => void;
+}
+
+// Stats interfaces
+interface RoutineStats {
+    routine_id: number;
+    routine_name: string;
+    completion_rate: number;
+    total_events: number;
+    completed_events: number;
+}
+
+interface BasicGoalStats {
+    completion_rate?: number;
+    total_events: number;
+    completed_events: number;
+    reschedule_count?: number;
+    avg_reschedule_distance_hours?: number;
+    last_30_days_completion_rate?: number;
+    parent_completion_rate?: number;
+    parent_total_events?: number;
+    parent_completed_events?: number;
+    event_position?: number; // Which event this is (e.g., event 3 of 5)
+    event_total?: number; // Total events for the parent
 }
 
 // Add routine update dialog state
@@ -115,6 +142,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         currentScheduledTime?: Date;
     } | null>(null);
 
+    // Stats management
+    const [goalStats, setGoalStats] = useState<BasicGoalStats | null>(null);
+    const [statsLoading, setStatsLoading] = useState<boolean>(false);
+
     // Add routine update dialog state
     const [routineUpdateDialog, setRoutineUpdateDialog] = useState<RoutineUpdateDialogState>({
         isOpen: false,
@@ -139,16 +170,214 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Fetch task events
     const fetchTaskEvents = useCallback(async (taskId: number) => {
+        console.log('[GoalMenu] fetchTaskEvents called with taskId:', taskId);
         try {
             const taskEventsData = await getTaskEvents(taskId);
+            console.log('[GoalMenu] fetchTaskEvents response:', taskEventsData);
             setTaskEvents(taskEventsData.events);
             setTotalDuration(taskEventsData.total_duration);
+            console.log('[GoalMenu] Set taskEvents to:', taskEventsData.events.length, 'events');
         } catch (error) {
             console.error('Failed to fetch task events:', error);
             setTaskEvents([]);
             setTotalDuration(0);
         }
     }, []);
+
+    // Fetch goal stats
+    const fetchGoalStats = useCallback(async (goal: Goal) => {
+        if (!goal.id || state.mode !== 'view') return;
+
+        setStatsLoading(true);
+        try {
+            let stats: BasicGoalStats = {
+                total_events: 0,
+                completed_events: 0
+            };
+
+            if (goal.goal_type === 'routine') {
+                // Fetch routine-specific stats
+                const currentYear = new Date().getFullYear();
+                const routineStatsResponse = await privateRequest<RoutineStats[]>(
+                    `stats/routines/stats?year=${currentYear}`,
+                    'POST',
+                    { routine_ids: [goal.id] }
+                );
+
+                if (routineStatsResponse.length > 0) {
+                    const routineStats = routineStatsResponse[0];
+                    stats = {
+                        completion_rate: routineStats.completion_rate,
+                        total_events: routineStats.total_events,
+                        completed_events: routineStats.completed_events
+                    };
+                }
+            } else if (goal.goal_type === 'task' && taskEvents.length > 0) {
+                // Calculate stats from task events
+                const completedEvents = taskEvents.filter(event => event.completed).length;
+                stats = {
+                    completion_rate: taskEvents.length > 0 ? completedEvents / taskEvents.length : 0,
+                    total_events: taskEvents.length,
+                    completed_events: completedEvents
+                };
+            } else if (goal.goal_type === 'event') {
+                console.log('[GoalMenu] Processing event stats. Parent ID:', goal.parent_id, 'Parent goals:', parentGoals);
+
+                // For events, show completion statistics for all sibling events
+                if (goal.parent_id && parentGoals.length > 0) {
+                    const parent = parentGoals[0];
+                    console.log('[GoalMenu] Found parent:', parent.name, 'type:', parent.goal_type, 'id:', parent.id);
+
+                    let siblingEvents: any[] = [];
+
+                    if (parent.goal_type === 'routine') {
+                        try {
+                            // Get all routine events (sibling events)
+                            try {
+                                console.log('[GoalMenu] Trying task events API for routine parent:', parent.id);
+                                const taskEventsData = await getTaskEvents(parent.id!);
+                                siblingEvents = taskEventsData.events;
+                                console.log('[GoalMenu] Task events API worked for routine:', siblingEvents);
+                            } catch (taskError) {
+                                console.log('[GoalMenu] Task events API failed for routine, trying calendar data');
+                                // Fallback: get calendar data and filter for this routine's events
+                                try {
+                                    const calendarData = await privateRequest<any>('calendar');
+                                    // Filter events that belong to this routine
+                                    siblingEvents = calendarData.events?.filter((e: any) =>
+                                        e.parent_id === parent.id || e.routine_id === parent.id
+                                    ).map((e: any) => ({
+                                        id: e.id,
+                                        scheduled_timestamp: e.scheduled_timestamp,
+                                        completed: e.completed,
+                                        ...e
+                                    })) || [];
+                                    console.log('[GoalMenu] Calendar data filtered events:', siblingEvents);
+                                } catch (calendarError) {
+                                    console.log('[GoalMenu] Calendar fallback also failed:', calendarError);
+                                    siblingEvents = [];
+                                }
+                            }
+                        } catch (error) {
+                            console.error('[GoalMenu] Could not fetch routine events:', error);
+                        }
+                    } else if (parent.goal_type === 'task') {
+                        try {
+                            const taskEventsData = await getTaskEvents(parent.id!);
+                            siblingEvents = taskEventsData.events;
+                        } catch (error) {
+                            console.log('Could not fetch task events:', error);
+                        }
+                    }
+
+                    if (siblingEvents.length > 0) {
+                        console.log('[GoalMenu] Found sibling events:', siblingEvents.length);
+                        console.log('[GoalMenu] Sample sibling events:', siblingEvents.slice(0, 3).map(e => ({
+                            id: e.id,
+                            scheduled_timestamp: e.scheduled_timestamp,
+                            completed: e.completed,
+                            name: e.name
+                        })));
+
+                        // Calculate completion statistics for sibling events
+                        const now = new Date();
+                        const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+
+                        // Filter events by time periods - include future events for better stats
+                        const recentEvents = siblingEvents.filter(e => {
+                            if (!e.scheduled_timestamp) return false;
+                            const eventDate = new Date(e.scheduled_timestamp);
+                            return eventDate >= tenDaysAgo && eventDate <= now;
+                        });
+
+                        // For all-time, include all events that have happened or are scheduled
+                        const allEvents = siblingEvents.filter(e => e.scheduled_timestamp);
+
+                        console.log('[GoalMenu] Filtered events:', {
+                            total_siblings: siblingEvents.length,
+                            recent_events: recentEvents.length,
+                            all_events: allEvents.length,
+                            recent_sample: recentEvents.slice(0, 2),
+                            all_sample: allEvents.slice(0, 2)
+                        });
+
+                        // Calculate completion rates - handle boolean and undefined values
+                        const recentCompletedEvents = recentEvents.filter(e => e.completed === true).length;
+                        const allCompletedEvents = allEvents.filter(e => e.completed === true).length;
+
+                        const recentCompletionRate = recentEvents.length > 0 ? recentCompletedEvents / recentEvents.length : 0;
+                        const allTimeCompletionRate = allEvents.length > 0 ? allCompletedEvents / allEvents.length : 0;
+
+                        console.log('[GoalMenu] Completion calculations:', {
+                            recent_completed: recentCompletedEvents,
+                            recent_total: recentEvents.length,
+                            recent_rate: recentCompletionRate,
+                            all_completed: allCompletedEvents,
+                            all_total: allEvents.length,
+                            all_rate: allTimeCompletionRate
+                        });
+
+                        // Calculate standard deviation of completion times (as a measure of consistency)
+                        let completionStdev = 0;
+                        if (allEvents.length > 1) {
+                            const completionRates = allEvents.map(e => e.completed === true ? 1 : 0);
+                            const mean = allTimeCompletionRate;
+                            const variance = completionRates.reduce((sum: number, rate: number) => sum + Math.pow(rate - mean, 2), 0) / completionRates.length;
+                            completionStdev = Math.sqrt(variance);
+                        }
+
+                        stats = {
+                            completion_rate: recentCompletionRate,
+                            total_events: allEvents.length,
+                            completed_events: allCompletedEvents,
+                            last_30_days_completion_rate: allTimeCompletionRate, // Reusing this field for all-time rate
+                            reschedule_count: recentEvents.length, // Reusing this field for recent events count
+                            avg_reschedule_distance_hours: completionStdev * 100 // Reusing this field for stdev %
+                        };
+
+                        console.log('[GoalMenu] Final calculated stats:', stats);
+                    } else {
+                        // No sibling events found
+                        stats = {
+                            completion_rate: 0,
+                            total_events: 0,
+                            completed_events: 0
+                        };
+                    }
+                } else {
+                    // No parent found
+                    stats = {
+                        completion_rate: goal.completed ? 1.0 : 0.0,
+                        total_events: 1,
+                        completed_events: goal.completed ? 1 : 0
+                    };
+                }
+
+                console.log('[GoalMenu] Final event stats:', stats);
+            }
+
+            // Fetch rescheduling stats for tasks and routines with events
+            if ((goal.goal_type === 'task' || goal.goal_type === 'routine') && stats.total_events > 0) {
+                try {
+                    const currentYear = new Date().getFullYear();
+                    const reschedulingResponse = await privateRequest<any>(`stats/rescheduling?year=${currentYear}`);
+
+                    // This is a simplified approach - in a real implementation, you'd want to filter by specific goal
+                    stats.reschedule_count = reschedulingResponse.total_reschedules || 0;
+                    stats.avg_reschedule_distance_hours = reschedulingResponse.avg_reschedule_distance_hours || 0;
+                } catch (error) {
+                    console.log('Could not fetch rescheduling stats:', error);
+                }
+            }
+
+            setGoalStats(stats);
+        } catch (error) {
+            console.error('Failed to fetch goal stats:', error);
+            setGoalStats(null);
+        } finally {
+            setStatsLoading(false);
+        }
+    }, [state.mode, taskEvents, parentGoals]);
 
     // Auto-show add event form for new tasks created from calendar clicks
     useEffect(() => {
@@ -208,6 +437,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //create copy, might need to be date.
         const goalCopy = { ...goal }
 
+        console.log('[GoalMenu] open() called with goal:', goalCopy);
+        console.log('[GoalMenu] goal.id:', goalCopy.id, 'goal.goal_type:', goalCopy.goal_type);
+
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
         }
@@ -246,20 +478,41 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }[actualMode]);
         setIsOpen(true);
 
+        console.log('[GoalMenu] About to check goal.id:', goalCopy.id, 'typeof:', typeof goalCopy.id);
         // Fetch parent goals if we have a goal ID
         if (goal.id) {
+            console.log('[GoalMenu] Goal has ID:', goal.id, 'and goal_type:', goal.goal_type);
             fetchParentGoals(goal.id, actualMode);
 
             // Fetch task events if this is a task
             if (goal.goal_type === 'task') {
+                console.log('[GoalMenu] Fetching task events for task ID:', goal.id);
                 fetchTaskEvents(goal.id);
+            } else {
+                console.log('[GoalMenu] Not a task, goal_type is:', goal.goal_type);
             }
         } else {
+            console.log('[GoalMenu] Goal has no ID, skipping fetchTaskEvents');
             setParentGoals([]);
             setTaskEvents([]);
             setTotalDuration(0);
         }
+
+        // Reset stats when goal changes
+        setGoalStats(null);
     }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals]);
+
+    // Fetch stats when in view mode and goal is loaded
+    useEffect(() => {
+        if (state.mode === 'view' && state.goal.id) {
+            fetchGoalStats(state.goal);
+        }
+    }, [state.mode, state.goal.id, state.goal.goal_type, taskEvents, fetchGoalStats]);
+
+    // Debug taskEvents changes
+    useEffect(() => {
+        console.log('[GoalMenu] taskEvents updated:', { length: taskEvents.length, events: taskEvents });
+    }, [taskEvents]);
 
     const close = useCallback(() => {
         setIsOpen(false);
@@ -280,6 +533,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setNewEventDuration(60);
             setSmartScheduleOpen(false);
             setSmartScheduleContext(null);
+            setGoalStats(null);
+            setStatsLoading(false);
         }, 100);
     }, [setState]);
 
@@ -1949,6 +2204,155 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         </Box>
                     </Box>
                 )}
+
+                {/* Stats display (view mode only) */}
+                {state.mode === 'view' && (state.goal.goal_type === 'routine' || state.goal.goal_type === 'task' || state.goal.goal_type === 'event') && (
+                    <Box sx={{ mb: 3 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                            <AssessmentIcon sx={{ fontSize: '1.2rem', color: 'text.secondary' }} />
+                            <Typography variant="subtitle2" sx={{ color: 'text.secondary', fontSize: '0.875rem' }}>
+                                Statistics
+                            </Typography>
+                        </Box>
+
+                        {statsLoading ? (
+                            <Box sx={{ textAlign: 'center', py: 2 }}>
+                                <Typography variant="body2" color="text.secondary">Loading stats...</Typography>
+                            </Box>
+                        ) : goalStats && (goalStats.total_events > 0 || state.goal.goal_type === 'routine' || state.goal.goal_type === 'event') ? (
+                            <Card variant="outlined" sx={{ mb: 2 }}>
+                                <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+                                    {state.goal.goal_type === 'event' ? (
+                                        <>
+                                            <Box sx={{ textAlign: 'center', mb: 2, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+                                                <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                                                    Sibling Events Completion Statistics
+                                                </Typography>
+                                                <Typography variant="caption" color="text.secondary">
+                                                    Performance of all events from the same {state.goal.parent_type || 'parent'}
+                                                </Typography>
+                                            </Box>
+
+                                            <Grid container spacing={2}>
+                                                <Grid item xs={6}>
+                                                    <Box sx={{ textAlign: 'center' }}>
+                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                                                            {goalStats.completion_rate !== undefined ?
+                                                                (goalStats.completion_rate * 100).toFixed(1) : '0.0'}%
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            10-Day Completion Rate
+                                                        </Typography>
+                                                    </Box>
+                                                </Grid>
+                                                <Grid item xs={6}>
+                                                    <Box sx={{ textAlign: 'center' }}>
+                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'secondary.main' }}>
+                                                            {goalStats.last_30_days_completion_rate !== undefined ?
+                                                                (goalStats.last_30_days_completion_rate * 100).toFixed(1) : '0.0'}%
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            All-Time Completion Rate
+                                                        </Typography>
+                                                    </Box>
+                                                </Grid>
+                                                <Grid item xs={6}>
+                                                    <Box sx={{ textAlign: 'center' }}>
+                                                        <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                                            {goalStats.completed_events}/{goalStats.total_events}
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            Events Completed
+                                                        </Typography>
+                                                    </Box>
+                                                </Grid>
+                                                <Grid item xs={6}>
+                                                    <Box sx={{ textAlign: 'center' }}>
+                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'info.main' }}>
+                                                            {goalStats.avg_reschedule_distance_hours !== undefined ?
+                                                                goalStats.avg_reschedule_distance_hours.toFixed(1) : '0.0'}%
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            Consistency (StdDev)
+                                                        </Typography>
+                                                    </Box>
+                                                </Grid>
+                                                {goalStats.reschedule_count !== undefined && goalStats.reschedule_count > 0 && (
+                                                    <Grid item xs={12}>
+                                                        <Box sx={{ textAlign: 'center' }}>
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                Recent Events (10 days): {goalStats.reschedule_count}
+                                                            </Typography>
+                                                        </Box>
+                                                    </Grid>
+                                                )}
+                                            </Grid>
+                                        </>
+                                    ) : (
+                                        <Grid container spacing={2}>
+                                            {goalStats.completion_rate !== undefined && (
+                                                <Grid item xs={6}>
+                                                    <Box sx={{ textAlign: 'center' }}>
+                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                                                            {(goalStats.completion_rate * 100).toFixed(1)}%
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            Completion Rate
+                                                        </Typography>
+                                                    </Box>
+                                                </Grid>
+                                            )}
+                                            <Grid item xs={6}>
+                                                <Box sx={{ textAlign: 'center' }}>
+                                                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                                        {goalStats.completed_events}/{goalStats.total_events}
+                                                    </Typography>
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        Events Completed
+                                                    </Typography>
+                                                </Box>
+                                            </Grid>
+
+                                            {goalStats.reschedule_count !== undefined && goalStats.reschedule_count > 0 && (
+                                                <>
+                                                    <Grid item xs={6}>
+                                                        <Box sx={{ textAlign: 'center' }}>
+                                                            <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'warning.main' }}>
+                                                                {goalStats.reschedule_count}
+                                                            </Typography>
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                Reschedules
+                                                            </Typography>
+                                                        </Box>
+                                                    </Grid>
+                                                    {goalStats.avg_reschedule_distance_hours !== undefined && (
+                                                        <Grid item xs={6}>
+                                                            <Box sx={{ textAlign: 'center' }}>
+                                                                <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'info.main' }}>
+                                                                    {goalStats.avg_reschedule_distance_hours.toFixed(1)}h
+                                                                </Typography>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                    Avg Move Distance
+                                                                </Typography>
+                                                            </Box>
+                                                        </Grid>
+                                                    )}
+                                                </>
+                                            )}
+                                        </Grid>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        ) : (
+                            <Box sx={{ textAlign: 'center', py: 2 }}>
+                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                    No statistics available yet.
+                                    {state.goal.goal_type === 'task' ? ' Add some events to see stats.' : ' Complete some routine events to see stats.'}
+                                </Typography>
+                            </Box>
+                        )}
+                    </Box>
+                )}
                 {commonFields}
                 {parentSelectorField}
                 {renderTypeSpecificFields()}
@@ -2087,15 +2491,20 @@ const GoalMenuBase = GoalMenu;
 const GoalMenuWithStatic = GoalMenuBase as GoalMenuComponent;
 
 GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+    console.log('[GoalMenu.open] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
+
     const container = document.createElement('div');
     document.body.appendChild(container);
 
     const cleanup = () => {
+        console.log('[GoalMenu.open] Cleaning up goal menu');
         if (currentRoot) {
             currentRoot.unmount();
             currentRoot = null;
         }
-        document.body.removeChild(container);
+        if (document.body.contains(container)) {
+            document.body.removeChild(container);
+        }
         currentInstance = null;
     };
 
@@ -2115,6 +2524,8 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
             }}
         />
     );
+
+    console.log('[GoalMenu.open] Goal menu rendered');
 };
 
 GoalMenuWithStatic.close = () => {

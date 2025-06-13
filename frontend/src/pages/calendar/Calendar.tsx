@@ -217,7 +217,7 @@ const Calendar: React.FC = () => {
   });
 
   // Debugging mode toggles global logs, etc.
-  const [debugMode] = useState(true);
+  const [debugMode] = useState(false);
 
   // -----------------------------
   // Data Loading
@@ -426,10 +426,12 @@ const Calendar: React.FC = () => {
   };
 
   const handleDateClick = (arg: any) => {
+    console.log('[Calendar] Date clicked:', arg);
     const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
+    console.log('[Calendar] Parsed date:', clickedDate);
 
     const newGoal: Goal = {
-      id: 0,
+      ...({} as Goal),
       name: '',
       goal_type: 'task',
       description: '',
@@ -439,7 +441,9 @@ const Calendar: React.FC = () => {
       duration: 60
     };
 
+    console.log('[Calendar] Opening goal menu with goal:', newGoal);
     openGoalMenu(newGoal, 'create', () => {
+      console.log('[Calendar] Goal menu success callback called');
       loadCalendarData();
     });
   };
@@ -807,7 +811,7 @@ const Calendar: React.FC = () => {
   // -----------------------------
   const handleAddTask = () => {
     const tempGoal: Goal = {
-      id: 0,
+      ...({} as Goal),
       name: '',
       goal_type: 'task',
       description: '',
