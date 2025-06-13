@@ -23,6 +23,17 @@ export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipT
         if (fromGoal.goal_type === 'directive' && toGoal.goal_type === 'achievement') {
             return 'Directives cannot be parents of Achievements.';
         }
+        // Tasks should not be children of routines
+        if (fromGoal.goal_type === 'routine' && toGoal.goal_type === 'task') {
+            return 'Tasks cannot be children of routines.';
+        }
+        // Routines should not be children of tasks (but tasks can't be parents anyway due to check above)
+        if (toGoal.goal_type === 'routine' && fromGoal.goal_type !== 'routine') {
+            // Only allow routines to be children of other routines, projects, directives, or achievements
+            if (!['routine', 'project', 'directive', 'achievement'].includes(fromGoal.goal_type)) {
+                return 'Routines can only be children of routines, projects, directives, or achievements.';
+            }
+        }
     }
 
     if (relationshipType === 'queue') {

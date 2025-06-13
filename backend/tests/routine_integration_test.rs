@@ -1,10 +1,11 @@
-use std::env;
-use chrono::Utc;
+use chrono::{Datelike, TimeZone, Utc};
 use neo4rs::{query, Graph};
 use serde_json;
 use std::collections::HashSet;
+use std::env;
 
 // Import the modules we need for testing
+use backend::jobs::routine_generator::generate_future_routine_events;
 use backend::tools::goal::{Goal, GoalType};
 
 /// Helper function to create a test database connection
@@ -104,10 +105,11 @@ async fn get_routine_events(graph: &Graph, routine_id: i64) -> Result<Vec<Goal>,
 
     let mut events = Vec::new();
     while let Some(row) = result.next().await? {
-        let event_data: serde_json::Value = row.get("event").map_err(|_| neo4rs::Error::ConversionError)?;
-        let event: Goal = serde_json::from_value(event_data).map_err(|_| {
-            neo4rs::Error::ConversionError
-        })?;
+        let event_data: serde_json::Value = row
+            .get("event")
+            .map_err(|_| neo4rs::Error::ConversionError)?;
+        let event: Goal =
+            serde_json::from_value(event_data).map_err(|_| neo4rs::Error::ConversionError)?;
         events.push(event);
     }
 
@@ -126,6 +128,55 @@ fn set_time_of_day(base_timestamp: i64, time_of_day: i64) -> i64 {
     start_of_day + time_of_day_ms
 }
 
+// Helper function to validate if a given timestamp matches the routine's frequency pattern
+fn is_valid_day_for_routine(timestamp: i64, frequency: &str) -> Result<bool, String> {
+    let current_dt = Utc
+        .timestamp_millis_opt(timestamp)
+        .earliest()
+        .ok_or("Invalid timestamp")?;
+
+    // frequency pattern: {multiplier}{unit}[:days]
+    let parts: Vec<&str> = frequency.split(':').collect();
+    let freq_part = parts[0];
+
+    if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
+        let unit = &freq_part[unit_pos..];
+
+        match unit {
+            "W" => {
+                if let Some(days) = parts.get(1) {
+                    // Get selected days as numbers (0-6)
+                    let selected_days: Vec<u32> =
+                        days.split(',').filter_map(|d| d.parse().ok()).collect();
+
+                    if selected_days.is_empty() {
+                        // If no specific days are selected, all days are valid for weekly
+                        return Ok(true);
+                    } else {
+                        // Check if current day is one of the selected days
+                        let current_weekday = current_dt.weekday().num_days_from_sunday();
+                        return Ok(selected_days.contains(&current_weekday));
+                    }
+                } else {
+                    // Weekly without specific days - all days are valid
+                    return Ok(true);
+                }
+            }
+            "D" | "M" | "Y" => {
+                // For daily, monthly, yearly - all days are valid (the frequency calculation handles the intervals)
+                return Ok(true);
+            }
+            _ => {
+                // Unknown unit - assume valid
+                return Ok(true);
+            }
+        }
+    } else {
+        // No unit found - assume daily, so all days are valid
+        return Ok(true);
+    }
+}
+
 /// Helper function to generate events for a specific test routine (more controlled than the full generator)
 async fn generate_events_for_test_routine(
     graph: &Graph,
@@ -134,24 +185,42 @@ async fn generate_events_for_test_routine(
     end_timestamp: i64,
 ) -> Result<(), neo4rs::Error> {
     // Fetch the routine details
-    let routine_query = query(
-        "MATCH (r:Goal) WHERE id(r) = $routine_id RETURN r"
-    ).param("routine_id", routine_id);
-    
+    let routine_query =
+        query("MATCH (r:Goal) WHERE id(r) = $routine_id RETURN r").param("routine_id", routine_id);
+
     let mut result = graph.execute(routine_query).await?;
-    let routine_row = result.next().await?
+    let routine_row = result
+        .next()
+        .await?
         .ok_or_else(|| neo4rs::Error::ConversionError)?;
-    let routine: Goal = routine_row.get("r")
+    let routine: Goal = routine_row
+        .get("r")
         .map_err(|_| neo4rs::Error::ConversionError)?;
-    
-    let frequency = routine.frequency.as_ref()
+
+    let frequency = routine
+        .frequency
+        .as_ref()
         .ok_or_else(|| neo4rs::Error::ConversionError)?;
-    
+
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
     let mut current_time = start_timestamp;
     let mut event_count = 0;
-    
+
     while current_time <= end_timestamp {
+        // Check if this day is valid for the routine's frequency pattern
+        if !is_valid_day_for_routine(current_time, frequency)
+            .map_err(|_| neo4rs::Error::ConversionError)?
+        {
+            // Skip to next occurrence if this day doesn't match the pattern
+            current_time = match frequency.as_str() {
+                "1D" => current_time + (24 * 60 * 60 * 1000), // Daily
+                "1W" => current_time + (7 * 24 * 60 * 60 * 1000), // Weekly
+                "2D" => current_time + (2 * 24 * 60 * 60 * 1000), // Every 2 days
+                _ => current_time + (24 * 60 * 60 * 1000),    // Default daily
+            };
+            continue;
+        }
+
         // Apply the routine's time of day
         let scheduled_timestamp = if let Some(routine_time) = routine.routine_time {
             set_time_of_day(current_time, routine_time)
@@ -167,7 +236,7 @@ async fn generate_events_for_test_routine(
                  WHERE id(r) = $routine_id 
                  AND e.scheduled_timestamp = $timestamp
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                 RETURN count(e) as existing_count"
+                 RETURN count(e) as existing_count",
             )
             .param("routine_id", routine_id)
             .param("timestamp", scheduled_timestamp);
@@ -185,7 +254,7 @@ async fn generate_events_for_test_routine(
                         break;
                     }
                 }
-                
+
                 // Create the event since it doesn't exist yet.
                 let create_query = query(
                     "MATCH (r:Goal) WHERE id(r) = $routine_id
@@ -203,12 +272,12 @@ async fn generate_events_for_test_routine(
                          completed: false,
                          is_deleted: false
                      })
-                     CREATE (r)-[:HAS_EVENT]->(e)"
+                     CREATE (r)-[:HAS_EVENT]->(e)",
                 )
                 .param("routine_id", routine_id)
                 .param("timestamp", scheduled_timestamp)
                 .param("instance_id", instance_id.clone());
-                
+
                 graph.run(create_query).await?;
                 event_count += 1;
             }
@@ -219,14 +288,17 @@ async fn generate_events_for_test_routine(
             "1D" => current_time + (24 * 60 * 60 * 1000), // Daily
             "1W" => current_time + (7 * 24 * 60 * 60 * 1000), // Weekly
             "2D" => current_time + (2 * 24 * 60 * 60 * 1000), // Every 2 days
-            _ => current_time + (24 * 60 * 60 * 1000), // Default daily
+            _ => current_time + (24 * 60 * 60 * 1000),    // Default daily
         };
     }
-    
+
     if event_count > 0 {
-        println!("Created {} events for test routine {}", event_count, routine_id);
+        println!(
+            "Created {} events for test routine {}",
+            event_count, routine_id
+        );
     }
-    
+
     Ok(())
 }
 
@@ -238,10 +310,14 @@ mod tests {
     #[ignore]
     async fn test_daily_routine_event_generation() {
         // Set up test database connection
-        let graph = create_test_graph().await.expect("Failed to create test database connection");
-        
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
         // Clear any existing test data
-        clear_test_data(&graph).await.expect("Failed to clear test data");
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
 
         // Define test parameters
         let now = Utc::now().timestamp_millis();
@@ -260,7 +336,9 @@ mod tests {
             Some(end_timestamp),
             routine_time,
             duration,
-        ).await.expect("Failed to create test routine");
+        )
+        .await
+        .expect("Failed to create test routine");
 
         // Generate events specifically for this test routine
         generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
@@ -306,7 +384,7 @@ mod tests {
             if let Some(rt) = routine_time {
                 let time_of_day_ms = scheduled % (24 * 60 * 60 * 1000);
                 let expected_time_of_day_ms = rt % (24 * 60 * 60 * 1000);
-                
+
                 assert_eq!(
                     time_of_day_ms, expected_time_of_day_ms,
                     "Event {} has incorrect time of day. Expected {} (9 AM), got {}",
@@ -317,14 +395,17 @@ mod tests {
 
         // Verify events are spaced exactly 1 day apart
         for i in 1..events.len() {
-            let prev_timestamp = events[i-1].scheduled_timestamp.unwrap();
+            let prev_timestamp = events[i - 1].scheduled_timestamp.unwrap();
             let curr_timestamp = events[i].scheduled_timestamp.unwrap();
             let diff_days = (curr_timestamp - prev_timestamp) / (24 * 60 * 60 * 1000);
-            
+
             assert_eq!(
-                diff_days, 1,
+                diff_days,
+                1,
                 "Events {} and {} are not exactly 1 day apart. Diff: {} days",
-                i-1, i, diff_days
+                i - 1,
+                i,
+                diff_days
             );
         }
     }
@@ -333,10 +414,14 @@ mod tests {
     #[ignore]
     async fn test_weekly_routine_event_generation() {
         // Set up test database connection
-        let graph = create_test_graph().await.expect("Failed to create test database connection");
-        
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
         // Clear any existing test data
-        clear_test_data(&graph).await.expect("Failed to clear test data");
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
 
         // Define test parameters for weekly routine
         let now = Utc::now().timestamp_millis();
@@ -355,9 +440,11 @@ mod tests {
             Some(end_timestamp),
             routine_time,
             duration,
-        ).await.expect("Failed to create test routine");
+        )
+        .await
+        .expect("Failed to create test routine");
 
-        // Generate events specifically for this test routine  
+        // Generate events specifically for this test routine
         generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
             .await
             .expect("Failed to generate routine events");
@@ -412,10 +499,14 @@ mod tests {
     #[ignore]
     async fn test_routine_without_end_date() {
         // Set up test database connection
-        let graph = create_test_graph().await.expect("Failed to create test database connection");
-        
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
         // Clear any existing test data
-        clear_test_data(&graph).await.expect("Failed to clear test data");
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
 
         // Define test parameters for open-ended routine
         let now = Utc::now().timestamp_millis();
@@ -433,7 +524,9 @@ mod tests {
             None, // No end date
             routine_time,
             duration,
-        ).await.expect("Failed to create test routine");
+        )
+        .await
+        .expect("Failed to create test routine");
 
         // For open-ended routines, generate events up to 90 days ahead
         let ninety_days_ahead = start_timestamp + (90 * 24 * 60 * 60 * 1000);
@@ -481,21 +574,25 @@ mod tests {
     #[ignore]
     async fn test_routine_time_application() {
         // Set up test database connection
-        let graph = create_test_graph().await.expect("Failed to create test database connection");
-        
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
         // Clear any existing test data
-        clear_test_data(&graph).await.expect("Failed to clear test data");
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
 
         // Define test parameters with specific routine time
         let now = Utc::now().timestamp_millis();
         let start_of_today = (now / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
         let start_timestamp = start_of_today;
         let end_timestamp = start_of_today + (3 * 24 * 60 * 60 * 1000); // 3 days
-        
+
         // Set routine time to 3:30 PM (15:30 = 15*60 + 30 = 930 minutes from midnight)
         let routine_time_minutes = 15 * 60 + 30; // 3:30 PM in minutes
         let routine_time = Some(routine_time_minutes as i64 * 60 * 1000); // Convert to milliseconds
-        
+
         let frequency = "1D"; // Daily
         let duration = 30; // 30 minutes
 
@@ -508,7 +605,9 @@ mod tests {
             Some(end_timestamp),
             routine_time,
             duration,
-        ).await.expect("Failed to create test routine");
+        )
+        .await
+        .expect("Failed to create test routine");
 
         // Generate events specifically for this test routine
         generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
@@ -521,18 +620,22 @@ mod tests {
             .expect("Failed to retrieve routine events");
 
         // Verify events were created
-        assert!(events.len() > 0, "Expected at least one event to be created");
+        assert!(
+            events.len() > 0,
+            "Expected at least one event to be created"
+        );
 
         // Verify each event is scheduled at the correct time of day
         for event in &events {
             let scheduled_timestamp = event.scheduled_timestamp.unwrap();
-            
+
             // Extract the time of day from the timestamp
             let time_of_day_ms = scheduled_timestamp % (24 * 60 * 60 * 1000);
             let time_of_day_minutes = time_of_day_ms / (60 * 1000);
-            
+
             assert_eq!(
-                time_of_day_minutes, routine_time_minutes as i64,
+                time_of_day_minutes,
+                routine_time_minutes as i64,
                 "Event scheduled at wrong time of day. Expected {}:{:02}, got {}:{:02}",
                 routine_time_minutes / 60,
                 routine_time_minutes % 60,
@@ -546,10 +649,14 @@ mod tests {
     #[ignore]
     async fn test_routine_event_relationship() {
         // Set up test database connection
-        let graph = create_test_graph().await.expect("Failed to create test database connection");
-        
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
         // Clear any existing test data
-        clear_test_data(&graph).await.expect("Failed to clear test data");
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
 
         // Create a simple daily routine
         let now = Utc::now().timestamp_millis();
@@ -567,7 +674,9 @@ mod tests {
             Some(end_timestamp),
             routine_time,
             duration,
-        ).await.expect("Failed to create test routine");
+        )
+        .await
+        .expect("Failed to create test routine");
 
         // Generate events specifically for this test routine
         generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
@@ -578,15 +687,816 @@ mod tests {
         let relationship_query = query(
             "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
              WHERE id(r) = $routine_id
-             RETURN count(e) as event_count"
-        ).param("routine_id", routine_id);
+             RETURN count(e) as event_count",
+        )
+        .param("routine_id", routine_id);
 
-        let mut result = graph.execute(relationship_query).await.expect("Failed to execute relationship query");
-        if let Some(row) = result.next().await.expect("Failed to get relationship result") {
+        let mut result = graph
+            .execute(relationship_query)
+            .await
+            .expect("Failed to execute relationship query");
+        if let Some(row) = result
+            .next()
+            .await
+            .expect("Failed to get relationship result")
+        {
             let event_count: i64 = row.get("event_count").expect("Failed to get event count");
-            assert!(event_count > 0, "No HAS_EVENT relationships found between routine and events");
+            assert!(
+                event_count > 0,
+                "No HAS_EVENT relationships found between routine and events"
+            );
         } else {
             panic!("No relationship query result returned");
         }
     }
-} 
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_weekly_routine_specific_days_validation() {
+        // Set up test database connection
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        // Clear any existing test data
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Create a Monday/Wednesday routine starting on a different day (like Tuesday)
+        // This tests the specific bug reported: routine should not create event on current day
+        // if current day is not one of the selected days
+
+        let now = Utc::now();
+        let current_weekday = now.weekday().num_days_from_sunday();
+
+        // Find a start day that is NOT Monday (1) or Wednesday (3)
+        let mut start_day_offset = 0;
+        let mut start_weekday = current_weekday;
+
+        // If today is Monday or Wednesday, move to a different day for testing
+        if current_weekday == 1 || current_weekday == 3 {
+            start_day_offset = 1; // Move to tomorrow
+            start_weekday = (current_weekday + 1) % 7;
+        }
+
+        let start_timestamp = now.timestamp_millis() + (start_day_offset * 24 * 60 * 60 * 1000);
+        let end_timestamp = start_timestamp + (14 * 24 * 60 * 60 * 1000); // 2 weeks
+        let routine_time = Some(14 * 60 * 60 * 1000); // 2 PM
+        let frequency = "1W:1,3"; // Weekly on Monday (1) and Wednesday (3)
+        let duration = 60;
+
+        println!("Test setup:");
+        println!(
+            "  Current weekday: {} (0=Sunday, 1=Monday, etc.)",
+            current_weekday
+        );
+        println!("  Start weekday: {} (should NOT be 1 or 3)", start_weekday);
+        println!("  Frequency: {}", frequency);
+
+        // Ensure our test setup is valid (start day should not be Monday or Wednesday)
+        assert!(
+            start_weekday != 1 && start_weekday != 3,
+            "Test setup error: start day {} should not be Monday (1) or Wednesday (3)",
+            start_weekday
+        );
+
+        let routine_id = create_test_routine(
+            &graph,
+            "Monday Wednesday Test Routine",
+            frequency,
+            start_timestamp,
+            Some(end_timestamp),
+            routine_time,
+            duration,
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        // Generate events specifically for this test routine
+        generate_events_for_test_routine(&graph, routine_id, start_timestamp, end_timestamp)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Retrieve generated events
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!("Generated {} events", events.len());
+
+        // Verify that NO event was created on the start day (since it's not Monday or Wednesday)
+        let start_day_ms = (start_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let start_day_end_ms = start_day_ms + (24 * 60 * 60 * 1000);
+
+        let events_on_start_day: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= start_day_ms && event_ts < start_day_end_ms
+            })
+            .collect();
+
+        assert_eq!(
+            events_on_start_day.len(),
+            0,
+            "Expected NO events on start day (weekday {}), but found {}",
+            start_weekday,
+            events_on_start_day.len()
+        );
+
+        // Verify that all generated events are on Monday (1) or Wednesday (3)
+        for event in &events {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            assert!(
+                event_weekday == 1 || event_weekday == 3,
+                "Event scheduled on wrong day: weekday {} (expected Monday=1 or Wednesday=3)",
+                event_weekday
+            );
+        }
+
+        // Should have at least 4 events (2 Mondays + 2 Wednesdays in 2 weeks)
+        assert!(
+            events.len() >= 4,
+            "Expected at least 4 events (2 weeks of Mon/Wed), got {}",
+            events.len()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_specific_user_issue_thursday_to_mwf() {
+        // This test specifically reproduces the user's issue:
+        // Create routine by clicking on Thursday, then set frequency to Monday/Wednesday/Friday
+        // Should NOT create events on Sunday/Tuesday/Thursday but on Monday/Wednesday/Friday
+
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Simulate clicking on a Thursday (day 4)
+        let base_time = Utc::now();
+        let days_to_thursday = (4 + 7 - base_time.weekday().num_days_from_sunday()) % 7;
+        let thursday_timestamp =
+            base_time.timestamp_millis() + (days_to_thursday as i64 * 24 * 60 * 60 * 1000);
+
+        // Verify this is actually a Thursday
+        let thursday_dt = Utc.timestamp_millis_opt(thursday_timestamp).unwrap();
+        let thursday_weekday = thursday_dt.weekday().num_days_from_sunday();
+        assert_eq!(
+            thursday_weekday, 4,
+            "Test setup error: should be Thursday (4), got {}",
+            thursday_weekday
+        );
+
+        println!("Test setup:");
+        println!(
+            "  Click timestamp (Thursday): {}",
+            thursday_dt.format("%A %Y-%m-%d")
+        );
+        println!("  Thursday weekday: {}", thursday_weekday);
+
+        // Create routine with Monday/Wednesday/Friday frequency (like user would do)
+        let frequency = "1W:1,3,5"; // Monday=1, Wednesday=3, Friday=5
+        let end_timestamp = thursday_timestamp + (14 * 24 * 60 * 60 * 1000); // 2 weeks
+        let routine_time = Some(10 * 60 * 60 * 1000); // 10 AM
+
+        let routine_id = create_test_routine(
+            &graph,
+            "Thursday Click MWF Routine",
+            frequency,
+            thursday_timestamp, // Start from Thursday click
+            Some(end_timestamp),
+            routine_time,
+            60, // 1 hour duration
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        // Generate events for this routine
+        generate_events_for_test_routine(&graph, routine_id, thursday_timestamp, end_timestamp)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Retrieve generated events
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!("Generated {} events", events.len());
+
+        // Print all event details for debugging
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+            let weekday_name = match event_weekday {
+                0 => "Sunday",
+                1 => "Monday",
+                2 => "Tuesday",
+                3 => "Wednesday",
+                4 => "Thursday",
+                5 => "Friday",
+                6 => "Saturday",
+                _ => "Unknown",
+            };
+            println!(
+                "  Event {}: {} ({}) - weekday {}",
+                i + 1,
+                event_dt.format("%A %Y-%m-%d %H:%M"),
+                weekday_name,
+                event_weekday
+            );
+        }
+
+        // Critical test: NO event should be created on Thursday (the click day)
+        let thursday_start_ms =
+            (thursday_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let thursday_end_ms = thursday_start_ms + (24 * 60 * 60 * 1000);
+
+        let events_on_thursday: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= thursday_start_ms && event_ts < thursday_end_ms
+            })
+            .collect();
+
+        assert_eq!(
+            events_on_thursday.len(),
+            0,
+            "Expected NO events on Thursday (click day), but found {}. This is the bug!",
+            events_on_thursday.len()
+        );
+
+        // Verify that ALL events are on Monday (1), Wednesday (3), or Friday (5)
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            assert!(
+                event_weekday == 1 || event_weekday == 3 || event_weekday == 5,
+                "Event {} scheduled on wrong day: weekday {} ({}). Expected Monday=1, Wednesday=3, or Friday=5",
+                i+1,
+                event_weekday,
+                event_dt.format("%A")
+            );
+        }
+
+        // Should have events for 2 weeks: 2 Mondays + 2 Wednesdays + 2 Fridays = 6 events
+        assert!(
+            events.len() >= 6,
+            "Expected at least 6 events (2 weeks of Mon/Wed/Fri), got {}",
+            events.len()
+        );
+
+        // Additional validation: check that we have roughly equal distribution of M/W/F
+        let mut monday_count = 0;
+        let mut wednesday_count = 0;
+        let mut friday_count = 0;
+
+        for event in &events {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            match event_weekday {
+                1 => monday_count += 1,
+                3 => wednesday_count += 1,
+                5 => friday_count += 1,
+                _ => {}
+            }
+        }
+
+        println!(
+            "Event distribution: Monday={}, Wednesday={}, Friday={}",
+            monday_count, wednesday_count, friday_count
+        );
+
+        // Each day should have at least 2 occurrences in a 2-week period
+        assert!(
+            monday_count >= 2,
+            "Expected at least 2 Monday events, got {}",
+            monday_count
+        );
+        assert!(
+            wednesday_count >= 2,
+            "Expected at least 2 Wednesday events, got {}",
+            wednesday_count
+        );
+        assert!(
+            friday_count >= 2,
+            "Expected at least 2 Friday events, got {}",
+            friday_count
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_exact_user_scenario_thursday_click_mwf_frequency() {
+        // This test exactly reproduces the user's bug report:
+        // 1. Click on Thursday in calendar to create routine
+        // 2. Set frequency to Monday/Wednesday/Friday (MWF)
+        // 3. Verify NO events are created on Thursday
+        // 4. Verify events are ONLY created on Monday, Wednesday, Friday
+
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Get next Thursday
+        let base_time = Utc::now();
+        let days_to_thursday = (4 + 7 - base_time.weekday().num_days_from_sunday()) % 7;
+        let thursday_click_timestamp =
+            base_time.timestamp_millis() + (days_to_thursday as i64 * 24 * 60 * 60 * 1000);
+
+        // Verify this is actually Thursday
+        let thursday_dt = Utc.timestamp_millis_opt(thursday_click_timestamp).unwrap();
+        let thursday_weekday = thursday_dt.weekday().num_days_from_sunday();
+        assert_eq!(
+            thursday_weekday, 4,
+            "Test setup error: should be Thursday, got {}",
+            thursday_weekday
+        );
+
+        println!(
+            "📅 Simulating user clicking on Thursday: {}",
+            thursday_dt.format("%A %Y-%m-%d")
+        );
+
+        // Simulate the frontend workflow:
+        // 1. User clicks on Thursday -> scheduled_timestamp is set to Thursday
+        // 2. User selects goal type "routine"
+        // 3. Frontend auto-sets frequency to "1W:4" (Thursday) based on scheduled_timestamp
+        // 4. User manually changes frequency to "1W:1,3,5" (Monday, Wednesday, Friday)
+
+        let routine = Goal {
+            id: None,
+            name: "User MWF Routine".to_string(),
+            goal_type: backend::tools::goal::GoalType::Routine,
+            description: Some("Testing exact user workflow".to_string()),
+            user_id: Some(999),
+            priority: Some("medium".to_string()),
+            start_timestamp: Some(base_time.timestamp_millis()),
+            end_timestamp: None,
+            completion_date: None,
+            next_timestamp: None,
+            scheduled_timestamp: Some(thursday_click_timestamp), // This is set from the Thursday click
+            duration: Some(60),
+            completed: Some(false),
+            frequency: Some("1W:1,3,5".to_string()), // Final frequency: Monday, Wednesday, Friday
+            routine_type: Some("task".to_string()),
+            routine_time: Some(thursday_click_timestamp), // This would be set from the click time
+            position_x: None,
+            position_y: None,
+            parent_id: None,
+            parent_type: None,
+            routine_instance_id: None,
+            is_deleted: Some(false),
+            due_date: None,
+            start_date: None,
+        };
+
+        // Create the routine via API (like frontend does)
+        let created_routine = routine
+            .create_goal(&graph)
+            .await
+            .expect("Failed to create routine");
+
+        println!(
+            "✅ Created routine with final frequency: {}",
+            created_routine.frequency.as_ref().unwrap()
+        );
+
+        // Generate events (this simulates what happens when updateRoutines is called)
+        generate_future_routine_events(&graph)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Verify the events
+        let events = get_routine_events(&graph, created_routine.id.unwrap())
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!("📊 Generated {} events", events.len());
+
+        // Critical verification: NO events should be on Thursday
+        let thursday_start_ms =
+            (thursday_click_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let thursday_end_ms = thursday_start_ms + (24 * 60 * 60 * 1000);
+
+        let thursday_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= thursday_start_ms && event_ts < thursday_end_ms
+            })
+            .collect();
+
+        if !thursday_events.is_empty() {
+            println!("❌ FOUND EVENTS ON THURSDAY (this is the bug!):");
+            for event in &thursday_events {
+                let event_dt = Utc
+                    .timestamp_millis_opt(event.scheduled_timestamp.unwrap())
+                    .unwrap();
+                println!("  Thursday event: {}", event_dt.format("%A %Y-%m-%d %H:%M"));
+            }
+        }
+
+        assert_eq!(
+            thursday_events.len(),
+            0,
+            "BUG REPRODUCED: Found {} events on Thursday (click day)! This should be 0.",
+            thursday_events.len()
+        );
+
+        // Verify events are ONLY on Monday (1), Wednesday (3), Friday (5)
+        let mut monday_count = 0;
+        let mut wednesday_count = 0;
+        let mut friday_count = 0;
+        let mut other_day_count = 0;
+
+        for event in &events {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            println!(
+                "📅 Event: {} (weekday {})",
+                event_dt.format("%A %Y-%m-%d"),
+                event_weekday
+            );
+
+            match event_weekday {
+                1 => monday_count += 1,
+                3 => wednesday_count += 1,
+                5 => friday_count += 1,
+                _ => {
+                    other_day_count += 1;
+                    println!(
+                        "❌ Event on wrong day: {} (weekday {})",
+                        event_dt.format("%A"),
+                        event_weekday
+                    );
+                }
+            }
+        }
+
+        println!(
+            "📊 Event distribution: Monday={}, Wednesday={}, Friday={}, Other={}",
+            monday_count, wednesday_count, friday_count, other_day_count
+        );
+
+        // All events should be on Monday, Wednesday, or Friday
+        assert_eq!(
+            other_day_count, 0,
+            "Found {} events on wrong days (not MWF)",
+            other_day_count
+        );
+
+        // Should have at least some events
+        assert!(events.len() > 0, "No events were generated");
+
+        println!("✅ Test PASSED: Events correctly placed only on Monday, Wednesday, Friday");
+        println!("✅ NO events found on Thursday (click day)");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_api_routine_creation_with_specific_days() {
+        // This test simulates the full API flow:
+        // 1. Create routine via API (like frontend does)
+        // 2. Call updateRoutines (like frontend does after routine creation)
+        // 3. Verify events are correct
+
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Simulate creating a routine on Thursday with MWF frequency via API
+        let base_time = Utc::now();
+        let days_to_thursday = (4 + 7 - base_time.weekday().num_days_from_sunday()) % 7;
+        let thursday_timestamp =
+            base_time.timestamp_millis() + (days_to_thursday as i64 * 24 * 60 * 60 * 1000);
+
+        let thursday_dt = Utc.timestamp_millis_opt(thursday_timestamp).unwrap();
+        println!(
+            "Simulating API routine creation on Thursday: {}",
+            thursday_dt.format("%A %Y-%m-%d")
+        );
+
+        // Create the routine directly using the API style creation
+        let routine = Goal {
+            id: None,
+            name: "API MWF Routine".to_string(),
+            goal_type: backend::tools::goal::GoalType::Routine,
+            description: Some("Test routine created via API simulation".to_string()),
+            user_id: Some(999),
+            priority: Some("medium".to_string()),
+            start_timestamp: Some(thursday_timestamp),
+            end_timestamp: None,
+            completion_date: None,
+            next_timestamp: None,
+            scheduled_timestamp: Some(thursday_timestamp), // This would be set from calendar click
+            duration: Some(60),
+            completed: Some(false),
+            frequency: Some("1W:1,3,5".to_string()), // Monday, Wednesday, Friday
+            routine_type: Some("task".to_string()),
+            routine_time: Some(thursday_timestamp), // Set from the click time initially
+            position_x: None,
+            position_y: None,
+            parent_id: None,
+            parent_type: None,
+            routine_instance_id: None,
+            is_deleted: Some(false),
+            due_date: None,
+            start_date: None,
+        };
+
+        // Create via Goal API (simulates what the frontend does)
+        let created_routine = routine
+            .create_goal(&graph)
+            .await
+            .expect("Failed to create routine via API");
+
+        println!("Created routine with ID: {}", created_routine.id.unwrap());
+
+        // Now simulate what happens when updateRoutines is called (like frontend does)
+        // This should trigger the routine generator which uses our validation logic
+        generate_future_routine_events(&graph)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Retrieve the generated events
+        let events = get_routine_events(&graph, created_routine.id.unwrap())
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!("Generated {} events via API flow", events.len());
+
+        // Print all event details for debugging
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+            let weekday_name = match event_weekday {
+                0 => "Sunday",
+                1 => "Monday",
+                2 => "Tuesday",
+                3 => "Wednesday",
+                4 => "Thursday",
+                5 => "Friday",
+                6 => "Saturday",
+                _ => "Unknown",
+            };
+            println!(
+                "  API Event {}: {} ({}) - weekday {}",
+                i + 1,
+                event_dt.format("%A %Y-%m-%d %H:%M"),
+                weekday_name,
+                event_weekday
+            );
+        }
+
+        // Critical validation: NO event should be on Thursday
+        let thursday_start_ms =
+            (thursday_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let thursday_end_ms = thursday_start_ms + (24 * 60 * 60 * 1000);
+
+        let events_on_thursday: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= thursday_start_ms && event_ts < thursday_end_ms
+            })
+            .collect();
+
+        if !events_on_thursday.is_empty() {
+            println!(
+                "ERROR: Found {} events on Thursday (should be 0):",
+                events_on_thursday.len()
+            );
+            for event in &events_on_thursday {
+                let event_timestamp = event.scheduled_timestamp.unwrap();
+                let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+                println!("  Thursday event: {}", event_dt.format("%A %Y-%m-%d %H:%M"));
+            }
+        }
+
+        assert_eq!(
+            events_on_thursday.len(),
+            0,
+            "API test failed: Found events on Thursday (click day), this indicates the bug is in the API flow!"
+        );
+
+        // Verify all events are on correct days (Monday=1, Wednesday=3, Friday=5)
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            assert!(
+                event_weekday == 1 || event_weekday == 3 || event_weekday == 5,
+                "API Event {} on wrong day: weekday {} ({}). Expected Mon/Wed/Fri only",
+                i + 1,
+                event_weekday,
+                event_dt.format("%A")
+            );
+        }
+
+        println!("✅ API routine creation test passed - all events on correct days");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_frontend_frequency_change_sequence() {
+        // This test simulates the exact frontend sequence:
+        // 1. Click Thursday (creates routine with scheduled_timestamp = Thursday)
+        // 2. Change goal type to 'routine' (triggers default frequency)
+        // 3. Change to weekly dropdown (frontend automatically sets frequency to clicked day: "1W:4")
+        // 4. Change to Monday/Wednesday/Friday ("1W:1,3,5")
+        // This tests if there are race conditions during frequency changes
+
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Step 1: Simulate clicking on Thursday (like user would do)
+        let base_time = Utc::now();
+        let days_to_thursday = (4 + 7 - base_time.weekday().num_days_from_sunday()) % 7;
+        let thursday_timestamp =
+            base_time.timestamp_millis() + (days_to_thursday as i64 * 24 * 60 * 60 * 1000);
+
+        println!(
+            "Step 1: User clicks Thursday: {}",
+            Utc.timestamp_millis_opt(thursday_timestamp)
+                .unwrap()
+                .format("%A %Y-%m-%d")
+        );
+
+        // Step 2: Frontend would create initial goal with goal_type='routine'
+        // This triggers default frequency in frontend: frequency = '1D'
+        let mut routine = Goal {
+            id: None,
+            name: "Frontend Sequence Test".to_string(),
+            goal_type: backend::tools::goal::GoalType::Routine,
+            description: Some("Testing frontend frequency change sequence".to_string()),
+            user_id: Some(999),
+            priority: Some("medium".to_string()),
+            start_timestamp: Some(thursday_timestamp),
+            end_timestamp: None,
+            completion_date: None,
+            next_timestamp: None,
+            scheduled_timestamp: Some(thursday_timestamp), // From Thursday click
+            duration: Some(60),
+            completed: Some(false),
+            frequency: Some("1D".to_string()), // Default when changing to routine
+            routine_type: Some("task".to_string()),
+            routine_time: Some(thursday_timestamp),
+            position_x: None,
+            position_y: None,
+            parent_id: None,
+            parent_type: None,
+            routine_instance_id: None,
+            is_deleted: Some(false),
+            due_date: None,
+            start_date: None,
+        };
+
+        println!(
+            "Step 2: Goal type changed to 'routine', default frequency: {}",
+            routine.frequency.as_ref().unwrap()
+        );
+
+        // Step 3: User changes frequency dropdown to "weekly"
+        // Frontend automatically sets frequency to clicked day: "1W:4" (Thursday)
+        routine.frequency = Some("1W:4".to_string());
+        println!(
+            "Step 3: User selects 'weekly', frequency auto-set to: {}",
+            routine.frequency.as_ref().unwrap()
+        );
+
+        // Step 4: User manually selects Monday, Wednesday, Friday
+        routine.frequency = Some("1W:1,3,5".to_string());
+        println!(
+            "Step 4: User selects Mon/Wed/Fri, final frequency: {}",
+            routine.frequency.as_ref().unwrap()
+        );
+
+        // NOW create the routine (simulate user clicking "Create")
+        let created_routine = routine
+            .create_goal(&graph)
+            .await
+            .expect("Failed to create routine via API");
+
+        println!(
+            "Created routine with final frequency: {}",
+            created_routine.frequency.as_ref().unwrap()
+        );
+
+        // Generate events (this should only use the FINAL frequency: 1W:1,3,5)
+        generate_future_routine_events(&graph)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Retrieve the generated events
+        let events = get_routine_events(&graph, created_routine.id.unwrap())
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!(
+            "Generated {} events after frequency change sequence",
+            events.len()
+        );
+
+        // Print all event details for debugging
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+            let weekday_name = match event_weekday {
+                0 => "Sunday",
+                1 => "Monday",
+                2 => "Tuesday",
+                3 => "Wednesday",
+                4 => "Thursday",
+                5 => "Friday",
+                6 => "Saturday",
+                _ => "Unknown",
+            };
+            println!(
+                "  Event {}: {} ({}) - weekday {}",
+                i + 1,
+                event_dt.format("%A %Y-%m-%d %H:%M"),
+                weekday_name,
+                event_weekday
+            );
+        }
+
+        // Critical test: NO event should be on Thursday
+        let thursday_start_ms =
+            (thursday_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let thursday_end_ms = thursday_start_ms + (24 * 60 * 60 * 1000);
+
+        let events_on_thursday: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= thursday_start_ms && event_ts < thursday_end_ms
+            })
+            .collect();
+
+        if !events_on_thursday.is_empty() {
+            println!("❌ FOUND EVENTS ON THURSDAY (this would be the bug):");
+            for event in &events_on_thursday {
+                let event_timestamp = event.scheduled_timestamp.unwrap();
+                let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+                println!("  Thursday event: {}", event_dt.format("%A %Y-%m-%d %H:%M"));
+            }
+        }
+
+        assert_eq!(
+            events_on_thursday.len(),
+            0,
+            "Frontend sequence test failed: Found {} events on Thursday (click day)! This means intermediate frequency states are being saved.",
+            events_on_thursday.len()
+        );
+
+        // Verify all events are on correct days (Monday=1, Wednesday=3, Friday=5)
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            assert!(
+                event_weekday == 1 || event_weekday == 3 || event_weekday == 5,
+                "Event {} on wrong day: weekday {} ({}). Expected Mon/Wed/Fri only",
+                i + 1,
+                event_weekday,
+                event_dt.format("%A")
+            );
+        }
+
+        println!("✅ Frontend frequency change sequence test passed - all events on correct days");
+    }
+}

@@ -297,6 +297,52 @@ export const updateRoutineEvent = async (
     }
 };
 
+export const updateRoutineEventProperties = async (
+    eventId: number,
+    updates: {
+        duration?: number;
+        name?: string;
+        description?: string;
+        priority?: string;
+        scheduled_timestamp?: Date;
+    },
+    updateScope: 'single' | 'all' | 'future'
+): Promise<Goal[]> => {
+    console.log('🔄 [API] updateRoutineEventProperties called with:', {
+        eventId,
+        updates,
+        updateScope
+    });
+
+    const requestData = {
+        update_scope: updateScope,
+        duration: updates.duration,
+        name: updates.name,
+        description: updates.description,
+        priority: updates.priority,
+        scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined
+    };
+
+    console.log('📡 [API] Making request to:', `events/${eventId}/routine-properties`);
+    console.log('📦 [API] Request body:', requestData);
+
+    try {
+        const response = await privateRequest<ApiGoal[]>(
+            `events/${eventId}/routine-properties`,
+            'PUT',
+            requestData
+        );
+
+        console.log('✅ [API] updateRoutineEventProperties response:', response);
+        const goals = response.map(processGoalFromAPI);
+        console.log('🎯 [API] Processed goals:', goals.length, 'events');
+        return goals;
+    } catch (error) {
+        console.error('❌ [API] updateRoutineEventProperties failed:', error);
+        throw error;
+    }
+};
+
 export const updateEvent = async (eventId: number, updates: {
     scheduled_timestamp?: Date;
     duration?: number;

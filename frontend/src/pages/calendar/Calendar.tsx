@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, updateRoutines, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, updateRoutines, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -43,6 +43,14 @@ interface RoutineRescheduleDialogState {
   eventName: string;
   newTimestamp: Date | null;
   originalTimestamp: Date | null;
+  eventInfo: any; // FullCalendar event info for reverting
+}
+
+interface RoutineResizeDialogState {
+  isOpen: boolean;
+  eventId: number | null;
+  eventName: string;
+  newDuration: number | null;
   eventInfo: any; // FullCalendar event info for reverting
 }
 
@@ -178,6 +186,14 @@ const Calendar: React.FC = () => {
     eventInfo: null
   });
   const [selectedUpdateScope, setSelectedUpdateScope] = useState<'single' | 'all' | 'future'>('single');
+  const [routineResizeDialog, setRoutineResizeDialog] = useState<RoutineResizeDialogState>({
+    isOpen: false,
+    eventId: null,
+    eventName: '',
+    newDuration: null,
+    eventInfo: null
+  });
+  const [selectedResizeScope, setSelectedResizeScope] = useState<'single' | 'all' | 'future'>('single');
   const calendarRef = useRef<FullCalendar | null>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
   const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -625,10 +641,9 @@ const Calendar: React.FC = () => {
         }
       }
 
-      // Regenerate routine occurrences so the calendar reflects the updated schedule
-      // This ensures that moving "all" or "future" occurrences immediately shows the
-      // expected changes without requiring a manual refresh.
-      await updateRoutines();
+      // Note: No need to call updateRoutines() here since updateRoutineEvent already
+      // updates all existing events. Calling updateRoutines() can cause race conditions
+      // where the routine generator interferes with recently moved events.
 
       // Close dialog and reload data
       setRoutineRescheduleDialog({
@@ -669,6 +684,68 @@ const Calendar: React.FC = () => {
     setSelectedUpdateScope('single');
   };
 
+  const handleRoutineResizeConfirm = async () => {
+    try {
+      if (!routineResizeDialog.eventId || !routineResizeDialog.newDuration) {
+        return;
+      }
+
+      if (selectedResizeScope === 'single') {
+        // For single updates, use regular updateGoal
+        const existingEvent = state.events.find((e) => e.id === String(routineResizeDialog.eventId!));
+        if (existingEvent?.goal) {
+          const updates = {
+            ...existingEvent.goal,
+            duration: routineResizeDialog.newDuration
+          };
+          await updateGoal(existingEvent.goal.id, updates);
+        }
+      } else {
+        // For all/future updates, use the routine event properties API
+        await updateRoutineEventProperties(
+          routineResizeDialog.eventId,
+          { duration: routineResizeDialog.newDuration },
+          selectedResizeScope
+        );
+      }
+
+      // Close dialog and reload data
+      setRoutineResizeDialog({
+        isOpen: false,
+        eventId: null,
+        eventName: '',
+        newDuration: null,
+        eventInfo: null
+      });
+      setSelectedResizeScope('single');
+      loadCalendarData();
+    } catch (error) {
+      console.error('Failed to resize routine event:', error);
+      setError('Failed to resize routine event. Please try again.');
+      // Revert the resize operation
+      if (routineResizeDialog.eventInfo) {
+        routineResizeDialog.eventInfo.revert();
+      }
+      handleRoutineResizeCancel();
+    }
+  };
+
+  const handleRoutineResizeCancel = () => {
+    // Revert the resize operation
+    if (routineResizeDialog.eventInfo) {
+      routineResizeDialog.eventInfo.revert();
+    }
+
+    setRoutineResizeDialog({
+      isOpen: false,
+      eventId: null,
+      eventName: '',
+      newDuration: null,
+      eventInfo: null
+    });
+    setSelectedResizeScope('single');
+  };
+
   const handleEventResize = async (info: any) => {
     const executeEventResize = async () => {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
@@ -677,6 +754,20 @@ const Calendar: React.FC = () => {
         const end = info.event.end;
         const durationInMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
 
+        // Check if this is a routine event
+        if (existingEvent.goal.parent_type === 'routine') {
+          // Show dialog for routine event resizing
+          setRoutineResizeDialog({
+            isOpen: true,
+            eventId: existingEvent.goal.id!,
+            eventName: existingEvent.goal.name,
+            newDuration: durationInMinutes,
+            eventInfo: info
+          });
+          return; // Don't proceed with immediate update
+        }
+
+        // For non-routine events, proceed with normal update
         const updates = {
           ...existingEvent.goal,
           duration: durationInMinutes,
@@ -1023,6 +1114,70 @@ const Calendar: React.FC = () => {
           </Button>
           <Button
             onClick={handleRoutineRescheduleConfirm}
+            color="primary"
+            variant="contained"
+          >
+            Update
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Routine Resize Dialog */}
+      <Dialog
+        open={routineResizeDialog.isOpen}
+        onClose={handleRoutineResizeCancel}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Resize Routine Event
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            You're resizing the routine event "{routineResizeDialog.eventName}".
+          </Typography>
+
+          {routineResizeDialog.newDuration && (
+            <Box sx={{ mb: 2, p: 1, bgcolor: 'info.light', borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                New duration: {Math.floor(routineResizeDialog.newDuration / 60)}h {routineResizeDialog.newDuration % 60}m
+              </Typography>
+            </Box>
+          )}
+
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            What would you like to update?
+          </Typography>
+
+          <FormControl component="fieldset">
+            <RadioGroup
+              value={selectedResizeScope}
+              onChange={(e) => setSelectedResizeScope(e.target.value as 'single' | 'all' | 'future')}
+            >
+              <FormControlLabel
+                value="single"
+                control={<Radio />}
+                label="Only this occurrence"
+              />
+              <FormControlLabel
+                value="future"
+                control={<Radio />}
+                label="This and all future occurrences"
+              />
+              <FormControlLabel
+                value="all"
+                control={<Radio />}
+                label="All occurrences of this routine"
+              />
+            </RadioGroup>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleRoutineResizeCancel}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleRoutineResizeConfirm}
             color="primary"
             variant="contained"
           >

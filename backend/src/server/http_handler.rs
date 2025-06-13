@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::ai::query;
+use crate::jobs::routine_generator;
 use crate::server::auth;
 use crate::server::middleware;
 use crate::tools::achievements;
@@ -24,7 +25,6 @@ use crate::tools::migration;
 use crate::tools::network;
 use crate::tools::stats;
 use crate::tools::traversal;
-use crate::jobs::routine_generator;
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
@@ -55,6 +55,10 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/task/:id", get(handle_get_task_events))
         .route("/:id/update", put(handle_update_event))
         .route("/:id/routine-update", put(handle_update_routine_event))
+        .route(
+            "/:id/routine-properties",
+            put(handle_update_routine_event_properties),
+        )
         .route(
             "/:id/reschedule-options",
             get(handle_get_reschedule_options),
@@ -103,8 +107,8 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/verify", get(handle_verify_migration));
 
     // New route group for on-demand routine event generation
-    let routine_generation_routes = Router::new()
-        .route("/:end_timestamp", post(handle_generate_routine_events));
+    let routine_generation_routes =
+        Router::new().route("/:end_timestamp", post(handle_generate_routine_events));
 
     // Protected routes with auth middleware
     let protected_routes = Router::new()
@@ -293,17 +297,45 @@ async fn handle_update_routine_event(
     Path(id): Path<i64>,
     Json(request): Json<event::UpdateRoutineEventRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    println!("🚀 [HTTP_HANDLER] handle_update_routine_event called - event_id: {}, user_id: {}, scope: {}", id, user_id, request.update_scope);
-    println!("📥 [HTTP_HANDLER] Request body: new_timestamp: {}, update_scope: {}", request.new_timestamp, request.update_scope);
-    
-    let result = event::update_routine_event_handler(graph, user_id, id, request).await;
-    
-    match &result {
-        Ok(events) => println!("✅ [HTTP_HANDLER] Successfully updated routine events, returning {} events", events.len()),
-        Err((status, error)) => println!("❌ [HTTP_HANDLER] Failed to update routine events: {} - {}", status, error),
+    // Log the incoming request with all details
+    println!(
+        "🔄 [ROUTE] Routine event update request - event_id: {}, user_id: {}, scope: {}, new_timestamp: {}",
+        id, user_id, request.update_scope, request.new_timestamp
+    );
+
+    match event::update_routine_event_handler(graph, user_id, id, request).await {
+        Ok(events) => Ok((StatusCode::OK, Json(events.0))),
+        Err((status, message)) => {
+            println!(
+                "❌ [ROUTE] Routine event update failed: {} - {}",
+                status, message
+            );
+            Err((status, message))
+        }
     }
-    
-    result
+}
+
+async fn handle_update_routine_event_properties(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+    Json(request): Json<event::UpdateRoutineEventPropertiesRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    println!(
+        "🔄 [ROUTE] Routine event properties update request - event_id: {}, user_id: {}, scope: {}",
+        id, user_id, request.update_scope
+    );
+
+    match event::update_routine_event_properties_handler(graph, user_id, id, request).await {
+        Ok(events) => Ok((StatusCode::OK, Json(events.0))),
+        Err((status, message)) => {
+            println!(
+                "❌ [ROUTE] Routine event properties update failed: {} - {}",
+                status, message
+            );
+            Err((status, message))
+        }
+    }
 }
 
 async fn handle_complete_event(

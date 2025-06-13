@@ -119,11 +119,15 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     // Determine if we're in development or production based on HOST_URL
     let is_development = host_url == "localhost" || host_url.starts_with("127.0.0.1");
 
-    let frontend_origin = if is_development {
-        format!("http://{}:3030", host_url)
+    let frontend_origins = if is_development {
+        // In development, allow both regular dev port (3030) and test port (3031)
+        vec![
+            format!("http://{}:3030", host_url),
+            format!("http://{}:3031", host_url),
+        ]
     } else {
         // In production, use HTTPS and no port (goes through router)
-        format!("https://{}", host_url)
+        vec![format!("https://{}", host_url)]
     };
 
     println!(
@@ -134,10 +138,15 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
             "Production"
         }
     );
-    println!("   Frontend origin: {}", frontend_origin);
+    println!("   Frontend origins: {:?}", frontend_origins);
 
     let cors = CorsLayer::new()
-        .allow_origin([frontend_origin.parse().unwrap()])
+        .allow_origin(
+            frontend_origins
+                .iter()
+                .map(|origin| origin.parse().unwrap())
+                .collect::<Vec<_>>(),
+        )
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,

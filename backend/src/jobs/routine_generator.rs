@@ -1,5 +1,5 @@
 use crate::tools::goal::Goal;
-use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Duration, TimeZone, Utc};
 use neo4rs::{query, Graph};
 
 pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String> {
@@ -49,12 +49,62 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
             _ => horizon,
         };
 
-        generate_events_for_routine(graph, &routine, routine_id, start_from, effective_until).await?;
+        generate_events_for_routine(graph, &routine, routine_id, start_from, effective_until)
+            .await?;
         routine_count += 1;
     }
 
     println!("Generated future events for {} routines", routine_count);
     Ok(())
+}
+
+// Helper function to validate if a given timestamp matches the routine's frequency pattern
+fn is_valid_day_for_routine(timestamp: i64, frequency: &str) -> Result<bool, String> {
+    let current_dt = Utc
+        .timestamp_millis_opt(timestamp)
+        .earliest()
+        .ok_or("Invalid timestamp")?;
+
+    // frequency pattern: {multiplier}{unit}[:days]
+    let parts: Vec<&str> = frequency.split(':').collect();
+    let freq_part = parts[0];
+
+    if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
+        let unit = &freq_part[unit_pos..];
+
+        match unit {
+            "W" => {
+                if let Some(days) = parts.get(1) {
+                    // Get selected days as numbers (0-6)
+                    let selected_days: Vec<u32> =
+                        days.split(',').filter_map(|d| d.parse().ok()).collect();
+
+                    if selected_days.is_empty() {
+                        // If no specific days are selected, all days are valid for weekly
+                        return Ok(true);
+                    } else {
+                        // Check if current day is one of the selected days
+                        let current_weekday = current_dt.weekday().num_days_from_sunday();
+                        return Ok(selected_days.contains(&current_weekday));
+                    }
+                } else {
+                    // Weekly without specific days - all days are valid
+                    return Ok(true);
+                }
+            }
+            "D" | "M" | "Y" => {
+                // For daily, monthly, yearly - all days are valid (the frequency calculation handles the intervals)
+                return Ok(true);
+            }
+            _ => {
+                // Unknown unit - assume valid
+                return Ok(true);
+            }
+        }
+    } else {
+        // No unit found - assume daily, so all days are valid
+        return Ok(true);
+    }
 }
 
 async fn generate_events_for_routine(
@@ -76,6 +126,13 @@ async fn generate_events_for_routine(
     let mut event_count = 0;
 
     while current_time <= until {
+        // Check if this day is valid for the routine's frequency pattern
+        if !is_valid_day_for_routine(current_time, frequency)? {
+            // Skip to next occurrence if this day doesn't match the pattern
+            current_time = calculate_next_occurrence(current_time, frequency)?;
+            continue;
+        }
+
         // Apply routine_time to the current timestamp
         let scheduled_timestamp = if let Some(routine_time) = routine.routine_time {
             set_time_of_day(current_time, routine_time)
@@ -96,7 +153,7 @@ async fn generate_events_for_routine(
              WHERE id(r) = $routine_id
              AND e.scheduled_timestamp = $timestamp
              AND (e.is_deleted IS NULL OR e.is_deleted = false)
-             RETURN count(e) as existing_count"
+             RETURN count(e) as existing_count",
         )
         .param("routine_id", routine_id)
         .param("timestamp", scheduled_timestamp);
@@ -106,11 +163,12 @@ async fn generate_events_for_routine(
             .await
             .map_err(|e| format!("Failed to check existing events: {}", e))?;
 
-        let existing_count: i64 = if let Some(row) = check_result.next().await.map_err(|e| e.to_string())? {
-            row.get("existing_count").unwrap_or(0)
-        } else {
-            0
-        };
+        let existing_count: i64 =
+            if let Some(row) = check_result.next().await.map_err(|e| e.to_string())? {
+                row.get("existing_count").unwrap_or(0)
+            } else {
+                0
+            };
 
         // Only create event if none exists at this timestamp
         if existing_count == 0 {

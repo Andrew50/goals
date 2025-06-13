@@ -160,17 +160,18 @@ pub async fn get_goal_handler(
     graph: Graph,
     id: i64,
 ) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
-    let query = format!(
-        "MATCH (g:Goal) WHERE g.id = $id {}",
-        GOAL_RETURN_QUERY
-    );
-    
+    let query = format!("MATCH (g:Goal) WHERE g.id = $id {}", GOAL_RETURN_QUERY);
+
     let mut result = graph
         .execute(neo4rs::query(&query).param("id", id))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if let Some(row) = result.next().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))? {
+    if let Some(row) = result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
         let goal_data: serde_json::Value = row.get("goal").map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -498,7 +499,7 @@ pub async fn delete_goal_handler(
         )
     })? {
         let goal_type: String = row.get("goal_type").unwrap_or_default();
-        
+
         if goal_type == "routine" {
             // Delete all events belonging to this routine first
             let delete_events_query = query(
@@ -996,6 +997,11 @@ impl Goal {
                 (GoalType::Directive, GoalType::Achievement, _) => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Directives cannot directly connect to achievements".to_string(),
+                    ))
+                }
+                (GoalType::Routine, GoalType::Task, "CHILD") => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Tasks cannot be children of routines".to_string(),
                     ))
                 }
                 (_, GoalType::Event, _) => {

@@ -26,7 +26,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, TaskDateValidationError } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -149,6 +149,30 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setTotalDuration(0);
         }
     }, []);
+
+    // Auto-show add event form for new tasks created from calendar clicks
+    useEffect(() => {
+        if (state.mode === 'create' &&
+            state.goal.goal_type === 'task' &&
+            state.goal.scheduled_timestamp &&
+            !state.goal.id) {
+            // This is a new task created from a calendar click
+            setShowAddEvent(true);
+            setNewEventScheduled(state.goal.scheduled_timestamp);
+        }
+    }, [state.mode, state.goal.goal_type, state.goal.scheduled_timestamp, state.goal.id]);
+
+    // Auto-show add event form when user changes goal type to 'task' in create mode
+    useEffect(() => {
+        if (state.mode === 'create' &&
+            state.goal.goal_type === 'task' &&
+            state.goal.scheduled_timestamp &&
+            !showAddEvent) {
+            // User selected task type, show add event form with the scheduled timestamp
+            setShowAddEvent(true);
+            setNewEventScheduled(state.goal.scheduled_timestamp);
+        }
+    }, [state.goal.goal_type, state.mode, state.goal.scheduled_timestamp, showAddEvent]);
 
     // Fetch parent goals using traversal API
     const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
@@ -402,24 +426,41 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const updatedGoal = state.goal;
 
             let updateType: 'scheduled_time' | 'duration' | 'other' = 'other';
+            let hasChanges = false;
 
+            // Check for scheduled time changes
             if (originalGoal.scheduled_timestamp !== updatedGoal.scheduled_timestamp) {
                 updateType = 'scheduled_time';
-            } else if (originalGoal.duration !== updatedGoal.duration) {
+                hasChanges = true;
+            }
+            // Check for duration changes (including all-day checkbox)
+            else if (originalGoal.duration !== updatedGoal.duration) {
                 updateType = 'duration';
+                hasChanges = true;
+            }
+            // Check for other property changes (name, description, priority)
+            else if (
+                originalGoal.name !== updatedGoal.name ||
+                originalGoal.description !== updatedGoal.description ||
+                originalGoal.priority !== updatedGoal.priority
+            ) {
+                updateType = 'other';
+                hasChanges = true;
             }
 
-            // Show routine update dialog
-            setRoutineUpdateDialog({
-                isOpen: true,
-                updateType,
-                originalGoal,
-                updatedGoal,
-                onConfirm: async (scope: 'single' | 'all' | 'future') => {
-                    await handleRoutineEventUpdate(originalGoal, updatedGoal, updateType, scope);
-                }
-            });
-            return;
+            // If there are changes to a routine event, show the scope dialog
+            if (hasChanges) {
+                setRoutineUpdateDialog({
+                    isOpen: true,
+                    updateType,
+                    originalGoal,
+                    updatedGoal,
+                    onConfirm: async (scope: 'single' | 'all' | 'future') => {
+                        await handleRoutineEventUpdate(originalGoal, updatedGoal, updateType, scope);
+                    }
+                });
+                return;
+            }
         }
 
         // Validation checks
@@ -628,9 +669,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
 
                 setState({ ...state, goal: updatedEvents[0] || updatedGoal });
-            } else if (updateType === 'duration' && (scope === 'all' || scope === 'future')) {
-                // For duration changes, update multiple events manually
-                await updateMultipleRoutineEvents(updatedGoal, 'duration', scope);
+            } else if ((updateType === 'duration' || updateType === 'other') && (scope === 'all' || scope === 'future')) {
+                // For duration or other property changes, update multiple events
+                await updateMultipleRoutineEvents(updatedGoal, updateType === 'duration' ? 'duration' : 'other', scope);
             } else {
                 // For single updates or other changes, use regular update
                 const result = await updateGoal(updatedGoal.id!, updatedGoal);
@@ -664,9 +705,75 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         changeType: 'duration' | 'other',
         scope: 'single' | 'all' | 'future'
     ) => {
-        // This is a simplified approach - in a real implementation you'd want a dedicated API
-        // For now, we'll just update the single event
-        await updateGoal(updatedGoal.id!, updatedGoal);
+        if (!updatedGoal.id) {
+            throw new Error('Goal ID is required for updating routine events');
+        }
+
+        // Extract the updates from the goal based on change type
+        const updates: {
+            duration?: number;
+            name?: string;
+            description?: string;
+            priority?: string;
+            scheduled_timestamp?: Date;
+        } = {};
+
+        if (changeType === 'duration') {
+            // For duration changes, only update the duration
+            if (updatedGoal.duration !== undefined) {
+                updates.duration = updatedGoal.duration;
+            }
+        } else {
+            // For other changes, include all relevant properties except scheduled_timestamp
+            // (scheduled_timestamp should be handled by the separate updateRoutineEvent API)
+            if (updatedGoal.name) updates.name = updatedGoal.name;
+            if (updatedGoal.description) updates.description = updatedGoal.description;
+            if (updatedGoal.priority) updates.priority = updatedGoal.priority;
+        }
+
+        // Use the dedicated API for updating routine event properties
+        const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
+
+        // For 'all' or 'future' scope, also update the parent routine with the same changes
+        if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
+            const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
+            if (parentRoutine) {
+                const routineUpdates: Partial<Goal> = {};
+
+                // Apply the same changes to the parent routine
+                if (changeType === 'duration' && updates.duration !== undefined) {
+                    routineUpdates.duration = updates.duration;
+                } else if (changeType === 'other') {
+                    if (updates.name) routineUpdates.name = updates.name;
+                    if (updates.description) routineUpdates.description = updates.description;
+                    if (updates.priority && ['high', 'medium', 'low'].includes(updates.priority)) {
+                        routineUpdates.priority = updates.priority as 'high' | 'medium' | 'low';
+                    }
+                }
+
+                // Only update if we have changes to apply
+                if (Object.keys(routineUpdates).length > 0) {
+                    try {
+                        await updateGoal(parentRoutine.id!, {
+                            ...parentRoutine,
+                            ...routineUpdates
+                        });
+                        console.log('Updated parent routine with changes:', routineUpdates);
+                    } catch (error) {
+                        console.warn('Failed to update parent routine:', error);
+                        // Don't fail the entire operation if routine update fails
+                    }
+                }
+            }
+        }
+
+        // Update the current goal state with the first updated event (the one being edited)
+        const currentEvent = updatedEvents.find(event => event.id === updatedGoal.id);
+        if (currentEvent) {
+            setState({ ...state, goal: currentEvent });
+        }
+
+        return updatedEvents;
     };
 
     const handleDelete = async () => {
@@ -1916,6 +2023,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     {routineUpdateDialog.updateType === 'duration' && (
                         <Typography variant="body2" sx={{ mb: 2, color: 'info.main' }}>
                             This will change the duration for the selected events.
+                        </Typography>
+                    )}
+                    {routineUpdateDialog.updateType === 'other' && (
+                        <Typography variant="body2" sx={{ mb: 2, color: 'info.main' }}>
+                            This will change the name, description, or other properties for the selected events.
                         </Typography>
                     )}
                     <FormControl component="fieldset">

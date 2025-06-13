@@ -1,5 +1,5 @@
 use crate::tools::goal::Goal;
-use chrono::Utc;
+use chrono::{Datelike, TimeZone, Utc};
 use neo4rs::{query, Graph};
 
 // Migration state tracking
@@ -688,6 +688,13 @@ async fn create_routine_events_in_db(
     let mut created_event_ids = Vec::new();
 
     while current_time <= end_time {
+        // Check if this day is valid for the routine's frequency pattern
+        if !is_valid_day_for_routine_migration(current_time, frequency)? {
+            // Skip to next occurrence if this day doesn't match the pattern
+            current_time = calculate_next_occurrence(current_time, frequency)?;
+            continue;
+        }
+
         // Skip if in the past
         if current_time >= start_time {
             let create_query = query(
@@ -738,6 +745,55 @@ async fn create_routine_events_in_db(
     Ok(created_event_ids)
 }
 
+// Helper function to validate if a given timestamp matches the routine's frequency pattern (for migration)
+fn is_valid_day_for_routine_migration(timestamp: i64, frequency: &str) -> Result<bool, String> {
+    let current_dt = Utc
+        .timestamp_millis_opt(timestamp)
+        .earliest()
+        .ok_or("Invalid timestamp")?;
+
+    // frequency pattern: {multiplier}{unit}[:days]
+    let parts: Vec<&str> = frequency.split(':').collect();
+    let freq_part = parts[0];
+
+    if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
+        let unit = &freq_part[unit_pos..];
+
+        match unit {
+            "W" => {
+                if let Some(days) = parts.get(1) {
+                    // Get selected days as numbers (0-6)
+                    let selected_days: Vec<u32> =
+                        days.split(',').filter_map(|d| d.parse().ok()).collect();
+
+                    if selected_days.is_empty() {
+                        // If no specific days are selected, all days are valid for weekly
+                        return Ok(true);
+                    } else {
+                        // Check if current day is one of the selected days
+                        let current_weekday = current_dt.weekday().num_days_from_sunday();
+                        return Ok(selected_days.contains(&current_weekday));
+                    }
+                } else {
+                    // Weekly without specific days - all days are valid
+                    return Ok(true);
+                }
+            }
+            "D" | "M" | "Y" => {
+                // For daily, monthly, yearly - all days are valid (the frequency calculation handles the intervals)
+                return Ok(true);
+            }
+            _ => {
+                // Unknown unit - assume valid
+                return Ok(true);
+            }
+        }
+    } else {
+        // No unit found - assume daily, so all days are valid
+        return Ok(true);
+    }
+}
+
 fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, String> {
     // Parse frequency and calculate next occurrence
     let ms_per_day = 24 * 60 * 60 * 1000;
@@ -766,24 +822,21 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                 } else {
                     return Err(format!("Invalid frequency format: {}", frequency));
                 }
-            } else if frequency.ends_with('D') || frequency.ends_with('d')
-            {
+            } else if frequency.ends_with('D') || frequency.ends_with('d') {
                 // Handle formats like "1D", "2d", etc.
                 let number_str = &frequency[..frequency.len() - 1];
                 let number = number_str
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
                 current_time + (number * ms_per_day)
-            } else if frequency.ends_with('W') || frequency.ends_with('w')
-            {
+            } else if frequency.ends_with('W') || frequency.ends_with('w') {
                 // Handle formats like "1W", "2w", etc.
                 let number_str = &frequency[..frequency.len() - 1];
                 let number = number_str
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
                 current_time + (number * 7 * ms_per_day)
-            } else if frequency.ends_with('M') || frequency.ends_with('m')
-            {
+            } else if frequency.ends_with('M') || frequency.ends_with('m') {
                 // Handle formats like "1M", "2m", etc.
                 let number_str = &frequency[..frequency.len() - 1];
                 let number = number_str

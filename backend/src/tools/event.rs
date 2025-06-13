@@ -919,8 +919,11 @@ pub async fn update_routine_event_handler(
     event_id: i64,
     request: UpdateRoutineEventRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
-    println!("🔄 [ROUTINE_UPDATE] Starting routine event update for event_id: {}, scope: {}", event_id, request.update_scope);
-    
+    println!(
+        "🔄 [ROUTINE_UPDATE] Starting routine event update for event_id: {}, scope: {}",
+        event_id, request.update_scope
+    );
+
     // First, fetch the event to get routine information
     let fetch_query = query(
         "MATCH (e:Goal)
@@ -987,7 +990,9 @@ pub async fn update_routine_event_handler(
                 println!("✅ [ROUTINE_UPDATE] Single event updated successfully");
                 Ok(Json(vec![updated_event]))
             } else {
-                println!("❌ [ROUTINE_UPDATE] Failed to update single event - not found after update");
+                println!(
+                    "❌ [ROUTINE_UPDATE] Failed to update single event - not found after update"
+                );
                 Err((
                     StatusCode::NOT_FOUND,
                     "Event not found after update".to_string(),
@@ -996,12 +1001,15 @@ pub async fn update_routine_event_handler(
         }
         "all" => {
             println!("🌐 [ROUTINE_UPDATE] Processing all events update");
-            
+
             // Calculate the new time-of-day from the new timestamp
             let day_in_ms: i64 = 24 * 60 * 60 * 1000;
             let new_time_of_day = request.new_timestamp % day_in_ms;
-            println!("🕐 [ROUTINE_UPDATE] New time of day: {} ms", new_time_of_day);
-            
+            println!(
+                "🕐 [ROUTINE_UPDATE] New time of day: {} ms",
+                new_time_of_day
+            );
+
             // For "all" scope, update ALL events for this routine to the new time-of-day
             let check_query = query(
                 "MATCH (e:Goal)
@@ -1009,7 +1017,7 @@ pub async fn update_routine_event_handler(
                  AND e.parent_id = $parent_id
                  AND e.parent_type = 'routine'
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                 RETURN count(e) as event_count, collect(id(e)) as ids"
+                 RETURN count(e) as event_count, collect(id(e)) as ids",
             )
             .param("parent_id", parent_id);
 
@@ -1025,7 +1033,10 @@ pub async fn update_routine_event_handler(
             {
                 let event_count: i64 = check_row.get("event_count").unwrap_or(0);
                 let ids: Vec<i64> = check_row.get("ids").unwrap_or_default();
-                println!("🔍 [ROUTINE_UPDATE] Found {} total events for 'all' scope. IDs: {:?}", event_count, ids);
+                println!(
+                    "🔍 [ROUTINE_UPDATE] Found {} total events for 'all' scope. IDs: {:?}",
+                    event_count, ids
+                );
             }
 
             // Update ALL events to the new time-of-day (preserve their dates, change only time)
@@ -1056,7 +1067,10 @@ pub async fn update_routine_event_handler(
                 let events: Vec<Goal> = row
                     .get("events")
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-                println!("✅ [ROUTINE_UPDATE] Updated {} events for 'all' scope to new time-of-day", events.len());
+                println!(
+                    "✅ [ROUTINE_UPDATE] Updated {} events for 'all' scope to new time-of-day",
+                    events.len()
+                );
                 Ok(Json(events))
             } else {
                 println!("⚠️  [ROUTINE_UPDATE] No events returned from update query");
@@ -1065,12 +1079,15 @@ pub async fn update_routine_event_handler(
         }
         "future" => {
             println!("⏭️  [ROUTINE_UPDATE] Processing future events update");
-            
+
             // Calculate the new time-of-day from the new timestamp
             let day_in_ms: i64 = 24 * 60 * 60 * 1000;
             let new_time_of_day = request.new_timestamp % day_in_ms;
-            println!("🕐 [ROUTINE_UPDATE] New time of day: {} ms", new_time_of_day);
-            
+            println!(
+                "🕐 [ROUTINE_UPDATE] New time of day: {} ms",
+                new_time_of_day
+            );
+
             // For "future" scope, update ALL future events for this routine to the new time-of-day
             let check_query = query(
                 "MATCH (e:Goal)
@@ -1079,7 +1096,7 @@ pub async fn update_routine_event_handler(
                  AND e.parent_type = 'routine'
                  AND e.scheduled_timestamp >= $current_timestamp
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                 RETURN count(e) as event_count, collect(id(e)) as ids"
+                 RETURN count(e) as event_count, collect(id(e)) as ids",
             )
             .param("parent_id", parent_id)
             .param("current_timestamp", current_timestamp);
@@ -1096,7 +1113,10 @@ pub async fn update_routine_event_handler(
             {
                 let event_count: i64 = check_row.get("event_count").unwrap_or(0);
                 let ids: Vec<i64> = check_row.get("ids").unwrap_or_default();
-                println!("🔍 [ROUTINE_UPDATE] Found {} future events for 'future' scope. IDs: {:?}", event_count, ids);
+                println!(
+                    "🔍 [ROUTINE_UPDATE] Found {} future events for 'future' scope. IDs: {:?}",
+                    event_count, ids
+                );
             }
 
             // Update ALL future events to the new time-of-day (preserve their dates, change only time)
@@ -1129,7 +1149,10 @@ pub async fn update_routine_event_handler(
                 let events: Vec<Goal> = row
                     .get("events")
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-                println!("✅ [ROUTINE_UPDATE] Updated {} events for 'future' scope to new time-of-day", events.len());
+                println!(
+                    "✅ [ROUTINE_UPDATE] Updated {} events for 'future' scope to new time-of-day",
+                    events.len()
+                );
                 Ok(Json(events))
             } else {
                 println!("⚠️  [ROUTINE_UPDATE] No events returned from update query");
@@ -1137,7 +1160,10 @@ pub async fn update_routine_event_handler(
             }
         }
         _ => {
-            println!("❌ [ROUTINE_UPDATE] Invalid update_scope: {}", request.update_scope);
+            println!(
+                "❌ [ROUTINE_UPDATE] Invalid update_scope: {}",
+                request.update_scope
+            );
             Err((
                 StatusCode::BAD_REQUEST,
                 "Invalid update_scope. Must be 'single', 'all', or 'future'".to_string(),
@@ -1517,7 +1543,7 @@ pub async fn update_routine_event_properties_handler(
     request: UpdateRoutineEventPropertiesRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
     println!("🔄 [ROUTINE_PROPERTIES] Starting routine event properties update for event_id: {}, scope: {}", event_id, request.update_scope);
-    
+
     // First, fetch the event to get routine information
     let fetch_query = query(
         "MATCH (e:Goal)
@@ -1552,47 +1578,70 @@ pub async fn update_routine_event_properties_handler(
         "Event missing scheduled_timestamp".to_string(),
     ))?;
 
-    println!("📋 [ROUTINE_PROPERTIES] Event details - parent_id: {}, current_timestamp: {}", 
-             parent_id, current_timestamp);
+    println!(
+        "📋 [ROUTINE_PROPERTIES] Event details - parent_id: {}, current_timestamp: {}",
+        parent_id, current_timestamp
+    );
 
     match request.update_scope.as_str() {
         "single" => {
             println!("🎯 [ROUTINE_PROPERTIES] Processing single event property update");
-            
+
             // Build the SET clause dynamically based on what properties are provided
             let mut set_clauses = Vec::new();
-            let mut params = vec![("event_id".to_string(), neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(event_id)))];
-            
+            let mut params = vec![(
+                "event_id".to_string(),
+                neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(event_id)),
+            )];
+
             if let Some(timestamp) = request.scheduled_timestamp {
                 set_clauses.push("e.scheduled_timestamp = $scheduled_timestamp");
-                params.push(("scheduled_timestamp".to_string(), neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(timestamp))));
+                params.push((
+                    "scheduled_timestamp".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(timestamp)),
+                ));
             }
             if let Some(duration) = request.duration {
                 set_clauses.push("e.duration = $duration");
-                params.push(("duration".to_string(), neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(duration as i64))));
+                params.push((
+                    "duration".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(duration as i64)),
+                ));
             }
             if let Some(name) = &request.name {
                 set_clauses.push("e.name = $name");
-                params.push(("name".to_string(), neo4rs::BoltType::String(neo4rs::BoltString::new(&name))));
+                params.push((
+                    "name".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(&name)),
+                ));
             }
             if let Some(description) = &request.description {
                 set_clauses.push("e.description = $description");
-                params.push(("description".to_string(), neo4rs::BoltType::String(neo4rs::BoltString::new(&description))));
+                params.push((
+                    "description".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(&description)),
+                ));
             }
             if let Some(priority) = &request.priority {
                 set_clauses.push("e.priority = $priority");
-                params.push(("priority".to_string(), neo4rs::BoltType::String(neo4rs::BoltString::new(&priority))));
+                params.push((
+                    "priority".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(&priority)),
+                ));
             }
-            
+
             if set_clauses.is_empty() {
-                return Err((StatusCode::BAD_REQUEST, "No properties to update".to_string()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "No properties to update".to_string(),
+                ));
             }
-            
+
             let query_str = format!(
                 "MATCH (e:Goal) WHERE id(e) = $event_id SET {} RETURN e",
                 set_clauses.join(", ")
             );
-            
+
             let mut update_query = query(&query_str);
             for (key, value) in params {
                 update_query = update_query.param(&key, value);
@@ -1622,28 +1671,126 @@ pub async fn update_routine_event_properties_handler(
             }
         }
         "all" | "future" => {
-            println!("🌐 [ROUTINE_PROPERTIES] Processing {} events property update", request.update_scope);
-            
-            // For now, just update the single event - implementing bulk property updates
-            // would require more complex logic and careful consideration of which properties
-            // should be bulk-updated vs. individual
-            let updated_event = update_event_handler(
-                graph,
-                _user_id,
-                event_id,
-                UpdateEventRequest {
-                    scheduled_timestamp: request.scheduled_timestamp,
-                    duration: request.duration,
-                    completed: None,
-                    move_reason: Some("Routine property update".to_string()),
-                }
-            ).await?;
-            
-            println!("✅ [ROUTINE_PROPERTIES] Event properties updated (scope: {})", request.update_scope);
-            Ok(Json(vec![updated_event.0]))
+            println!(
+                "🌐 [ROUTINE_PROPERTIES] Processing {} events property update",
+                request.update_scope
+            );
+
+            // Build the SET clause dynamically based on what properties are provided
+            let mut set_clauses = Vec::new();
+            let mut params = vec![(
+                "parent_id".to_string(),
+                neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(parent_id)),
+            )];
+
+            if let Some(timestamp) = request.scheduled_timestamp {
+                set_clauses.push("e.scheduled_timestamp = $scheduled_timestamp");
+                params.push((
+                    "scheduled_timestamp".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(timestamp)),
+                ));
+            }
+            if let Some(duration) = request.duration {
+                set_clauses.push("e.duration = $duration");
+                params.push((
+                    "duration".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(duration as i64)),
+                ));
+            }
+            if let Some(name) = &request.name {
+                set_clauses.push("e.name = $name");
+                params.push((
+                    "name".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(&name)),
+                ));
+            }
+            if let Some(description) = &request.description {
+                set_clauses.push("e.description = $description");
+                params.push((
+                    "description".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(&description)),
+                ));
+            }
+            if let Some(priority) = &request.priority {
+                set_clauses.push("e.priority = $priority");
+                params.push((
+                    "priority".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(&priority)),
+                ));
+            }
+
+            if set_clauses.is_empty() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "No properties to update".to_string(),
+                ));
+            }
+
+            // Build the query based on scope
+            let query_str = if request.update_scope == "all" {
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     SET {}
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            } else {
+                // future scope
+                params.push((
+                    "current_timestamp".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(current_timestamp)),
+                ));
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND e.scheduled_timestamp >= $current_timestamp
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     SET {}
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            };
+
+            let mut update_query = query(&query_str);
+            for (key, value) in params {
+                update_query = update_query.param(&key, value);
+            }
+
+            let mut update_result = graph
+                .execute(update_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if let Some(row) = update_result
+                .next()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            {
+                let events: Vec<Goal> = row
+                    .get("events")
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                println!(
+                    "✅ [ROUTINE_PROPERTIES] Updated {} events for '{}' scope",
+                    events.len(),
+                    request.update_scope
+                );
+                Ok(Json(events))
+            } else {
+                println!("⚠️  [ROUTINE_PROPERTIES] No events returned from update query");
+                Ok(Json(vec![]))
+            }
         }
         _ => {
-            println!("❌ [ROUTINE_PROPERTIES] Invalid update_scope: {}", request.update_scope);
+            println!(
+                "❌ [ROUTINE_PROPERTIES] Invalid update_scope: {}",
+                request.update_scope
+            );
             Err((
                 StatusCode::BAD_REQUEST,
                 "Invalid update_scope. Must be 'single', 'all', or 'future'".to_string(),

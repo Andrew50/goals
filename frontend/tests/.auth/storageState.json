@@ -6,7 +6,7 @@
       "localStorage": [
         {
           "name": "authToken",
-          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5ODM5MzQzLCJpYXQiOjE3NDk3NTI5NDN9.bwpW2XlJj_-nGVNau6BxJ83ESStEsjbUnjfcq39xTSA"
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzQ5ODg1MTY5LCJpYXQiOjE3NDk3OTg3Njl9.napXMdpqTDTQOEyCXlPfjviagcw3Nu-LHWU5voWxaL4"
         },
         {
           "name": "userId",
