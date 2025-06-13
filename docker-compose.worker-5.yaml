@@ -1,0 +1,64 @@
+services:
+  goals_backend_worker_5:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5062:5059"
+    volumes:
+      - ./backend/:/usr/src/app
+      - /usr/src/app/target
+    environment:
+      - NEO4J_URI=bolt://goals_db_test_worker_5:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=password123
+      - TEST_MODE=true
+      - WORKER_ID=5
+    env_file:
+      - .env
+    networks:
+      - test_network_worker_5
+    depends_on:
+      - goals_db_test_worker_5
+
+  goals_frontend_worker_5:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3036:3030"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL=http://localhost:5062
+      - WORKER_ID=5
+    env_file:
+      - .env
+    networks:
+      - test_network_worker_5
+    depends_on:
+      - goals_backend_worker_5
+
+  goals_db_test_worker_5:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.dev
+    ports:
+      - "7480:7474"
+      - "7693:7687"
+    volumes:
+      - goal_db_test_worker_5:/data
+      - ./db/seed_test_db.sh:/data/seed_test_db.sh
+    environment:
+      - NEO4J_AUTH=neo4j/password123
+    networks:
+      - test_network_worker_5
+
+volumes:
+  goal_db_test_worker_5:
+
+networks:
+  test_network_worker_5:
+    driver: bridge

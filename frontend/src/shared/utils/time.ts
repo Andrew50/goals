@@ -11,8 +11,8 @@ const msToDate = (ms?: number | null): Date | undefined =>
   ms == null ? undefined : new Date(ms);
 
 /** Extract UTC ms from a Date (or undefined). */
-const dateToMs = (d?: Date | null): number | undefined =>
-  d == null ? undefined : d.getTime();
+const dateToMs = (d?: Date | null): number | null | undefined =>
+  d === null ? null : d === undefined ? undefined : d.getTime();
 
 /* ────────────────────────────────────────────────────────── *
  *  2.  Former "timestamp conversion" API                     *
