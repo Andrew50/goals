@@ -440,7 +440,7 @@ test.describe('Calendar Routine Interactions', () => {
 
                 // Verify that time inputs are hidden when all-day is checked
                 const timeInputs = page.locator('input[type="number"]');
-                const timeInputCount = await timeInputs.count();
+                await timeInputs.count();
 
                 // Uncheck all-day to test duration inputs
                 await allDayCheckbox.uncheck();

@@ -36,11 +36,10 @@ if (typeof global.structuredClone === 'undefined') {
 
 // Mock react-dnd modules
 jest.mock('react-dnd', () => {
-    const React = require('react');
     return {
         useDrop: jest.fn().mockReturnValue([{}, jest.fn()]),
         useDrag: jest.fn().mockReturnValue([{}, jest.fn()]),
-        DndProvider: ({ children }: { children: React.ReactNode }) => children
+        DndProvider: ({ children }: { children: any }) => children
     };
 });
 
