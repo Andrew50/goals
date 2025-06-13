@@ -228,8 +228,9 @@ async fn generate_events_for_test_routine(
             current_time
         };
 
-        // Ensure we only create events in or after the start window
-        if scheduled_timestamp >= start_timestamp {
+        // Ensure we only create events in or after the routine's start date
+        let routine_start = routine.start_timestamp.unwrap_or(start_timestamp);
+        if scheduled_timestamp >= routine_start {
             // Check if an event already exists at this timestamp
             let check_query = query(
                 "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
