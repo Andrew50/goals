@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { goalToLocal } from '../../shared/utils/time';
@@ -102,14 +103,16 @@ jest.mock('../../shared/hooks/useHistoryState', () => ({
     }
 }));
 
-// Test wrapper component with DndProvider and GoalMenuProvider
+// Test wrapper component with MemoryRouter, DndProvider and GoalMenuProvider
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return (
-        <DndProvider backend={HTML5Backend}>
-            <GoalMenuProvider>
-                {children}
-            </GoalMenuProvider>
-        </DndProvider>
+        <MemoryRouter>
+            <DndProvider backend={HTML5Backend}>
+                <GoalMenuProvider>
+                    {children}
+                </GoalMenuProvider>
+            </DndProvider>
+        </MemoryRouter>
     );
 };
 
