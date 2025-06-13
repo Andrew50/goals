@@ -36,6 +36,14 @@ export interface Goal {
     start_date?: Date;
     // Note: scheduled_timestamp is now event-only for tasks
     // Note: duration is now event-only for tasks
+
+    // Google Calendar sync fields:
+    gcal_event_id?: string;
+    gcal_calendar_id?: string;
+    gcal_sync_enabled?: boolean;
+    gcal_last_sync?: Date;
+    gcal_sync_direction?: 'bidirectional' | 'to_gcal' | 'from_gcal';
+    is_gcal_imported?: boolean;
 }
 
 // Utility functions for timezone conversion
@@ -120,7 +128,7 @@ export interface NetworkEdge {
     };
 }
 
-export type ApiGoal = Omit<Goal, 'start_timestamp' | 'end_timestamp' | 'next_timestamp' | 'scheduled_timestamp' | 'routine_time' | 'due_date' | 'start_date'> & {
+export type ApiGoal = Omit<Goal, 'start_timestamp' | 'end_timestamp' | 'next_timestamp' | 'scheduled_timestamp' | 'routine_time' | 'due_date' | 'start_date' | 'gcal_last_sync'> & {
     start_timestamp?: number | null;
     end_timestamp?: number | null;
     next_timestamp?: number | null;
@@ -128,4 +136,5 @@ export type ApiGoal = Omit<Goal, 'start_timestamp' | 'end_timestamp' | 'next_tim
     routine_time?: number | null;
     due_date?: number | null;
     start_date?: number | null;
+    gcal_last_sync?: number | null;
 };

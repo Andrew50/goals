@@ -1887,6 +1887,62 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {scheduleField}
                         {durationField}
                         {completedField}
+
+                        {/* Google Calendar Sync Settings */}
+                        <Box sx={{ mt: 2, mb: 2 }}>
+                            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                                Google Calendar Sync
+                            </Typography>
+
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={state.goal.gcal_sync_enabled || false}
+                                        onChange={(e: ChangeEvent<HTMLInputElement>) => handleChange({
+                                            ...state.goal,
+                                            gcal_sync_enabled: e.target.checked,
+                                            gcal_sync_direction: e.target.checked ? 'bidirectional' : undefined
+                                        })}
+                                        disabled={isViewOnly}
+                                    />
+                                }
+                                label="Sync with Google Calendar"
+                            />
+
+                            {state.goal.gcal_sync_enabled && (
+                                <Box sx={{ ml: 3, mt: 1 }}>
+                                    <TextField
+                                        label="Sync Direction"
+                                        select
+                                        value={state.goal.gcal_sync_direction || 'bidirectional'}
+                                        onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
+                                            ...state.goal,
+                                            gcal_sync_direction: e.target.value as 'bidirectional' | 'to_gcal' | 'from_gcal'
+                                        })}
+                                        fullWidth
+                                        margin="dense"
+                                        size="small"
+                                        disabled={isViewOnly}
+                                    >
+                                        <MenuItem value="bidirectional">Bidirectional (both ways)</MenuItem>
+                                        <MenuItem value="to_gcal">To Google Calendar only</MenuItem>
+                                        <MenuItem value="from_gcal">From Google Calendar only</MenuItem>
+                                    </TextField>
+
+                                    {state.goal.gcal_event_id && (
+                                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                            Synced with Google Calendar event: {state.goal.gcal_event_id}
+                                        </Typography>
+                                    )}
+
+                                    {state.goal.is_gcal_imported && (
+                                        <Typography variant="caption" color="primary.main" sx={{ mt: 1, display: 'block' }}>
+                                            ⚠️ This event was imported from Google Calendar
+                                        </Typography>
+                                    )}
+                                </Box>
+                            )}
+                        </Box>
                     </>
                 );
         }

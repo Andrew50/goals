@@ -40,6 +40,14 @@ pub struct Goal {
     // Modified fields for tasks:
     pub due_date: Option<i64>,   // New for tasks
     pub start_date: Option<i64>, // New for tasks (earliest event date)
+
+    // Add these fields to the Goal struct after the existing fields
+    pub gcal_event_id: Option<String>, // Google Calendar event ID
+    pub gcal_calendar_id: Option<String>, // Google Calendar calendar ID
+    pub gcal_sync_enabled: Option<bool>, // Whether this goal should sync to Google Calendar
+    pub gcal_last_sync: Option<i64>,   // Last sync timestamp
+    pub gcal_sync_direction: Option<String>, // "bidirectional", "to_gcal", "from_gcal"
+    pub is_gcal_imported: Option<bool>, // Whether this event was imported from Google Calendar
 }
 
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
@@ -65,6 +73,12 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     is_deleted: g.is_deleted,
                     due_date: g.due_date,
                     start_date: g.start_date,
+                    gcal_event_id: g.gcal_event_id,
+                    gcal_calendar_id: g.gcal_calendar_id,
+                    gcal_sync_enabled: g.gcal_sync_enabled,
+                    gcal_last_sync: g.gcal_last_sync,
+                    gcal_sync_direction: g.gcal_sync_direction,
+                    is_gcal_imported: g.is_gcal_imported,
                     id: id(g)
                  } as g";
 
@@ -433,6 +447,30 @@ pub async fn update_goal_handler(
     if let Some(start_date) = goal.start_date {
         set_clauses.push("g.start_date = $start_date");
         params.push(("start_date", start_date.into()));
+    }
+    if let Some(gcal_event_id) = &goal.gcal_event_id {
+        set_clauses.push("g.gcal_event_id = $gcal_event_id");
+        params.push(("gcal_event_id", gcal_event_id.clone().into()));
+    }
+    if let Some(gcal_calendar_id) = &goal.gcal_calendar_id {
+        set_clauses.push("g.gcal_calendar_id = $gcal_calendar_id");
+        params.push(("gcal_calendar_id", gcal_calendar_id.clone().into()));
+    }
+    if let Some(gcal_sync_enabled) = goal.gcal_sync_enabled {
+        set_clauses.push("g.gcal_sync_enabled = $gcal_sync_enabled");
+        params.push(("gcal_sync_enabled", gcal_sync_enabled.into()));
+    }
+    if let Some(gcal_last_sync) = goal.gcal_last_sync {
+        set_clauses.push("g.gcal_last_sync = $gcal_last_sync");
+        params.push(("gcal_last_sync", gcal_last_sync.into()));
+    }
+    if let Some(gcal_sync_direction) = &goal.gcal_sync_direction {
+        set_clauses.push("g.gcal_sync_direction = $gcal_sync_direction");
+        params.push(("gcal_sync_direction", gcal_sync_direction.clone().into()));
+    }
+    if let Some(is_gcal_imported) = goal.is_gcal_imported {
+        set_clauses.push("g.is_gcal_imported = $is_gcal_imported");
+        params.push(("is_gcal_imported", is_gcal_imported.into()));
     }
     // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
@@ -911,6 +949,28 @@ impl Goal {
                 self.start_date
                     .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
             ),
+            (
+                "gcal_event_id",
+                self.gcal_event_id.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "gcal_calendar_id",
+                self.gcal_calendar_id.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "gcal_sync_enabled",
+                self.gcal_sync_enabled.map(|v| v.into()),
+            ),
+            (
+                "gcal_last_sync",
+                self.gcal_last_sync
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
+            (
+                "gcal_sync_direction",
+                self.gcal_sync_direction.as_ref().map(|v| v.clone().into()),
+            ),
+            ("is_gcal_imported", self.is_gcal_imported.map(|v| v.into())),
         ];
 
         // Build query properties and parameters in one pass

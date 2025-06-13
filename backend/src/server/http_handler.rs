@@ -1,30 +1,26 @@
 use axum::{
-    extract::{Extension, Json, Path, Query},
+    extract::{Extension, Path, Query},
     http::StatusCode,
-    middleware::from_fn,
     response::IntoResponse,
     routing::{delete, get, post, put},
-    Router,
+    Json, Router,
 };
 use neo4rs::Graph;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::env;
+use std::sync::{Arc, Mutex};
+use tower_http::trace::TraceLayer;
+use yup_oauth2::ServiceAccountKey;
 
-use crate::ai::query;
+use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
-use crate::server::auth;
-use crate::server::middleware;
-use crate::tools::achievements;
-use crate::tools::calendar;
-use crate::tools::day;
-use crate::tools::event;
-use crate::tools::goal::{Goal, GoalUpdate, Relationship};
-use crate::tools::list;
-use crate::tools::migration;
-use crate::tools::network;
-use crate::tools::stats;
-use crate::tools::traversal;
+use crate::server::auth::{self, Claims};
+use crate::tools::{
+    achievements, calendar, day, event,
+    gcal::{self, GCalService, GCalSyncRequest, SyncResult},
+    goal::{self, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
+    list, migration, network, routine, stats, traversal,
+};
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
@@ -87,9 +83,19 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/", get(handle_get_day_tasks))
         .route("/complete/:id", put(handle_toggle_complete_task));
 
-    let query_routes = Router::new().route("/ws", get(query::handle_query_ws));
+    let query_routes = Router::new().route("/ws", get(ai_query::handle_query_ws));
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
+
+    let misc_routes = Router::new()
+        .route("/health", get(handle_health_check))
+        .route("/list", get(handle_get_list_data))
+        .route("/migrate-to-events", post(handle_migrate_to_events));
+
+    let gcal_routes = Router::new()
+        .route("/sync-from", post(handle_sync_from_gcal))
+        .route("/sync-to", post(handle_sync_to_gcal))
+        .route("/sync-bidirectional", post(handle_sync_bidirectional));
 
     let stats_routes = Router::new()
         .route("/", get(handle_get_stats_data))
@@ -122,6 +128,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/day", day_routes)
         .nest("/query", query_routes)
         .nest("/achievements", achievements_routes)
+        .nest("/gcal", gcal_routes)
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
         .nest("/routine", routine_generation_routes)
@@ -359,7 +366,7 @@ async fn handle_uncomplete_task(
     Extension(user_id): Extension<i64>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    event::uncomplete_task_handler(graph, id, user_id).await
+    event::uncomplete_task_handler(graph, user_id, id).await
 }
 
 async fn handle_check_task_completion_status(
@@ -571,9 +578,9 @@ async fn handle_migrate_to_events(
 async fn handle_expand_task_date_range(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Json(request): Json<crate::tools::goal::ExpandTaskDateRangeRequest>,
+    Json(request): Json<ExpandTaskDateRangeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::tools::goal::expand_task_date_range_handler(graph, user_id, request).await
+    goal::expand_task_date_range_handler(graph, user_id, request).await
 }
 
 // Migration management handlers
@@ -612,8 +619,110 @@ async fn handle_generate_routine_events(
     Extension(graph): Extension<Graph>,
     Path(_end_timestamp): Path<i64>, // Currently unused, generator creates events ahead automatically
 ) -> Result<StatusCode, (StatusCode, String)> {
-    match routine_generator::generate_future_routine_events(&graph).await {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
-    }
+    routine_generator::run_routine_generator(graph).await;
+    Ok(StatusCode::OK)
+}
+
+// Helper function to create GCalService
+async fn create_gcal_service() -> Result<GCalService, (StatusCode, String)> {
+    let gcal_sa_key_path = env::var("GCAL_SERVICE_ACCOUNT_PATH").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "GCAL_SERVICE_ACCOUNT_PATH not set".to_string(),
+        )
+    })?;
+
+    let gcal_sa_key_json = std::fs::read_to_string(&gcal_sa_key_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "Failed to read Google service account key file at {}: {}",
+                gcal_sa_key_path, e
+            ),
+        )
+    })?;
+
+    let gcal_sa_key: ServiceAccountKey = serde_json::from_str(&gcal_sa_key_json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to parse Google service account key: {}", e),
+        )
+    })?;
+
+    GCalService::new(gcal_sa_key).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create Google Calendar service: {}", e),
+        )
+    })
+}
+
+// Google Calendar handlers
+async fn handle_sync_from_gcal(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<GCalSyncRequest>,
+) -> Result<Json<SyncResult>, (StatusCode, String)> {
+    let gcal_service = create_gcal_service().await?;
+    gcal::sync_from_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
+}
+
+async fn handle_sync_to_gcal(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<GCalSyncRequest>,
+) -> Result<Json<SyncResult>, (StatusCode, String)> {
+    let gcal_service = create_gcal_service().await?;
+    gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
+}
+
+async fn handle_sync_bidirectional(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<GCalSyncRequest>,
+) -> Result<Json<SyncResult>, (StatusCode, String)> {
+    let gcal_service = create_gcal_service().await?;
+
+    // Step 1: Sync from GCal to our app
+    let from_gcal_result =
+        match gcal::sync_from_gcal(graph.clone(), user_id, &gcal_service, &request.calendar_id)
+            .await
+        {
+            Ok(Json(res)) => res,
+            Err((status, msg)) => {
+                // If sync_from fails, we should stop and return the error
+                return Err((
+                    status,
+                    format!("Error during sync from Google Calendar: {}", msg),
+                ));
+            }
+        };
+
+    // Step 2: Sync from our app to GCal
+    let to_gcal_result =
+        match gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await {
+            Ok(Json(res)) => res,
+            Err((status, msg)) => {
+                // Even if sync_to fails, we have still imported events.
+                // It's better to return a partial success with error details.
+                return Ok(Json(SyncResult {
+                    imported_events: from_gcal_result.imported_events,
+                    exported_events: 0,
+                    updated_events: from_gcal_result.updated_events, // These are updates from GCal->local
+                    errors: vec![format!("Error during sync to Google Calendar: {}", msg)],
+                }));
+            }
+        };
+
+    // Step 3: Combine results
+    let final_result = SyncResult {
+        imported_events: from_gcal_result.imported_events,
+        exported_events: to_gcal_result.exported_events,
+        // Sum updates from both directions. `updated_events` in `from_gcal` are local goals updated from GCal.
+        // `updated_events` in `to_gcal` are GCal events updated from local goals.
+        updated_events: from_gcal_result.updated_events + to_gcal_result.updated_events,
+        errors: [from_gcal_result.errors, to_gcal_result.errors].concat(),
+    };
+
+    Ok(Json(final_result))
 }
