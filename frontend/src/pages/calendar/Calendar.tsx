@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -214,6 +214,21 @@ const Calendar: React.FC = () => {
     onRetry: () => { },
     originalAction: async () => { },
     eventInfo: null
+  });
+
+  // Google Calendar sync state
+  const [gcalSyncDialog, setGcalSyncDialog] = useState<{
+    isOpen: boolean;
+    isLoading: boolean;
+    lastResult: GCalSyncResult | null;
+    calendarId: string;
+    syncDirection: 'bidirectional' | 'to_gcal' | 'from_gcal';
+  }>({
+    isOpen: false,
+    isLoading: false,
+    lastResult: null,
+    calendarId: 'primary',
+    syncDirection: 'bidirectional'
   });
 
   // Debugging mode toggles global logs, etc.
@@ -975,6 +990,71 @@ const Calendar: React.FC = () => {
     return `${sign}${minutes} minute${minutes !== 1 ? 's' : ''}`;
   };
 
+  // Google Calendar sync handlers
+  const handleGoogleCalendarSync = () => {
+    setGcalSyncDialog({
+      ...gcalSyncDialog,
+      isOpen: true
+    });
+  };
+
+  const handleGcalSyncConfirm = async () => {
+    setGcalSyncDialog({
+      ...gcalSyncDialog,
+      isLoading: true
+    });
+
+    try {
+      let result: GCalSyncResult;
+      const request = {
+        calendar_id: gcalSyncDialog.calendarId,
+        sync_direction: gcalSyncDialog.syncDirection
+      };
+
+      switch (gcalSyncDialog.syncDirection) {
+        case 'from_gcal':
+          result = await syncFromGoogleCalendar(request);
+          break;
+        case 'to_gcal':
+          result = await syncToGoogleCalendar(request);
+          break;
+        case 'bidirectional':
+        default:
+          result = await syncBidirectionalGoogleCalendar(request);
+          break;
+      }
+
+      setGcalSyncDialog({
+        ...gcalSyncDialog,
+        isLoading: false,
+        lastResult: result
+      });
+
+      // Reload calendar data to show synced events
+      loadCalendarData();
+    } catch (error) {
+      console.error('Google Calendar sync failed:', error);
+      setGcalSyncDialog({
+        ...gcalSyncDialog,
+        isLoading: false,
+        lastResult: {
+          imported_events: 0,
+          exported_events: 0,
+          updated_events: 0,
+          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')]
+        }
+      });
+    }
+  };
+
+  const handleGcalSyncClose = () => {
+    setGcalSyncDialog({
+      ...gcalSyncDialog,
+      isOpen: false,
+      lastResult: null
+    });
+  };
+
   // -----------------------------
   // Render
   // -----------------------------
@@ -1023,7 +1103,13 @@ const Calendar: React.FC = () => {
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',
-              right: 'dayGridMonth,timeGridWeek,timeGridDay'
+              right: 'gcalSync dayGridMonth,timeGridWeek,timeGridDay'
+            }}
+            customButtons={{
+              gcalSync: {
+                text: '📅 Sync',
+                click: handleGoogleCalendarSync
+              }
             }}
             height="100%"
             allDaySlot={true}
@@ -1199,6 +1285,108 @@ const Calendar: React.FC = () => {
         validationError={taskDateWarningDialog.validationError}
         eventName={taskDateWarningDialog.eventName}
       />
+
+      {/* Google Calendar Sync Dialog */}
+      <Dialog
+        open={gcalSyncDialog.isOpen}
+        onClose={handleGcalSyncClose}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Google Calendar Sync
+        </DialogTitle>
+        <DialogContent>
+          {!gcalSyncDialog.lastResult ? (
+            <>
+              <Typography variant="body1" sx={{ mb: 2 }}>
+                Sync your events with Google Calendar.
+              </Typography>
+
+              <Box sx={{ mb: 2 }}>
+                <FormControl component="fieldset" fullWidth>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Sync Direction
+                  </Typography>
+                  <RadioGroup
+                    value={gcalSyncDialog.syncDirection}
+                    onChange={(e) => setGcalSyncDialog({
+                      ...gcalSyncDialog,
+                      syncDirection: e.target.value as 'bidirectional' | 'to_gcal' | 'from_gcal'
+                    })}
+                  >
+                    <FormControlLabel
+                      value="bidirectional"
+                      control={<Radio />}
+                      label="Bidirectional (sync both ways)"
+                    />
+                    <FormControlLabel
+                      value="from_gcal"
+                      control={<Radio />}
+                      label="Import from Google Calendar only"
+                    />
+                    <FormControlLabel
+                      value="to_gcal"
+                      control={<Radio />}
+                      label="Export to Google Calendar only"
+                    />
+                  </RadioGroup>
+                </FormControl>
+              </Box>
+
+              <Typography variant="caption" color="text.secondary">
+                Note: Google Calendar sync requires proper configuration on the server.
+              </Typography>
+            </>
+          ) : (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Sync Results
+              </Typography>
+
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2">
+                  📥 Imported: {gcalSyncDialog.lastResult.imported_events} events
+                </Typography>
+                <Typography variant="body2">
+                  📤 Exported: {gcalSyncDialog.lastResult.exported_events} events
+                </Typography>
+                <Typography variant="body2">
+                  🔄 Updated: {gcalSyncDialog.lastResult.updated_events} events
+                </Typography>
+              </Box>
+
+              {gcalSyncDialog.lastResult.errors.length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ color: 'error.main', mb: 1 }}>
+                    Errors:
+                  </Typography>
+                  {gcalSyncDialog.lastResult.errors.map((error, index) => (
+                    <Typography key={index} variant="body2" sx={{ color: 'error.main', ml: 1 }}>
+                      • {error}
+                    </Typography>
+                  ))}
+                </Box>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleGcalSyncClose}>
+            {gcalSyncDialog.lastResult ? 'Close' : 'Cancel'}
+          </Button>
+          {!gcalSyncDialog.lastResult && (
+            <Button
+              onClick={handleGcalSyncConfirm}
+              color="primary"
+              variant="contained"
+              disabled={gcalSyncDialog.isLoading}
+            >
+              {gcalSyncDialog.isLoading ? 'Syncing...' : 'Sync Now'}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </div>
   );
 };
