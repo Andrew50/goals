@@ -48,7 +48,8 @@ impl GCalService {
         let hub = CalendarHub::new(
             hyper::Client::builder().build(
                 hyper_rustls::HttpsConnectorBuilder::new()
-                    .with_native_roots()?
+                    .with_native_roots()
+                    .map_err(|e| format!("Failed to set native roots: {}", e))?
                     .https_or_http()
                     .enable_http1()
                     .enable_http2()
@@ -116,12 +117,11 @@ impl GCalService {
         let end_time = start_time + (duration_minutes as i64 * 60 * 1000);
 
         let start_datetime = if goal.duration == Some(1440) {
-            // All-day event
+            // All-day event - convert timestamp to DateTime first
+            let start_dt =
+                DateTime::from_timestamp_millis(start_time).ok_or("Invalid start timestamp")?;
             EventDateTime {
-                date: Utc
-                    .timestamp_millis_opt(start_time)
-                    .single()
-                    .map(|dt| dt.date_naive()),
+                date: Some(start_dt.date_naive()),
                 date_time: None,
                 time_zone: None,
                 ..Default::default()
@@ -129,19 +129,20 @@ impl GCalService {
         } else {
             EventDateTime {
                 date: None,
-                date_time: Utc.timestamp_millis_opt(start_time).single(),
+                date_time: Some(
+                    DateTime::from_timestamp_millis(start_time).ok_or("Invalid start timestamp")?,
+                ),
                 time_zone: Some("UTC".to_string()),
                 ..Default::default()
             }
         };
 
         let end_datetime = if goal.duration == Some(1440) {
-            // All-day event
+            // All-day event - convert timestamp to DateTime first
+            let end_dt =
+                DateTime::from_timestamp_millis(end_time).ok_or("Invalid end timestamp")?;
             EventDateTime {
-                date: Utc
-                    .timestamp_millis_opt(end_time)
-                    .single()
-                    .map(|dt| dt.date_naive()),
+                date: Some(end_dt.date_naive()),
                 date_time: None,
                 time_zone: None,
                 ..Default::default()
@@ -149,7 +150,9 @@ impl GCalService {
         } else {
             EventDateTime {
                 date: None,
-                date_time: Utc.timestamp_millis_opt(end_time).single(),
+                date_time: Some(
+                    DateTime::from_timestamp_millis(end_time).ok_or("Invalid end timestamp")?,
+                ),
                 time_zone: Some("UTC".to_string()),
                 ..Default::default()
             }

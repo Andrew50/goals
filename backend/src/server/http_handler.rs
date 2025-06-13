@@ -8,10 +8,8 @@ use axum::{
 };
 use neo4rs::Graph;
 use std::collections::HashMap;
-use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use yup_oauth2::ServiceAccountKey;
 
 use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
@@ -21,7 +19,7 @@ use crate::tools::{
     achievements, calendar, day, event,
     gcal::{self, GCalService, GCalSyncRequest, SyncResult},
     goal::{self, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
-    list, migration, network, routine, stats, traversal,
+    list, migration, network, stats, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -89,7 +87,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
-    let misc_routes = Router::<()>::new()
+    let _misc_routes = Router::<()>::new()
         .route("/health", get(handle_health_check))
         .route("/list", get(handle_get_list_data))
         .route("/migrate-to-events", post(handle_migrate_to_events));
