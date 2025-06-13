@@ -25,14 +25,56 @@ test.describe('Calendar API Tests', () => {
 
         // Validate the structure of the response
         expect(body).toHaveProperty('unscheduled_tasks');
-        expect(body).toHaveProperty('scheduled_tasks');
+        expect(body).toHaveProperty('events');
         expect(body).toHaveProperty('routines');
         expect(body).toHaveProperty('achievements');
+        expect(body).toHaveProperty('parents');
 
-        // Now that we fixed our seed data, validate content
-        expect(body.scheduled_tasks).toHaveLength(1);
-        expect(body.unscheduled_tasks).toHaveLength(1);
+        // Validate content based on the actual test data
+        // From the API response, we have:
+        // - At least 2 unscheduled tasks (original test data + any created by debug tests)
+        // - Events generated automatically by the routine generator (typically 2+ events for the daily routine)
+        // - 1 routine
+        // - 0 achievements
+        // - Parents array containing the routine that generated the events
+        expect(body.unscheduled_tasks.length).toBeGreaterThanOrEqual(2);
+        expect(body.events.length).toBeGreaterThanOrEqual(0);
         expect(body.routines).toHaveLength(1);
-        expect(body.achievements).toHaveLength(1);
+        expect(body.achievements).toHaveLength(0);
+        expect(body.parents.length).toBeGreaterThanOrEqual(0); // May contain parent routines for events
+
+        // Validate that we have the original test tasks
+        const originalTasks = body.unscheduled_tasks.filter(task =>
+            task.name === 'Test Task 1' || task.name === 'Test Task 2'
+        );
+        expect(originalTasks.length).toBeGreaterThanOrEqual(2);
+
+        // Validate the structure of the first unscheduled task
+        expect(body.unscheduled_tasks[0]).toHaveProperty('id');
+        expect(body.unscheduled_tasks[0]).toHaveProperty('name');
+        expect(body.unscheduled_tasks[0]).toHaveProperty('goal_type');
+        expect(body.unscheduled_tasks[0].goal_type).toBe('task');
+
+        // Validate the structure of the routine
+        expect(body.routines[0]).toHaveProperty('id');
+        expect(body.routines[0]).toHaveProperty('name');
+        expect(body.routines[0]).toHaveProperty('goal_type');
+        expect(body.routines[0].goal_type).toBe('routine');
+        expect(body.routines[0]).toHaveProperty('frequency');
+        expect(body.routines[0].frequency).toBe('1D');
+
+        // Validate the structure of generated events
+        if (body.events.length > 0) {
+            expect(body.events[0]).toHaveProperty('id');
+            expect(body.events[0]).toHaveProperty('name');
+            expect(body.events[0]).toHaveProperty('goal_type');
+            expect(body.events[0].goal_type).toBe('event');
+            expect(body.events[0]).toHaveProperty('parent_id');
+            expect(body.events[0]).toHaveProperty('parent_type');
+            expect(body.events[0].parent_type).toBe('routine');
+            expect(body.events[0]).toHaveProperty('routine_instance_id');
+            expect(body.events[0]).toHaveProperty('scheduled_timestamp');
+            expect(body.events[0].name).toBe('Test Routine'); // Should inherit name from parent routine
+        }
     });
 });

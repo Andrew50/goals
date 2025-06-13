@@ -87,11 +87,8 @@ jobs:
       - uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: rustfmt, clippy
       
       - name: Cache dependencies
@@ -109,6 +106,7 @@ jobs:
   backend-tests:
     name: Backend Unit Tests
     needs: [backend-checks]
+    if: always()
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -117,17 +115,17 @@ jobs:
       - uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
       
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         
       - name: Run backend unit tests
-        run: cargo test
+        run: cargo test --lib
+      
+      # Run integration tests that require the Neo4j test database
+      - name: Run backend integration tests
+        run: bash run_integration_tests.sh
       
       - name: Mark test success
         if: success()
@@ -167,6 +165,7 @@ jobs:
   frontend-tests:
     name: Frontend Unit Tests
     needs: [frontend-checks]
+    if: always()
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -205,27 +204,34 @@ jobs:
     needs: [changed-files, check-previous-runs, backend-tests, frontend-tests]
     if: |
       always() && 
-      (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true') &&
-      (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped') &&
-      (needs.frontend-tests.result == 'success' || needs.frontend-tests.result == 'skipped')
+      (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true')
     uses: ./.github/workflows/e2e-tests.yml
     with:
       ref: ${{ github.ref }}
       skip_tests: false
+      num_workers: 16
 
   # DEPLOYMENT CHECK
   deploy-ready:
     name: Ready for Deployment
-    needs: [e2e-tests]
+    needs: [backend-checks, backend-tests, frontend-checks, frontend-tests, e2e-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check if all required tests passed
-        if: needs.e2e-tests.result == 'success' || needs.e2e-tests.result == 'skipped'
-        run: echo "All checks passed! This PR is ready to be merged to prod for deployment."
-        
-      - name: Report failure
-        if: needs.e2e-tests.result == 'failure'
+      - name: Evaluate overall workflow result
         run: |
-          echo "E2E tests failed! PR is not ready for deployment."
-          exit 1 
+          echo "backend-checks: ${{ needs.backend-checks.result }}"
+          echo "backend-tests: ${{ needs.backend-tests.result }}"
+          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
+          echo "frontend-tests: ${{ needs.frontend-tests.result }}"
+          echo "e2e-tests: ${{ needs.e2e-tests.result }}"
+          if [ "${{ needs.backend-checks.result }}" != "success" ] || \
+             [ "${{ needs.backend-tests.result }}" != "success" ] || \
+             [ "${{ needs.frontend-checks.result }}" != "success" ] || \
+             [ "${{ needs.frontend-tests.result }}" != "success" ] || \
+             [ "${{ needs.e2e-tests.result }}" != "success" ]; then
+            echo "One or more jobs failed. PR is not ready for deployment."
+            exit 1
+          else
+            echo "All checks passed! This PR is ready to be merged to prod for deployment."
+          fi

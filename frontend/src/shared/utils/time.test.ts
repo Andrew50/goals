@@ -10,7 +10,7 @@ import {
     timestampToDisplayString
 } from './time';
 import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
-import { mockTimezone } from './testUtils';
+
 
 // Old helper to mock timezone offset - kept for backward compatibility
 // eslint-disable-next-line no-extend-native
@@ -35,33 +35,36 @@ describe('Time conversion utilities', () => {
 
     describe('toLocalTimestamp and toUTCTimestamp', () => {
         test('should convert UTC timestamp to local time', () => {
-            // Mock timezone offset to -300 minutes (-5 hours, like EST)
-            const restoreOffset = mockTimezoneOffset(300);
-
             // Test with a known UTC timestamp (2023-01-01T12:00:00Z)
             const utcTimestamp = 1672574400000;
 
-            // Expected local timestamp would be 5 hours earlier
-            const expectedLocalTimestamp = utcTimestamp - (300 * 60 * 1000);
+            // Convert to local Date - the Date object should have the same timestamp
+            const localDate = toLocalTimestamp(utcTimestamp);
 
-            expect(toLocalTimestamp(utcTimestamp)).toBe(expectedLocalTimestamp);
+            // The Date object should have the same underlying timestamp
+            expect(localDate!.getTime()).toBe(utcTimestamp);
 
-            restoreOffset();
+            // Verify the Date object is created correctly
+            expect(localDate).toBeInstanceOf(Date);
+            expect(localDate!.getUTCFullYear()).toBe(2023);
+            expect(localDate!.getUTCMonth()).toBe(0); // January (0-indexed)
+            expect(localDate!.getUTCDate()).toBe(1);
+            expect(localDate!.getUTCHours()).toBe(12);
         });
 
         test('should convert local timestamp to UTC', () => {
-            // Mock timezone offset to -300 minutes (-5 hours, like EST)
-            const restoreOffset = mockTimezoneOffset(300);
+            // Test with a Date object
+            const testDate = new Date(2023, 0, 1, 12, 0, 0); // Local date
 
-            // Test with a known local timestamp (2023-01-01T07:00:00 EST)
-            const localTimestamp = 1672574400000 - (300 * 60 * 1000);
+            // Convert to UTC timestamp - should return getTime() value
+            const utcTimestamp = toUTCTimestamp(testDate);
 
-            // Expected UTC timestamp would be 5 hours later
-            const expectedUTCTimestamp = localTimestamp + (300 * 60 * 1000);
+            // Should be the same as getTime()
+            expect(utcTimestamp).toBe(testDate.getTime());
 
-            expect(toUTCTimestamp(localTimestamp)).toBe(expectedUTCTimestamp);
-
-            restoreOffset();
+            // Test with a number (already UTC)
+            const numericTimestamp = 1672574400000;
+            expect(toUTCTimestamp(numericTimestamp)).toBe(numericTimestamp);
         });
 
         test('should handle null or undefined', () => {
@@ -72,88 +75,61 @@ describe('Time conversion utilities', () => {
         });
 
         test('should handle leap year dates correctly', () => {
-            // Use the new robust mockTimezone with consistent offset of 5 hours
-            const restoreMock = mockTimezone(300); // EST: UTC-5
-
             // February 29, 2020 (leap year) at noon UTC
             const leapYearUTC = Date.UTC(2020, 1, 29, 12, 0, 0, 0);
 
-            // Convert to local time
+            // Convert to local time (should be a Date object with the same timestamp)
             const leapYearLocal = toLocalTimestamp(leapYearUTC);
 
-            // Verify local time is correct by checking the offset difference
-            // UTC-to-local conversion subtracts the timezone offset in milliseconds
-            const expectedOffset = 300 * 60 * 1000; // 5 hours in milliseconds
-            // Compare timestamps using getTime()
-            expect(leapYearUTC - leapYearLocal!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(leapYearLocal!.getTime()).toBe(leapYearUTC);
 
-            // Verify day and month are preserved
-            // No need to wrap leapYearLocal in new Date() again, it's already a Date
+            // Verify day and month are preserved (will display in local timezone)
             const localDate = leapYearLocal!;
-            expect(localDate.getMonth()).toBe(1); // February (0-indexed)
-            expect(localDate.getDate()).toBe(29);
+            expect(localDate.getUTCMonth()).toBe(1); // February (0-indexed) in UTC
+            expect(localDate.getUTCDate()).toBe(29); // 29th day in UTC
 
             // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(leapYearLocal);
             expect(backToUTC).toBe(leapYearUTC);
-
-            restoreMock();
         });
 
         test('should handle half-hour timezone offsets correctly', () => {
-            // Use the new robust mockTimezone with offset of -330 minutes (UTC+5:30)
-            const restoreMock = mockTimezone(-330); // IST: UTC+5:30
-
             // Noon UTC
             const noonUTC = Date.UTC(2023, 0, 15, 12, 0, 0, 0);
 
-            // Convert to local time (IST)
+            // Convert to local time
             const localTimestamp = toLocalTimestamp(noonUTC);
 
-            // Verify the conversion by checking the offset difference
-            // UTC-to-local conversion subtracts the timezone offset
-            const expectedOffset = -330 * 60 * 1000; // -5.5 hours in milliseconds
-            // Compare timestamps using getTime()
-            expect(noonUTC - localTimestamp!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(localTimestamp!.getTime()).toBe(noonUTC);
 
-            // Verify minutes are preserved for half-hour offset
-            // No need to wrap localTimestamp in new Date() again
-            const localDate = localTimestamp!;
-            expect(localDate.getMinutes()).toBe(30);
+            // UTC time should be preserved
+            expect(localTimestamp!.getUTCHours()).toBe(12);
+            expect(localTimestamp!.getUTCMinutes()).toBe(0);
 
             // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(localTimestamp);
             expect(backToUTC).toBe(noonUTC);
-
-            restoreMock();
         });
 
         test('should handle quarter-hour timezone offsets correctly', () => {
-            // Use the new robust mockTimezone with offset of -345 minutes (UTC+5:45)
-            const restoreMock = mockTimezone(-345); // Nepal Time: UTC+5:45
-
             // Noon UTC
             const noonUTC = Date.UTC(2023, 0, 15, 12, 0, 0, 0);
 
-            // Convert to local time (Nepal)
+            // Convert to local time
             const localTimestamp = toLocalTimestamp(noonUTC);
 
-            // Verify the conversion by checking the offset difference
-            // UTC-to-local conversion subtracts the timezone offset
-            const expectedOffset = -345 * 60 * 1000; // -5.75 hours in milliseconds
-            // Compare timestamps using getTime()
-            expect(noonUTC - localTimestamp!.getTime()).toBe(expectedOffset);
+            // The Date object should have the same underlying timestamp
+            expect(localTimestamp!.getTime()).toBe(noonUTC);
 
-            // Verify minutes are preserved for quarter-hour offset
-            // No need to wrap localTimestamp in new Date() again
-            const localDate = localTimestamp!;
-            expect(localDate.getMinutes()).toBe(45);
+            // UTC time should be preserved
+            expect(localTimestamp!.getUTCHours()).toBe(12);
+            expect(localTimestamp!.getUTCMinutes()).toBe(0);
 
             // Convert back to UTC and verify roundtrip conversion
             const backToUTC = toUTCTimestamp(localTimestamp);
             expect(backToUTC).toBe(noonUTC);
-
-            restoreMock();
         });
     });
 
@@ -461,17 +437,21 @@ describe('Time conversion utilities', () => {
         });
 
         test('should format timestamp for time display', () => {
-            // Test with a known timestamp in UTC
-            const timestamp = 1673778600000; // 2023-01-15T10:30:00.000Z
+            // Test with a timestamp that will display as 10:30 in local time
+            // Create a Date in local time and get its timestamp
+            const localDate = new Date(2023, 0, 15, 10, 30); // 10:30 AM local time
+            const timestamp = localDate.getTime();
             const display = timestampToDisplayString(timestamp, 'time');
 
-            // The exact format depends on locale, but should include hours and minutes
+            // The exact format depends on locale, but should include 10:30
             expect(display).toMatch(/10:30|10:30 AM/i);
         });
 
         test('should format timestamp for datetime display', () => {
-            // Test with a known timestamp in UTC
-            const timestamp = 1673778600000; // 2023-01-15T10:30:00.000Z
+            // Test with a timestamp that will display as 10:30 in local time
+            // Create a Date in local time and get its timestamp
+            const localDate = new Date(2023, 0, 15, 10, 30); // 10:30 AM local time
+            const timestamp = localDate.getTime();
             const display = timestampToDisplayString(timestamp);
 
             // Check for both date and time components

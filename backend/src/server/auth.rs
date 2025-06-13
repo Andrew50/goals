@@ -78,6 +78,10 @@ pub fn create_google_oauth_client() -> Result<BasicClient, String> {
         env::var("GOOGLE_CLIENT_ID").map_err(|_| "GOOGLE_CLIENT_ID must be set")?;
     let google_client_secret =
         env::var("GOOGLE_CLIENT_SECRET").map_err(|_| "GOOGLE_CLIENT_SECRET must be set")?;
+
+    // The redirect URL should always point to the frontend callback route
+    // In dev: http://localhost:3030/auth/callback
+    // In prod: https://goals.atlantis.trading/auth/callback (no /api prefix)
     let redirect_url = env::var("GOOGLE_REDIRECT_URL")
         .unwrap_or_else(|_| "http://localhost:3030/auth/callback".to_string());
 
@@ -715,6 +719,7 @@ pub async fn validate_token(token: &str) -> Result<StatusCode, StatusCode> {
 // Enhanced user management functions
 
 // Get user account information with all auth methods
+#[allow(dead_code)]
 pub async fn get_user_account(graph: &Graph, user_id: i64) -> Result<UserAccount, String> {
     let query = Query::new(
         "MATCH (u:User) WHERE id(u) = $user_id 
@@ -781,6 +786,7 @@ pub async fn get_user_account(graph: &Graph, user_id: i64) -> Result<UserAccount
 }
 
 // Link Google account to existing user
+#[allow(dead_code)]
 pub async fn link_google_account(
     graph: &Graph,
     user_id: i64,
@@ -832,6 +838,7 @@ pub async fn link_google_account(
 }
 
 // Unlink Google account from user
+#[allow(dead_code)]
 pub async fn unlink_google_account(graph: &Graph, user_id: i64) -> Result<(), String> {
     // Check if user has password auth before unlinking Google
     let check_query = Query::new(
@@ -879,6 +886,7 @@ pub async fn unlink_google_account(graph: &Graph, user_id: i64) -> Result<(), St
 }
 
 // Set password for Google-only users
+#[allow(dead_code)]
 pub async fn set_password_for_user(
     graph: &Graph,
     user_id: i64,
@@ -1083,6 +1091,7 @@ pub struct AccountLinkResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct SetPasswordPayload {
     pub password: String,
 }

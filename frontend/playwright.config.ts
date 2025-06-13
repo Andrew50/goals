@@ -8,7 +8,7 @@ import dotenv from 'dotenv'; // Import dotenv
  * https://github.com/motdotla/dotenv
  */
 // Load environment variables from the root .env file
-dotenv.config({ path: path.resolve(__dirname, '../.env') }); // <-- Point to ../.env
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -21,8 +21,8 @@ export default defineConfig({
     forbidOnly: !!process.env.CI,
     /* Retry on CI only */
     retries: process.env.CI ? 2 : 0,
-    /* Opt out of parallel tests on CI. */
-    workers: process.env.CI ? 1 : undefined,
+    /* Enable multiple workers with proper isolation */
+    workers: process.env.CI ? 4 : undefined, // Change from 1 to 4 workers
     /* Reporter to use. See https://playwright.dev/docs/test-reporters */
     reporter: 'html',
     /* Path to the global setup file. */
@@ -30,8 +30,8 @@ export default defineConfig({
 
     /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
     use: {
-        /* Base URL to use in actions like `await page.goto('/')`. */
-        baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3030',
+        /* Base URL will be dynamically set per worker */
+        baseURL: process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${3031 + (parseInt(process.env.TEST_WORKER_INDEX || '0'))}`,
         /* Use the saved storage state for authentication. */
         storageState: 'tests/.auth/storageState.json',
         /* Default locale */
@@ -43,7 +43,7 @@ export default defineConfig({
         /* Add screenshot on failure */
         screenshot: 'only-on-failure',
         /* Increase timeout for CI environment */
-        actionTimeout: process.env.CI ? 30000 : 15000,
+        actionTimeout: process.env.CI ? 30000 : 30000,
         navigationTimeout: process.env.CI ? 60000 : 30000,
     },
 
@@ -90,14 +90,14 @@ export default defineConfig({
         */
     ],
 
-    /* Run the frontend server in CI */
-    webServer: {
-        command: 'npm run start',
-        url: 'http://localhost:3030',
-        reuseExistingServer: !process.env.CI,
-        timeout: 120 * 1000, // 2 minutes
-        env: {
-            REACT_APP_API_URL: process.env.REACT_APP_API_URL || 'http://localhost:5057',
-        },
-    },
+    /* Run the frontend server in CI - disabled in favor of external setup */
+    // webServer: {
+    //     command: 'npm run start',
+    //     url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3031',
+    //     reuseExistingServer: true,
+    //     timeout: 120 * 1000, // 2 minutes
+    //     env: {
+    //         REACT_APP_API_URL: process.env.REACT_APP_API_URL || 'http://localhost:5057',
+    //     },
+    // },
 });

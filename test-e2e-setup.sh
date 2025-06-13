@@ -110,7 +110,7 @@ timeout 60s npm start &
 FRONTEND_PID=$!
 sleep 30
 
-if curl --retry 5 --retry-delay 2 --retry-connrefused http://localhost:3030 &> /dev/null; then
+if curl --retry 5 --retry-delay 2 --retry-connrefused http://localhost:3031 &> /dev/null; then
     echo "✅ Frontend is responding"
     kill $FRONTEND_PID 2>/dev/null || true
 else

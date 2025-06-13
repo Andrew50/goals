@@ -43,12 +43,14 @@
     "test:ci": "react-scripts test --watchAll=false --coverage --passWithNoTests --ci",
     "eject": "react-scripts eject",
     "dev": "react-scripts start",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:calendar": "playwright test calendar-interactions.spec.ts",
-    "test:timezone": "playwright test timestamp-e2e.spec.ts",
-    "test:calendar:debug": "playwright test calendar-interactions.spec.ts --debug",
-    "test:all-e2e": "playwright test"
+    "test:e2e": "WDS_SOCKET_PORT=0 playwright test",
+    "test:e2e:ui": "WDS_SOCKET_PORT=0 playwright test --ui",
+    "test:e2e:parallel": "WDS_SOCKET_PORT=0 playwright test --workers=4",
+    "test:e2e:parallel:debug": "WDS_SOCKET_PORT=0 playwright test --workers=4 --reporter=line",
+    "test:calendar": "WDS_SOCKET_PORT=0 playwright test calendar-interactions.spec.ts",
+    "test:timezone": "WDS_SOCKET_PORT=0 playwright test timestamp-e2e.spec.ts",
+    "test:calendar:debug": "WDS_SOCKET_PORT=0 playwright test calendar-interactions.spec.ts --debug",
+    "test:all-e2e": "WDS_SOCKET_PORT=0 playwright test"
   },
   "eslintConfig": {
     "extends": [
@@ -58,10 +60,11 @@
   },
   "jest": {
     "transformIgnorePatterns": [
-      "/node_modules/(?!(@?react-dnd|react-dnd-html5-backend|dnd-core|@dnd-kit|@fullcalendar)/)"
+      "/node_modules/(?!(@?react-dnd|react-dnd-html5-backend|dnd-core|@dnd-kit|@fullcalendar|@mui|vis-network)/)"
     ],
     "moduleNameMapper": {
-      "\\.(css|less|scss|sass)$": "identity-obj-proxy"
+      "\\.(css|less|scss|sass)$": "identity-obj-proxy",
+      "vis-network/standalone": "<rootDir>/src/__mocks__/vis-network.js"
     }
   },
   "browserslist": {
@@ -80,7 +83,7 @@
     "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@playwright/test": "^1.51.1",
     "@types/jsonwebtoken": "^9.0.9",
-    "@types/node": "^20.17.30",
+    "@types/node": "^20.19.0",
     "identity-obj-proxy": "^3.0.0",
     "jsonwebtoken": "^9.0.2",
     "ts-jest": "^29.1.2"

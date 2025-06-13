@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -45,14 +45,7 @@ const RescheduleDialog: React.FC<RescheduleDialogProps> = ({
     const [lookAheadDays, setLookAheadDays] = useState(7);
     const [rescheduling, setRescheduling] = useState(false);
 
-    // Load initial suggestions when dialog opens
-    useEffect(() => {
-        if (open && event.id) {
-            loadSuggestions();
-        }
-    }, [open, event.id]);
-
-    const loadSuggestions = async (additionalDays?: number) => {
+    const loadSuggestions = useCallback(async (additionalDays?: number) => {
         if (!event.id) return;
 
         setLoading(true);
@@ -77,7 +70,14 @@ const RescheduleDialog: React.FC<RescheduleDialogProps> = ({
         } finally {
             setLoading(false);
         }
-    };
+    }, [event.id, lookAheadDays, suggestions]);
+
+    // Load initial suggestions when dialog opens
+    useEffect(() => {
+        if (open && event.id) {
+            loadSuggestions();
+        }
+    }, [open, event.id, loadSuggestions]);
 
     const handleLoadMore = () => {
         loadSuggestions(lookAheadDays + 7);

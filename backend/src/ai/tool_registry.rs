@@ -17,7 +17,6 @@ use crate::tools::goal::{
 };
 use crate::tools::list::get_list_data;
 use crate::tools::network::{get_network_data, update_node_position};
-use crate::tools::routine::process_user_routines;
 use crate::tools::traversal::query_hierarchy_handler;
 
 // The same alias as in http_handler for user locks
@@ -371,35 +370,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 14) process_user_routines
-    function_declarations.push(FunctionDeclaration {
-        name: "process_user_routines".to_string(),
-        description: "Processes all user routines for a given user EOD timestamp and user ID."
-            .to_string(),
-        parameters: ParameterDefinition {
-            type_: "object".to_string(),
-            properties: {
-                let mut props = serde_json::Map::new();
-                props.insert(
-                    "user_eod_timestamp".to_string(),
-                    serde_json::json!({
-                        "type": "number",
-                        "description": "The user's End-Of-Day timestamp (millis)."
-                    }),
-                );
-                /*props.insert(
-                    "user_id".to_string(),
-                    serde_json::json!({
-                        "type": "number",
-                        "description": "The user ID whose routines should be processed."
-                    }),
-                );*/
-                props
-            },
-            //required: Some(vec!["user_eod_timestamp".to_string(), "user_id".to_string()]),
-            required: Some(vec!["user_eod_timestamp".to_string()]),
-        },
-    });
+
 
     vec![Tool {
         function_declarations,
@@ -418,7 +389,7 @@ pub async fn dispatch_tool(
     tool_name: &str,
     args: &serde_json::Value,
     graph: &Graph,
-    user_locks: &UserLocks,
+    _user_locks: &UserLocks,
     user_id: i64,
 ) -> Result<serde_json::Value, String> {
     match tool_name {
@@ -529,19 +500,7 @@ pub async fn dispatch_tool(
             wrap_result(result)
         }
 
-        // 14) process_user_routines
-        "process_user_routines" => {
-            let user_eod_timestamp = must_get_i64(args, "user_eod_timestamp")?;
-            //let user_id = must_get_i64(args, "user_id")?;
-            let result = process_user_routines(
-                user_eod_timestamp,
-                graph.clone(),
-                user_id,
-                user_locks.clone(),
-            )
-            .await;
-            wrap_result(result)
-        }
+
 
         // Fallback
         other => Err(format!("Unknown tool_name: '{other}'")),
@@ -557,7 +516,7 @@ fn wrap_result<T: std::fmt::Debug>(
 ) -> Result<serde_json::Value, String> {
     match base_result {
         Ok(success_payload) => {
-            // We’ll just convert the success payload to a debug string here.
+            // We'll just convert the success payload to a debug string here.
             // This provides a consistent, simple JSON structure for the LLM.
             let json_val = serde_json::json!({
                 "result": "success",

@@ -1,14 +1,13 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import { goalToLocal } from '../../shared/utils/time';
-import { Goal, ApiGoal } from '../../types/goals';
+import { render, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
+import { goalToLocal } from '../../shared/utils/time';
+import { Goal, ApiGoal } from '../../types/goals';
 
-// Import GoalMenu
-import GoalMenu from '../../shared/components/GoalMenu';
-
-// Import calendarData explicitly to reference the mock
+import Calendar from './Calendar';
+import { GoalMenuProvider } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 
 // Import the API
@@ -17,13 +16,14 @@ jest.mock('../../shared/utils/api', () => ({
     updateGoal: jest.fn()
 }));
 
-// Add a mock for GoalMenu
-jest.mock('../../shared/components/GoalMenu', () => ({
-    __esModule: true,
-    default: {
-        open: jest.fn(),
-        close: jest.fn()
-    }
+// Mock the GoalMenuContext to provide openGoalMenu
+const mockOpenGoalMenu = jest.fn();
+jest.mock('../../shared/contexts/GoalMenuContext', () => ({
+    useGoalMenu: () => ({
+        openGoalMenu: mockOpenGoalMenu,
+        closeGoalMenu: jest.fn()
+    }),
+    GoalMenuProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>
 }));
 
 // Mock TaskList component since it uses react-dnd
@@ -88,18 +88,33 @@ jest.mock('./calendarData', () => ({
     })
 }));
 
-// Test wrapper component with DndProvider
+// Mock the react-hotkeys-hook dependency
+jest.mock('react-hotkeys-hook', () => ({
+    useHotkeys: jest.fn()
+}));
+
+// Mock the useHistoryState hook
+jest.mock('../../shared/hooks/useHistoryState', () => ({
+    useHistoryState: (initialState: any) => {
+        const React = require('react');
+        const [state, setState] = React.useState(initialState);
+        const setStateWithHistory = (newState: any) => setState(newState);
+        return [state, setStateWithHistory];
+    }
+}));
+
+// Test wrapper component with MemoryRouter, DndProvider and GoalMenuProvider
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return (
-        <DndProvider backend={HTML5Backend}>
-            {children}
-        </DndProvider>
+        <MemoryRouter>
+            <DndProvider backend={HTML5Backend}>
+                <GoalMenuProvider>
+                    {children}
+                </GoalMenuProvider>
+            </DndProvider>
+        </MemoryRouter>
     );
 };
-
-// Import the component after mocks are set up
-// This is necessary to avoid the component trying to use the real modules during import
-const importCalendar = () => import('./Calendar').then(module => module.default);
 
 // Helper to mock timezone offset
 const mockTimezoneOffset = (offsetMinutes: number) => {
@@ -112,7 +127,6 @@ const mockTimezoneOffset = (offsetMinutes: number) => {
 
 describe('Calendar Component', () => {
     // Save original console functionality
-    const originalLog = console.log;
     const originalWarn = console.warn;
     const originalError = console.error;
 
@@ -124,6 +138,7 @@ describe('Calendar Component', () => {
 
         // Reset all mocks
         jest.clearAllMocks();
+        mockOpenGoalMenu.mockClear();
 
         // Mock the fetchCalendarData call - make sure we use the imported one from calendarData
         (fetchCalendarData as jest.Mock).mockImplementation(() => Promise.resolve({
@@ -174,8 +189,7 @@ describe('Calendar Component', () => {
             achievements: []
         });
 
-        // Import and render the Calendar component with DndProvider
-        const Calendar = await importCalendar();
+        // Render the Calendar component with DndProvider
         render(
             <TestWrapper>
                 <Calendar />
@@ -190,8 +204,8 @@ describe('Calendar Component', () => {
         // Check that the event is converted to local time using goalToLocal
         // goalToLocal expects an ApiGoal (numeric timestamps)
         const localTask = goalToLocal(apiTask); // Use the apiTask defined earlier
-        // Verify the resulting Date object's time is correct
-        expect(localTask.start_timestamp?.getTime()).toBe(apiTask.start_timestamp! - (300 * 60 * 1000));
+        // Verify the resulting Date object contains the UTC timestamp (goalToLocal just wraps in Date)
+        expect(localTask.start_timestamp?.getTime()).toBe(apiTask.start_timestamp!);
 
         // Clean up
         restoreOffset();
@@ -270,8 +284,7 @@ describe('Calendar Component', () => {
             achievements: []
         });
 
-        // Import and render the Calendar component
-        const Calendar = await importCalendar();
+        // Render the Calendar component
         render(
             <TestWrapper>
                 <Calendar />
@@ -287,12 +300,10 @@ describe('Calendar Component', () => {
         const localBeforeDST = goalToLocal(apiBeforeDST);
         const localAfterDST = goalToLocal(apiAfterDST);
 
-        // Verify the offset differences by checking the resulting Date object's time
-        // Before DST: 5 hours difference (300 minutes)
-        expect(localBeforeDST.start_timestamp?.getTime()).toBe(apiBeforeDST.start_timestamp! - (300 * 60 * 1000));
-
-        // After DST: 4 hours difference (240 minutes)
-        expect(localAfterDST.start_timestamp?.getTime()).toBe(apiAfterDST.start_timestamp! - (240 * 60 * 1000));
+        // Verify that goalToLocal correctly converts UTC timestamps to Date objects (no timezone adjustment)
+        // goalToLocal just wraps UTC timestamps in Date objects
+        expect(localBeforeDST.start_timestamp?.getTime()).toBe(apiBeforeDST.start_timestamp!);
+        expect(localAfterDST.start_timestamp?.getTime()).toBe(apiAfterDST.start_timestamp!);
 
         restoreDST();
     });
@@ -308,8 +319,7 @@ describe('Calendar Component', () => {
             achievements: []
         });
 
-        // Import and render component
-        const Calendar = await importCalendar();
+        // Render component
         render(
             <TestWrapper>
                 <Calendar />
@@ -332,12 +342,12 @@ describe('Calendar Component', () => {
         // Manually call the dateClick callback to simulate a calendar click
         props.dateClick(mockArg);
 
-        // Verify that the GoalMenu.open was called with correct time
-        expect(GoalMenu.open).toHaveBeenCalled();
+        // Verify that the openGoalMenu was called with correct time
+        expect(mockOpenGoalMenu).toHaveBeenCalled();
 
-        // Check if the goal passed to GoalMenu.open has timestamp in user timezone
-        const passedGoal = (GoalMenu.open as jest.Mock).mock.calls[0][0];
-        expect(passedGoal._tz).toBe('user');
+        // Check if the goal passed to openGoalMenu has the correct scheduled_timestamp
+        const passedGoal = mockOpenGoalMenu.mock.calls[0][0];
+        expect(passedGoal.scheduled_timestamp).toEqual(mockClickDate);
 
         restoreOffset();
     });

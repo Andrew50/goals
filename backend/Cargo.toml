@@ -26,3 +26,7 @@ urlencoding = "2.1"
 regex = "1.10"
 tokio-cron-scheduler = "0.13"
 oauth2 = "4.4"
+
+[[bin]]
+name = "backend"
+path = "src/main.rs"

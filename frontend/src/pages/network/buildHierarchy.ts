@@ -15,7 +15,9 @@ const DAMPING = 0.85;                    // Damping factor to stabilize the simu
 // =====================================================
 // Helper: Choose a root node (prefer one with no incoming 'child' edges)
 // =====================================================
-function findRootNode(nodes: NetworkNode[], edges: NetworkEdge[]): number {
+function findRootNode(nodes: NetworkNode[], edges: NetworkEdge[]): number | null {
+    if (nodes.length === 0) return null;
+
     const incoming = new Set<number>();
     edges.forEach(edge => {
         if (edge.relationship_type === 'child') {
@@ -124,11 +126,22 @@ export async function buildHierarchy(networkData: {
 }) {
     //console.log('Initial nodes:', networkData.nodes);
 
+    // Handle empty data case
+    if (networkData.nodes.length === 0) {
+        return { nodes: [], edges: [] };
+    }
+
     // 1. Determine the root and compute initial data.
     const rootId = findRootNode(networkData.nodes, networkData.edges);
+    if (rootId === null) {
+        return { nodes: [], edges: [] };
+    }
+
     const levels = computeBFSLevels(networkData.nodes, networkData.edges, rootId);
     const degrees = computeNodeDegrees(networkData.nodes, networkData.edges);
-    const maxDegree = Math.max(...Object.values(degrees));
+    const degreeValues = Object.values(degrees);
+    // Ensure maxDegree is at least 1 to avoid division-by-zero in later calculations
+    const maxDegree = degreeValues.length > 0 ? Math.max(1, ...degreeValues) : 1;
 
     // 2. Initialize positions and velocities.
     let positions = initializePositions(networkData.nodes, levels, degrees, maxDegree);
@@ -304,6 +317,12 @@ export function calculateNewNodePosition(
 ): { x: number; y: number } {
     const goldenRatio = 1.618033988749895;
     const total = processedNodes.length;
+
+    // If no existing nodes, place at origin
+    if (total === 0) {
+        return { x: 0, y: 0 };
+    }
+
     const angle = total * (Math.PI * goldenRatio);
     const radius = BASE_SPACING * Math.sqrt(total + 1);
     return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
@@ -315,6 +334,11 @@ export function calculateNewNodePosition(
 // =====================================================
 export async function saveNodePosition(nodeId: number, x: number, y: number) {
     try {
+        // Validate coordinates before sending to backend
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            console.warn(`Skipping saveNodePosition for node ${nodeId}: Invalid coordinates`, { x, y });
+            return false;
+        }
         await privateRequest(`network/${nodeId}/position`, 'PUT', { x, y });
         return true;
     } catch (error) {

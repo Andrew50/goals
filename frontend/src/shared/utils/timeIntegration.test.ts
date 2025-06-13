@@ -99,64 +99,38 @@ describe('Time conversion integration tests', () => {
     });
 
     test('Goal roundtrip through different timezones maintains data integrity', () => {
-        // Create a goal in PST (frontend Goal with Dates)
-        const restorePST = mockTimezoneOffset(480); // PST: UTC-8
-
+        // Create a goal with specific UTC timestamps
         const originalGoal: Goal = {
             id: 1,
             name: 'Timezone Test Goal',
             goal_type: 'task',
-            start_timestamp: new Date(2023, 0, 15, 9, 0), // 9 AM Local (PST for test)
-            end_timestamp: new Date(2023, 0, 15, 17, 0),  // 5 PM Local (PST for test)
-            scheduled_timestamp: new Date(2023, 0, 15, 10, 0), // 10 AM Local (PST for test)
-            // _tz: 'user' // _tz might not be part of Goal type anymore
+            start_timestamp: new Date(2023, 0, 15, 9, 0), // Local date
+            end_timestamp: new Date(2023, 0, 15, 17, 0),  // Local date
+            scheduled_timestamp: new Date(2023, 0, 15, 10, 0), // Local date
         };
 
-        // Convert to API representation (numbers)
+        // Convert to API representation (numbers) - should preserve timestamp values
         const apiGoal = goalToUTC(originalGoal);
-        restorePST(); // Restore timezone before next step
 
-        // Expected numeric timestamps (UTC) based on PST (UTC-8) input
-        // 9 AM PST = 17:00 UTC
-        // 5 PM PST = 01:00 UTC next day (Jan 16)
-        // 10 AM PST = 18:00 UTC
-        const expectedStartUTC = Date.UTC(2023, 0, 15, 17, 0);
-        const expectedEndUTC = Date.UTC(2023, 0, 16, 1, 0); // Note: Day changes
-        const expectedScheduledUTC = Date.UTC(2023, 0, 15, 18, 0);
+        // The timestamps should be the same as the original getTime() values
+        expect(apiGoal.start_timestamp).toBe(originalGoal.start_timestamp!.getTime());
+        expect(apiGoal.end_timestamp).toBe(originalGoal.end_timestamp!.getTime());
+        expect(apiGoal.scheduled_timestamp).toBe(originalGoal.scheduled_timestamp!.getTime());
 
-        expect(apiGoal.start_timestamp).toBe(expectedStartUTC);
-        expect(apiGoal.end_timestamp).toBe(expectedEndUTC);
-        expect(apiGoal.scheduled_timestamp).toBe(expectedScheduledUTC);
+        // Convert the API goal back to local (Goal with Dates)
+        const localGoal = goalToLocal(apiGoal);
 
-
-        // Now pretend we're in EST
-        const restoreEST = mockTimezoneOffset(300); // EST: UTC-5
-
-        // Convert the API goal (numbers) back to local (now EST Goal with Dates)
-        const estGoal = goalToLocal(apiGoal);
-
-        // Verify the Date objects represent the correct instant in time
-        expect(estGoal.start_timestamp?.getTime()).toBe(expectedStartUTC);
-        expect(estGoal.end_timestamp?.getTime()).toBe(expectedEndUTC);
-        expect(estGoal.scheduled_timestamp?.getTime()).toBe(expectedScheduledUTC);
-
-        // Verify the displayed times are correct for EST
-        // 17:00 UTC = 12:00 PM EST (noon)
-        expect(estGoal.start_timestamp?.getHours()).toBe(12);
-        // 01:00 UTC Jan 16 = 8:00 PM EST Jan 15
-        expect(estGoal.end_timestamp?.getHours()).toBe(20); // 8 PM
-        expect(estGoal.end_timestamp?.getDate()).toBe(15); // Should be back to Jan 15 in EST
-        // 18:00 UTC = 1:00 PM EST
-        expect(estGoal.scheduled_timestamp?.getHours()).toBe(13); // 1 PM
+        // Verify the Date objects represent the same instant in time
+        expect(localGoal.start_timestamp?.getTime()).toBe(originalGoal.start_timestamp!.getTime());
+        expect(localGoal.end_timestamp?.getTime()).toBe(originalGoal.end_timestamp!.getTime());
+        expect(localGoal.scheduled_timestamp?.getTime()).toBe(originalGoal.scheduled_timestamp!.getTime());
 
         // Convert back to API representation again
-        const backToApi = goalToUTC(estGoal);
+        const backToApi = goalToUTC(localGoal);
 
-        // Should match the original API representation (numeric UTC timestamps)
+        // Should match the API representation
         expect(backToApi.start_timestamp).toBe(apiGoal.start_timestamp);
         expect(backToApi.end_timestamp).toBe(apiGoal.end_timestamp);
         expect(backToApi.scheduled_timestamp).toBe(apiGoal.scheduled_timestamp);
-
-        restoreEST();
     });
 }); 

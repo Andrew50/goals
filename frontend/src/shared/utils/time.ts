@@ -21,23 +21,38 @@ const dateToMs = (d?: Date | null): number | undefined =>
 
 /**
  * API → frontend : UTC ms ➜ Date   (was "toLocalTimestamp").
+ * Simply converts a UTC timestamp to a Date object - the Date object will 
+ * automatically display in the user's local timezone.
  */
 export const toLocalTimestamp = <T extends number | null | undefined>(
   timestamp?: T
 ): T extends number ? Date : undefined => {
+  if (timestamp == null) {
+    // @ts-expect-error  (generic return for drop-in)
+    return undefined;
+  }
+
+  // Simply create a Date from the UTC timestamp - no manual offset needed
   // @ts-expect-error  (generic return for drop-in)
-  return msToDate(timestamp);
+  return new Date(timestamp);
 };
 
 /**
  * frontend → API : Date ➜ UTC ms   (was "toUTCTimestamp").
+ * Converts a Date to UTC timestamp using getTime().
  */
 export const toUTCTimestamp = <T extends Date | number | null | undefined>(
   value?: T
 ): number | undefined => {
-  // accept either Date (new flow) or legacy number
   if (value == null) return undefined;
-  return value instanceof Date ? value.getTime() : value;
+
+  if (value instanceof Date) {
+    // Date.getTime() already returns UTC milliseconds
+    return value.getTime();
+  } else {
+    // If it's already a number, return as-is
+    return value as number;
+  }
 };
 
 /* ────────────────────────────────────────────────────────── *
@@ -117,34 +132,78 @@ export const inputStringToTimestamp = (
     let d = new Date(today); // start from today to preserve Y-M-D when parsing 'time'
     switch (format) {
       case 'date': {
-        const [y, m, dd] = str.split('-').map(Number);
+        const parts = str.split('-');
+        if (parts.length !== 3) return new Date(0);
+        const [y, m, dd] = parts.map(Number);
+        // Validate the input values
+        if (isNaN(y) || isNaN(m) || isNaN(dd) ||
+          y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31) {
+          return new Date(0);
+        }
         d = new Date(y, m - 1, dd, 0, 0, 0, 0);
+        // Check if the date components actually match what we set
+        if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
+          return new Date(0);
+        }
         break;
       }
       case 'end-date': {
-        const [y, m, dd] = str.split('-').map(Number);
+        const parts = str.split('-');
+        if (parts.length !== 3) return new Date(0);
+        const [y, m, dd] = parts.map(Number);
+        // Validate the input values
+        if (isNaN(y) || isNaN(m) || isNaN(dd) ||
+          y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31) {
+          return new Date(0);
+        }
         d = new Date(y, m - 1, dd, 23, 59, 59, 999);
+        // Check if the date components actually match what we set
+        if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
+          return new Date(0);
+        }
         break;
       }
       case 'time': {
-        const [hh, mm] = str.split(':').map(Number);
+        const parts = str.split(':');
+        if (parts.length !== 2) return new Date(0);
+        const [hh, mm] = parts.map(Number);
+        // Validate the input values
+        if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+          return new Date(0);
+        }
         d.setHours(hh, mm, 0, 0);
         break;
       }
       case 'datetime':
       default: {
-        const [datePart, timePart] = str.split('T');
-        const [y, m, dd] = datePart.split('-').map(Number);
-        const [hh, mm] = timePart.split(':').map(Number);
+        const mainParts = str.split('T');
+        if (mainParts.length !== 2) return new Date(0);
+        const [datePart, timePart] = mainParts;
+
+        const dateParts = datePart.split('-');
+        const timeParts = timePart.split(':');
+        if (dateParts.length !== 3 || timeParts.length !== 2) return new Date(0);
+
+        const [y, m, dd] = dateParts.map(Number);
+        const [hh, mm] = timeParts.map(Number);
+
+        // Validate all values
+        if (isNaN(y) || isNaN(m) || isNaN(dd) || isNaN(hh) || isNaN(mm) ||
+          y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31 ||
+          hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+          return new Date(0);
+        }
+
         d = new Date(y, m - 1, dd, hh, mm, 0, 0);
+        // Check if the date components actually match what we set
+        if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
+          return new Date(0);
+        }
       }
     }
-    console.log(d)
-    console.log(typeof d)
     // Ensure the parsed date is valid before returning
     return isNaN(d.getTime()) ? new Date(0) : d;
   } catch (e) {
-    console.error(e)
     // Return Epoch date on parsing error
     return new Date(0);
   }

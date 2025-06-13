@@ -9,17 +9,36 @@ const STORAGE_STATE_PATH = path.join(__dirname, '.auth', 'storageState.json');
 async function globalSetup(config: FullConfig) {
     console.log('Executing global setup...');
 
-    // Determine the baseURL from the Playwright config
-    // Use the first project's baseURL or a default fallback
-    const baseURL = config.projects[0]?.use?.baseURL || 'http://localhost:3000';
+    // Get worker index from environment variable
+    const workerIndex = parseInt(process.env.TEST_WORKER_INDEX || '0');
+    const basePort = 3031;
+    const workerPort = basePort + workerIndex;
+
+    console.log(`Setting up for worker ${workerIndex} on port ${workerPort}`);
+
+    // Determine the baseURL from the worker-specific port
+    const baseURL = `http://localhost:${workerPort}`;
     console.log(`Using baseURL: ${baseURL} for storage state origin.`);
 
     // Define the default user for the global authenticated state
     const defaultUserId = 1;
-    const defaultUsername = `testuser${defaultUserId}`;
+    // Use the default username from the helper (which is 'testuser')
+    // Don't override it here to match the test database
 
     // Generate the storage state object using the helper
-    const storageState = generateStorageState(defaultUserId, defaultUsername, baseURL);
+    const storageState = generateStorageState(defaultUserId, undefined, baseURL);
+
+    // Add a test mode flag to prevent immediate token validation
+    storageState.origins[0].localStorage.push({
+        name: 'testMode',
+        value: 'true'
+    });
+
+    // Add worker-specific information
+    storageState.origins[0].localStorage.push({
+        name: 'workerIndex',
+        value: workerIndex.toString()
+    });
 
     try {
         // Ensure the .auth directory exists
@@ -29,7 +48,12 @@ async function globalSetup(config: FullConfig) {
             fs.mkdirSync(dir, { recursive: true });
         }
 
-        // Write the storage state to the file
+        // Create worker-specific storage state file
+        const workerStorageStatePath = path.join(dir, `storageState-worker-${workerIndex}.json`);
+        console.log(`Writing worker-specific storage state to: ${workerStorageStatePath}`);
+        fs.writeFileSync(workerStorageStatePath, JSON.stringify(storageState, null, 2));
+
+        // Also write to the default location for backward compatibility
         console.log(`Writing storage state to: ${STORAGE_STATE_PATH}`);
         fs.writeFileSync(STORAGE_STATE_PATH, JSON.stringify(storageState, null, 2)); // Pretty print JSON
         console.log('Storage state saved successfully.');
@@ -40,7 +64,7 @@ async function globalSetup(config: FullConfig) {
         // throw error; 
     }
 
-    console.log('Global setup finished.');
+    console.log(`Global setup finished for worker ${workerIndex}.`);
 }
 
 export default globalSetup;

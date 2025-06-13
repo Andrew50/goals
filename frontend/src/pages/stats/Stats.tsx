@@ -445,14 +445,16 @@ const Stats: React.FC = () => {
                                                         {week.map((day, dayIndex) => {
                                                             const hasTasks = day.date !== '' && day.total_events > 0;
                                                             const isToday = day.date === today;
+                                                            const isFutureDay = day.date !== '' && new Date(day.date + 'T00:00:00') > new Date(today + 'T00:00:00');
+
                                                             return (
                                                                 <div
                                                                     key={`${weekIndex}-${dayIndex}`}
-                                                                    className={`day-square ${!day.date ? 'empty' : ''} ${hasTasks ? 'has-tasks' : ''} ${isToday ? 'today' : ''}`}
+                                                                    className={`day-square ${!day.date ? 'empty' : ''} ${hasTasks ? 'has-tasks' : ''} ${isToday ? 'today' : ''} ${isFutureDay ? 'future' : ''}`}
                                                                     style={{
-                                                                        backgroundColor: day.date ? getColorForScore(day.score, hasTasks) : 'transparent',
+                                                                        backgroundColor: day.date && !isFutureDay ? getColorForScore(day.score, hasTasks) : 'transparent',
                                                                     }}
-                                                                    onMouseEnter={() => day.date && handleDayHover(day)}
+                                                                    onMouseEnter={() => day.date && !isFutureDay && handleDayHover(day)}
                                                                     onMouseLeave={() => handleDayHover(null)}
                                                                     onMouseMove={handleMouseMove}
                                                                     data-date={day.date}

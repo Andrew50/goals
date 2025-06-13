@@ -13,11 +13,17 @@ on:
         required: false
         type: boolean
         default: false
+      num_workers:
+        description: 'Number of parallel workers for E2E tests'
+        required: false
+        type: number
+        default: 16
 
 jobs:
   e2e-tests:
     name: Run E2E Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 60  # Reduced from default since we're parallelizing
     steps:
       - uses: actions/checkout@v3
         with:
@@ -49,58 +55,69 @@ jobs:
           echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
           echo "BACKUP_PATH=/tmp/backups" >> .env
           echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
-          echo "REACT_APP_API_URL=http://localhost:5057" >> .env
           echo "JWT_SECRET=test_jwt_secret" >> .env
           echo "JWT_EXPIRATION=86400" >> .env
       
-      - name: Start test environment
+      - name: Make scripts executable
         run: |
-          # Start the test database and backend using docker compose
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
-          
-          # Wait for services to start
-          echo "Waiting for services to start..."
-          sleep 45
-          
-          # Wait for Neo4j test database to be ready
-          echo "Waiting for Neo4j test database to be ready..."
-          for i in {1..30}; do
-            if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" &> /dev/null; then
-              echo "Neo4j test database is ready!"
-              break
-            fi
-            echo "Waiting for Neo4j test database... ($i/30)"
-            sleep 3
-          done
-          
-          # Basic healthcheck to ensure backend is up
-          curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:5057/health || echo "Backend health check failed but continuing"
-          
-          # Seed the test database with test data using the built-in cypher-shell
-          echo "Seeding test database..."
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /data/seed_test_db.sh
+          chmod +x start-parallel-test-env.sh
+          chmod +x cleanup-parallel-test-env.sh
+          chmod +x run-parallel-tests.sh
       
-      - name: Run Playwright tests
-        working-directory: ./frontend
-        run: npx playwright test
+      - name: Start parallel test environment
+        run: |
+          export NUM_WORKERS=${{ inputs.num_workers }}
+          ./start-parallel-test-env.sh
+        env:
+          NUM_WORKERS: ${{ inputs.num_workers }}
+      
+      - name: Run Playwright tests in parallel
+        run: |
+          export NUM_WORKERS=${{ inputs.num_workers }}
+          ./run-parallel-tests.sh
         env:
           CI: true
-          PLAYWRIGHT_BASE_URL: http://localhost:3030
-          PLAYWRIGHT_TEST_BASE_URL: http://localhost:3030
+          NUM_WORKERS: ${{ inputs.num_workers }}
       
-      - name: Upload test report
+      - name: Combine test reports
+        if: always()
+        run: |
+          # Create a combined report directory
+          mkdir -p frontend/playwright-report-combined
+          
+          # Copy all worker reports
+          for worker_id in $(seq 0 $((${{ inputs.num_workers }} - 1))); do
+            if [ -d "frontend/test-results-worker-$worker_id" ]; then
+              cp -r frontend/test-results-worker-$worker_id/* frontend/playwright-report-combined/ 2>/dev/null || true
+            fi
+          done
+          
+          # Try to generate a combined HTML report
+          cd frontend
+          npx playwright show-report --host 0.0.0.0 --port 9323 playwright-report-combined/ &
+          sleep 5
+          pkill -f "playwright show-report" || true
+          cd ..
+      
+      - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: frontend/playwright-report/
+          name: playwright-reports-parallel
+          path: |
+            frontend/test-results-worker-*/
+            frontend/playwright-report-combined/
           retention-days: 30
       
       - name: Cleanup test environment
         if: always()
-        run: docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+        run: |
+          export NUM_WORKERS=${{ inputs.num_workers }}
+          ./cleanup-parallel-test-env.sh
+        env:
+          NUM_WORKERS: ${{ inputs.num_workers }}
       
       - name: Mark test success
         if: success()
         run: |
-          echo "E2E tests passed successfully" 
+          echo "E2E tests passed successfully with ${{ inputs.num_workers }} parallel workers" 
