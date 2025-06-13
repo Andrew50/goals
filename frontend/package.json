@@ -45,6 +45,8 @@
     "dev": "react-scripts start",
     "test:e2e": "WDS_SOCKET_PORT=0 playwright test",
     "test:e2e:ui": "WDS_SOCKET_PORT=0 playwright test --ui",
+    "test:e2e:parallel": "WDS_SOCKET_PORT=0 playwright test --workers=4",
+    "test:e2e:parallel:debug": "WDS_SOCKET_PORT=0 playwright test --workers=4 --reporter=line",
     "test:calendar": "WDS_SOCKET_PORT=0 playwright test calendar-interactions.spec.ts",
     "test:timezone": "WDS_SOCKET_PORT=0 playwright test timestamp-e2e.spec.ts",
     "test:calendar:debug": "WDS_SOCKET_PORT=0 playwright test calendar-interactions.spec.ts --debug",
