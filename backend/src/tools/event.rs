@@ -12,6 +12,7 @@ pub struct CreateEventRequest {
     pub parent_type: String, // "task" or "routine"
     pub scheduled_timestamp: i64,
     pub duration: i32,
+    pub routine_instance_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,38 +242,23 @@ pub async fn create_event_handler(
         .get("p")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Create event inheriting from parent
+    // Create the new event in the database
     let event = Goal {
-        id: None,
-        name: parent.name.clone(),
+        name: parent.name.clone(), // Use parent's name for the event
         goal_type: GoalType::Event,
-        description: parent.description.clone(),
-        priority: parent.priority.clone(),
         user_id: Some(user_id),
+        parent_id: Some(request.parent_id),
+        parent_type: Some(request.parent_type.clone()),
         scheduled_timestamp: Some(request.scheduled_timestamp),
         duration: Some(request.duration),
-        parent_id: Some(request.parent_id),
-        parent_type: Some(request.parent_type),
-        completed: Some(false),
-        is_deleted: Some(false),
-        start_timestamp: None,
-        end_timestamp: None,
-        completion_date: None,
-        next_timestamp: None,
-        frequency: None,
-        routine_type: None,
-        routine_time: None,
-        position_x: None,
-        position_y: None,
-        routine_instance_id: None,
-        due_date: None,
-        start_date: None,
+        routine_instance_id: request.routine_instance_id,
+        ..Default::default()
     };
 
-    let created_event = event
-        .create_goal(&graph)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let created_event = match event.create_goal(&graph).await {
+        Ok(e) => e,
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    };
 
     // Create HAS_EVENT relationship
     let rel_query = query(

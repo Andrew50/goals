@@ -167,7 +167,7 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
- "yup-oauth2 8.3.2",
+ "yup-oauth2",
 ]
 
 [[package]]
@@ -733,7 +733,7 @@ dependencies = [
  "tokio",
  "tower-service",
  "url 2.5.3",
- "yup-oauth2 9.0.0",
+ "yup-oauth2",
 ]
 
 [[package]]
@@ -2040,9 +2040,9 @@ dependencies = [
 
 [[package]]
 name = "security-framework-sys"
-version = "2.12.1"
+version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa39c7303dc58b5543c94d22c1766b0d31f2ee58306363ea622b10bbc075eaa2"
+checksum = "49db231d56a190491cb4aeda9527f1ad45345af50b0851622a7adb8c03b01c32"
 dependencies = [
  "core-foundation-sys",
  "libc",
@@ -3105,33 +3105,6 @@ dependencies = [
  "quote",
  "syn 2.0.87",
  "synstructure",
-]
-
-[[package]]
-name = "yup-oauth2"
-version = "8.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b61da40aeb0907a65f7fb5c1de83c5a224d6a9ebb83bf918588a2bb744d636b8"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.21.7",
- "futures",
- "http 0.2.12",
- "hyper 0.14.32",
- "hyper-rustls 0.24.2",
- "itertools 0.12.1",
- "log",
- "percent-encoding 2.3.1",
- "rustls 0.22.4",
- "rustls-pemfile 1.0.4",
- "seahash",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tower-service",
- "url 2.5.3",
 ]
 
 [[package]]

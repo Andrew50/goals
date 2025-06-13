@@ -1,3 +1,4 @@
+use axum::middleware::from_fn;
 use axum::{
     extract::{Extension, Path, Query},
     http::StatusCode,
@@ -8,13 +9,14 @@ use axum::{
 use neo4rs::Graph;
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex};
-use tower_http::trace::TraceLayer;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use yup_oauth2::ServiceAccountKey;
 
 use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
-use crate::server::auth::{self, Claims};
+use crate::server::auth;
+use crate::server::middleware;
 use crate::tools::{
     achievements, calendar, day, event,
     gcal::{self, GCalService, GCalSyncRequest, SyncResult},
@@ -87,7 +89,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
-    let misc_routes = Router::new()
+    let misc_routes = Router::<()>::new()
         .route("/health", get(handle_health_check))
         .route("/list", get(handle_get_list_data))
         .route("/migrate-to-events", post(handle_migrate_to_events));
@@ -625,39 +627,32 @@ async fn handle_generate_routine_events(
 
 // Helper function to create GCalService
 async fn create_gcal_service() -> Result<GCalService, (StatusCode, String)> {
-    let gcal_sa_key_path = env::var("GCAL_SERVICE_ACCOUNT_PATH").map_err(|_| {
+    let gcp_credentials_path = std::env::var("GCP_CREDENTIALS_PATH").map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "GCAL_SERVICE_ACCOUNT_PATH not set".to_string(),
+            "GCP_CREDENTIALS_PATH env var not set".to_string(),
         )
     })?;
 
-    let gcal_sa_key_json = std::fs::read_to_string(&gcal_sa_key_path).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "Failed to read Google service account key file at {}: {}",
-                gcal_sa_key_path, e
-            ),
-        )
-    })?;
+    let sa_key = yup_oauth2::read_service_account_key(&gcp_credentials_path)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read service account key: {}", e),
+            )
+        })?;
 
-    let gcal_sa_key: ServiceAccountKey = serde_json::from_str(&gcal_sa_key_json).map_err(|e| {
+    GCalService::new(sa_key).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to parse Google service account key: {}", e),
-        )
-    })?;
-
-    GCalService::new(gcal_sa_key).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create Google Calendar service: {}", e),
+            format!("Failed to create GCal service: {}", e),
         )
     })
 }
 
 // Google Calendar handlers
+#[axum::debug_handler]
 async fn handle_sync_from_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -667,6 +662,7 @@ async fn handle_sync_from_gcal(
     gcal::sync_from_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
 }
 
+#[axum::debug_handler]
 async fn handle_sync_to_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -676,6 +672,7 @@ async fn handle_sync_to_gcal(
     gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
 }
 
+#[axum::debug_handler]
 async fn handle_sync_bidirectional(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -689,12 +686,15 @@ async fn handle_sync_bidirectional(
             .await
         {
             Ok(Json(res)) => res,
-            Err((status, msg)) => {
-                // If sync_from fails, we should stop and return the error
-                return Err((
-                    status,
-                    format!("Error during sync from Google Calendar: {}", msg),
-                ));
+            Err((_status, msg)) => {
+                let mut res = SyncResult {
+                    imported_events: 0,
+                    exported_events: 0,
+                    updated_events: 0,
+                    errors: vec![],
+                };
+                res.errors.push(format!("Sync from GCal failed: {}", msg));
+                res
             }
         };
 
@@ -702,15 +702,15 @@ async fn handle_sync_bidirectional(
     let to_gcal_result =
         match gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await {
             Ok(Json(res)) => res,
-            Err((status, msg)) => {
-                // Even if sync_to fails, we have still imported events.
-                // It's better to return a partial success with error details.
-                return Ok(Json(SyncResult {
-                    imported_events: from_gcal_result.imported_events,
+            Err((_status, msg)) => {
+                let mut res = SyncResult {
+                    imported_events: 0,
                     exported_events: 0,
-                    updated_events: from_gcal_result.updated_events, // These are updates from GCal->local
-                    errors: vec![format!("Error during sync to Google Calendar: {}", msg)],
-                }));
+                    updated_events: 0,
+                    errors: vec![],
+                };
+                res.errors.push(format!("Sync to GCal failed: {}", msg));
+                res
             }
         };
 

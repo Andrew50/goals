@@ -1001,14 +1001,13 @@ const Calendar: React.FC = () => {
   const handleGcalSyncConfirm = async () => {
     setGcalSyncDialog({
       ...gcalSyncDialog,
-      isLoading: true
+      isLoading: true,
     });
 
     try {
       let result: GCalSyncResult;
       const request = {
         calendar_id: gcalSyncDialog.calendarId,
-        sync_direction: gcalSyncDialog.syncDirection
       };
 
       switch (gcalSyncDialog.syncDirection) {
@@ -1027,7 +1026,7 @@ const Calendar: React.FC = () => {
       setGcalSyncDialog({
         ...gcalSyncDialog,
         isLoading: false,
-        lastResult: result
+        lastResult: result,
       });
 
       // Reload calendar data to show synced events
@@ -1041,8 +1040,8 @@ const Calendar: React.FC = () => {
           imported_events: 0,
           exported_events: 0,
           updated_events: 0,
-          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')]
-        }
+          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')],
+        },
       });
     }
   };

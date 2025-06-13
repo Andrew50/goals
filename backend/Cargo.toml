@@ -26,8 +26,8 @@ urlencoding = "2.1"
 regex = "1.10"
 tokio-cron-scheduler = "0.13"
 oauth2 = "4.4"
-google-calendar3 = "5.0"
-yup-oauth2 = "8.0"
+yup-oauth2 = "9.0"
+google-calendar3 = "5.0.5+20240328"
 hyper-rustls = "0.24"
 
 [[bin]]

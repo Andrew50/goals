@@ -50,6 +50,7 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
             is_deleted: None,
             due_date: None,
             start_date: None,
+            ..Default::default()
         });
     }
 
@@ -129,6 +130,7 @@ pub async fn query_parent_hierarchy(
             is_deleted: None,
             due_date: None,
             start_date: None,
+            ..Default::default()
         });
     }
 

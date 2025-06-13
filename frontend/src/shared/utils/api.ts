@@ -438,20 +438,18 @@ export const expandTaskDateRange = async (options: {
     new_start_timestamp?: Date;
     new_end_timestamp?: Date;
 }): Promise<Goal> => {
-    const requestData = {
-        task_id: options.task_id,
-        new_start_timestamp: options.new_start_timestamp ? options.new_start_timestamp.getTime() : undefined,
-        new_end_timestamp: options.new_end_timestamp ? options.new_end_timestamp.getTime() : undefined,
+    const apiOptions = {
+        ...options,
+        new_start_timestamp: options.new_start_timestamp?.getTime(),
+        new_end_timestamp: options.new_end_timestamp?.getTime(),
     };
-
-    const response = await privateRequest<ApiGoal>('goals/expand-date-range', 'POST', requestData);
+    const response = await privateRequest<ApiGoal>(`goals/expand-task-dates`, 'POST', apiOptions);
     return processGoalFromAPI(response);
 };
 
 // Google Calendar Sync API functions
 export interface GCalSyncRequest {
     calendar_id: string;
-    sync_direction: 'bidirectional' | 'to_gcal' | 'from_gcal';
 }
 
 export interface GCalSyncResult {

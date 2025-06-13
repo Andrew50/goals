@@ -50,6 +50,43 @@ pub struct Goal {
     pub is_gcal_imported: Option<bool>, // Whether this event was imported from Google Calendar
 }
 
+impl Default for Goal {
+    fn default() -> Self {
+        Self {
+            id: None,
+            name: String::new(),
+            goal_type: GoalType::Task, // Default to task, can be changed
+            description: None,
+            user_id: None,
+            priority: None,
+            start_timestamp: None,
+            end_timestamp: None,
+            completion_date: None,
+            next_timestamp: None,
+            scheduled_timestamp: None,
+            duration: None,
+            completed: None,
+            frequency: None,
+            routine_type: None,
+            routine_time: None,
+            position_x: None,
+            position_y: None,
+            parent_id: None,
+            parent_type: None,
+            routine_instance_id: None,
+            is_deleted: None,
+            due_date: None,
+            start_date: None,
+            gcal_event_id: None,
+            gcal_calendar_id: None,
+            gcal_sync_enabled: None,
+            gcal_last_sync: None,
+            gcal_sync_direction: None,
+            is_gcal_imported: None,
+        }
+    }
+}
+
 pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     name: g.name,
                     description: g.description,
@@ -138,7 +175,7 @@ pub struct GoalUpdate {
     pub completed: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ExpandTaskDateRangeRequest {
     pub task_id: i64,
     pub new_start_timestamp: Option<i64>,
