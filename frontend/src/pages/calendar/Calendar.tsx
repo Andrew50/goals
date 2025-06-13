@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, updateRoutines, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties } from '../../shared/utils/api';
 import { getGoalColor } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';

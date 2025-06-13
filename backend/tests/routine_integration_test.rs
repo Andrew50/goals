@@ -1469,8 +1469,9 @@ mod tests {
         if !events_on_thursday.is_empty() {
             println!("❌ FOUND EVENTS ON THURSDAY (this would be the bug):");
             for event in &events_on_thursday {
-                let event_timestamp = event.scheduled_timestamp.unwrap();
-                let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+                let event_dt = Utc
+                    .timestamp_millis_opt(event.scheduled_timestamp.unwrap())
+                    .unwrap();
                 println!("  Thursday event: {}", event_dt.format("%A %Y-%m-%d %H:%M"));
             }
         }
@@ -1498,5 +1499,404 @@ mod tests {
         }
 
         println!("✅ Frontend frequency change sequence test passed - all events on correct days");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_routine_with_future_start_date_no_current_day_events() {
+        // This test covers the bug where creating a routine on Tuesday with:
+        // - Start date: Saturday (future)
+        // - Frequency: Monday/Wednesday (1W:1,3)
+        // Incorrectly creates a task on current day (Tuesday)
+
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Get current time and day of week
+        let now = Utc::now();
+        let current_weekday = now.weekday().num_days_from_sunday();
+
+        println!("Test setup:");
+        println!(
+            "  Current day: {} (weekday {})",
+            now.format("%A %Y-%m-%d"),
+            current_weekday
+        );
+
+        // Set start date to Saturday (future date)
+        let days_to_saturday = if (6 + 7 - current_weekday) % 7 == 0 {
+            // If today is Saturday, use next Saturday
+            7
+        } else {
+            (6 + 7 - current_weekday) % 7
+        };
+        let saturday_start =
+            now.timestamp_millis() + (days_to_saturday as i64 * 24 * 60 * 60 * 1000);
+
+        let saturday_dt = Utc.timestamp_millis_opt(saturday_start).unwrap();
+        let saturday_weekday = saturday_dt.weekday().num_days_from_sunday();
+
+        // Verify our Saturday calculation is correct
+        assert_eq!(
+            saturday_weekday, 6,
+            "Start date should be Saturday (6), got {}",
+            saturday_weekday
+        );
+
+        println!(
+            "  Start date (Saturday): {} (weekday {})",
+            saturday_dt.format("%A %Y-%m-%d"),
+            saturday_weekday
+        );
+
+        // Test parameters
+        let current_timestamp = now.timestamp_millis();
+        let end_timestamp = saturday_start + (21 * 24 * 60 * 60 * 1000); // 3 weeks after start
+        let routine_time = Some(9 * 60 * 60 * 1000); // 9 AM
+        let frequency = "1W:1,3"; // Monday (1) and Wednesday (3) only
+        let duration = 60;
+
+        println!("  Frequency: {} (Monday and Wednesday only)", frequency);
+        println!(
+            "  Routine should NOT create events before: {}",
+            saturday_dt.format("%A %Y-%m-%d")
+        );
+
+        // Create the routine with future start date
+        let routine_id = create_test_routine(
+            &graph,
+            "Future Start Monday Wednesday Routine",
+            frequency,
+            saturday_start, // Start from Saturday (future)
+            Some(end_timestamp),
+            routine_time,
+            duration,
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        // Generate events for this routine
+        generate_events_for_test_routine(&graph, routine_id, current_timestamp, end_timestamp)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Retrieve generated events
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!("Generated {} events", events.len());
+
+        // Print all event details for debugging
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+            let weekday_name = match event_weekday {
+                0 => "Sunday",
+                1 => "Monday",
+                2 => "Tuesday",
+                3 => "Wednesday",
+                4 => "Thursday",
+                5 => "Friday",
+                6 => "Saturday",
+                _ => "Unknown",
+            };
+            println!(
+                "  Event {}: {} ({}) - weekday {}",
+                i + 1,
+                event_dt.format("%A %Y-%m-%d %H:%M"),
+                weekday_name,
+                event_weekday
+            );
+        }
+
+        // CRITICAL TEST 1: NO events should be created on the current day
+        let current_day_start = (current_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let current_day_end = current_day_start + (24 * 60 * 60 * 1000);
+
+        let events_on_current_day: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= current_day_start && event_ts < current_day_end
+            })
+            .collect();
+
+        if !events_on_current_day.is_empty() {
+            println!("❌ FOUND EVENTS ON CURRENT DAY (this is the bug!):");
+            for event in &events_on_current_day {
+                let event_dt = Utc
+                    .timestamp_millis_opt(event.scheduled_timestamp.unwrap())
+                    .unwrap();
+                println!(
+                    "  Current day event: {}",
+                    event_dt.format("%A %Y-%m-%d %H:%M")
+                );
+            }
+        }
+
+        assert_eq!(
+            events_on_current_day.len(),
+            0,
+            "BUG REPRODUCED: Found {} events on current day! Should be 0 since routine starts in the future.",
+            events_on_current_day.len()
+        );
+
+        // CRITICAL TEST 2: NO events should be created before the start date (Saturday)
+        let events_before_start: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts < saturday_start
+            })
+            .collect();
+
+        if !events_before_start.is_empty() {
+            println!("❌ FOUND EVENTS BEFORE START DATE:");
+            for event in &events_before_start {
+                let event_dt = Utc
+                    .timestamp_millis_opt(event.scheduled_timestamp.unwrap())
+                    .unwrap();
+                println!(
+                    "  Pre-start event: {} (before start: {})",
+                    event_dt.format("%A %Y-%m-%d %H:%M"),
+                    saturday_dt.format("%A %Y-%m-%d")
+                );
+            }
+        }
+
+        assert_eq!(
+            events_before_start.len(),
+            0,
+            "Found {} events before start date! All events should be on or after {}",
+            events_before_start.len(),
+            saturday_dt.format("%A %Y-%m-%d")
+        );
+
+        // CRITICAL TEST 3: ALL events should be on Monday (1) or Wednesday (3) only
+        let mut monday_count = 0;
+        let mut wednesday_count = 0;
+        let mut other_day_count = 0;
+
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+
+            match event_weekday {
+                1 => monday_count += 1,    // Monday
+                3 => wednesday_count += 1, // Wednesday
+                _ => {
+                    other_day_count += 1;
+                    println!(
+                        "❌ Event {} on wrong day: {} (weekday {}). Expected Monday or Wednesday only.",
+                        i + 1,
+                        event_dt.format("%A"),
+                        event_weekday
+                    );
+                }
+            }
+        }
+
+        println!(
+            "📊 Event distribution: Monday={}, Wednesday={}, Other={}",
+            monday_count, wednesday_count, other_day_count
+        );
+
+        assert_eq!(
+            other_day_count, 0,
+            "Found {} events on wrong days! All events should be on Monday or Wednesday only.",
+            other_day_count
+        );
+
+        // CRITICAL TEST 4: ALL events should be on or after the start date
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            assert!(
+                event_timestamp >= saturday_start,
+                "Event {} is scheduled before start date! Event: {}, Start: {}",
+                i + 1,
+                Utc.timestamp_millis_opt(event_timestamp)
+                    .unwrap()
+                    .format("%Y-%m-%d"),
+                saturday_dt.format("%Y-%m-%d")
+            );
+        }
+
+        // Should have some events (expect at least 6 events: 3 weeks * 2 days/week)
+        assert!(
+            events.len() >= 6,
+            "Expected at least 6 events (3 weeks of Mon/Wed), got {}",
+            events.len()
+        );
+
+        // Additional validation: verify time of day is correct (9 AM)
+        if let Some(routine_time) = routine_time {
+            for event in &events {
+                let event_timestamp = event.scheduled_timestamp.unwrap();
+                let time_of_day_ms = event_timestamp % (24 * 60 * 60 * 1000);
+                let expected_time_ms = routine_time % (24 * 60 * 60 * 1000);
+
+                assert_eq!(
+                    time_of_day_ms, expected_time_ms,
+                    "Event has wrong time of day. Expected 9 AM, got {}ms since midnight",
+                    time_of_day_ms
+                );
+            }
+        }
+
+        println!("✅ ALL TESTS PASSED:");
+        println!("✅ No events created on current day");
+        println!("✅ No events created before start date");
+        println!("✅ All events are on Monday or Wednesday only");
+        println!("✅ All events are on or after the start date");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_edge_case_routine_created_on_frequency_day_with_future_start() {
+        // Edge case: Create routine on Monday, set frequency to Monday/Wednesday,
+        // but with start date in the future (next Saturday)
+        // Should NOT create event on current Monday
+
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Force test to run on a Monday (or simulate it)
+        let now = Utc::now();
+        let days_to_monday = (1 + 7 - now.weekday().num_days_from_sunday()) % 7;
+        let monday_timestamp = if days_to_monday == 0 {
+            now.timestamp_millis() // Today is Monday
+        } else {
+            now.timestamp_millis() + (days_to_monday as i64 * 24 * 60 * 60 * 1000)
+        };
+
+        let monday_dt = Utc.timestamp_millis_opt(monday_timestamp).unwrap();
+        let monday_weekday = monday_dt.weekday().num_days_from_sunday();
+        assert_eq!(
+            monday_weekday, 1,
+            "Should be Monday, got {}",
+            monday_weekday
+        );
+
+        // Set start date to next Saturday (future)
+        let saturday_start = monday_timestamp + (5 * 24 * 60 * 60 * 1000); // 5 days after Monday
+        let saturday_dt = Utc.timestamp_millis_opt(saturday_start).unwrap();
+        let saturday_weekday = saturday_dt.weekday().num_days_from_sunday();
+        assert_eq!(
+            saturday_weekday, 6,
+            "Start should be Saturday, got {}",
+            saturday_weekday
+        );
+
+        println!("Edge case test setup:");
+        println!(
+            "  Creation day (Monday): {}",
+            monday_dt.format("%A %Y-%m-%d")
+        );
+        println!(
+            "  Start date (Saturday): {}",
+            saturday_dt.format("%A %Y-%m-%d")
+        );
+        println!("  Frequency: 1W:1,3 (Monday and Wednesday)");
+
+        let end_timestamp = saturday_start + (14 * 24 * 60 * 60 * 1000); // 2 weeks after start
+        let routine_time = Some(14 * 60 * 60 * 1000); // 2 PM
+        let frequency = "1W:1,3"; // Monday and Wednesday
+
+        // Create routine on Monday with future Saturday start
+        let routine_id = create_test_routine(
+            &graph,
+            "Monday Created Future Start Routine",
+            frequency,
+            saturday_start, // Start from Saturday (future)
+            Some(end_timestamp),
+            routine_time,
+            60,
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        // Generate events starting from the creation time (Monday)
+        generate_events_for_test_routine(&graph, routine_id, monday_timestamp, end_timestamp)
+            .await
+            .expect("Failed to generate routine events");
+
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+
+        println!("Generated {} events", events.len());
+
+        // Print event details
+        for (i, event) in events.iter().enumerate() {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+            println!(
+                "  Event {}: {} (weekday {})",
+                i + 1,
+                event_dt.format("%A %Y-%m-%d %H:%M"),
+                event_weekday
+            );
+        }
+
+        // NO event should be on the creation day (Monday) since start is in future
+        let monday_day_start = (monday_timestamp / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let monday_day_end = monday_day_start + (24 * 60 * 60 * 1000);
+
+        let events_on_creation_monday: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                let event_ts = event.scheduled_timestamp.unwrap();
+                event_ts >= monday_day_start && event_ts < monday_day_end
+            })
+            .collect();
+
+        assert_eq!(
+            events_on_creation_monday.len(),
+            0,
+            "Found {} events on creation day (Monday)! Should be 0 since start date is in future.",
+            events_on_creation_monday.len()
+        );
+
+        // All events should be on or after Saturday start date
+        for event in &events {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            assert!(
+                event_timestamp >= saturday_start,
+                "Event before start date: {} < {}",
+                Utc.timestamp_millis_opt(event_timestamp)
+                    .unwrap()
+                    .format("%Y-%m-%d"),
+                saturday_dt.format("%Y-%m-%d")
+            );
+        }
+
+        // All events should be on Monday or Wednesday only
+        for event in &events {
+            let event_timestamp = event.scheduled_timestamp.unwrap();
+            let event_dt = Utc.timestamp_millis_opt(event_timestamp).unwrap();
+            let event_weekday = event_dt.weekday().num_days_from_sunday();
+            assert!(
+                event_weekday == 1 || event_weekday == 3,
+                "Event on wrong day: weekday {} ({})",
+                event_weekday,
+                event_dt.format("%A")
+            );
+        }
+
+        println!("✅ Edge case test passed: No events on creation day when start is in future");
     }
 }

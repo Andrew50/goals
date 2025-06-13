@@ -768,29 +768,29 @@ fn is_valid_day_for_routine_migration(timestamp: i64, frequency: &str) -> Result
 
                     if selected_days.is_empty() {
                         // If no specific days are selected, all days are valid for weekly
-                        return Ok(true);
+                        Ok(true)
                     } else {
                         // Check if current day is one of the selected days
                         let current_weekday = current_dt.weekday().num_days_from_sunday();
-                        return Ok(selected_days.contains(&current_weekday));
+                        Ok(selected_days.contains(&current_weekday))
                     }
                 } else {
                     // Weekly without specific days - all days are valid
-                    return Ok(true);
+                    Ok(true)
                 }
             }
             "D" | "M" | "Y" => {
                 // For daily, monthly, yearly - all days are valid (the frequency calculation handles the intervals)
-                return Ok(true);
+                Ok(true)
             }
             _ => {
                 // Unknown unit - assume valid
-                return Ok(true);
+                Ok(true)
             }
         }
     } else {
         // No unit found - assume daily, so all days are valid
-        return Ok(true);
+        Ok(true)
     }
 }
 

@@ -91,6 +91,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
+    const [childGoals, setChildGoals] = useState<Goal[]>([]);
 
     // Ensure start_timestamp is set for new goals in create mode
     const processedInitialGoal = useMemo(() => {
@@ -102,7 +103,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // Set start_timestamp for create mode if not already set
         if (initialMode === 'create' && !goalCopy.start_timestamp) {
-            goalCopy.start_timestamp = new Date();
+            // If we have a scheduled_timestamp (from calendar click), use that as start_timestamp
+            // Otherwise default to today
+            goalCopy.start_timestamp = goalCopy.scheduled_timestamp || new Date();
         }
 
         return goalCopy;
@@ -405,17 +408,22 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Fetch parent goals using traversal API
     const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
+        console.log('[GoalMenu] fetchParentGoals called with goalId:', goalId);
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
+            console.log('[GoalMenu] fetchParentGoals hierarchyResponse:', hierarchyResponse);
             // Filter to only get parent goals (those that have a child relationship to current goal)
             const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+            console.log('[GoalMenu] fetchParentGoals networkData edges:', networkData.edges);
             const parentIds = networkData.edges
                 .filter(e => e.relationship_type === 'child' && e.to === goalId)
                 .map(e => e.from);
+            console.log('[GoalMenu] fetchParentGoals parentIds:', parentIds);
 
             const parents = hierarchyResponse
                 .filter(g => parentIds.includes(g.id!))
                 .map(goalToLocal);
+            console.log('[GoalMenu] fetchParentGoals parents:', parents);
 
             // Sort by hierarchy level (furthest parents first)
             setParentGoals(parents);
@@ -430,6 +438,33 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (mode === 'edit') {
                 setSelectedParents([]);
             }
+        }
+    }, []);
+
+    // Fetch child goals using traversal API
+    const fetchChildGoals = useCallback(async (goalId: number, mode: Mode) => {
+        console.log('[GoalMenu] fetchChildGoals called with goalId:', goalId);
+        try {
+            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
+            console.log('[GoalMenu] fetchChildGoals hierarchyResponse:', hierarchyResponse);
+            // Filter to only get child goals (those that have a child relationship from current goal)
+            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+            console.log('[GoalMenu] fetchChildGoals networkData edges:', networkData.edges);
+            const childIds = networkData.edges
+                .filter(e => e.relationship_type === 'child' && e.from === goalId)
+                .map(e => e.to);
+            console.log('[GoalMenu] fetchChildGoals childIds:', childIds);
+
+            const children = hierarchyResponse
+                .filter(g => childIds.includes(g.id!))
+                .map(goalToLocal);
+            console.log('[GoalMenu] fetchChildGoals children:', children);
+
+            // Sort by hierarchy level (immediate children first)
+            setChildGoals(children);
+        } catch (error) {
+            console.error('Failed to fetch child goals:', error);
+            setChildGoals([]);
         }
     }, []);
 
@@ -448,7 +483,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         const actualMode = initialMode;
 
         if (actualMode === 'create' && !goalCopy.start_timestamp) {
-            goalCopy.start_timestamp = new Date();
+            // If we have a scheduled_timestamp (from calendar click), use that as start_timestamp
+            // Otherwise default to today
+            goalCopy.start_timestamp = goalCopy.scheduled_timestamp || new Date();
         }
 
         //queue relationships can only between achievements, default to achievement and force achievemnt in ui
@@ -479,10 +516,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         setIsOpen(true);
 
         console.log('[GoalMenu] About to check goal.id:', goalCopy.id, 'typeof:', typeof goalCopy.id);
-        // Fetch parent goals if we have a goal ID
+        // Fetch parent and child goals if we have a goal ID
         if (goal.id) {
             console.log('[GoalMenu] Goal has ID:', goal.id, 'and goal_type:', goal.goal_type);
             fetchParentGoals(goal.id, actualMode);
+            fetchChildGoals(goal.id, actualMode);
 
             // Fetch task events if this is a task
             if (goal.goal_type === 'task') {
@@ -494,25 +532,49 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         } else {
             console.log('[GoalMenu] Goal has no ID, skipping fetchTaskEvents');
             setParentGoals([]);
+            setChildGoals([]);
             setTaskEvents([]);
             setTotalDuration(0);
         }
 
         // Reset stats when goal changes
         setGoalStats(null);
-    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals]);
+    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals, fetchChildGoals]);
 
     // Fetch stats when in view mode and goal is loaded
     useEffect(() => {
         if (state.mode === 'view' && state.goal.id) {
             fetchGoalStats(state.goal);
         }
-    }, [state.mode, state.goal.id, state.goal.goal_type, taskEvents, fetchGoalStats]);
+    }, [state.mode, state.goal, taskEvents, fetchGoalStats]);
 
     // Debug taskEvents changes
     useEffect(() => {
         console.log('[GoalMenu] taskEvents updated:', { length: taskEvents.length, events: taskEvents });
     }, [taskEvents]);
+
+    // Debug childGoals changes
+    useEffect(() => {
+        console.log('[GoalMenu] childGoals updated:', { length: childGoals.length, children: childGoals });
+    }, [childGoals]);
+
+    // Debug parentGoals changes
+    useEffect(() => {
+        console.log('[GoalMenu] parentGoals updated:', { length: parentGoals.length, parents: parentGoals });
+    }, [parentGoals]);
+
+    // Fetch parent and child goals when component mounts or goal changes
+    useEffect(() => {
+        if (state.goal.id && isOpen) {
+            console.log('[GoalMenu] useEffect: Fetching relationships for goal ID:', state.goal.id);
+            fetchParentGoals(state.goal.id, state.mode);
+            fetchChildGoals(state.goal.id, state.mode);
+        } else {
+            console.log('[GoalMenu] useEffect: No goal ID or dialog closed, clearing relationships');
+            setParentGoals([]);
+            setChildGoals([]);
+        }
+    }, [state.goal.id, state.mode, isOpen, fetchParentGoals, fetchChildGoals]);
 
     const close = useCallback(() => {
         setIsOpen(false);
@@ -535,6 +597,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setSmartScheduleContext(null);
             setGoalStats(null);
             setStatsLoading(false);
+            setChildGoals([]);
         }, 100);
     }, [setState]);
 
@@ -1506,6 +1569,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         updates.routine_type = 'task';
                         if (!state.goal.duration) updates.duration = 60;
                         if (!state.goal.frequency) updates.frequency = '1D';
+                        // If start_timestamp is not set and we have a scheduled_timestamp (from calendar click), use it
+                        if (!state.goal.start_timestamp && state.goal.scheduled_timestamp) {
+                            updates.start_timestamp = state.goal.scheduled_timestamp;
+                        }
                     }
 
                     handleChange({
@@ -2199,6 +2266,40 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     onClick={() => open(parent, 'view')}
                                 >
                                     {parent.name}
+                                </Box>
+                            ))}
+                        </Box>
+                    </Box>
+                )}
+
+                {/* Child display (view mode only) */}
+                {state.mode === 'view' && childGoals.length > 0 && (
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                            Children
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                            {childGoals.map((child) => (
+                                <Box
+                                    key={child.id}
+                                    sx={{
+                                        backgroundColor: getGoalColor(child),
+                                        color: 'white',
+                                        px: 1.5,
+                                        py: 0.75,
+                                        borderRadius: '16px',
+                                        fontSize: '0.875rem',
+                                        fontWeight: 500,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        '&:hover': {
+                                            transform: 'translateY(-2px)',
+                                            boxShadow: 2
+                                        }
+                                    }}
+                                    onClick={() => open(child, 'view')}
+                                >
+                                    {child.name}
                                 </Box>
                             ))}
                         </Box>

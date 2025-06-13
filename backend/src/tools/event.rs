@@ -1612,21 +1612,21 @@ pub async fn update_routine_event_properties_handler(
                 set_clauses.push("e.name = $name");
                 params.push((
                     "name".to_string(),
-                    neo4rs::BoltType::String(neo4rs::BoltString::new(&name)),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(name)),
                 ));
             }
             if let Some(description) = &request.description {
                 set_clauses.push("e.description = $description");
                 params.push((
                     "description".to_string(),
-                    neo4rs::BoltType::String(neo4rs::BoltString::new(&description)),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(description)),
                 ));
             }
             if let Some(priority) = &request.priority {
                 set_clauses.push("e.priority = $priority");
                 params.push((
                     "priority".to_string(),
-                    neo4rs::BoltType::String(neo4rs::BoltString::new(&priority)),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(priority)),
                 ));
             }
 
@@ -1701,21 +1701,21 @@ pub async fn update_routine_event_properties_handler(
                 set_clauses.push("e.name = $name");
                 params.push((
                     "name".to_string(),
-                    neo4rs::BoltType::String(neo4rs::BoltString::new(&name)),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(name)),
                 ));
             }
             if let Some(description) = &request.description {
                 set_clauses.push("e.description = $description");
                 params.push((
                     "description".to_string(),
-                    neo4rs::BoltType::String(neo4rs::BoltString::new(&description)),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(description)),
                 ));
             }
             if let Some(priority) = &request.priority {
                 set_clauses.push("e.priority = $priority");
                 params.push((
                     "priority".to_string(),
-                    neo4rs::BoltType::String(neo4rs::BoltString::new(&priority)),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(priority)),
                 ));
             }
 
