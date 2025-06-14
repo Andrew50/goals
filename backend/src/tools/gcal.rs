@@ -49,7 +49,7 @@ impl GCalService {
         let hub = CalendarHub::new(
             hyper::Client::builder().build(
                 hyper_rustls::HttpsConnectorBuilder::new()
-                    .with_native_roots()
+                    .with_native_roots()?
                     .https_or_http()
                     .enable_http1()
                     .enable_http2()
@@ -114,21 +114,20 @@ impl GCalService {
             .scheduled_timestamp
             .ok_or("Goal must have a scheduled timestamp")?;
         let duration_minutes = goal.duration.unwrap_or(60);
-        let end_time = start_time.timestamp_millis() + (duration_minutes as i64 * 60 * 1000);
+        let start_dt = DateTime::from_timestamp_millis(start_time).unwrap();
+        let end_time = start_time + (duration_minutes as i64 * 60 * 1000);
 
         let start_datetime = if goal.duration == Some(1440) {
             // All-day event
             EventDateTime {
-                date: Some(start_time.format("%Y-%m-%d").to_string()),
+                date: Some(start_dt.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
         } else {
             EventDateTime {
                 date: None,
-                date_time: Some(
-                    DateTime::from_timestamp_millis(start_time.timestamp_millis()).unwrap(),
-                ),
+                date_time: Some(start_dt),
                 time_zone: Some("UTC".to_string()),
             }
         };
@@ -137,7 +136,7 @@ impl GCalService {
             // All-day event
             let end_date = DateTime::from_timestamp_millis(end_time).unwrap();
             EventDateTime {
-                date: Some(end_date.format("%Y-%m-%d").to_string()),
+                date: Some(end_date.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
@@ -173,20 +172,19 @@ impl GCalService {
             .scheduled_timestamp
             .ok_or("Goal must have a scheduled timestamp")?;
         let duration_minutes = goal.duration.unwrap_or(60);
-        let end_time = start_time.timestamp_millis() + (duration_minutes as i64 * 60 * 1000);
+        let start_dt = DateTime::from_timestamp_millis(start_time).unwrap();
+        let end_time = start_time + (duration_minutes as i64 * 60 * 1000);
 
         let start_datetime = if goal.duration == Some(1440) {
             EventDateTime {
-                date: Some(start_time.format("%Y-%m-%d").to_string()),
+                date: Some(start_dt.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
         } else {
             EventDateTime {
                 date: None,
-                date_time: Some(
-                    DateTime::from_timestamp_millis(start_time.timestamp_millis()).unwrap(),
-                ),
+                date_time: Some(start_dt),
                 time_zone: Some("UTC".to_string()),
             }
         };
@@ -194,7 +192,7 @@ impl GCalService {
         let end_datetime = if goal.duration == Some(1440) {
             let end_date = DateTime::from_timestamp_millis(end_time).unwrap();
             EventDateTime {
-                date: Some(end_date.format("%Y-%m-%d").to_string()),
+                date: Some(end_date.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
@@ -274,8 +272,8 @@ pub async fn sync_from_gcal(
              RETURN g",
         )
         .param("user_id", user_id)
-        .param("gcal_event_id", &gcal_event.id)
-        .param("gcal_calendar_id", &gcal_event.calendar_id);
+        .param("gcal_event_id", gcal_event.id.clone())
+        .param("gcal_calendar_id", gcal_event.calendar_id.clone());
 
         let mut existing_result = graph.execute(existing_query).await.map_err(|e| {
             (
@@ -287,15 +285,8 @@ pub async fn sync_from_gcal(
         let start_timestamp = match &gcal_event.start {
             event_datetime if event_datetime.date.is_some() => {
                 // All-day event
-                let date_str = event_datetime.date.as_ref().unwrap();
-                chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| {
-                        (
-                            StatusCode::BAD_REQUEST,
-                            format!("Invalid date format: {}", e),
-                        )
-                    })?
-                    .and_hms_opt(0, 0, 0)
+                let date = event_datetime.date.as_ref().unwrap();
+                date.and_hms_opt(0, 0, 0)
                     .unwrap()
                     .and_utc()
                     .timestamp_millis()
@@ -313,15 +304,8 @@ pub async fn sync_from_gcal(
 
         let end_timestamp = match &gcal_event.end {
             event_datetime if event_datetime.date.is_some() => {
-                let date_str = event_datetime.date.as_ref().unwrap();
-                chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| {
-                        (
-                            StatusCode::BAD_REQUEST,
-                            format!("Invalid date format: {}", e),
-                        )
-                    })?
-                    .and_hms_opt(23, 59, 59)
+                let date = event_datetime.date.as_ref().unwrap();
+                date.and_hms_opt(23, 59, 59)
                     .unwrap()
                     .and_utc()
                     .timestamp_millis()
@@ -366,8 +350,8 @@ pub async fn sync_from_gcal(
                      g.gcal_last_sync = $sync_time",
             )
             .param("user_id", user_id)
-            .param("gcal_event_id", &gcal_event.id)
-            .param("name", &gcal_event.summary)
+            .param("gcal_event_id", gcal_event.id.clone())
+            .param("name", gcal_event.summary.clone())
             .param(
                 "description",
                 gcal_event.description.as_deref().unwrap_or(""),

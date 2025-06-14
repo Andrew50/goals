@@ -1,6 +1,7 @@
 use axum::{
     extract::{Extension, Path, Query},
     http::StatusCode,
+    middleware::from_fn,
     response::IntoResponse,
     routing::{delete, get, post, put},
     Json, Router,
@@ -8,17 +9,19 @@ use axum::{
 use neo4rs::Graph;
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 use yup_oauth2::ServiceAccountKey;
 
 use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
 use crate::server::auth::{self, Claims};
+use crate::server::middleware;
 use crate::tools::{
     achievements, calendar, day, event,
     gcal::{self, GCalService, GCalSyncRequest, SyncResult},
-    goal::{self, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
+    goal::{self, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship, GOAL_RETURN_QUERY},
     list, migration, network, routine, stats, traversal,
 };
 
@@ -87,15 +90,12 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
-    let misc_routes = Router::new()
+    let misc_routes: Router = Router::new()
         .route("/health", get(handle_health_check))
         .route("/list", get(handle_get_list_data))
         .route("/migrate-to-events", post(handle_migrate_to_events));
 
-    let gcal_routes = Router::new()
-        .route("/sync-from", post(handle_sync_from_gcal))
-        .route("/sync-to", post(handle_sync_to_gcal))
-        .route("/sync-bidirectional", post(handle_sync_bidirectional));
+    let gcal_routes = Router::new().route("/sync-from", post(handle_sync_from_gcal));
 
     let stats_routes = Router::new()
         .route("/", get(handle_get_stats_data))
@@ -667,6 +667,7 @@ async fn handle_sync_from_gcal(
     gcal::sync_from_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
 }
 
+#[axum::debug_handler]
 async fn handle_sync_to_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -676,6 +677,7 @@ async fn handle_sync_to_gcal(
     gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
 }
 
+#[axum::debug_handler]
 async fn handle_sync_bidirectional(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,

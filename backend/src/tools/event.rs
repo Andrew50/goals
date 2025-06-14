@@ -267,6 +267,12 @@ pub async fn create_event_handler(
         routine_instance_id: None,
         due_date: None,
         start_date: None,
+        gcal_event_id: None,
+        gcal_calendar_id: None,
+        gcal_sync_enabled: None,
+        gcal_last_sync: None,
+        gcal_sync_direction: None,
+        is_gcal_imported: None,
     };
 
     let created_event = event

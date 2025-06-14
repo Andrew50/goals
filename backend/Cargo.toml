@@ -27,8 +27,8 @@ regex = "1.10"
 tokio-cron-scheduler = "0.13"
 oauth2 = "4.4"
 google-calendar3 = "5.0"
-yup-oauth2 = "8.0"
-hyper-rustls = "0.24"
+yup-oauth2 = "9.0"
+hyper-rustls = "0.25"
 
 [[bin]]
 name = "backend"
