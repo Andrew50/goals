@@ -2,6 +2,7 @@ pub mod achievements;
 pub mod calendar;
 pub mod day;
 pub mod event;
+pub mod gcal;
 pub mod goal;
 pub mod list;
 pub mod migration;

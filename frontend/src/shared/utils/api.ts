@@ -447,3 +447,28 @@ export const expandTaskDateRange = async (options: {
     const response = await privateRequest<ApiGoal>('goals/expand-date-range', 'POST', requestData);
     return processGoalFromAPI(response);
 };
+
+// Google Calendar Sync API functions
+export interface GCalSyncRequest {
+    calendar_id: string;
+    sync_direction: 'bidirectional' | 'to_gcal' | 'from_gcal';
+}
+
+export interface GCalSyncResult {
+    imported_events: number;
+    exported_events: number;
+    updated_events: number;
+    errors: string[];
+}
+
+export const syncFromGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
+    return privateRequest<GCalSyncResult>('gcal/sync-from', 'POST', request);
+};
+
+export const syncToGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
+    return privateRequest<GCalSyncResult>('gcal/sync-to', 'POST', request);
+};
+
+export const syncBidirectionalGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
+    return privateRequest<GCalSyncResult>('gcal/sync-bidirectional', 'POST', request);
+};
