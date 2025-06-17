@@ -34,7 +34,7 @@ jobs:
       - name: Stop and remove existing containers
         run: |
           docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
-          docker system prune -f --volumes || true
+          docker system prune -f || true
 
       - name: Build containers with no cache
         run: docker compose -p p -f docker-compose.prod.yaml build --no-cache
