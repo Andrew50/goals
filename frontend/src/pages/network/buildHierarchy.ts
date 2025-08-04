@@ -1,5 +1,5 @@
 import { NetworkNode, NetworkEdge } from '../../types/goals';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { privateRequest } from '../../shared/utils/api';
 
 // =====================================================
@@ -264,7 +264,7 @@ export async function buildHierarchy(networkData: {
                 bold: { color: '#ffffff', size: fontSize, mod: 'bold' },
             },
             color: {
-                background: getGoalColor(node),
+                background: getGoalStyle(node).backgroundColor,
                 opacity: Math.min(0.5 + degree * 0.05, 1),
             },
         };
@@ -276,7 +276,7 @@ export async function buildHierarchy(networkData: {
         const baseWidth = 1;
         const width = Math.max(baseWidth, Math.min(baseWidth + importance * 0.5, 8));
         const fromNode = networkData.nodes.find(n => n.id === edge.from);
-        const parentColor = fromNode ? getGoalColor(fromNode) : '#2196F3';
+        const parentColor = fromNode ? getGoalStyle(fromNode).backgroundColor : '#2196F3';
         const arrowScale = Math.max(0.5, Math.min(width * 0.3, 2));
         return {
             ...edge,

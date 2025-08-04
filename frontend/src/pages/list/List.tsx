@@ -2,7 +2,7 @@ import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState, useMemo } from 'react';
 import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
 import Fuse from 'fuse.js';
@@ -294,13 +294,14 @@ const List: React.FC = () => {
                             </thead>
                             <tbody>
                                 {sortedList.map(goal => {
-                                    const goalColor = getGoalColor(goal);
+                                    const goalStyle = getGoalStyle(goal);
                                     return (
                                         <tr
                                             key={goal.id}
                                             className="table-row"
                                             style={{
-                                                borderLeft: `4px solid ${goalColor}`,
+                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`,
+                                                border: goalStyle.border,
                                             }}
                                             onClick={() => handleGoalClick(goal)}
                                             onContextMenu={(e) => handleGoalContextMenu(e, goal)}
@@ -310,8 +311,8 @@ const List: React.FC = () => {
                                                 <span
                                                     className="goal-type-badge"
                                                     style={{
-                                                        backgroundColor: `${goalColor}20`,
-                                                        color: goalColor
+                                                        backgroundColor: `${goalStyle.backgroundColor}20`,
+                                                        color: goalStyle.backgroundColor
                                                     }}
                                                 >
                                                     {goal.goal_type}

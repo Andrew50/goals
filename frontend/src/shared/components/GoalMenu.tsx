@@ -37,12 +37,24 @@ import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
 import SmartScheduleDialog from "./SmartScheduleDialog";
-import { getGoalColor } from '../styles/colors';
+import { getGoalStyle } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
 import Fuse from 'fuse.js';
 
 type Mode = 'create' | 'edit' | 'view';
+
+// Constants for create-new functionality
+const CREATE_NEW_SENTINEL_ID = -1;
+
+interface CreateNewPlaceholder {
+    id: number;
+    name: string;
+    goal_type: '__create__';
+}
+
+const isCreatePlaceholder = (g: Goal | CreateNewPlaceholder): g is CreateNewPlaceholder =>
+    (g as CreateNewPlaceholder).goal_type === '__create__';
 
 interface GoalMenuProps {
     goal: Goal;
@@ -690,6 +702,26 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         });
     }, [allGoals]);
 
+    // Helper function to infer default goal type for new parent goals
+    const inferParentType = useCallback((child: Goal, relationshipType: 'child' | 'queue'): GoalType => {
+        if (relationshipType === 'queue') return 'achievement';
+        if (child.goal_type === 'event') return 'task';     // routine also allowed—user can change later
+        return 'project';                                    // sensible general default
+    }, []);
+
+    // Open nested create dialog for new parent goal
+    const openNestedCreateDialog = useCallback((name: string, goalType: GoalType) => {
+        GoalMenuWithStatic.open(
+            { name, goal_type: goalType } as Goal,
+            'create',
+            (created) => {
+                // 1. make it selectable
+                setAllGoals(prev => [...prev, created]);
+                setSelectedParents(prev => [...prev, created]);
+            }
+        );
+    }, []);
+
     // Get filtered parent options based on search and validation
     const getParentOptions = useCallback(() => {
         if (!state.goal.goal_type) return [];
@@ -721,7 +753,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             validGoals = validGoals.filter(g => resultIds.has(g.id));
         }
 
-        return validGoals.slice(0, 10); // Limit to 10 results
+        // Add "Create new goal" option if there's a search query
+        let options: (Goal | CreateNewPlaceholder)[] = validGoals;
+        if (parentSearchQuery.trim()) {
+            const placeholder: CreateNewPlaceholder = {
+                id: CREATE_NEW_SENTINEL_ID,
+                name: `Create new goal "${parentSearchQuery.trim()}"`,
+                goal_type: '__create__'
+            };
+            options = [placeholder, ...options];
+        }
+
+        return options.slice(0, 11); // Limit to 11 results (10 + create option)
     }, [allGoals, state.goal, parentSearchQuery, fuse, relationshipType]);
 
     const handleChange = (newGoal: Goal) => {
@@ -1637,8 +1680,20 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             <Autocomplete
                 multiple
                 value={selectedParents}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
                 onChange={(event, newValue) => {
-                    setSelectedParents(newValue as Goal[]);
+                    // Did user click the create-new item?
+                    const createIdx = newValue.findIndex(isCreatePlaceholder);
+                    if (createIdx !== -1) {
+                        const query = parentSearchQuery.trim();
+                        const inferred = inferParentType(state.goal, relationshipType);
+                        // Remove placeholder before we open nested dialog
+                        const filteredValue = newValue.filter(v => !isCreatePlaceholder(v)) as Goal[];
+                        setSelectedParents(filteredValue);
+                        openNestedCreateDialog(query, inferred);
+                        return; // don't set state yet
+                    }
+                    setSelectedParents(newValue.filter(v => !isCreatePlaceholder(v)) as Goal[]);
                 }}
                 inputValue={parentSearchQuery}
                 onInputChange={(event, newInputValue) => {
@@ -1646,40 +1701,54 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }}
                 options={getParentOptions()}
                 getOptionLabel={(option) => option.name}
-                renderOption={(props, option) => (
-                    <Box component="li" {...props}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                renderOption={(props, option) => {
+                    if (isCreatePlaceholder(option)) {
+                        return (
+                            <Box component="li" {...props} sx={{ color: 'primary.main', fontWeight: 500 }}>
+                                <AddIcon sx={{ mr: 1, fontSize: 18 }} />
+                                {option.name}
+                            </Box>
+                        );
+                    }
+                    return (
+                        <Box component="li" {...props}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                                <Chip
+                                    label={option.goal_type}
+                                    size="small"
+                                    sx={{
+                                        ...getGoalStyle(option),
+                                        color: 'white',
+                                        fontSize: '0.75rem'
+                                    }}
+                                />
+                                <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                                    {option.name}
+                                </Typography>
+                            </Box>
+                        </Box>
+                    );
+                }}
+                renderTags={(value, getTagProps) =>
+                    value.filter((option): option is Goal => !isCreatePlaceholder(option)).map((option, index) => {
+                        const { key, ...tagProps } = getTagProps({ index });
+                        return (
                             <Chip
-                                label={option.goal_type}
+                                key={key}
+                                variant="outlined"
+                                label={option.name}
                                 size="small"
                                 sx={{
-                                    backgroundColor: getGoalColor(option),
+                                    ...getGoalStyle(option),
                                     color: 'white',
-                                    fontSize: '0.75rem'
+                                    '& .MuiChip-deleteIcon': {
+                                        color: 'white'
+                                    }
                                 }}
+                                {...tagProps}
                             />
-                            <Typography variant="body2" sx={{ flexGrow: 1 }}>
-                                {option.name}
-                            </Typography>
-                        </Box>
-                    </Box>
-                )}
-                renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                        <Chip
-                            variant="outlined"
-                            label={option.name}
-                            size="small"
-                            sx={{
-                                backgroundColor: getGoalColor(option),
-                                color: 'white',
-                                '& .MuiChip-deleteIcon': {
-                                    color: 'white'
-                                }
-                            }}
-                            {...getTagProps({ index })}
-                        />
-                    ))
+                        );
+                    })
                 }
                 renderInput={(params) => (
                     <TextField
@@ -2308,7 +2377,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 <Box
                                     key={parent.id}
                                     sx={{
-                                        backgroundColor: getGoalColor(parent),
+                                        ...getGoalStyle(parent),
                                         color: 'white',
                                         px: 1.5,
                                         py: 0.75,
@@ -2342,7 +2411,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 <Box
                                     key={child.id}
                                     sx={{
-                                        backgroundColor: getGoalColor(child),
+                                        ...getGoalStyle(child),
                                         color: 'white',
                                         px: 1.5,
                                         py: 0.75,
@@ -2659,8 +2728,12 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
     const cleanup = () => {
         console.log('[GoalMenu.open] Cleaning up goal menu');
         if (currentRoot) {
-            currentRoot.unmount();
+            // Defer unmounting to the next tick so we don't unmount while React is still rendering
+            const rootToUnmount = currentRoot;
             currentRoot = null;
+            setTimeout(() => {
+                rootToUnmount.unmount();
+            });
         }
         if (document.body.contains(container)) {
             document.body.removeChild(container);

@@ -1,7 +1,7 @@
 import { privateRequest } from '../../shared/utils/api';
 import { timestampToDisplayString } from '../../shared/utils/time';
 import React, { useEffect, useState, useCallback } from 'react';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -282,14 +282,15 @@ const Day: React.FC = () => {
                                 </div>
                             ) : (
                                 organizedEvents().todo.map(event => {
-                                    const goalColor = getGoalColor({ priority: event.priority, color: event.color } as any);
+                                    const goalStyle = getGoalStyle({ priority: event.priority, color: event.color } as any);
                                     const timeString = timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
                                     return (
                                         <Paper
                                             key={event.id}
                                             className="task-card"
                                             style={{
-                                                borderLeft: `4px solid ${goalColor}`,
+                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`,
+                                                border: goalStyle.border,
                                             }}
                                         >
                                             <div
@@ -345,13 +346,14 @@ const Day: React.FC = () => {
                                 </div>
                             ) : (
                                 organizedEvents().completed.map(event => {
-                                    const goalColor = getGoalColor({ priority: event.priority, color: event.color } as any);
+                                    const goalStyle = getGoalStyle({ priority: event.priority, color: event.color } as any);
                                     return (
                                         <Paper
                                             key={event.id}
                                             className="task-card completed"
                                             style={{
-                                                borderLeft: `4px solid ${goalColor}`,
+                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`,
+                                                border: goalStyle.border,
                                             }}
                                         >
                                             <div

@@ -17,8 +17,18 @@ export const dimIfCompleted = (hex: string, completed?: boolean): string => {
     return completed ? `${hex}80` : hex; // "80" = 50% alpha
 };
 
+// Helper to determine the effective type for color determination
+export const getEffectiveType = (goal: Goal): GoalType => {
+    // For events, use the parent type if available, otherwise fall back to 'event'
+    if (goal.goal_type === 'event' && goal.parent_type) {
+        return goal.parent_type as GoalType;
+    }
+    return goal.goal_type;
+};
+
 export const getGoalColor = (goal: Goal): string => {
-    const baseColor = baseColors[goal.goal_type];
+    const effectiveType = getEffectiveType(goal);
+    const baseColor = baseColors[effectiveType];
 
     // If completed, return a muted/grayed out version of the color
     if (goal.completed) {
@@ -26,5 +36,53 @@ export const getGoalColor = (goal: Goal): string => {
     }
 
     return baseColor;
+};
+
+// Priority-based border styling
+export type Priority = 'high' | 'medium' | 'low';
+
+const priorityBorders: Record<Priority, string> = {
+    high: '3px solid #d32f2f',     // Red, thicker border for highest priority
+    medium: '2px solid #ffa726',   // Orange for medium priority
+    low: '2px solid #9e9e9e'       // Gray for low priority
+};
+
+export const getPriorityBorder = (priority?: Priority): string => {
+    return priority ? priorityBorders[priority] : 'none';
+};
+
+// Helper to get the priority border color (just the color, not the full border style)
+export const getPriorityBorderColor = (priority?: Priority): string => {
+    const priorityColors: Record<Priority, string> = {
+        high: '#d32f2f',     // Red for highest priority
+        medium: '#ffa726',   // Orange for medium priority
+        low: '#9e9e9e'       // Gray for low priority
+    };
+    return priority ? priorityColors[priority] : '#e0e0e0'; // Default light gray
+};
+
+// Combined styling helper that provides comprehensive styling for calendar events
+export const getGoalStyle = (goal: Goal, parent?: Goal): {
+    backgroundColor: string;
+    border: string;
+    textColor: string;
+    borderColor: string;
+} => {
+    const backgroundColor = getGoalColor(goal);
+
+    // For events, use parent's priority for border, otherwise use goal's own priority
+    const effectivePriority = (goal.goal_type === 'event' && parent?.priority)
+        ? parent.priority
+        : goal.priority;
+
+    const border = getPriorityBorder(effectivePriority);
+    const borderColor = getPriorityBorderColor(effectivePriority);
+
+    return {
+        backgroundColor,
+        border,
+        textColor: '#ffffff', // White text for good contrast on colored backgrounds
+        borderColor // Use priority-based border color for FullCalendar
+    };
 };
 

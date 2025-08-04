@@ -18,7 +18,7 @@ import {
   saveNodePosition,
   calculateNewNodePosition
 } from './buildHierarchy';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 
 // Expect ApiGoal from the backend, return NetworkNode (which extends Goal)
@@ -27,7 +27,7 @@ const formatNetworkNode = (localGoal: Goal): NetworkNode => {
     ...localGoal,
     label: localGoal.name,
     title: `${localGoal.name} (${localGoal.goal_type})`,
-    color: getGoalColor(localGoal)
+    color: getGoalStyle(localGoal).backgroundColor
   };
 };
 

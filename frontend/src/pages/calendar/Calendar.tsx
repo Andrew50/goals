@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
 import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult } from '../../shared/utils/api';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import TaskList from './TaskList';
@@ -473,6 +473,12 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDidMount = (info: any) => {
+    // Apply priority border styling that FullCalendar can't handle inline
+    const computedBorder = info.event.extendedProps?.computedBorder;
+    if (computedBorder && computedBorder !== 'none') {
+      info.el.style.border = computedBorder;
+    }
+
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
@@ -842,13 +848,14 @@ const Calendar: React.FC = () => {
     setState({ ...state, events: data.events, tasks: data.tasks });
   };
 
-  // Build events array - colors are already determined in calendarData
+  // Build events array using centralized styling from colors.ts
   const eventsWithColors = state.events.map((evt) => {
     const goal = evt.goal;
     const parent = evt.parent;
-    // Trust the colors from calendarData (parent type + event completion)
-    const bgColor = evt.backgroundColor!;
-    const txtColor = evt.textColor || '#ffffff';
+
+    // Use centralized styling that handles parent types and priority borders
+    // Pass parent goal so priority borders come from parent
+    const { backgroundColor, border, textColor, borderColor } = getGoalStyle(goal, parent);
 
     return {
       id: evt.id,
@@ -856,14 +863,15 @@ const Calendar: React.FC = () => {
       start: evt.start,
       end: evt.end,
       allDay: evt.allDay,
-      backgroundColor: bgColor,
-      borderColor: evt.borderColor || bgColor,
-      textColor: txtColor,
-      color: bgColor, // Explicitly set color property for FullCalendar
+      backgroundColor,
+      borderColor,
+      textColor,
+      color: backgroundColor, // Explicitly set color property for FullCalendar
       extendedProps: {
         ...evt,
         goal,
-        parent
+        parent,
+        computedBorder: border // Store border style for potential use in eventDidMount
       }
     };
   });
@@ -1100,6 +1108,7 @@ const Calendar: React.FC = () => {
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView={initialCalendarView}
             eventDisplay="block" //supposed to add full background color but doesnt ?
+            eventMinHeight={24}
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',

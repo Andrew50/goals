@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { useDrop } from 'react-dnd';
 import { CalendarTask, CalendarEvent, Goal } from '../../types/goals';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
@@ -70,7 +70,7 @@ const DraggableTask: React.FC<{
       style={{
         marginBottom: '8px',
         padding: '12px 16px',
-        backgroundColor: getGoalColor(goal),
+        ...getGoalStyle(goal),
         borderRadius: '8px',
         color: '#ffffff',
         cursor: 'grab',
