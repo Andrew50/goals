@@ -16,10 +16,6 @@ import {
     Autocomplete,
     Chip,
     IconButton,
-    List,
-    ListItem,
-    ListItemText,
-    ListItemSecondaryAction,
     FormControl,
     RadioGroup,
     Radio,
@@ -132,9 +128,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
     const [totalDuration, setTotalDuration] = useState<number>(0);
-    const [showAddEvent, setShowAddEvent] = useState<boolean>(false);
-    const [newEventScheduled, setNewEventScheduled] = useState<Date>(new Date());
-    const [newEventDuration, setNewEventDuration] = useState<number>(60);
+    const [autoEventAdded, setAutoEventAdded] = useState<boolean>(false);
 
     // Smart schedule dialog management
     const [smartScheduleOpen, setSmartScheduleOpen] = useState<boolean>(false);
@@ -382,33 +376,47 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [state.mode, taskEvents, parentGoals]);
 
-    // Auto-show add event form for new tasks created from calendar clicks
+    // Auto-add event for new tasks created from calendar clicks
     useEffect(() => {
-        if (state.mode === 'create' &&
+        if (!autoEventAdded &&
+            state.mode === 'create' &&
             state.goal.goal_type === 'task' &&
             state.goal.scheduled_timestamp &&
-            !state.goal.id) {
-            // This is a new task created from a calendar click
-            setShowAddEvent(true);
-            setNewEventScheduled(state.goal.scheduled_timestamp);
+            !state.goal.id &&
+            taskEvents.length === 0) {
+            // This is a new task created from a calendar click - auto-add an event
+            const tempEvent = makeTempEvent(state.goal.scheduled_timestamp, 60);
+            setTaskEvents([tempEvent]);
+            setTotalDuration(60);
+            setAutoEventAdded(true);
         }
-    }, [state.mode, state.goal.goal_type, state.goal.scheduled_timestamp, state.goal.id]);
+    }, [autoEventAdded, state.mode, state.goal.goal_type, state.goal.scheduled_timestamp, state.goal.id, taskEvents.length]);
 
-    // Auto-show add event form when user changes goal type to 'task' in create mode
+    // Auto-add event when user changes goal type to 'task' in create mode
     useEffect(() => {
-        if (state.mode === 'create' &&
+        if (!autoEventAdded &&
+            state.mode === 'create' &&
             state.goal.goal_type === 'task' &&
             state.goal.scheduled_timestamp &&
-            !showAddEvent) {
-            // User selected task type, show add event form with the scheduled timestamp
-            setShowAddEvent(true);
-            setNewEventScheduled(state.goal.scheduled_timestamp);
+            taskEvents.length === 0) {
+            // User selected task type, add event with the scheduled timestamp
+            const tempEvent = makeTempEvent(state.goal.scheduled_timestamp, 60);
+            setTaskEvents([tempEvent]);
+            setTotalDuration(60);
+            setAutoEventAdded(true);
         }
-    }, [state.goal.goal_type, state.mode, state.goal.scheduled_timestamp, showAddEvent]);
+    }, [autoEventAdded, state.goal.goal_type, state.mode, state.goal.scheduled_timestamp, taskEvents.length]);
 
     // Fetch parent goals using traversal API
     const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
         console.log('[GoalMenu] fetchParentGoals called with goalId:', goalId);
+
+        // Skip fetching for events - they get their parent from the event-specific helper
+        if (state.goal.goal_type === 'event') {
+            console.log('[GoalMenu] Skipping fetchParentGoals for event type');
+            return;
+        }
+
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
             console.log('[GoalMenu] fetchParentGoals hierarchyResponse:', hierarchyResponse);
@@ -425,8 +433,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 .map(goalToLocal);
             console.log('[GoalMenu] fetchParentGoals parents:', parents);
 
-            // Sort by hierarchy level (furthest parents first)
-            setParentGoals(parents);
+            // Only update parentGoals if we found parents to prevent clearing existing data
+            if (parents.length > 0) {
+                setParentGoals(parents);
+            }
 
             // In edit mode, also populate selectedParents so they show in the selector
             if (mode === 'edit') {
@@ -434,12 +444,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
         } catch (error) {
             console.error('Failed to fetch parent goals:', error);
+            // Since we return early for events, this will only run for non-events
             setParentGoals([]);
             if (mode === 'edit') {
                 setSelectedParents([]);
             }
         }
-    }, []);
+    }, [state.goal.goal_type]);
 
     // Fetch child goals using traversal API
     const fetchChildGoals = useCallback(async (goalId: number, mode: Mode) => {
@@ -519,7 +530,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Fetch parent and child goals if we have a goal ID
         if (goal.id) {
             console.log('[GoalMenu] Goal has ID:', goal.id, 'and goal_type:', goal.goal_type);
-            fetchParentGoals(goal.id, actualMode);
+            // Skip fetchParentGoals for events - they use their own parent logic
+            if (goal.goal_type !== 'event') {
+                fetchParentGoals(goal.id, actualMode);
+            }
             fetchChildGoals(goal.id, actualMode);
 
             // Fetch task events if this is a task
@@ -531,7 +545,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
         } else {
             console.log('[GoalMenu] Goal has no ID, skipping fetchTaskEvents');
-            setParentGoals([]);
+            // Don't clear parentGoals for events as they have their own parent management
+            if (goalCopy.goal_type !== 'event') {
+                setParentGoals([]);
+            }
             setChildGoals([]);
             setTaskEvents([]);
             setTotalDuration(0);
@@ -567,14 +584,20 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     useEffect(() => {
         if (state.goal.id && isOpen) {
             console.log('[GoalMenu] useEffect: Fetching relationships for goal ID:', state.goal.id);
-            fetchParentGoals(state.goal.id, state.mode);
+            // Skip fetchParentGoals for events - they use their own parent logic
+            if (state.goal.goal_type !== 'event') {
+                fetchParentGoals(state.goal.id, state.mode);
+            }
             fetchChildGoals(state.goal.id, state.mode);
         } else {
             console.log('[GoalMenu] useEffect: No goal ID or dialog closed, clearing relationships');
-            setParentGoals([]);
+            // Don't clear parentGoals for events as they have their own parent management
+            if (state.goal.goal_type !== 'event') {
+                setParentGoals([]);
+            }
             setChildGoals([]);
         }
-    }, [state.goal.id, state.mode, isOpen, fetchParentGoals, fetchChildGoals]);
+    }, [state.goal.id, state.goal.goal_type, state.mode, isOpen, fetchParentGoals, fetchChildGoals]);
 
     const close = useCallback(() => {
         setIsOpen(false);
@@ -590,9 +613,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setRelationshipType('child');
             setTaskEvents([]);
             setTotalDuration(0);
-            setShowAddEvent(false);
-            setNewEventScheduled(new Date());
-            setNewEventDuration(60);
+            setAutoEventAdded(false);
             setSmartScheduleOpen(false);
             setSmartScheduleContext(null);
             setGoalStats(null);
@@ -1756,126 +1777,115 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {dateFields}
                         {/* Task Events Section */}
                         <Box sx={{ mt: 2, mb: 2 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                                    Events {taskEvents.length > 0 && `(${taskEvents.length})`}
-                                </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 1, overflow: 'hidden' }}>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 'bold', flexShrink: 0 }}>
+                                        Events {taskEvents.length > 0 && `(${taskEvents.length})`}
+                                    </Typography>
+                                    <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        Total: {Math.floor(totalDuration / 60)}h {totalDuration % 60}m
+                                    </Typography>
+                                </Box>
                                 {!isViewOnly && (
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => setShowAddEvent(true)}
-                                        sx={{ color: 'primary.main' }}
-                                    >
-                                        <AddIcon />
-                                    </IconButton>
-                                )}
-                            </Box>
-
-                            {/* Total Duration Display */}
-                            <Box sx={{ mb: 2 }}>
-                                <Typography variant="body2" color="text.secondary">
-                                    Total Duration: {Math.floor(totalDuration / 60)}h {totalDuration % 60}m
-                                </Typography>
-                            </Box>
-
-                            {/* Events List */}
-                            {taskEvents.length > 0 ? (
-                                <List dense>
-                                    {taskEvents.map((event, index) => (
-                                        <ListItem key={index} sx={{ px: 0 }}>
-                                            <ListItemText
-                                                primary={timestampToDisplayString(event.scheduled_timestamp)}
-                                                secondary={`Duration: ${Math.floor((event.duration || 0) / 60)}h ${(event.duration || 0) % 60}m`}
-                                            />
-                                            {!isViewOnly && (
-                                                <ListItemSecondaryAction>
-                                                    <IconButton
-                                                        size="small"
-                                                        onClick={() => handleRemoveEvent(index)}
-                                                        sx={{ color: 'error.main' }}
-                                                    >
-                                                        <DeleteIcon />
-                                                    </IconButton>
-                                                </ListItemSecondaryAction>
-                                            )}
-                                        </ListItem>
-                                    ))}
-                                </List>
-                            ) : (
-                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                    No events scheduled. {!isViewOnly && 'Click + to add an event.'}
-                                </Typography>
-                            )}
-
-                            {/* Add Event Form */}
-                            {showAddEvent && (
-                                <Box sx={{ mt: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                                    <Typography variant="subtitle2" sx={{ mb: 1 }}>Add New Event</Typography>
-                                    <TextField
-                                        label="Scheduled Time"
-                                        type="datetime-local"
-                                        value={timestampToInputString(newEventScheduled, 'datetime')}
-                                        onChange={(e) => {
-                                            const newTimestamp = inputStringToTimestamp(e.target.value, 'datetime');
-                                            setNewEventScheduled(newTimestamp);
-                                        }}
-                                        fullWidth
-                                        margin="dense"
-                                        InputLabelProps={{ shrink: true }}
-                                    />
-                                    <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
-                                        <TextField
-                                            label="Hours"
-                                            type="number"
-                                            value={Math.floor(newEventDuration / 60)}
-                                            onChange={(e) => {
-                                                const hours = parseInt(e.target.value) || 0;
-                                                const minutes = newEventDuration % 60;
-                                                setNewEventDuration(hours * 60 + minutes);
-                                            }}
-                                            margin="dense"
-                                            inputProps={{ min: 0, step: 1 }}
-                                            sx={{ width: '50%' }}
-                                        />
-                                        <TextField
-                                            label="Minutes"
-                                            type="number"
-                                            value={newEventDuration % 60}
-                                            onChange={(e) => {
-                                                const minutes = parseInt(e.target.value) || 0;
-                                                const hours = Math.floor(newEventDuration / 60);
-                                                setNewEventDuration(hours * 60 + minutes);
-                                            }}
-                                            margin="dense"
-                                            inputProps={{ min: 0, max: 59, step: 1 }}
-                                            sx={{ width: '50%' }}
-                                        />
-                                    </Box>
-                                    <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-                                        <Button
+                                    <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+                                        {/* <Button
                                             size="small"
-                                            onClick={handleAddEvent}
-                                            variant="contained"
-                                        >
-                                            Add Event
-                                        </Button>
-                                        <Button
-                                            size="small"
-                                            onClick={() => handleSmartSchedule('new-task-event', newEventDuration, state.goal.name)}
+                                            onClick={() => handleSmartSchedule('new-task-event', 60, state.goal.name)}
                                             variant="outlined"
                                             color="secondary"
                                         >
                                             Smart Schedule
-                                        </Button>
-                                        <Button
+                                        </Button> */}
+                                        <IconButton
                                             size="small"
-                                            onClick={() => setShowAddEvent(false)}
+                                            onClick={addTempEvent}
+                                            sx={{ color: 'primary.main' }}
                                         >
-                                            Cancel
-                                        </Button>
+                                            <AddIcon />
+                                        </IconButton>
                                     </Box>
+                                )}
+                            </Box>
+
+                            {/* Events List */}
+                            {taskEvents.length > 0 ? (
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                    {taskEvents.map((event, index) => (
+                                        <Box key={index} sx={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 1,
+                                            p: 1,
+                                            border: '1px solid',
+                                            borderColor: 'divider',
+                                            borderRadius: 1,
+                                            bgcolor: 'background.paper'
+                                        }}>
+                                            <TextField
+                                                type="datetime-local"
+                                                value={timestampToInputString(event.scheduled_timestamp, 'datetime')}
+                                                onChange={(e) => {
+                                                    const newTimestamp = inputStringToTimestamp(e.target.value, 'datetime');
+                                                    setTaskEvents(prev => prev.map((evt, idx) =>
+                                                        idx === index ? { ...evt, scheduled_timestamp: newTimestamp } : evt
+                                                    ));
+                                                }}
+                                                size="small"
+                                                InputLabelProps={{ shrink: true }}
+                                                disabled={isViewOnly}
+                                                sx={{ flex: 1 }}
+                                            />
+                                            <TextField
+                                                label="H"
+                                                type="number"
+                                                value={Math.floor((event.duration || 0) / 60)}
+                                                onChange={(e) => {
+                                                    const hours = parseInt(e.target.value) || 0;
+                                                    const minutes = (event.duration || 0) % 60;
+                                                    const newDuration = hours * 60 + minutes;
+                                                    const oldDuration = event.duration || 0;
+                                                    setTaskEvents(prev => prev.map((evt, idx) =>
+                                                        idx === index ? { ...evt, duration: newDuration } : evt
+                                                    ));
+                                                    setTotalDuration(prev => prev - oldDuration + newDuration);
+                                                }}
+                                                size="small"
+                                                inputProps={{ min: 0, step: 1 }}
+                                                disabled={isViewOnly}
+                                                sx={{ width: 60 }}
+                                            />
+                                            <TextField
+                                                label="M"
+                                                type="number"
+                                                value={(event.duration || 0) % 60}
+                                                onChange={(e) => {
+                                                    const minutes = parseInt(e.target.value) || 0;
+                                                    const hours = Math.floor((event.duration || 0) / 60);
+                                                    const newDuration = hours * 60 + minutes;
+                                                    const oldDuration = event.duration || 0;
+                                                    setTaskEvents(prev => prev.map((evt, idx) =>
+                                                        idx === index ? { ...evt, duration: newDuration } : evt
+                                                    ));
+                                                    setTotalDuration(prev => prev - oldDuration + newDuration);
+                                                }}
+                                                size="small"
+                                                inputProps={{ min: 0, max: 59, step: 1 }}
+                                                disabled={isViewOnly}
+                                                sx={{ width: 60 }}
+                                            />
+                                            {!isViewOnly && (
+                                                <IconButton
+                                                    size="small"
+                                                    onClick={() => handleRemoveEvent(index)}
+                                                    sx={{ color: 'error.main' }}
+                                                >
+                                                    <DeleteIcon />
+                                                </IconButton>
+                                            )}
+                                        </Box>
+                                    ))}
                                 </Box>
-                            )}
+                            ) : null}
                         </Box>
                         {completedField}
                     </>
@@ -1982,15 +1992,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 }
             } else if (smartScheduleContext.type === 'new-task-event') {
-                // For new task events, set the timestamp and trigger the add event flow
-                setNewEventScheduled(timestamp);
-                setSmartScheduleOpen(false);
-                setSmartScheduleContext(null);
-                // Auto-trigger the add event after smart scheduling
-                setTimeout(() => {
-                    handleAddEvent();
-                }, 100);
-                return; // Don't close the dialog yet, let handleAddEvent handle it
+                // For new task events, add a new event with the smart scheduled time
+                const tempEvent = makeTempEvent(timestamp, smartScheduleContext.duration);
+                setTaskEvents(prev => [...prev, tempEvent]);
+                setTotalDuration(prev => prev + smartScheduleContext.duration);
             }
 
             setSmartScheduleOpen(false);
@@ -2149,58 +2154,34 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         parent_type: 'task'
     });
 
-    // Modify the handleAddEvent function to handle date validation errors
-    const handleAddEvent = useCallback(async () => {
-        const executeAddEvent = async () => {
-            // Create temporary event object
-            const tempEvent = makeTempEvent(newEventScheduled, newEventDuration);
+    // Helper function to add a new temporary event to the task
+    const addTempEvent = useCallback(() => {
+        const defaultTime = new Date();
+        defaultTime.setMinutes(Math.ceil(defaultTime.getMinutes() / 15) * 15); // Round to next 15 min
+        const tempEvent = makeTempEvent(defaultTime, 60);
+        setTaskEvents(prev => [...prev, tempEvent]);
+        setTotalDuration(prev => prev + 60);
+    }, []);
 
-            if (!state.goal.id) {
-                // Task not yet saved - cache locally only
-                setTaskEvents(prev => [...prev, tempEvent]);
-                setTotalDuration(prev => prev + newEventDuration);
-                setShowAddEvent(false);
-                return;
-            }
-
-            // Task already exists - behave as before
-            try {
-                await createEvent({
-                    parent_id: state.goal.id!,
-                    parent_type: 'task',
-                    scheduled_timestamp: newEventScheduled,
-                    duration: newEventDuration
-                });
-                fetchTaskEvents(state.goal.id);
-                setShowAddEvent(false);
-            } catch (error) {
-                console.error('Failed to add event:', error);
-                if (isTaskDateValidationError(error)) {
-                    showTaskDateWarning(error, "New Event", executeAddEvent);
-                } else {
-                    setState({ ...state, error: 'Failed to add event' });
-                }
-            }
-        };
-
+    // Helper function to create an event immediately for existing tasks
+    const createEventForExistingTask = useCallback(async (event: Goal, taskId: number) => {
         try {
-            await executeAddEvent();
+            await createEvent({
+                parent_id: taskId,
+                parent_type: 'task',
+                scheduled_timestamp: event.scheduled_timestamp!,
+                duration: event.duration!
+            });
+            fetchTaskEvents(taskId);
         } catch (error) {
             console.error('Failed to create event:', error);
-
-            // Check if it's a task date validation error
             if (isTaskDateValidationError(error)) {
-                const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
-                showTaskDateWarning(validationError, "New Event", executeAddEvent);
-                return;
+                showTaskDateWarning(error, "New Event", () => createEventForExistingTask(event, taskId));
+            } else {
+                setState({ ...state, error: 'Failed to create event' });
             }
-
-            setState({
-                ...state,
-                error: 'Failed to create event'
-            });
         }
-    }, [state, newEventScheduled, newEventDuration, setState, fetchTaskEvents]);
+    }, [setState, state, fetchTaskEvents]);
 
     // Handle removing an event from the task
     const handleRemoveEvent = useCallback(async (eventIndex: number) => {
