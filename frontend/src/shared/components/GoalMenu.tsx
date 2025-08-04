@@ -871,7 +871,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     // For tasks, create any events that were added during creation
                     if (state.goal.goal_type === 'task' && taskEvents.length > 0) {
                         for (const event of taskEvents) {
-                            if (event.id === 0) { // Only create events with temporary IDs
+                            if (!event.id || event.id <= 0) { // Only create events with temporary IDs
                                 try {
                                     await createEvent({
                                         parent_id: updatedGoal.id!,
@@ -2138,10 +2138,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Handle task date warning dialog actions
 
 
+    // Helper function to create a temporary event object for unsaved tasks
+    const makeTempEvent = (scheduledTime: Date, duration: number): Goal => ({
+        id: 0, // Sentinel value for unsaved events
+        name: 'New Event',
+        goal_type: 'event' as GoalType,
+        scheduled_timestamp: scheduledTime,
+        duration: duration,
+        completed: false,
+        parent_type: 'task'
+    });
+
     // Modify the handleAddEvent function to handle date validation errors
     const handleAddEvent = useCallback(async () => {
         const executeAddEvent = async () => {
-            if (!state.goal.id) return;
+            // Create temporary event object
+            const tempEvent = makeTempEvent(newEventScheduled, newEventDuration);
+
+            if (!state.goal.id) {
+                // Task not yet saved - cache locally only
+                setTaskEvents(prev => [...prev, tempEvent]);
+                setTotalDuration(prev => prev + newEventDuration);
+                setShowAddEvent(false);
+                return;
+            }
+
+            // Task already exists - behave as before
             try {
                 await createEvent({
                     parent_id: state.goal.id!,

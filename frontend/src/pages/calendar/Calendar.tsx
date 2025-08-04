@@ -842,13 +842,13 @@ const Calendar: React.FC = () => {
     setState({ ...state, events: data.events, tasks: data.tasks });
   };
 
-  // Build events array with color from the goal
+  // Build events array - colors are already determined in calendarData
   const eventsWithColors = state.events.map((evt) => {
     const goal = evt.goal;
     const parent = evt.parent;
-    // Use the event's own completion status for color (not parent's)
-    const bgColor = evt.backgroundColor || getGoalColor(goal) || '#4299e1';
-    let txtColor = evt.textColor || '#ffffff';
+    // Trust the colors from calendarData (parent type + event completion)
+    const bgColor = evt.backgroundColor!;
+    const txtColor = evt.textColor || '#ffffff';
 
     return {
       id: evt.id,

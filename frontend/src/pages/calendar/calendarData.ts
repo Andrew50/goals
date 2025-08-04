@@ -1,7 +1,7 @@
 import { CalendarResponse, CalendarEvent, CalendarTask, ApiGoal } from '../../types/goals';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getBaseColor, dimIfCompleted } from '../../shared/styles/colors';
 
 export interface TransformedCalendarData {
     events: CalendarEvent[];
@@ -37,6 +37,11 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             const parent = response.parents?.find(p => p.id === event.parent_id);
             const parentGoal = parent ? goalToLocal(parent as ApiGoal) : undefined;
 
+            // Determine color: parent type decides hue, event completion decides dimming
+            const parentType = parentGoal ? parentGoal.goal_type : event.goal_type;
+            const baseColor = getBaseColor(parentType);
+            const finalColor = dimIfCompleted(baseColor, event.completed);
+
             // Create calendar event
             const calendarEvent: CalendarEvent = {
                 id: `event-${event.id}`,
@@ -47,8 +52,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 goal: event, // The event goal
                 parent: parentGoal, // The parent task/routine
                 allDay: event.duration === 1440,
-                backgroundColor: getGoalColor(parentGoal || event),
-                borderColor: getGoalColor(parentGoal || event),
+                backgroundColor: finalColor,
+                borderColor: finalColor,
                 textColor: '#fff'
             };
 
@@ -76,6 +81,10 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             }
 
             const end = new Date(achievement.end_timestamp);
+            // For achievements, use achievement's own type and completion
+            const baseColor = getBaseColor(achievement.goal_type);
+            const finalColor = dimIfCompleted(baseColor, achievement.completed);
+
             return {
                 id: `achievement-${achievement.id}`,
                 title: achievement.name,
@@ -84,8 +93,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 type: 'event',
                 goal: achievement,
                 allDay: true,
-                backgroundColor: getGoalColor(achievement),
-                borderColor: getGoalColor(achievement),
+                backgroundColor: finalColor,
+                borderColor: finalColor,
                 textColor: '#fff'
             };
         }).filter(Boolean) as CalendarEvent[];
