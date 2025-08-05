@@ -345,3 +345,28 @@
         justify-content: center;
     }
 }
+
+/* Event content styling for better title display */
+.fc-event-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Micro event overrides */
+.fc-micro-event {
+    padding: 0 4px !important;
+    /* tighten vertical padding */
+}
+
+.fc-micro-event .fc-event-main {
+    padding: 0 !important;
+}
+
+.fc-micro-event .fc-event-title {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 !important;
+    line-height: 1.1;
+}

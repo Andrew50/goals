@@ -15,19 +15,22 @@ interface DayEvent {
     id: number;
     name: string;
     description?: string;
-    goal_type: string;
+    goal_type: 'event';
     priority: string;
     color?: string;
     completed: boolean;
     scheduled_timestamp: number;
-    goal_id: number;
-    recurrence_pattern?: string;
+    duration?: number;
+    parent_id: number;
+    parent_goal_type?: string;
+    routine_instance_id?: number;
 }
 
 const Day: React.FC = () => {
     const { openGoalMenu } = useGoalMenu();
     const [events, setEvents] = useState<DayEvent[]>([]);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
+    const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
     // Helper function to get start and end of a given date
     const getDayBounds = (date: Date) => {
@@ -90,6 +93,21 @@ const Day: React.FC = () => {
         fetchEventsForDate(currentDate);
     }, [currentDate, fetchEventsForDate]);
 
+    // Update current time every minute to keep the current time line accurate
+    useEffect(() => {
+        const updateCurrentTime = () => {
+            setCurrentTime(new Date());
+        };
+
+        // Update immediately
+        updateCurrentTime();
+
+        // Then update every minute
+        const interval = setInterval(updateCurrentTime, 60000);
+
+        return () => clearInterval(interval);
+    }, []);
+
     // Navigation functions
     const goToPreviousDay = useCallback(() => {
         const previousDay = new Date(currentDate);
@@ -144,17 +162,19 @@ const Day: React.FC = () => {
 
     const handleEventClick = (event: DayEvent) => {
         // Convert event to Goal format for GoalMenu
-        const goalFormat = {
-            id: event.goal_id,
+        const eventGoal = {
+            id: event.id,
             name: event.name,
             description: event.description,
-            goal_type: event.goal_type,
+            goal_type: 'event',
             priority: event.priority,
             color: event.color,
             scheduled_timestamp: new Date(event.scheduled_timestamp),
+            parent_id: event.parent_id,
+            duration: event.duration,
         };
 
-        openGoalMenu(goalFormat as any, 'view', (updatedGoal) => {
+        openGoalMenu(eventGoal as any, 'view', (updatedGoal) => {
             fetchEventsForDate(currentDate);
         });
     };
@@ -162,17 +182,19 @@ const Day: React.FC = () => {
     const handleEventContextMenu = (e: React.MouseEvent, event: DayEvent) => {
         e.preventDefault();
         // Convert event to Goal format for GoalMenu
-        const goalFormat = {
-            id: event.goal_id,
+        const eventGoal = {
+            id: event.id,
             name: event.name,
             description: event.description,
-            goal_type: event.goal_type,
+            goal_type: 'event',
             priority: event.priority,
             color: event.color,
             scheduled_timestamp: new Date(event.scheduled_timestamp),
+            parent_id: event.parent_id,
+            duration: event.duration,
         };
 
-        openGoalMenu(goalFormat as any, 'edit', (updatedGoal) => {
+        openGoalMenu(eventGoal as any, 'edit', (updatedGoal) => {
             fetchEventsForDate(currentDate);
         });
     };
@@ -182,6 +204,14 @@ const Day: React.FC = () => {
         const completedItems = events.filter(item => item.completed);
 
         const sortByScheduled = (a: DayEvent, b: DayEvent) => {
+            // All-day events (duration = 1440 minutes) should be sorted to the bottom
+            const aIsAllDay = a.duration === 1440;
+            const bIsAllDay = b.duration === 1440;
+
+            if (aIsAllDay && !bIsAllDay) return 1; // a goes after b
+            if (!aIsAllDay && bIsAllDay) return -1; // a goes before b
+
+            // If both are all-day or both are timed, sort by scheduled time
             const aTime = a.scheduled_timestamp || 0;
             const bTime = b.scheduled_timestamp || 0;
             return aTime - bTime;
@@ -197,6 +227,50 @@ const Day: React.FC = () => {
         if (events.length === 0) return 0;
         const completed = events.filter(event => event.completed).length;
         return Math.round((completed / events.length) * 100);
+    };
+
+    // Current time line component
+    const CurrentTimeLine = () => {
+        const timeString = currentTime.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+
+        return (
+            <div className="current-time-line">
+                <div className="current-time-circle"></div>
+                <div className="current-time-text">{timeString}</div>
+            </div>
+        );
+    };
+
+    // Function to determine where current time line should appear in a list of events
+    const insertCurrentTimeLine = (eventsList: DayEvent[]) => {
+        // Only show current time line if viewing today
+        if (!isToday(currentDate)) {
+            return eventsList.map((event, index) => ({ type: 'event', event, index }));
+        }
+
+        const currentTimeStamp = currentTime.getTime();
+        const result: Array<{ type: 'event' | 'current-time', event?: DayEvent, index: number }> = [];
+        let timeLineInserted = false;
+
+        eventsList.forEach((event, index) => {
+            // If current time is before this event and we haven't inserted the line yet
+            if (!timeLineInserted && currentTimeStamp < event.scheduled_timestamp) {
+                result.push({ type: 'current-time', index: result.length });
+                timeLineInserted = true;
+            }
+            result.push({ type: 'event', event, index: result.length });
+        });
+
+        // If we haven't inserted the line yet (current time is after all events), add it at the end
+        if (!timeLineInserted) {
+            result.push({ type: 'current-time', index: result.length });
+        }
+
+        return result;
     };
 
     const handleCreateGoal = () => {
@@ -255,6 +329,17 @@ const Day: React.FC = () => {
                         <span>{getCompletionPercentage()}% complete</span>
                         <span> • {organizedEvents().completed.length} of {events.length} tasks</span>
                     </Box>
+
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        onClick={handleCreateGoal}
+                        startIcon={<AddIcon />}
+                        className="create-task-button"
+                        size="medium"
+                    >
+                        Create New
+                    </Button>
                 </div>
 
                 <Box className="columns-container">
@@ -265,25 +350,33 @@ const Day: React.FC = () => {
                         </div>
                         <div className="tasks-list">
                             {organizedEvents().todo.length === 0 ? (
-                                <div className="empty-state">
-                                    <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                                    </svg>
-                                    <p className="empty-state-text">No tasks for today</p>
-                                    <Button
-                                        variant="contained"
-                                        color="primary"
-                                        onClick={handleCreateGoal}
-                                        startIcon={<AddIcon />}
-                                        size="small"
-                                    >
-                                        Add Task
-                                    </Button>
-                                </div>
+                                <>
+                                    {isToday(currentDate) && <CurrentTimeLine />}
+                                    <div className="empty-state">
+                                        <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                        </svg>
+                                        <p className="empty-state-text">No tasks for today</p>
+                                        <Button
+                                            variant="contained"
+                                            color="primary"
+                                            onClick={handleCreateGoal}
+                                            startIcon={<AddIcon />}
+                                            size="small"
+                                        >
+                                            Add Task
+                                        </Button>
+                                    </div>
+                                </>
                             ) : (
-                                organizedEvents().todo.map(event => {
+                                insertCurrentTimeLine(organizedEvents().todo).map((item, index) => {
+                                    if (item.type === 'current-time') {
+                                        return <CurrentTimeLine key={`current-time-todo-${index}`} />;
+                                    }
+
+                                    const event = item.event!;
                                     const goalStyle = getGoalStyle({ priority: event.priority, color: event.color } as any);
-                                    const timeString = timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
+                                    const timeString = event.duration === 1440 ? 'all day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
                                     return (
                                         <Paper
                                             key={event.id}

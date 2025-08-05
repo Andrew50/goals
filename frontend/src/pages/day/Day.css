@@ -204,6 +204,56 @@
     transform: rotate(45deg);
 }
 
+/* Current time line styling */
+.current-time-line {
+    display: flex;
+    align-items: center;
+    margin: 0.5rem 0;
+    position: relative;
+}
+
+.current-time-line-content {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 0.5rem;
+}
+
+.current-time-line::before {
+    content: '';
+    height: 2px;
+    background-color: #e53e3e;
+    flex: 1;
+}
+
+.current-time-line::after {
+    content: '';
+    height: 2px;
+    background-color: #e53e3e;
+    flex: 1;
+}
+
+.current-time-circle {
+    width: 12px;
+    height: 12px;
+    background-color: #e53e3e;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    flex-shrink: 0;
+}
+
+.current-time-text {
+    background-color: #e53e3e;
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 /* Task header styling */
 .task-header {
     display: flex;

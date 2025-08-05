@@ -22,6 +22,7 @@ import {
 } from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
+import { EventContentArg } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction';
@@ -479,6 +480,14 @@ const Calendar: React.FC = () => {
       info.el.style.border = computedBorder;
     }
 
+    // Add a class for micro events so we can tweak padding in CSS
+    const start = info.event.start as Date;
+    const end = (info.event.end as Date) ?? start;
+    const minutes = (end.getTime() - start.getTime()) / 60000;
+    if (!info.event.allDay && minutes <= 10) {
+      info.el.classList.add('fc-micro-event');
+    }
+
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
@@ -516,7 +525,8 @@ const Calendar: React.FC = () => {
         parent_id: goal.id,
         parent_type: goal.goal_type,
         scheduled_timestamp: info.event.start,
-        duration: duration
+        duration: duration,
+        priority: goal.priority
       });
 
       info.revert(); // Revert the drag since we're creating a new event
@@ -854,7 +864,7 @@ const Calendar: React.FC = () => {
     const parent = evt.parent;
 
     // Use centralized styling that handles parent types and priority borders
-    // Pass parent goal so priority borders come from parent
+    // Pass parent goal so priority borders fall back to parent if event has no priority
     const { backgroundColor, border, textColor, borderColor } = getGoalStyle(goal, parent);
 
     return {
@@ -998,6 +1008,35 @@ const Calendar: React.FC = () => {
     return `${sign}${minutes} minute${minutes !== 1 ? 's' : ''}`;
   };
 
+  // Custom event content renderer for micro events
+  const renderEventContent = (info: EventContentArg) => {
+    const { event, timeText } = info;
+
+    // Compute duration in minutes
+    const start = event.start!;
+    const end = event.end ?? start;
+    const minutes = (end.getTime() - start.getTime()) / 60000;
+
+    const isMicro = !event.allDay && minutes <= 10;
+
+    // For micro events, show only the title with time in tooltip
+    if (isMicro) {
+      return (
+        <div className="fc-event-title" title={timeText}>
+          {event.title}
+        </div>
+      );
+    }
+
+    // Default rendering: time first, then title
+    return (
+      <>
+        <div className="fc-event-time">{timeText}</div>
+        <div className="fc-event-title">{event.title}</div>
+      </>
+    );
+  };
+
   // Google Calendar sync handlers
   const handleGoogleCalendarSync = () => {
     setGcalSyncDialog({
@@ -1108,7 +1147,8 @@ const Calendar: React.FC = () => {
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView={initialCalendarView}
             eventDisplay="block" //supposed to add full background color but doesnt ?
-            eventMinHeight={24}
+            eventMinHeight={18}
+            eventContent={renderEventContent}
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',

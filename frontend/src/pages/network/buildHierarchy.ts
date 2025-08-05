@@ -253,19 +253,25 @@ export async function buildHierarchy(networkData: {
         const maxFontSize = 28;
         const fontSize = Math.max(minFontSize, Math.min(size / 2.5, maxFontSize));
 
+        const { backgroundColor, border, textColor, borderColor } = getGoalStyle(node);
+        const borderWidthMatch = border.match(/(\d+)px/);
+        const borderWidth = borderWidthMatch ? parseInt(borderWidthMatch[1], 10) : (node as any).borderWidth || 0;
         return {
             ...node,
             x: positions[node.id].x,
             y: positions[node.id].y,
             size,
+            borderWidth,
             font: {
                 size: fontSize,
-                color: '#ffffff',
-                bold: { color: '#ffffff', size: fontSize, mod: 'bold' },
+                color: textColor,
+                bold: { color: textColor, size: fontSize, mod: 'bold' },
             },
             color: {
-                background: getGoalStyle(node).backgroundColor,
-                opacity: Math.min(0.5 + degree * 0.05, 1),
+                background: backgroundColor,
+                border: borderColor,
+                highlight: { background: backgroundColor, border: borderColor },
+                hover: { background: backgroundColor, border: borderColor }
             },
         };
     });

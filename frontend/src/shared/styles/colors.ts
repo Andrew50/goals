@@ -42,7 +42,7 @@ export const getGoalColor = (goal: Goal): string => {
 export type Priority = 'high' | 'medium' | 'low';
 
 const priorityBorders: Record<Priority, string> = {
-    high: '3px solid #d32f2f',     // Red, thicker border for highest priority
+    high: '2px solid #d32f2f',     // Red, uniform border weight
     medium: '2px solid #ffa726',   // Orange for medium priority
     low: '2px solid #9e9e9e'       // Gray for low priority
 };
@@ -70,10 +70,8 @@ export const getGoalStyle = (goal: Goal, parent?: Goal): {
 } => {
     const backgroundColor = getGoalColor(goal);
 
-    // For events, use parent's priority for border, otherwise use goal's own priority
-    const effectivePriority = (goal.goal_type === 'event' && parent?.priority)
-        ? parent.priority
-        : goal.priority;
+    // Use event's own priority if set, otherwise fall back to parent's priority
+    const effectivePriority = goal.priority || parent?.priority;
 
     const border = getPriorityBorder(effectivePriority);
     const borderColor = getPriorityBorderColor(effectivePriority);

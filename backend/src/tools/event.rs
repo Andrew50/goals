@@ -12,6 +12,7 @@ pub struct CreateEventRequest {
     pub parent_type: String, // "task" or "routine"
     pub scheduled_timestamp: i64,
     pub duration: i32,
+    pub priority: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,7 +248,7 @@ pub async fn create_event_handler(
         name: parent.name.clone(),
         goal_type: GoalType::Event,
         description: parent.description.clone(),
-        priority: parent.priority.clone(),
+        priority: request.priority.or(parent.priority.clone()),
         user_id: Some(user_id),
         scheduled_timestamp: Some(request.scheduled_timestamp),
         duration: Some(request.duration),

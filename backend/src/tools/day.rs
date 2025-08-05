@@ -57,13 +57,14 @@ pub async fn get_day_tasks(
             id: id(e),
             name: e.name,
             description: e.description,
-            goal_type: g.goal_type,
+            goal_type: 'event',
             priority: COALESCE(e.priority, g.priority, 'medium'),
             color: COALESCE(e.color, g.color),
             completed: COALESCE(e.completed, false),
             scheduled_timestamp: e.scheduled_timestamp,
-            goal_id: id(g),
-            parent_type: e.parent_type,
+            duration: e.duration,
+            parent_id: id(g),
+            parent_goal_type: g.goal_type,
             routine_instance_id: e.routine_instance_id
         } as event
         ORDER BY e.scheduled_timestamp";
