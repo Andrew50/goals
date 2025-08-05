@@ -41,7 +41,7 @@ pub struct GCalService {
 impl GCalService {
     pub async fn new(
         service_account_key: ServiceAccountKey,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let auth = ServiceAccountAuthenticator::builder(service_account_key)
             .build()
             .await?;
@@ -67,7 +67,7 @@ impl GCalService {
         calendar_id: &str,
         time_min: DateTime<Utc>,
         time_max: DateTime<Utc>,
-    ) -> Result<Vec<GCalEvent>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<GCalEvent>, Box<dyn std::error::Error + Send + Sync>> {
         let result = self
             .hub
             .events()
@@ -109,7 +109,7 @@ impl GCalService {
         &self,
         calendar_id: &str,
         goal: &Goal,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let start_time = goal
             .scheduled_timestamp
             .ok_or("Goal must have a scheduled timestamp")?;
@@ -167,7 +167,7 @@ impl GCalService {
         calendar_id: &str,
         event_id: &str,
         goal: &Goal,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_time = goal
             .scheduled_timestamp
             .ok_or("Goal must have a scheduled timestamp")?;
@@ -226,7 +226,7 @@ impl GCalService {
         &self,
         calendar_id: &str,
         event_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.hub
             .events()
             .delete(calendar_id, event_id)
@@ -504,4 +504,34 @@ pub async fn sync_to_gcal(
         updated_events,
         errors,
     }))
+}
+
+pub async fn delete_gcal_event_handler(
+    graph: Graph,
+    gcal_service: &GCalService,
+    goal_id: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
+    // Fetch the goal to get the calendar_id and event_id
+    let get_goal_query = query("MATCH (g:Goal) WHERE id(g) = $id RETURN g.gcal_calendar_id, g.gcal_event_id")
+        .param("id", goal_id);
+
+    let mut result = graph.execute(get_goal_query).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))?;
+
+    if let Some(row) = result.next().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))? {
+        let calendar_id: Option<String> = row.get("g.gcal_calendar_id").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse calendar_id: {}", e)))?;
+        let event_id: Option<String> = row.get("g.gcal_event_id").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse event_id: {}", e)))?;
+
+        if let (Some(calendar_id), Some(event_id)) = (calendar_id, event_id) {
+            // Delete the event from Google Calendar
+            gcal_service.delete_event(&calendar_id, &event_id).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to delete Google Calendar event: {}", e)))?;
+
+            // Remove GCal-related properties from the goal node
+            let update_goal_query = query("MATCH (g:Goal) WHERE id(g) = $id REMOVE g.gcal_event_id, g.gcal_calendar_id, g.gcal_sync_enabled, g.gcal_last_sync, g.is_gcal_imported, g.gcal_sync_direction")
+                .param("id", goal_id);
+
+            graph.run(update_goal_query).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update goal after deletion: {}", e)))?;
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -231,11 +231,11 @@
 /* Event styling */
 .fc-event {
     border-radius: 0.375rem !important;
-    border: none !important;
     padding: 0.25rem 0.5rem !important;
     font-size: 0.875rem !important;
     font-weight: 500 !important;
     transition: all 0.2s !important;
+    overflow: visible !important;
 }
 
 .fc-event:hover {
@@ -309,20 +309,22 @@
 }
 
 /* Responsive design */
-@media (max-width: 1024px) {
+@media (max-width: 768px) {
     .calendar-content {
         flex-direction: column;
-        height: auto;
-        min-height: calc(100vh - 64px);
+        height: calc(100vh - 64px);
+        overflow-y: auto;
     }
 
     .calendar-sidebar {
         width: 100%;
         max-height: 300px;
+        flex-shrink: 0;
     }
 
     .calendar-main {
-        min-height: 600px;
+        flex: 1;
+        min-height: calc(160vh - 64px);
     }
 }
 
@@ -342,4 +344,29 @@
         display: flex;
         justify-content: center;
     }
+}
+
+/* Event content styling for better title display */
+.fc-event-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Micro event overrides */
+.fc-micro-event {
+    padding: 0 4px !important;
+    /* tighten vertical padding */
+}
+
+.fc-micro-event .fc-event-main {
+    padding: 0 !important;
+}
+
+.fc-micro-event .fc-event-title {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 !important;
+    line-height: 1.1;
 }

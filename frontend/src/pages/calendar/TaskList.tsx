@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { useDrop } from 'react-dnd';
 import { CalendarTask, CalendarEvent, Goal } from '../../types/goals';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
@@ -70,7 +70,7 @@ const DraggableTask: React.FC<{
       style={{
         marginBottom: '8px',
         padding: '12px 16px',
-        backgroundColor: getGoalColor(goal),
+        ...getGoalStyle(goal),
         borderRadius: '8px',
         color: '#ffffff',
         cursor: 'grab',
@@ -159,7 +159,7 @@ const DraggableTask: React.FC<{
 /**
  * Main TaskList component that:
  * - Renders all active (non-completed) tasks
- * - Provides an "Add Task" button
+ * - Provides a "Create Goal" button
  * - Allows dropping scheduled events from the Calendar
  *   back into the TaskList (i.e., "unscheduling" them)
  */
@@ -227,15 +227,38 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
 
     // Sort tasks by priority/status
     const sortedTasks = useMemo(() => {
+      const priorityRank = (priority?: string): number => {
+        switch (priority) {
+          case 'high': return 0;
+          case 'medium': return 1;
+          case 'low': return 2;
+          default: return 3; // undefined or other values
+        }
+      };
+
       return [...tasksWithInfo].sort((a, b) => {
         // Tasks with no events first
         if (a.eventCount === 0 && b.eventCount > 0) return -1;
         if (b.eventCount === 0 && a.eventCount > 0) return 1;
 
-        // Then by due date
-        const aDue = a.goal?.end_timestamp?.getTime() || Infinity;
-        const bDue = b.goal?.end_timestamp?.getTime() || Infinity;
-        return aDue - bDue;
+        // Primary: Completion status (incomplete first)
+        const aCompleted = a.goal?.completed || false;
+        const bCompleted = b.goal?.completed || false;
+        if (aCompleted !== bCompleted) {
+          return aCompleted ? 1 : -1; // false (incomplete) comes first
+        }
+
+        // Secondary: Priority (high → medium → low → undefined)
+        const aPriority = priorityRank(a.goal?.priority);
+        const bPriority = priorityRank(b.goal?.priority);
+        if (aPriority !== bPriority) {
+          return aPriority - bPriority;
+        }
+
+        // Tertiary: Alphabetical by task title
+        const aTitle = a.title || '';
+        const bTitle = b.title || '';
+        return aTitle.localeCompare(bTitle, undefined, { sensitivity: 'base' });
       });
     }, [tasksWithInfo]);
 
@@ -293,7 +316,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             marginBottom: '16px'
           }}
         >
-          Add Task
+          Create Goal
         </button>
 
         <div

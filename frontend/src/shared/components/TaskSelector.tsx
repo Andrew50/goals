@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { Goal, CalendarTask } from '../../types/goals';
-import { getGoalColor } from '../styles/colors';
+import { getGoalStyle } from '../styles/colors';
 import './TaskSelector.css';
 
 interface TaskSelectorProps {
@@ -78,7 +78,8 @@ const TaskSelectorBase: React.FC<TaskSelectorProps> = ({ tasks, onSelect, onClos
                                 className="task-selector-item"
                                 onClick={() => handleTaskClick(task)}
                                 style={{
-                                    borderLeftColor: getGoalColor(task.goal)
+                                    borderLeftColor: getGoalStyle(task.goal).backgroundColor,
+                                    border: getGoalStyle(task.goal).border
                                 }}
                             >
                                 <div className="task-name">{task.title}</div>

@@ -8,7 +8,7 @@ import Fuse from 'fuse.js';
 import { Goal, ApiGoal, NetworkNode, NetworkEdge } from '../../types/goals';
 import { privateRequest, createRelationship, deleteRelationship } from '../utils/api';
 import { goalToLocal } from '../utils/time';
-import { getGoalColor } from '../styles/colors';
+import { getGoalStyle } from '../styles/colors';
 import { validateRelationship } from '../utils/goalValidation';
 
 interface GoalRelationsProps {
@@ -37,7 +37,7 @@ const GoalRelations: React.FC<GoalRelationsProps> = ({ goal, onClose, onUpdate }
     privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network').then(res => {
       const nodes = res.nodes.map(g => {
         const local = goalToLocal(g);
-        return { ...local, label: local.name, color: getGoalColor(local) } as NetworkNode;
+        return { ...local, label: local.name, color: getGoalStyle(local).backgroundColor } as NetworkNode;
       });
       const edges = res.edges.map(e => ({ ...e, id: `${e.from}-${e.to}` }));
       const relatedEdges = edges.filter(e => e.from === goal.id || e.to === goal.id);
