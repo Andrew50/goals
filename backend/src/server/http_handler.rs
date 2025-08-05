@@ -1,6 +1,7 @@
 use axum::{
     extract::{Extension, Path, Query},
     http::StatusCode,
+    middleware::from_fn,
     response::IntoResponse,
     routing::{delete, get, post, put},
     Json, Router,
@@ -8,18 +9,19 @@ use axum::{
 use neo4rs::Graph;
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex};
-use tower_http::trace::TraceLayer;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use yup_oauth2::ServiceAccountKey;
 
 use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
-use crate::server::auth::{self, Claims};
+use crate::server::auth::{self};
+use crate::server::middleware;
 use crate::tools::{
     achievements, calendar, day, event,
     gcal::{self, GCalService, GCalSyncRequest, SyncResult},
     goal::{self, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
-    list, migration, network, routine, stats, traversal,
+    list, migration, network, stats, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -87,7 +89,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
-    let misc_routes = Router::new()
+    let _misc_routes: Router = Router::new()
         .route("/health", get(handle_health_check))
         .route("/list", get(handle_get_list_data))
         .route("/migrate-to-events", post(handle_migrate_to_events));
@@ -95,7 +97,8 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let gcal_routes = Router::new()
         .route("/sync-from", post(handle_sync_from_gcal))
         .route("/sync-to", post(handle_sync_to_gcal))
-        .route("/sync-bidirectional", post(handle_sync_bidirectional));
+        .route("/sync-bidirectional", post(handle_sync_bidirectional))
+        .route("/event/:goal_id", delete(handle_delete_gcal_event));
 
     let stats_routes = Router::new()
         .route("/", get(handle_get_stats_data))
@@ -667,6 +670,7 @@ async fn handle_sync_from_gcal(
     gcal::sync_from_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
 }
 
+#[axum::debug_handler]
 async fn handle_sync_to_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -676,6 +680,7 @@ async fn handle_sync_to_gcal(
     gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
 }
 
+#[axum::debug_handler]
 async fn handle_sync_bidirectional(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -702,7 +707,7 @@ async fn handle_sync_bidirectional(
     let to_gcal_result =
         match gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await {
             Ok(Json(res)) => res,
-            Err((status, msg)) => {
+            Err((_status, msg)) => {
                 // Even if sync_to fails, we have still imported events.
                 // It's better to return a partial success with error details.
                 return Ok(Json(SyncResult {
@@ -725,4 +730,13 @@ async fn handle_sync_bidirectional(
     };
 
     Ok(Json(final_result))
+}
+
+#[axum::debug_handler]
+async fn handle_delete_gcal_event(
+    Extension(graph): Extension<Graph>,
+    Path(goal_id): Path<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let gcal_service = create_gcal_service().await?;
+    gcal::delete_gcal_event_handler(graph, &gcal_service, goal_id).await
 }

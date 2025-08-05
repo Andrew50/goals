@@ -18,22 +18,22 @@ ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
 ENV NEO4J_CONNECTION_TIMEOUT=120
 
-# Install runtime dependencies: OpenSSL and netcat
+# Install runtime dependencies: OpenSSL, CA certificates, and netcat
 RUN apt-get update && \
-    apt-get install -y libssl3 netcat-traditional && \
+    apt-get install -y libssl3 ca-certificates netcat-traditional && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Add a startup script to wait for Neo4j
 RUN echo '#!/bin/bash\n\
-echo "Waiting for Neo4j to be ready..."\n\
-timeout $NEO4J_CONNECTION_TIMEOUT bash -c "\
-until nc -z goals_db 7687 2>/dev/null; do \
+    echo "Waiting for Neo4j to be ready..."\n\
+    timeout $NEO4J_CONNECTION_TIMEOUT bash -c "\
+    until nc -z goals_db 7687 2>/dev/null; do \
     echo \"Waiting for Neo4j...\"; \
     sleep 5; \
-done"\n\
-echo "Neo4j is ready, starting backend..."\n\
-exec ./backend' > /start.sh && chmod +x /start.sh
+    done"\n\
+    echo "Neo4j is ready, starting backend..."\n\
+    exec ./backend' > /start.sh && chmod +x /start.sh
 
 EXPOSE 5059
 CMD ["/start.sh"]

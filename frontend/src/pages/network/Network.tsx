@@ -18,16 +18,29 @@ import {
   saveNodePosition,
   calculateNewNodePosition
 } from './buildHierarchy';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 
 // Expect ApiGoal from the backend, return NetworkNode (which extends Goal)
 const formatNetworkNode = (localGoal: Goal): NetworkNode => {
+  const { backgroundColor, border, textColor, borderColor } = getGoalStyle(localGoal);
+
+  // Extract border width from border string (e.g., '3px solid #d32f2f' -> 3)
+  const borderWidthMatch = border.match(/(\d+)px/);
+  const borderWidth = borderWidthMatch ? parseInt(borderWidthMatch[1], 10) : 0;
+
   return {
     ...localGoal,
     label: localGoal.name,
     title: `${localGoal.name} (${localGoal.goal_type})`,
-    color: getGoalColor(localGoal)
+    color: {
+      background: backgroundColor,
+      border: borderColor,
+      highlight: { background: backgroundColor, border: borderColor },
+      hover: { background: backgroundColor, border: borderColor }
+    },
+    borderWidth,
+    font: { color: textColor }
   };
 };
 
@@ -98,6 +111,7 @@ const NetworkView: React.FC = () => {
         // nodeData from DataSet might still be ApiGoal-like if not fully processed,
         // Assuming nodeData here is effectively a Goal or NetworkNode.
         GoalMenu.open(nodeData as Goal, goalDialogMode, (updatedGoal: Goal) => {
+          console.log('[Network] onSuccess priority:', updatedGoal.priority);
           // After editing/viewing, update the node's properties
           // GoalMenu returns an updated Goal object.
           const updatedNode = formatNetworkNode(updatedGoal); // Pass updatedGoal (Goal), isAlreadyGoal = true
@@ -121,18 +135,12 @@ const NetworkView: React.FC = () => {
       margin: { top: 12, right: 12, bottom: 12, left: 12 },
       font: {
         size: 14,
-        color: '#ffffff',
-        bold: { color: '#ffffff', size: 14, mod: 'bold' }
+        bold: { size: 14, mod: 'bold' }
       },
       widthConstraint: { maximum: 150 },
       fixed: { x: false, y: false },
-      borderWidth: 0,
-      chosen: false,
-      color: {
-        border: 'transparent',
-        highlight: { border: 'transparent', background: '#ffffff' },
-        hover: { border: 'transparent', background: '#f0f0f0' }
-      }
+      borderWidth: 1, // Default border width for nodes without priority
+      chosen: false
     },
     edges: {
       arrows: { to: { enabled: true, scaleFactor: 0.5 } },

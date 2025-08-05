@@ -9,6 +9,18 @@ services:
           - "5059"
         depends_on:
           - goals_db
+        environment:
+          - GOALS_GEMINI_API_KEY=${GOALS_GEMINI_API_KEY}
+          - JWT_SECRET=${JWT_SECRET}
+          - JWT_EXPIRATION=${JWT_EXPIRATION}
+          - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+          - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+          - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL}
+          - HOST_URL=${HOST_URL}
+          - NEO4J_URI=${NEO4J_URI}
+          - NEO4J_USERNAME=${NEO4J_USERNAME}
+          - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+          - NEO4J_CONNECTION_TIMEOUT=300
         networks:
             - prod_network
 
@@ -31,6 +43,8 @@ services:
         expose:
           - "3030"
         restart: unless-stopped
+        environment:
+          - REACT_APP_API_URL=${REACT_APP_API_URL}
         networks:
           - prod_network
         

@@ -50,6 +50,12 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
             is_deleted: None,
             due_date: None,
             start_date: None,
+            gcal_event_id: None,
+            gcal_calendar_id: None,
+            gcal_sync_enabled: None,
+            gcal_last_sync: None,
+            gcal_sync_direction: None,
+            is_gcal_imported: None,
         });
     }
 
@@ -129,6 +135,12 @@ pub async fn query_parent_hierarchy(
             is_deleted: None,
             due_date: None,
             start_date: None,
+            gcal_event_id: None,
+            gcal_calendar_id: None,
+            gcal_sync_enabled: None,
+            gcal_last_sync: None,
+            gcal_sync_direction: None,
+            is_gcal_imported: None,
         });
     }
 

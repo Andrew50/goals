@@ -202,6 +202,7 @@ export const createEvent = async (event: {
     parent_type: string;
     scheduled_timestamp: Date;
     duration: number;
+    priority?: string;
 }): Promise<Goal> => {
     const apiEvent = {
         ...event,

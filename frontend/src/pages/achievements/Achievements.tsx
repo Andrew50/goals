@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import { Goal, ApiGoal } from '../../types/goals';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './Achievements.css';
 
@@ -155,7 +155,7 @@ const Achievements: React.FC = () => {
                     ) : (
                         <div className="achievements-grid">
                             {filteredAchievements.map(achievement => {
-                                const goalColor = getGoalColor(achievement);
+                                const goalStyle = getGoalStyle(achievement);
                                 const dueDateClass = getDueDateClass(achievement.end_timestamp);
 
                                 return (
@@ -165,7 +165,8 @@ const Achievements: React.FC = () => {
                                         onClick={() => handleAchievementClick(achievement)}
                                         onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
                                         style={{
-                                            borderTop: `4px solid ${goalColor}`,
+                                            borderTop: `4px solid ${goalStyle.backgroundColor}`,
+                                            border: goalStyle.border,
                                         }}
                                     >
                                         <div className="achievement-header">

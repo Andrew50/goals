@@ -86,17 +86,23 @@ export interface Relationship {
 export type NetworkNode = Goal & {
     label: string;
     title?: string;
-    color?: string;
+    color?: string | {
+        background: string;
+        border: string;
+        highlight: { background: string; border: string; };
+        hover: { background: string; border: string; };
+    };
     x?: number;
     y?: number;
     size?: number;
+    borderWidth?: number;
     font?: {
-        size: number;
-        color: string;
-        bold: {
-            color: string;
-            size: number;
-            mod: string;
+        size?: number;
+        color?: string;
+        bold?: {
+            color?: string;
+            size?: number;
+            mod?: string;
         };
     };
 };

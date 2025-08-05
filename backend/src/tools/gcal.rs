@@ -41,7 +41,7 @@ pub struct GCalService {
 impl GCalService {
     pub async fn new(
         service_account_key: ServiceAccountKey,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let auth = ServiceAccountAuthenticator::builder(service_account_key)
             .build()
             .await?;
@@ -49,7 +49,7 @@ impl GCalService {
         let hub = CalendarHub::new(
             hyper::Client::builder().build(
                 hyper_rustls::HttpsConnectorBuilder::new()
-                    .with_native_roots()
+                    .with_native_roots()?
                     .https_or_http()
                     .enable_http1()
                     .enable_http2()
@@ -67,7 +67,7 @@ impl GCalService {
         calendar_id: &str,
         time_min: DateTime<Utc>,
         time_max: DateTime<Utc>,
-    ) -> Result<Vec<GCalEvent>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<GCalEvent>, Box<dyn std::error::Error + Send + Sync>> {
         let result = self
             .hub
             .events()
@@ -109,26 +109,25 @@ impl GCalService {
         &self,
         calendar_id: &str,
         goal: &Goal,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let start_time = goal
             .scheduled_timestamp
             .ok_or("Goal must have a scheduled timestamp")?;
         let duration_minutes = goal.duration.unwrap_or(60);
-        let end_time = start_time.timestamp_millis() + (duration_minutes as i64 * 60 * 1000);
+        let start_dt = DateTime::from_timestamp_millis(start_time).unwrap();
+        let end_time = start_time + (duration_minutes as i64 * 60 * 1000);
 
         let start_datetime = if goal.duration == Some(1440) {
             // All-day event
             EventDateTime {
-                date: Some(start_time.format("%Y-%m-%d").to_string()),
+                date: Some(start_dt.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
         } else {
             EventDateTime {
                 date: None,
-                date_time: Some(
-                    DateTime::from_timestamp_millis(start_time.timestamp_millis()).unwrap(),
-                ),
+                date_time: Some(start_dt),
                 time_zone: Some("UTC".to_string()),
             }
         };
@@ -137,7 +136,7 @@ impl GCalService {
             // All-day event
             let end_date = DateTime::from_timestamp_millis(end_time).unwrap();
             EventDateTime {
-                date: Some(end_date.format("%Y-%m-%d").to_string()),
+                date: Some(end_date.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
@@ -168,25 +167,24 @@ impl GCalService {
         calendar_id: &str,
         event_id: &str,
         goal: &Goal,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_time = goal
             .scheduled_timestamp
             .ok_or("Goal must have a scheduled timestamp")?;
         let duration_minutes = goal.duration.unwrap_or(60);
-        let end_time = start_time.timestamp_millis() + (duration_minutes as i64 * 60 * 1000);
+        let start_dt = DateTime::from_timestamp_millis(start_time).unwrap();
+        let end_time = start_time + (duration_minutes as i64 * 60 * 1000);
 
         let start_datetime = if goal.duration == Some(1440) {
             EventDateTime {
-                date: Some(start_time.format("%Y-%m-%d").to_string()),
+                date: Some(start_dt.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
         } else {
             EventDateTime {
                 date: None,
-                date_time: Some(
-                    DateTime::from_timestamp_millis(start_time.timestamp_millis()).unwrap(),
-                ),
+                date_time: Some(start_dt),
                 time_zone: Some("UTC".to_string()),
             }
         };
@@ -194,7 +192,7 @@ impl GCalService {
         let end_datetime = if goal.duration == Some(1440) {
             let end_date = DateTime::from_timestamp_millis(end_time).unwrap();
             EventDateTime {
-                date: Some(end_date.format("%Y-%m-%d").to_string()),
+                date: Some(end_date.date_naive()),
                 date_time: None,
                 time_zone: None,
             }
@@ -228,7 +226,7 @@ impl GCalService {
         &self,
         calendar_id: &str,
         event_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.hub
             .events()
             .delete(calendar_id, event_id)
@@ -274,8 +272,8 @@ pub async fn sync_from_gcal(
              RETURN g",
         )
         .param("user_id", user_id)
-        .param("gcal_event_id", &gcal_event.id)
-        .param("gcal_calendar_id", &gcal_event.calendar_id);
+        .param("gcal_event_id", gcal_event.id.clone())
+        .param("gcal_calendar_id", gcal_event.calendar_id.clone());
 
         let mut existing_result = graph.execute(existing_query).await.map_err(|e| {
             (
@@ -287,15 +285,8 @@ pub async fn sync_from_gcal(
         let start_timestamp = match &gcal_event.start {
             event_datetime if event_datetime.date.is_some() => {
                 // All-day event
-                let date_str = event_datetime.date.as_ref().unwrap();
-                chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| {
-                        (
-                            StatusCode::BAD_REQUEST,
-                            format!("Invalid date format: {}", e),
-                        )
-                    })?
-                    .and_hms_opt(0, 0, 0)
+                let date = event_datetime.date.as_ref().unwrap();
+                date.and_hms_opt(0, 0, 0)
                     .unwrap()
                     .and_utc()
                     .timestamp_millis()
@@ -313,15 +304,8 @@ pub async fn sync_from_gcal(
 
         let end_timestamp = match &gcal_event.end {
             event_datetime if event_datetime.date.is_some() => {
-                let date_str = event_datetime.date.as_ref().unwrap();
-                chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| {
-                        (
-                            StatusCode::BAD_REQUEST,
-                            format!("Invalid date format: {}", e),
-                        )
-                    })?
-                    .and_hms_opt(23, 59, 59)
+                let date = event_datetime.date.as_ref().unwrap();
+                date.and_hms_opt(23, 59, 59)
                     .unwrap()
                     .and_utc()
                     .timestamp_millis()
@@ -366,8 +350,8 @@ pub async fn sync_from_gcal(
                      g.gcal_last_sync = $sync_time",
             )
             .param("user_id", user_id)
-            .param("gcal_event_id", &gcal_event.id)
-            .param("name", &gcal_event.summary)
+            .param("gcal_event_id", gcal_event.id.clone())
+            .param("name", gcal_event.summary.clone())
             .param(
                 "description",
                 gcal_event.description.as_deref().unwrap_or(""),
@@ -520,4 +504,34 @@ pub async fn sync_to_gcal(
         updated_events,
         errors,
     }))
+}
+
+pub async fn delete_gcal_event_handler(
+    graph: Graph,
+    gcal_service: &GCalService,
+    goal_id: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
+    // Fetch the goal to get the calendar_id and event_id
+    let get_goal_query = query("MATCH (g:Goal) WHERE id(g) = $id RETURN g.gcal_calendar_id, g.gcal_event_id")
+        .param("id", goal_id);
+
+    let mut result = graph.execute(get_goal_query).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))?;
+
+    if let Some(row) = result.next().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))? {
+        let calendar_id: Option<String> = row.get("g.gcal_calendar_id").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse calendar_id: {}", e)))?;
+        let event_id: Option<String> = row.get("g.gcal_event_id").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse event_id: {}", e)))?;
+
+        if let (Some(calendar_id), Some(event_id)) = (calendar_id, event_id) {
+            // Delete the event from Google Calendar
+            gcal_service.delete_event(&calendar_id, &event_id).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to delete Google Calendar event: {}", e)))?;
+
+            // Remove GCal-related properties from the goal node
+            let update_goal_query = query("MATCH (g:Goal) WHERE id(g) = $id REMOVE g.gcal_event_id, g.gcal_calendar_id, g.gcal_sync_enabled, g.gcal_last_sync, g.is_gcal_imported, g.gcal_sync_direction")
+                .param("id", goal_id);
+
+            graph.run(update_goal_query).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update goal after deletion: {}", e)))?;
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }

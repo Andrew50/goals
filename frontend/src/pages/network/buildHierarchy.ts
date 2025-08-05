@@ -1,5 +1,5 @@
 import { NetworkNode, NetworkEdge } from '../../types/goals';
-import { getGoalColor } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 import { privateRequest } from '../../shared/utils/api';
 
 // =====================================================
@@ -253,19 +253,25 @@ export async function buildHierarchy(networkData: {
         const maxFontSize = 28;
         const fontSize = Math.max(minFontSize, Math.min(size / 2.5, maxFontSize));
 
+        const { backgroundColor, border, textColor, borderColor } = getGoalStyle(node);
+        const borderWidthMatch = border.match(/(\d+)px/);
+        const borderWidth = borderWidthMatch ? parseInt(borderWidthMatch[1], 10) : (node as any).borderWidth || 0;
         return {
             ...node,
             x: positions[node.id].x,
             y: positions[node.id].y,
             size,
+            borderWidth,
             font: {
                 size: fontSize,
-                color: '#ffffff',
-                bold: { color: '#ffffff', size: fontSize, mod: 'bold' },
+                color: textColor,
+                bold: { color: textColor, size: fontSize, mod: 'bold' },
             },
             color: {
-                background: getGoalColor(node),
-                opacity: Math.min(0.5 + degree * 0.05, 1),
+                background: backgroundColor,
+                border: borderColor,
+                highlight: { background: backgroundColor, border: borderColor },
+                hover: { background: backgroundColor, border: borderColor }
             },
         };
     });
@@ -276,7 +282,7 @@ export async function buildHierarchy(networkData: {
         const baseWidth = 1;
         const width = Math.max(baseWidth, Math.min(baseWidth + importance * 0.5, 8));
         const fromNode = networkData.nodes.find(n => n.id === edge.from);
-        const parentColor = fromNode ? getGoalColor(fromNode) : '#2196F3';
+        const parentColor = fromNode ? getGoalStyle(fromNode).backgroundColor : '#2196F3';
         const arrowScale = Math.max(0.5, Math.min(width * 0.3, 2));
         return {
             ...edge,

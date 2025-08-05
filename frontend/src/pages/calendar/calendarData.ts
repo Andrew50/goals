@@ -1,7 +1,7 @@
 import { CalendarResponse, CalendarEvent, CalendarTask, ApiGoal } from '../../types/goals';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
-import { getGoalColor } from '../../shared/styles/colors';
+// Colors are now handled centrally in colors.ts via getGoalStyle
 
 export interface TransformedCalendarData {
     events: CalendarEvent[];
@@ -37,7 +37,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             const parent = response.parents?.find(p => p.id === event.parent_id);
             const parentGoal = parent ? goalToLocal(parent as ApiGoal) : undefined;
 
-            // Create calendar event
+            // Create calendar event - colors will be determined by getGoalStyle in Calendar.tsx
             const calendarEvent: CalendarEvent = {
                 id: `event-${event.id}`,
                 title: event.name, // Always inherited from parent
@@ -46,10 +46,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 type: 'event', // Always 'event' now
                 goal: event, // The event goal
                 parent: parentGoal, // The parent task/routine
-                allDay: event.duration === 1440,
-                backgroundColor: getGoalColor(parentGoal || event),
-                borderColor: getGoalColor(parentGoal || event),
-                textColor: '#fff'
+                allDay: event.duration === 1440
+                // Colors removed - now handled centrally in Calendar.tsx via getGoalStyle
             };
 
             return calendarEvent;
@@ -76,6 +74,7 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             }
 
             const end = new Date(achievement.end_timestamp);
+
             return {
                 id: `achievement-${achievement.id}`,
                 title: achievement.name,
@@ -83,10 +82,8 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
                 end: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999),
                 type: 'event',
                 goal: achievement,
-                allDay: true,
-                backgroundColor: getGoalColor(achievement),
-                borderColor: getGoalColor(achievement),
-                textColor: '#fff'
+                allDay: true
+                // Colors removed - now handled centrally in Calendar.tsx via getGoalStyle
             };
         }).filter(Boolean) as CalendarEvent[];
 
