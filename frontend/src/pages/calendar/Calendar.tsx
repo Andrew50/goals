@@ -633,7 +633,7 @@ const Calendar: React.FC = () => {
       // -----------------------------
       // Fetch parent routine (if applicable)
       // -----------------------------
-      const movedEvent = state.events.find((e) => e.id === String(routineRescheduleDialog.eventId!));
+      const movedEvent = state.events.find((e) => e.goal?.id === routineRescheduleDialog.eventId!);
       const parentRoutine = movedEvent?.parent;
 
       // If we are changing more than a single occurrence and the routine has no
@@ -735,7 +735,7 @@ const Calendar: React.FC = () => {
 
       if (selectedResizeScope === 'single') {
         // For single updates, use regular updateGoal
-        const existingEvent = state.events.find((e) => e.id === String(routineResizeDialog.eventId!));
+        const existingEvent = state.events.find((e) => e.goal?.id === routineResizeDialog.eventId!);
         if (existingEvent?.goal) {
           const updates = {
             ...existingEvent.goal,

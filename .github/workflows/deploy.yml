@@ -18,6 +18,7 @@ jobs:
           cat > .env << EOF
           GOALS_CLOUDFLARED_TOKEN=${{ secrets.GOALS_CLOUDFLARED_TOKEN }}
           BACKUP_PATH=${{ secrets.BACKUP_PATH }}
+          BACKUP_LOGS_PATH=${{ secrets.BACKUP_LOGS_PATH }}
           GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
           REACT_APP_API_URL=${{ secrets.REACT_APP_API_URL }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
@@ -31,6 +32,58 @@ jobs:
           NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
           EOF
 
+      - name: Prepare backup directories (idempotent)
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+          BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
+        run: |
+          set -euxo pipefail
+          : "${BACKUP_PATH:=/var/lib/goals/backups}"
+          : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
+          sudo mkdir -p "$BACKUP_PATH" "$BACKUP_LOGS_PATH"
+          # Set permissive ownership/permissions to avoid container write issues
+          sudo chown -R 7474:7474 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
+          sudo chmod -R 0775 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
+          # Cleanup zero-byte or partial backups from previous runs, retain last 30
+          find "$BACKUP_PATH" -type f -name 'neo4j_dump_*.dump' -size 0 -delete || true
+          # Retention: keep last 30 dumps, delete older
+          ls -1t "$BACKUP_PATH"/neo4j_dump_*.dump 2>/dev/null | tail -n +31 | xargs -r rm -f || true
+
+      - name: Pre-deploy backup (required)
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+        run: |
+          set -euxo pipefail
+          if docker ps -q -f name=goals_db | grep -q .; then
+            echo "goals_db is running; taking a pre-deploy backup (in-place)"
+            before_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            # Prefer script (shebang uses bash); fallback to inline dump via sh
+            if docker exec goals_db test -x /scripts/backup.sh; then
+              docker exec goals_db /scripts/backup.sh
+            else
+              docker exec goals_db sh -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
+            fi
+            after_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            if [ "$after_count" -le "$before_count" ]; then
+              echo "Pre-deploy backup did not increase backup count" >&2
+              exit 1
+            fi
+          else
+            echo "goals_db not running; running one-off backup container to verify backup system"
+            before_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
+            # Prefer script; fallback to inline dump
+            if docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'test -x /scripts/backup.sh' >/dev/null 2>&1; then
+              docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint /scripts/backup.sh goals_db
+            else
+              docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
+            fi
+            after_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
+            if [ "${after_count}" -le "${before_count}" ]; then
+              echo "Pre-deploy backup (one-off) did not increase backup count" >&2
+              exit 1
+            fi
+          fi
+
       - name: Stop and remove existing containers
         run: |
           docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
@@ -41,3 +94,57 @@ jobs:
 
       - name: Deploy stack
         run: docker compose -p p -f docker-compose.prod.yaml up -d
+
+      - name: Run immediate test backup and then wait for healthy
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+        run: |
+          set -euxo pipefail
+          # Wait for container to be running
+          for i in {1..60}; do
+            state=$(docker inspect -f '{{.State.Status}}' goals_db || echo 'starting')
+            if [ "$state" = "running" ]; then break; fi
+            sleep 5
+          done
+          # Trigger immediate backup and verify a new file appears
+          before_count=$(docker exec goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+          docker exec goals_db bash -lc '/scripts/backup.sh'
+          after_count=$(docker exec goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+          if [ "$after_count" -le "$before_count" ]; then
+            echo "Backup count did not increase after manual backup" >&2
+            exit 1
+          fi
+          # Now wait for healthcheck to pass (should be quick after manual backup)
+          for i in {1..30}; do
+            status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')
+            if [ "$status" = "healthy" ]; then break; fi
+            sleep 10
+          done
+
+      - name: Collect backup logs to workspace
+        if: always()
+        run: |
+          set -euxo pipefail
+          mkdir -p "${{ github.workspace }}/backup-artifacts"
+          docker cp goals_db:/var/log/cron/backup.log "${{ github.workspace }}/backup-artifacts/backup.log" || true
+
+      - name: Show backup logs on failure
+        if: failure()
+        env:
+          BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
+        run: |
+          set -euxo pipefail
+          : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
+          echo '===== goals_db container logs ====='
+          docker logs goals_db || true
+          echo '===== cron/backup.log (host bind) ====='
+          sudo tail -n 200 "$BACKUP_LOGS_PATH/backup.log" || true
+
+      - name: Upload backup logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-logs
+          path: |
+            ${{ github.workspace }}/backup-artifacts/backup.log
+            ${{ github.workspace }}/.env
