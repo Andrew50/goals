@@ -2,6 +2,12 @@ name: E2E Tests
 
 on:
   workflow_call:
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
     inputs:
       ref:
         description: 'The branch, tag or SHA to checkout'
@@ -25,12 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60  # Reduced from default since we're parallelizing
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -63,6 +69,39 @@ jobs:
           chmod +x start-parallel-test-env.sh
           chmod +x cleanup-parallel-test-env.sh
           chmod +x run-parallel-tests.sh
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend dev image (cached)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: backend/Dockerfile.dev
+          tags: goals_backend:dev
+          load: true
+          cache-from: type=gha,scope=goals-backend-dev
+          cache-to: type=gha,mode=max,scope=goals-backend-dev
+
+      - name: Build frontend dev image (cached)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile.dev
+          tags: goals_frontend:dev
+          load: true
+          cache-from: type=gha,scope=goals-frontend-dev
+          cache-to: type=gha,mode=max,scope=goals-frontend-dev
+
+      - name: Build db dev image (cached)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./db
+          file: db/Dockerfile.dev
+          tags: goals_db:dev
+          load: true
+          cache-from: type=gha,scope=goals-db-dev
+          cache-to: type=gha,mode=max,scope=goals-db-dev
       
       - name: Start parallel test environment
         run: |
@@ -102,6 +141,8 @@ jobs:
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
+        permissions:
+          contents: read
         with:
           name: playwright-reports-parallel
           path: |

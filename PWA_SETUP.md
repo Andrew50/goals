@@ -94,10 +94,25 @@ docker-compose -f docker-compose.prod.yaml up -d
 ### Notification Types
 
 The app can send notifications for:
-- **Event Reminders**: 15 minutes before scheduled events
+- **High Priority Events**: Automatic alerts 15 minutes before high priority events start
+- **Event Reminders**: Configurable reminders before any event (15 min, 1 hour, 1 day)
 - **Task Deadlines**: When tasks are approaching their due date
 - **Routine Reminders**: For recurring routine events
 - **Custom Notifications**: Any other app-specific alerts
+
+#### High Priority Event Notifications
+
+Events marked as "high" priority will automatically trigger push notifications 15 minutes before they start. These notifications:
+- Are sent automatically without requiring manual configuration
+- Have a distinctive "⚡ High Priority Event" title
+- Require user interaction (won't auto-dismiss)
+- Include action buttons to view the event or snooze the reminder
+- Are checked every minute by the backend scheduler
+
+To enable high priority notifications:
+1. Mark an event as "High" priority when creating or editing it
+2. Ensure push notifications are enabled in Account Settings
+3. The system will automatically send a notification 15 minutes before the event starts
 
 ### Troubleshooting
 

@@ -35,9 +35,7 @@ start_worker() {
     cat > docker-compose.worker-${worker_id}.yaml << EOF
 services:
   goals_backend_worker_${worker_id}:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
+    image: goals_backend:dev
     ports:
       - "${backend_port}:5059"
     volumes:
@@ -57,9 +55,7 @@ services:
       - goals_db_test_worker_${worker_id}
 
   goals_frontend_worker_${worker_id}:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
+    image: goals_frontend:dev
     ports:
       - "${frontend_port}:3030"
     volumes:
@@ -77,9 +73,7 @@ services:
       - goals_backend_worker_${worker_id}
 
   goals_db_test_worker_${worker_id}:
-    build:
-      context: ./db
-      dockerfile: Dockerfile.dev
+    image: goals_db:dev
     ports:
       - "${db_web_port}:7474"
       - "${db_bolt_port}:7687"

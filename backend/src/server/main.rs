@@ -8,7 +8,7 @@ use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::cors::CorsLayer;
 use tracing::Level;
 
-use crate::jobs::routine_generator;
+use crate::jobs::{notification_scheduler, routine_generator};
 use crate::server::db;
 use crate::server::http_handler;
 
@@ -97,6 +97,7 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clone the pool for the scheduler
     let scheduler_pool = pool.clone();
+    let notification_pool = pool.clone();
 
     // Schedule routine event generation to run every hour
     let routine_job = Job::new_async("0 0 * * * *", move |_uuid, _l| {
@@ -107,11 +108,21 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
         })
     })?;
 
+    // Schedule notification checks to run every minute
+    // This checks for high priority events starting in the next 15 minutes
+    let notification_job = Job::new_async("0 * * * * *", move |_uuid, _l| {
+        let pool = notification_pool.clone();
+        Box::pin(async move {
+            notification_scheduler::run_notification_checks(pool).await;
+        })
+    })?;
+
     scheduler.add(routine_job).await?;
+    scheduler.add(notification_job).await?;
 
     // Start the scheduler
     scheduler.start().await?;
-    println!("✅ Scheduler started - routine events will be generated hourly");
+    println!("✅ Scheduler started - routine events will be generated hourly, notifications checked every minute");
 
     println!("🌐 Configuring CORS and server settings...");
     let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "localhost".to_string());

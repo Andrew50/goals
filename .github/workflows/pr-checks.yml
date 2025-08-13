@@ -49,6 +49,9 @@ jobs:
   check-previous-runs:
     name: Check Previous Test Runs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     timeout-minutes: 3
     outputs:
       backend_previously_failed: ${{ steps.check-failures.outputs.backend_failed }}
@@ -119,6 +122,8 @@ jobs:
             ~/.cargo/git
             backend/target
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
       
       - name: Apply code format
         run: cargo fmt --all
@@ -155,6 +160,8 @@ jobs:
             ~/.cargo/git
             backend/target
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
         
       - name: Run backend unit tests
         run: cargo test --lib
@@ -212,6 +219,8 @@ jobs:
     needs: [frontend-checks]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     defaults:
       run:

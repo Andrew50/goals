@@ -40,7 +40,10 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            backend/target
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
           
       - name: Cache npm
         uses: actions/cache@v4

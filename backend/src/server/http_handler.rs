@@ -123,7 +123,8 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let push_routes = Router::new()
         .route("/subscribe", post(handle_push_subscribe))
         .route("/unsubscribe", post(handle_push_unsubscribe))
-        .route("/test", post(handle_push_test));
+        .route("/test", post(handle_push_test))
+        .route("/check-notifications", post(handle_check_notifications));
 
     // Protected routes with auth middleware
     let protected_routes = Router::new()
@@ -884,4 +885,26 @@ async fn handle_push_test(
     Extension(user_id): Extension<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     push::send_test_notification(graph, user_id).await
+}
+
+async fn handle_check_notifications(
+    Extension(graph): Extension<Graph>,
+    Extension(_user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    // Manually trigger notification check (useful for testing)
+    println!("📢 [PUSH] Manual notification check triggered");
+
+    // Import the notification scheduler
+    use crate::jobs::notification_scheduler;
+
+    // Run the notification checks
+    if let Err(e) = notification_scheduler::check_and_send_event_notifications(&graph).await {
+        eprintln!("❌ [PUSH] Error during manual notification check: {}", e);
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Notification check failed: {}", e),
+        ));
+    }
+
+    Ok(StatusCode::OK)
 }
