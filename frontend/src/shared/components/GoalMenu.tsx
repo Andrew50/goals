@@ -2266,6 +2266,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         const RateTile = (props: { label: string; tooltip: string; value: number; icon: React.ReactNode; color?: string; }) => {
             const pct = Number.isFinite(props.value) ? Math.max(0, Math.min(1, props.value)) : 0;
             const ringSize = 48;
+
             return (
                 <Tooltip title={props.tooltip} placement="top" arrow>
                     <Box sx={{
