@@ -36,9 +36,23 @@ jobs:
             curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
-          rustup toolchain install stable
-          rustup component add --toolchain stable rustfmt clippy
-          rustup default stable
+          # Ensure rustup is available in this step as well
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if [ -f "$HOME/.cargo/env" ]; then
+            . "$HOME/.cargo/env"
+          fi
+          RUSTUP_BIN="$HOME/.cargo/bin/rustup"
+          if [ ! -x "$RUSTUP_BIN" ]; then
+            RUSTUP_BIN="$(command -v rustup || true)"
+          fi
+          if [ -z "$RUSTUP_BIN" ]; then
+            echo "rustup still not found in PATH"
+            ls -la "$HOME/.cargo/bin" || true
+            exit 1
+          fi
+          "$RUSTUP_BIN" toolchain install stable
+          "$RUSTUP_BIN" component add --toolchain stable rustfmt clippy
+          "$RUSTUP_BIN" default stable
           
       - name: Cache cargo
         uses: actions/cache@v4
@@ -103,8 +117,9 @@ jobs:
             docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml ps
             exit 1
           fi
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'mkdir -p /scripts /backups && chown -R neo4j:neo4j /scripts /backups'
           docker cp db/backup.sh "$CID":/scripts/backup.sh
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'mkdir -p /scripts /backups && chown -R neo4j:neo4j /scripts /backups && chmod +x /scripts/backup.sh'
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'chmod +x /scripts/backup.sh'
           echo "Running backup..."
           docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T --user neo4j goals_db_test bash -lc '/scripts/backup.sh'
           echo "Verifying backup output..."
