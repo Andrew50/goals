@@ -1,6 +1,8 @@
 services:
   # Override the backend to connect to the test database
   goals_backend:
+    build:
+      dockerfile: Dockerfile.prod
     ports:
       - "5057:5059" # Map external port 5057 to internal port 5059 to match test expectations
     environment:
@@ -11,7 +13,6 @@ services:
       - JWT_SECRET=default_secret
       - RUST_BACKTRACE=1
       - RUST_LOG=info
-    command: ["bash","-lc","cargo build --release && ./target/release/backend"]
     volumes: []
     healthcheck:
       test: ["CMD-SHELL","nc -z localhost 5059 || exit 1"]
@@ -26,7 +27,6 @@ services:
     environment:
       - REACT_APP_API_URL=http://localhost:5057
       - HOST_URL=localhost
-    user: "${UID}:${GID}"
 
   # Create a dedicated test database for testing
   goals_db_test:

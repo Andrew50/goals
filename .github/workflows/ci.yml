@@ -28,42 +28,7 @@ jobs:
         with:
           node-version: 20
           
-      - name: Install rustup and Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
-          # Ensure rustup is available in this step as well
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if [ -f "$HOME/.cargo/env" ]; then
-            . "$HOME/.cargo/env"
-          fi
-          RUSTUP_BIN="$HOME/.cargo/bin/rustup"
-          if [ ! -x "$RUSTUP_BIN" ]; then
-            RUSTUP_BIN="$(command -v rustup || true)"
-          fi
-          if [ -z "$RUSTUP_BIN" ]; then
-            echo "rustup still not found in PATH"
-            ls -la "$HOME/.cargo/bin" || true
-            exit 1
-          fi
-          "$RUSTUP_BIN" toolchain install stable
-          "$RUSTUP_BIN" component add --toolchain stable rustfmt clippy
-          "$RUSTUP_BIN" default stable
-          
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            backend/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+      # Rust toolchain not needed on host when running tests inside containers
           
       - name: Cache npm
         uses: actions/cache@v4
@@ -131,17 +96,15 @@ jobs:
             rm -rf frontend/node_modules 2>/dev/null || mv -f frontend/node_modules "frontend/node_modules.bak.$(date +%s)" || true
           fi
           
-      - name: Backend integration tests
+      - name: Backend integration tests (in container)
         env:
           CI: "true"
-          NEO4J_TEST_URI: bolt://localhost:7688
-          NEO4J_TEST_USERNAME: neo4j
-          NEO4J_TEST_PASSWORD: password123
-          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
         run: |
-          mkdir -p "$CARGO_TARGET_DIR"
-          cd backend
-          cargo test --test routine_integration_test -- --nocapture
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml run --rm \
+            goals_backend bash -lc 'NEO4J_TEST_URI=bolt://goals_db_test:7687 \
+                                    NEO4J_TEST_USERNAME=neo4j \
+                                    NEO4J_TEST_PASSWORD=password123 \
+                                    cargo test --test routine_integration_test -- --nocapture'
       
           
       - name: E2E Playwright tests
