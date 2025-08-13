@@ -19,6 +19,16 @@ if [ ! -x "${NEO4J_ADMIN_BIN}" ]; then
     fi
 fi
 
+# Resolve Neo4j data directory. In official Docker images, data is stored at /data
+# but the default config uses $NEO4J_HOME/data unless overridden. We prefer /data when present.
+NEO4J_DATA_DIR_CANDIDATE="/data"
+if [ -d "${NEO4J_DATA_DIR_CANDIDATE}/databases" ]; then
+    export NEO4J_server_directories_data="${NEO4J_DATA_DIR_CANDIDATE}"
+    echo "[$(date)] Using data directory: ${NEO4J_server_directories_data}"
+else
+    echo "[$(date)] /data not found; falling back to default data directory"
+fi
+
 echo "----------------------------------------"
 echo "[$(date)] Starting backup process"
 echo "[$(date)] Backup directory: ${BACKUP_DIR}"

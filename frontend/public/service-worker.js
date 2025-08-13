@@ -13,7 +13,7 @@ const urlsToCache = [
 ];
 
 // Install event - cache essential files
-self.addEventListener('install', event => {
+globalThis.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
@@ -25,29 +25,28 @@ self.addEventListener('install', event => {
       })
   );
   // Force the waiting service worker to become active
-  self.skipWaiting();
+  globalThis.skipWaiting();
 });
 
 // Activate event - clean up old caches
-self.addEventListener('activate', event => {
+globalThis.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(cacheNames => {
+      const oldCacheNames = cacheNames.filter(name => name !== CACHE_NAME);
       return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[ServiceWorker] Removing old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
+        oldCacheNames.map(cacheName => {
+          console.log('[ServiceWorker] Removing old cache:', cacheName);
+          return caches.delete(cacheName);
         })
       );
     })
   );
   // Claim all clients immediately
-  self.clients.claim();
+  globalThis.clients.claim();
 });
 
 // Fetch event - serve from cache when possible
-self.addEventListener('fetch', event => {
+globalThis.addEventListener('fetch', event => {
   // Skip non-GET requests and API calls
   if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
     return;
@@ -68,9 +67,9 @@ self.addEventListener('fetch', event => {
 });
 
 // Push event - show notification
-self.addEventListener('push', event => {
+globalThis.addEventListener('push', event => {
   console.log('[ServiceWorker] Push received:', event);
-  
+
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
@@ -94,7 +93,7 @@ self.addEventListener('push', event => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(title, options)
+    globalThis.registration.showNotification(title, options)
       .catch(err => {
         console.error('[ServiceWorker] Error showing notification:', err);
       })
@@ -102,14 +101,14 @@ self.addEventListener('push', event => {
 });
 
 // Notification click event - handle notification interactions
-self.addEventListener('notificationclick', event => {
+globalThis.addEventListener('notificationclick', event => {
   console.log('[ServiceWorker] Notification clicked:', event);
-  
+
   event.notification.close();
 
   const data = event.notification.data || {};
   const url = data.url || '/';
-  
+
   // Handle action buttons
   if (event.action) {
     console.log('[ServiceWorker] Action clicked:', event.action);
@@ -118,30 +117,30 @@ self.addEventListener('notificationclick', event => {
   }
 
   event.waitUntil(
-    clients.matchAll({ 
-      type: 'window', 
-      includeUncontrolled: true 
+    globalThis.clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true
     }).then(clientList => {
       // Check if there's already a window/tab open
       for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
+        if (client.url.includes(globalThis.location.origin) && 'focus' in client) {
           // Navigate to the URL if provided
-          if (url !== '/' && client.url !== new URL(url, self.location.origin).href) {
+          if (url !== '/' && client.url !== new URL(url, globalThis.location.origin).href) {
             client.navigate(url);
           }
           return client.focus();
         }
       }
       // If no window is open, open a new one
-      if (clients.openWindow) {
-        return clients.openWindow(url);
+      if (globalThis.clients.openWindow) {
+        return globalThis.clients.openWindow(url);
       }
     })
   );
 });
 
 // Background sync event (for future use)
-self.addEventListener('sync', event => {
+globalThis.addEventListener('sync', event => {
   console.log('[ServiceWorker] Background sync:', event.tag);
   if (event.tag === 'sync-goals') {
     // Implement background sync logic here
@@ -150,7 +149,7 @@ self.addEventListener('sync', event => {
 });
 
 // Periodic background sync (for future use)
-self.addEventListener('periodicsync', event => {
+globalThis.addEventListener('periodicsync', event => {
   console.log('[ServiceWorker] Periodic background sync:', event.tag);
   if (event.tag === 'update-routines') {
     // Implement periodic sync logic here
