@@ -257,7 +257,6 @@ jobs:
       always() && 
       (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true')
     uses: ./.github/workflows/e2e-tests.yml
-    timeout-minutes: 60
     with:
       ref: ${{ github.ref }}
       skip_tests: false
