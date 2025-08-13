@@ -26,6 +26,7 @@ services:
     environment:
       - REACT_APP_API_URL=http://localhost:5057
       - HOST_URL=localhost
+    user: "${UID}:${GID}"
 
   # Create a dedicated test database for testing
   goals_db_test:
