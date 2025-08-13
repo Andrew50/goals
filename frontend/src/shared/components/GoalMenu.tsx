@@ -183,6 +183,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [goalStats, setGoalStats] = useState<BasicGoalStats | null>(null);
     const [statsLoading, setStatsLoading] = useState<boolean>(false);
 
+    // Local string states for duration inputs to allow temporary empty values and smooth editing
+    const [durationHoursInput, setDurationHoursInput] = useState<string>('');
+    const [durationMinutesInput, setDurationMinutesInput] = useState<string>('');
+
+    // Local string states for each task event's hours/minutes
+    const [taskEventInputs, setTaskEventInputs] = useState<Array<{ hours: string; minutes: string }>>([]);
+
     // Add routine update dialog state
     const [routineUpdateDialog, setRoutineUpdateDialog] = useState<RoutineUpdateDialogState>({
         isOpen: false,
@@ -732,6 +739,36 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             });
         }
     }, [isOpen]);
+
+    // Initialize duration input strings when opening a goal or switching goals
+    useEffect(() => {
+        if (state.goal.duration !== undefined && state.goal.duration !== 1440) {
+            const hours = Math.floor((state.goal.duration || 0) / 60);
+            const minutes = (state.goal.duration || 0) % 60;
+            setDurationHoursInput(String(hours));
+            setDurationMinutesInput(String(minutes));
+        } else {
+            // For all-day or no duration, clear inputs so user can start fresh
+            setDurationHoursInput('');
+            setDurationMinutesInput('');
+        }
+    }, [state.goal.id, isOpen]);
+
+    // Initialize per-event input strings when taskEvents list changes size (e.g., fetched or item added/removed)
+    useEffect(() => {
+        setTaskEventInputs(prev => {
+            if (prev.length !== taskEvents.length) {
+                return taskEvents.map(evt => {
+                    const dur = evt.duration || 0;
+                    return {
+                        hours: String(Math.floor(dur / 60)),
+                        minutes: String(dur % 60)
+                    };
+                });
+            }
+            return prev;
+        });
+    }, [taskEvents]);
 
     // NEW EFFECT: Automatically populate parentGoals and selectedParents for events once allGoals are available
     useEffect(() => {
@@ -1367,51 +1404,58 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
                     <TextField
                         label="Hours"
-                        type="number"
-                        value={(() => {
-                            const hours = state.goal.duration ? Math.floor(state.goal.duration / 60) : '';
-                            return hours;
-                        })()}
+                        type="text"
+                        value={durationHoursInput}
                         onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                            const hours = e.target.value ? parseInt(e.target.value) : 0;
-                            const minutes = state.goal.duration ? state.goal.duration % 60 : 0;
+                            const raw = (e.target.value || '').replace(/\D/g, '');
+                            setDurationHoursInput(raw);
+                            const hours = raw === '' ? 0 : parseInt(raw, 10);
+                            const minutesStr = durationMinutesInput;
+                            const minutes = minutesStr === '' ? (state.goal.duration ? state.goal.duration % 60 : 0) : Math.min(59, parseInt(minutesStr, 10) || 0);
                             const newDuration = hours * 60 + minutes;
                             handleChange({
                                 ...state.goal,
                                 duration: newDuration
                             });
                         }}
+                        onBlur={() => {
+                            if (durationHoursInput === '') setDurationHoursInput('0');
+                        }}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
                         inputProps={{
-                            min: 0,
-                            step: 1
+                            inputMode: 'numeric',
+                            pattern: '[0-9]*'
                         }}
                         disabled={isViewOnly}
                         sx={{ width: '50%' }}
                     />
                     <TextField
                         label="Minutes"
-                        type="number"
-                        value={(() => {
-                            const minutes = state.goal.duration ? state.goal.duration % 60 : '';
-                            return minutes;
-                        })()}
+                        type="text"
+                        value={durationMinutesInput}
                         onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                            const minutes = e.target.value ? parseInt(e.target.value) : 0;
-                            const hours = state.goal.duration ? Math.floor(state.goal.duration / 60) : 0;
+                            const raw = (e.target.value || '').replace(/\D/g, '');
+                            // clamp to 0-59
+                            const clamped = raw === '' ? '' : String(Math.min(59, parseInt(raw, 10) || 0));
+                            setDurationMinutesInput(clamped);
+                            const minutes = clamped === '' ? 0 : parseInt(clamped, 10);
+                            const hoursStr = durationHoursInput;
+                            const hours = hoursStr === '' ? (state.goal.duration ? Math.floor(state.goal.duration / 60) : 0) : parseInt(hoursStr, 10) || 0;
                             const newDuration = hours * 60 + minutes;
                             handleChange({
                                 ...state.goal,
                                 duration: newDuration
                             });
                         }}
+                        onBlur={() => {
+                            if (durationMinutesInput === '') setDurationMinutesInput('0');
+                        }}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
                         inputProps={{
-                            min: 0,
-                            max: 59,
-                            step: 1
+                            inputMode: 'numeric',
+                            pattern: '[0-9]*'
                         }}
                         disabled={isViewOnly}
                         sx={{ width: '50%' }}
@@ -1975,11 +2019,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                             />
                                             <TextField
                                                 label="H"
-                                                type="number"
-                                                value={Math.floor((event.duration || 0) / 60)}
+                                                type="text"
+                                                value={taskEventInputs[index]?.hours ?? String(Math.floor((event.duration || 0) / 60))}
                                                 onChange={(e) => {
-                                                    const hours = parseInt(e.target.value) || 0;
-                                                    const minutes = (event.duration || 0) % 60;
+                                                    const raw = (e.target.value || '').replace(/\D/g, '');
+                                                    setTaskEventInputs(prev => {
+                                                        const next = [...prev];
+                                                        const current = next[index] || { hours: '', minutes: '' };
+                                                        next[index] = { ...current, hours: raw };
+                                                        return next;
+                                                    });
+                                                    const hours = raw === '' ? 0 : parseInt(raw, 10);
+                                                    const minutesStr = taskEventInputs[index]?.minutes;
+                                                    const minutes = minutesStr === undefined || minutesStr === '' ? ((event.duration || 0) % 60) : Math.min(59, parseInt(minutesStr, 10) || 0);
                                                     const newDuration = hours * 60 + minutes;
                                                     const oldDuration = event.duration || 0;
                                                     setTaskEvents(prev => prev.map((evt, idx) =>
@@ -1987,18 +2039,35 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                     ));
                                                     setTotalDuration(prev => prev - oldDuration + newDuration);
                                                 }}
+                                                onBlur={() => {
+                                                    setTaskEventInputs(prev => {
+                                                        const next = [...prev];
+                                                        const current = next[index] || { hours: '', minutes: '' };
+                                                        if (current.hours === '') next[index] = { ...current, hours: '0' };
+                                                        return next;
+                                                    });
+                                                }}
                                                 size="small"
-                                                inputProps={{ min: 0, step: 1 }}
+                                                inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
                                                 disabled={isViewOnly}
                                                 sx={{ width: 60 }}
                                             />
                                             <TextField
                                                 label="M"
-                                                type="number"
-                                                value={(event.duration || 0) % 60}
+                                                type="text"
+                                                value={taskEventInputs[index]?.minutes ?? String((event.duration || 0) % 60)}
                                                 onChange={(e) => {
-                                                    const minutes = parseInt(e.target.value) || 0;
-                                                    const hours = Math.floor((event.duration || 0) / 60);
+                                                    const raw = (e.target.value || '').replace(/\D/g, '');
+                                                    const clamped = raw === '' ? '' : String(Math.min(59, parseInt(raw, 10) || 0));
+                                                    setTaskEventInputs(prev => {
+                                                        const next = [...prev];
+                                                        const current = next[index] || { hours: '', minutes: '' };
+                                                        next[index] = { ...current, minutes: clamped };
+                                                        return next;
+                                                    });
+                                                    const minutes = clamped === '' ? 0 : parseInt(clamped, 10);
+                                                    const hoursStr = taskEventInputs[index]?.hours;
+                                                    const hours = hoursStr === undefined || hoursStr === '' ? Math.floor((event.duration || 0) / 60) : parseInt(hoursStr, 10) || 0;
                                                     const newDuration = hours * 60 + minutes;
                                                     const oldDuration = event.duration || 0;
                                                     setTaskEvents(prev => prev.map((evt, idx) =>
@@ -2006,8 +2075,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                     ));
                                                     setTotalDuration(prev => prev - oldDuration + newDuration);
                                                 }}
+                                                onBlur={() => {
+                                                    setTaskEventInputs(prev => {
+                                                        const next = [...prev];
+                                                        const current = next[index] || { hours: '', minutes: '' };
+                                                        if (current.minutes === '') next[index] = { ...current, minutes: '0' };
+                                                        return next;
+                                                    });
+                                                }}
                                                 size="small"
-                                                inputProps={{ min: 0, max: 59, step: 1 }}
+                                                inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
                                                 disabled={isViewOnly}
                                                 sx={{ width: 60 }}
                                             />
