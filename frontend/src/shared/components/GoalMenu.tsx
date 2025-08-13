@@ -213,6 +213,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         selectedScope: 'single'
     });
 
+    // Robust detection: is the current goal an event that belongs to a routine?
+    const isRoutineParentEvent = useMemo(() => {
+        if (state.goal.goal_type !== 'event') return false;
+
+        // Direct flag from the event
+        if (state.goal.parent_type === 'routine') return true;
+
+        // Selected parents in edit/create flows
+        if (selectedParents.some(p => p.goal_type === 'routine')) return true;
+
+        // Resolve via parent_id against loaded goals
+        if (state.goal.parent_id) {
+            const parent = allGoals.find(g => g.id === state.goal.parent_id) || parentGoals.find(g => g.id === state.goal.parent_id);
+            if (parent?.goal_type === 'routine') return true;
+        }
+
+        // Fallback: any known parent goal is a routine
+        if (parentGoals.some(p => p.goal_type === 'routine')) return true;
+
+        return false;
+    }, [state.goal, selectedParents, allGoals, parentGoals]);
+
     // Ensure the error at the top is visible by resetting scroll to top when errors appear
     const contentRef = useRef<HTMLDivElement | null>(null);
     const scrollDialogToTop = useCallback(() => {
@@ -345,15 +367,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         const now = new Date();
                         const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
 
-                        // Filter events by time periods - include future events for better stats
+                        // Filter events by time periods - exclude future events
                         const recentEvents = siblingEvents.filter(e => {
                             if (!e.scheduled_timestamp) return false;
                             const eventDate = new Date(e.scheduled_timestamp);
                             return eventDate >= tenDaysAgo && eventDate <= now;
                         });
 
-                        // For all-time, include all events that have happened or are scheduled
-                        const allEvents = siblingEvents.filter(e => e.scheduled_timestamp);
+                        // For all-time, include only events scheduled on or before now (exclude future events)
+                        const allEvents = siblingEvents.filter(e => {
+                            if (!e.scheduled_timestamp) return false;
+                            const eventDate = new Date(e.scheduled_timestamp);
+                            return eventDate <= now;
+                        });
 
                         console.log('[GoalMenu] Filtered events:', {
                             total_siblings: siblingEvents.length,
@@ -896,7 +922,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Check if this is a routine event being modified
-        if (state.mode === 'edit' && state.goal.goal_type === 'event' && state.goal.parent_type === 'routine') {
+        if (state.mode === 'edit' && state.goal.goal_type === 'event' && isRoutineParentEvent) {
             // Determine what type of change this is
             const originalGoal = initialGoal;
             const updatedGoal = state.goal;
@@ -1275,7 +1301,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         try {
             if (state.goal.goal_type === 'event') {
-                if (state.goal.parent_type === 'routine') {
+                if (isRoutineParentEvent) {
                     console.log('[GoalMenu] Deleting routine event – opening scope dialog');
                     // Open routine delete dialog instead of immediate confirm
                     setRoutineDeleteDialog({
@@ -1362,12 +1388,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             value={state.goal.priority || ''}
             onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
                 ...state.goal,
-                priority: e.target.value as 'high' | 'medium' | 'low'
+                priority: (e.target.value === '' ? undefined : (e.target.value as 'high' | 'medium' | 'low'))
             })}
             fullWidth
             margin="dense"
             disabled={isViewOnly}
         >
+            <MenuItem value="">None</MenuItem>
             <MenuItem value="high">High</MenuItem>
             <MenuItem value="medium">Medium</MenuItem>
             <MenuItem value="low">Low</MenuItem>
@@ -1702,6 +1729,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             <Box sx={{ mb: 2 }}>
                 <strong>Description:</strong> {state.goal.description || 'Not set'}
             </Box>
+            {priorityField}
         </>
     ) : (
         <>
@@ -1779,6 +1807,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     autoComplete: 'off'
                 }}
             />
+            {priorityField}
         </>
     );
 
@@ -1931,7 +1960,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         if (!state.goal.goal_type) return null;
         const project_and_achievement_fields = (
             <>
-                {priorityField}
                 {dateFields}
                 {completedField}
             </>
@@ -1946,7 +1974,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             case 'routine':
                 return (
                     <>
-                        {priorityField}
                         {dateFields}
                         {frequencyField}
                         {routineFields}
@@ -1955,7 +1982,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             case 'task':
                 return (
                     <>
-                        {priorityField}
                         {dateFields}
                         {/* Task Events Section */}
                         <Box sx={{ mt: 2, mb: 2 }}>
@@ -2109,7 +2135,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 // Events should display their scheduled time and duration
                 return (
                     <>
-                        {priorityField}
                         {scheduleField}
                         <Box sx={{ mt: 1, mb: 2, display: 'flex', gap: 1 }}>
                             <Button
@@ -2224,17 +2249,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         p: 1,
                         borderRadius: 1,
                         bgcolor: 'action.hover',
-                        display: 'flex',
+                        display: 'grid',
+                        gridTemplateColumns: '24px 28px 1fr',
                         alignItems: 'center',
-                        gap: 1,
+                        columnGap: 1,
                         minHeight: 56,
                         overflow: 'hidden'
                     }}>
-                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24, flexShrink: 0 }}>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24 }}>
                             {props.icon}
                         </Box>
-                        <Box sx={{ position: 'relative', width: 32, height: 32, flexShrink: 0 }}>
-                            <CircularProgress size={32} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
+                        <Box sx={{ position: 'relative', width: 28, height: 28, flexShrink: 0 }}>
+                            <CircularProgress size={28} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
                             <Typography
                                 variant="caption"
                                 sx={{
@@ -2243,14 +2269,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     left: '50%',
                                     transform: 'translate(-50%, -50%)',
                                     fontWeight: 700,
-                                    lineHeight: 1
+                                    lineHeight: 1,
+                                    zIndex: 1,
+                                    pointerEvents: 'none',
+                                    color: 'text.primary',
+                                    fontSize: '0.7rem'
                                 }}
                             >
                                 {(pct * 100).toFixed(0)}%
                             </Typography>
                         </Box>
-                        <Box sx={{ flex: 1, minWidth: 48, overflow: 'hidden' }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
+                        <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
                                 {props.label}
                             </Typography>
                         </Box>
@@ -2261,17 +2291,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         const SimpleTile = (props: { label: string; tooltip: string; primary: string; icon: React.ReactNode; }) => (
             <Tooltip title={props.tooltip} placement="top" arrow>
-                <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', display: 'flex', alignItems: 'center', gap: 1, minHeight: 56 }}>
-                    <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 28, height: 28, color: 'text.secondary' }}>
+                <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', display: 'grid', gridTemplateColumns: '24px 1fr', alignItems: 'center', columnGap: 1, minHeight: 56 }}>
+                    <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24 }}>
                         {props.icon}
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
                         <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
                             {props.primary}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
-                            {props.label}
-                        </Typography>
+                        {props.label && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
+                                {props.label}
+                            </Typography>
+                        )}
                     </Box>
                 </Box>
             </Tooltip>
@@ -2281,10 +2313,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             <Tooltip title="Completed vs total events" placement="top" arrow>
                 <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', minHeight: 56, overflow: 'hidden' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 28, height: 28, color: 'text.secondary' }}>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24 }}>
                             <EventAvailableIcon sx={{ fontSize: 16 }} />
                         </Box>
-                        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>Done</Typography>
                     </Box>
                     <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>{completed}/{total}</Typography>
                     <LinearProgress variant="determinate" value={completedPct * 100} sx={{ height: 6, borderRadius: 999 }} />
@@ -2294,14 +2325,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         return (
             <Box sx={{ mt: 2 }}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 1 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 1 }}>
                     <RateTile label={isEvent ? '10d' : 'Completion'} tooltip={isEvent ? '10-day completion rate' : 'Completion rate'} value={completionRate} icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />} />
                     {isEvent ? (
                         <RateTile label="All" tooltip="All-time completion rate" value={allTimeRate} icon={<TrendingUpIcon sx={{ fontSize: 16, color: 'secondary.main' }} />} color={'secondary.main'} />
                     ) : (
                         <CompletedTile />
                     )}
-                    <SimpleTile label={isEvent ? 'Done' : 'Reschedules'} tooltip={isEvent ? 'Events completed' : 'Number of reschedules'} primary={isEvent ? `${completed}/${total}` : String(reschedules)} icon={<EventAvailableIcon sx={{ fontSize: 16 }} />} />
+                    <SimpleTile label={isEvent ? '' : 'Reschedules'} tooltip={isEvent ? 'Events completed' : 'Number of reschedules'} primary={isEvent ? `${completed}/${total}` : String(reschedules)} icon={<EventAvailableIcon sx={{ fontSize: 16 }} />} />
                     <SimpleTile label={isEvent ? 'Cons' : 'Avg move'} tooltip={isEvent ? 'Consistency (std dev)' : 'Average move distance (hours)'} primary={isEvent ? `${(avgMove || 0).toFixed(1)}%` : `${(avgMove || 0).toFixed(1)}h`} icon={<AvTimerIcon sx={{ fontSize: 16 }} />} />
                 </Box>
             </Box>
@@ -2328,6 +2359,25 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (smartScheduleContext.type === 'event') {
                 // For existing events, update their scheduled timestamp
                 if (state.goal.id && state.goal.goal_type === 'event') {
+                    // If this event belongs to a routine, open scope dialog instead of immediate update
+                    if (isRoutineParentEvent) {
+                        const originalGoal = state.goal;
+                        const updatedGoal = { ...state.goal, scheduled_timestamp: timestamp } as Goal;
+                        setSmartScheduleOpen(false);
+                        setSmartScheduleContext(null);
+                        setRoutineUpdateDialog({
+                            isOpen: true,
+                            updateType: 'scheduled_time',
+                            originalGoal,
+                            updatedGoal,
+                            selectedScope: 'single',
+                            onConfirm: async (scope: 'single' | 'all' | 'future') => {
+                                await handleRoutineEventUpdate(originalGoal, updatedGoal, 'scheduled_time', scope);
+                            }
+                        });
+                        return;
+                    }
+
                     const updatedEvent = await updateEvent(state.goal.id, {
                         scheduled_timestamp: timestamp,
                         move_reason: 'Smart scheduled'
@@ -2353,6 +2403,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
             }
 
+            // Close smart schedule dialog only if we didn't branch into routine scope dialog above
             setSmartScheduleOpen(false);
             setSmartScheduleContext(null);
         };

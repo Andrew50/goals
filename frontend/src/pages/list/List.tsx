@@ -1,12 +1,13 @@
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
 import Fuse from 'fuse.js';
 import { formatFrequency } from '../../shared/utils/frequency';
+import { deleteGoal, duplicateGoal, updateGoal, completeGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
 
 type FieldType = 'text' | 'enum' | 'number' | 'boolean' | 'date';
 type ColumnKey = keyof Goal;
@@ -18,28 +19,29 @@ type FieldConfig = {
     type: FieldType;
     sortable?: boolean;
     filterable?: boolean;
+    multi?: boolean; // whether the filter supports multi-selection
 };
 
 const FIELD_CONFIG: FieldConfig[] = [
     { key: 'name', label: 'Name', width: '15%', type: 'text', sortable: true, filterable: false },
-    { key: 'goal_type', label: 'Type', width: '8%', type: 'enum', sortable: true, filterable: true },
+    { key: 'goal_type', label: 'Type', width: '8%', type: 'enum', sortable: true, filterable: true, multi: true },
     { key: 'description', label: 'Description', width: '20%', type: 'text', sortable: false, filterable: false },
-    { key: 'priority', label: 'Priority', width: '7%', type: 'enum', sortable: true, filterable: true },
-    { key: 'completed', label: 'Status', width: '8%', type: 'boolean', sortable: true, filterable: true },
+    { key: 'priority', label: 'Priority', width: '7%', type: 'enum', sortable: true, filterable: true, multi: true },
+    { key: 'completed', label: 'Status', width: '8%', type: 'boolean', sortable: true, filterable: true, multi: true },
     { key: 'start_timestamp', label: 'Start Date', width: '8%', type: 'date', sortable: true, filterable: true },
     { key: 'end_timestamp', label: 'End Date', width: '8%', type: 'date', sortable: true, filterable: true },
     { key: 'scheduled_timestamp', label: 'Scheduled', width: '8%', type: 'date', sortable: true, filterable: true },
     { key: 'next_timestamp', label: 'Next Due', width: '8%', type: 'date', sortable: true, filterable: true },
-    { key: 'frequency', label: 'Frequency', width: '5%', type: 'enum', sortable: true, filterable: true },
+    { key: 'frequency', label: 'Frequency', width: '5%', type: 'enum', sortable: true, filterable: true, multi: true },
     { key: 'duration', label: 'Duration', width: '5%', type: 'number', sortable: true, filterable: true },
 ];
 
 type DateRange = { from?: string; to?: string };
 type FiltersState = {
-    goal_type?: string;
-    priority?: string; // 'low' | 'medium' | 'high' | '__none__'
-    completed?: boolean;
-    frequency?: string;
+    goal_type?: string[];
+    priority?: string[]; // 'low' | 'medium' | 'high' | '__none__'
+    completed?: boolean[];
+    frequency?: string[];
     duration?: number;
     start_timestamp?: DateRange;
     end_timestamp?: DateRange;
@@ -57,6 +59,10 @@ const List: React.FC = () => {
     const [refreshTrigger, setRefreshTrigger] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [showFilters, setShowFilters] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [isBulkWorking, setIsBulkWorking] = useState(false);
+    const [bulkPriority, setBulkPriority] = useState<string>('');
+    const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         // Expect ApiGoal[] from the API
@@ -94,6 +100,16 @@ const List: React.FC = () => {
         setFilters(prev => ({ ...prev, [key]: value }));
     };
 
+    const toggleValueInArray = <T,>(arr: T[] | undefined, value: T, checked: boolean): T[] | undefined => {
+        const current = arr ?? [];
+        if (checked) {
+            if (!current.some(v => v === value)) return [...current, value];
+            return current;
+        }
+        const next = current.filter(v => v !== value);
+        return next.length > 0 ? next : undefined;
+    };
+
     const filteredList = useMemo(() => {
         let filtered = list;
 
@@ -106,22 +122,30 @@ const List: React.FC = () => {
             return t >= from && t <= to;
         };
 
-        // Enum and primitive filters
-        if (filters.goal_type !== undefined) {
-            filtered = filtered.filter(g => g.goal_type === filters.goal_type);
+        // Build selected sets for O(1) membership checks
+        const goalTypeSet = (filters.goal_type && filters.goal_type.length > 0) ? new Set(filters.goal_type) : undefined;
+        const frequencySet = (filters.frequency && filters.frequency.length > 0) ? new Set(filters.frequency) : undefined;
+        const prioritySet = (filters.priority && filters.priority.length > 0) ? new Set(filters.priority) : undefined;
+        const completedSet = (filters.completed && filters.completed.length > 0) ? new Set(filters.completed) : undefined;
+
+        // Enum and primitive filters with multi-selection
+        if (goalTypeSet) {
+            filtered = filtered.filter(g => g.goal_type !== undefined && goalTypeSet.has(g.goal_type as any));
         }
-        if (filters.frequency !== undefined) {
-            filtered = filtered.filter(g => g.frequency === filters.frequency);
+        if (frequencySet) {
+            filtered = filtered.filter(g => g.frequency !== undefined && frequencySet.has(g.frequency as any));
         }
-        if (filters.completed !== undefined) {
-            filtered = filtered.filter(g => g.completed === filters.completed);
+        if (completedSet) {
+            filtered = filtered.filter(g => completedSet.has(Boolean(g.completed) as any));
         }
-        if (filters.priority !== undefined) {
-            if (filters.priority === '__none__') {
-                filtered = filtered.filter(g => g.priority === undefined || g.priority === null);
-            } else {
-                filtered = filtered.filter(g => g.priority === filters.priority);
-            }
+        if (prioritySet) {
+            filtered = filtered.filter(g => {
+                const hasNone = prioritySet.has('__none__' as any);
+                if (g.priority === undefined || g.priority === null) {
+                    return hasNone;
+                }
+                return prioritySet.has(g.priority as any);
+            });
         }
         if (filters.duration !== undefined) {
             filtered = filtered.filter(g => (g.duration as any) === filters.duration);
@@ -181,6 +205,143 @@ const List: React.FC = () => {
         }
         return sorted;
     }, [filteredList, sortConfig]);
+
+    // Visible IDs and selection meta
+    const visibleIds = useMemo(() => sortedList.map(g => g.id), [sortedList]);
+    const numSelectedVisible = useMemo(() => visibleIds.filter(id => selectedIds.has(id)).length, [visibleIds, selectedIds]);
+    const allVisibleSelected = useMemo(() => visibleIds.length > 0 && numSelectedVisible === visibleIds.length, [visibleIds, numSelectedVisible]);
+    const isIndeterminate = useMemo(() => numSelectedVisible > 0 && !allVisibleSelected, [numSelectedVisible, allVisibleSelected]);
+
+    // Keep header checkbox indeterminate UI in sync
+    useEffect(() => {
+        if (headerCheckboxRef.current) {
+            headerCheckboxRef.current.indeterminate = isIndeterminate;
+        }
+    }, [isIndeterminate]);
+
+    // Prune selection when list refreshes
+    useEffect(() => {
+        if (selectedIds.size === 0) return;
+        const present = new Set(list.map(g => g.id));
+        const next = new Set<number>();
+        selectedIds.forEach(id => { if (present.has(id)) next.add(id); });
+        if (next.size !== selectedIds.size) setSelectedIds(next);
+    }, [list]);
+
+    // Clear selection on filter or search change for simplicity
+    useEffect(() => {
+        if (selectedIds.size > 0) setSelectedIds(new Set());
+    }, [filters, searchQuery]);
+
+    const toggleSelectOne = (goalId: number, checked: boolean) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (checked) next.add(goalId); else next.delete(goalId);
+            return next;
+        });
+    };
+
+    const toggleSelectAllVisible = (checked: boolean) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (checked) {
+                visibleIds.forEach(id => next.add(id));
+            } else {
+                visibleIds.forEach(id => next.delete(id));
+            }
+            return next;
+        });
+    };
+
+    const getSelectedGoals = (): Goal[] => list.filter(g => selectedIds.has(g.id));
+
+    const refreshAndClearSelection = () => {
+        setSelectedIds(new Set());
+        setRefreshTrigger(prev => prev + 1);
+    };
+
+    const handleBulkComplete = async (completed: boolean) => {
+        if (selectedIds.size === 0) return;
+        setIsBulkWorking(true);
+        const selectedGoals = getSelectedGoals();
+        try {
+            await Promise.all(selectedGoals.map(async (g) => {
+                if (g.goal_type === 'event') {
+                    await updateEvent(g.id, { completed });
+                } else {
+                    await completeGoal(g.id, completed);
+                }
+            }));
+            refreshAndClearSelection();
+        } catch (e) {
+            console.error('Bulk complete failed:', e);
+            refreshAndClearSelection();
+        } finally {
+            setIsBulkWorking(false);
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        if (!window.confirm('Delete selected items? This cannot be undone.')) return;
+        setIsBulkWorking(true);
+        const selectedGoals = getSelectedGoals();
+        try {
+            await Promise.all(selectedGoals.map(async (g) => {
+                if (g.goal_type === 'event') {
+                    await deleteEvent(g.id, false);
+                } else {
+                    await deleteGoal(g.id);
+                }
+            }));
+            refreshAndClearSelection();
+        } catch (e) {
+            console.error('Bulk delete failed:', e);
+            refreshAndClearSelection();
+        } finally {
+            setIsBulkWorking(false);
+        }
+    };
+
+    const handleBulkDuplicate = async () => {
+        if (selectedIds.size === 0) return;
+        const selectedGoals = getSelectedGoals();
+        const hasEvent = selectedGoals.some(g => g.goal_type === 'event');
+        if (hasEvent) return;
+        setIsBulkWorking(true);
+        try {
+            await Promise.all(selectedGoals.map(async (g) => {
+                await duplicateGoal(g.id);
+            }));
+            refreshAndClearSelection();
+        } catch (e) {
+            console.error('Bulk duplicate failed:', e);
+            refreshAndClearSelection();
+        } finally {
+            setIsBulkWorking(false);
+        }
+    };
+
+    const handleBulkPriorityApply = async () => {
+        if (!bulkPriority) return;
+        if (selectedIds.size === 0) return;
+        const selectedGoals = getSelectedGoals();
+        const hasEvent = selectedGoals.some(g => g.goal_type === 'event');
+        if (hasEvent) return;
+        setIsBulkWorking(true);
+        try {
+            await Promise.all(selectedGoals.map(async (g) => {
+                await updateGoal(g.id, { ...g, priority: bulkPriority as 'high' | 'medium' | 'low' });
+            }));
+            setBulkPriority('');
+            refreshAndClearSelection();
+        } catch (e) {
+            console.error('Bulk priority failed:', e);
+            refreshAndClearSelection();
+        } finally {
+            setIsBulkWorking(false);
+        }
+    };
 
     const handleGoalClick = (goal: Goal) => {
         GoalMenu.open(goal, 'view', (updatedGoal) => {
@@ -289,7 +450,50 @@ const List: React.FC = () => {
             );
         }
         if (cfg.type === 'boolean') {
-            const value = (filters[cfg.key as keyof FiltersState] as boolean | undefined);
+            const selected = (filters[cfg.key as keyof FiltersState] as boolean[] | undefined) ?? undefined;
+            if (cfg.multi) {
+                const isSelected = (val: boolean) => selected ? selected.includes(val) : false;
+                return (
+                    <div className="filter-input-wrapper">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <input
+                                type="checkbox"
+                                checked={isSelected(false)}
+                                onChange={(e) => {
+                                    const next = toggleValueInArray(selected, false, e.target.checked);
+                                    updateFilter(cfg.key as keyof FiltersState, next as any);
+                                }}
+                                aria-label="In Progress"
+                            />
+                            <span>In Progress</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+                            <input
+                                type="checkbox"
+                                checked={isSelected(true)}
+                                onChange={(e) => {
+                                    const next = toggleValueInArray(selected, true, e.target.checked);
+                                    updateFilter(cfg.key as keyof FiltersState, next as any);
+                                }}
+                                aria-label="Completed"
+                            />
+                            <span>Completed</span>
+                        </label>
+                        {(selected && selected.length > 0) && (
+                            <button
+                                type="button"
+                                className="filter-clear"
+                                onClick={() => updateFilter(cfg.key as keyof FiltersState, undefined)}
+                                aria-label={`Clear ${cfg.label}`}
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                );
+            }
+            // Fallback single-select UI
+            const value = (filters[cfg.key as keyof FiltersState] as unknown as boolean | undefined);
             return (
                 <div className="filter-input-wrapper">
                     <select
@@ -319,6 +523,7 @@ const List: React.FC = () => {
         }
         if (cfg.type === 'number') {
             const value = filters[cfg.key as keyof FiltersState] as number | undefined;
+            const isAllDaySelected = value === 1440;
             return (
                 <div className="filter-input-wrapper">
                     <input
@@ -331,6 +536,7 @@ const List: React.FC = () => {
                         className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
                         spellCheck="false"
                         autoComplete="off"
+                        disabled={isAllDaySelected}
                     />
                     {(value !== undefined) && (
                         <button
@@ -342,13 +548,66 @@ const List: React.FC = () => {
                             ×
                         </button>
                     )}
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.5rem' }}>
+                        <input
+                            type="checkbox"
+                            checked={isAllDaySelected}
+                            onChange={(e) => {
+                                updateFilter(cfg.key as keyof FiltersState, (e.target.checked ? 1440 : undefined) as any);
+                            }}
+                            aria-label="All day"
+                        />
+                        <span>All day</span>
+                    </label>
                 </div>
             );
         }
         if (cfg.type === 'enum') {
-            const value = filters[cfg.key as keyof FiltersState] as string | undefined;
+            const selected = filters[cfg.key as keyof FiltersState] as string[] | undefined;
             const options = cfg.key === 'goal_type' ? enumOptions.goal_type : cfg.key === 'frequency' ? enumOptions.frequency : cfg.key === 'priority' ? enumOptions.priority : [];
             const sortedValues = cfg.key === 'priority' ? options : [...options].sort((a, b) => a.toString().localeCompare(b.toString()));
+            if (cfg.multi) {
+                const selectedSet = new Set(selected ?? []);
+                return (
+                    <div className="filter-input-wrapper">
+                        <div className="grid grid-cols-1 gap-1">
+                            {sortedValues.map(v => {
+                                const str = String(v);
+                                const label = cfg.key === 'priority'
+                                    ? (str === '__none__' ? 'None' : str.charAt(0).toUpperCase() + str.slice(1))
+                                    : str;
+                                const isChecked = selectedSet.has(str);
+                                return (
+                                    <label key={str} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={isChecked}
+                                            onChange={(e) => {
+                                                const next = toggleValueInArray(selected, str, e.target.checked);
+                                                updateFilter(cfg.key as keyof FiltersState, next as any);
+                                            }}
+                                            aria-label={label}
+                                        />
+                                        <span>{label}</span>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                        {(selected && selected.length > 0) && (
+                            <button
+                                type="button"
+                                className="filter-clear"
+                                onClick={() => updateFilter(cfg.key as keyof FiltersState, undefined)}
+                                aria-label={`Clear ${cfg.label}`}
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                );
+            }
+            // Fallback single-select UI
+            const value = (filters[cfg.key as keyof FiltersState] as unknown as string | undefined);
             return (
                 <div className="filter-input-wrapper">
                     <select
@@ -444,11 +703,102 @@ const List: React.FC = () => {
                     </div>
                 )}
 
+                {selectedIds.size > 0 && (
+                    <div className="bulk-actions-bar">
+                        <div className="bulk-actions-left">
+                            <span>{selectedIds.size} selected</span>
+                            <button
+                                type="button"
+                                className="bulk-actions-button"
+                                onClick={() => handleBulkComplete(true)}
+                                disabled={isBulkWorking}
+                                aria-label="Mark completed"
+                            >
+                                Mark completed
+                            </button>
+                            <button
+                                type="button"
+                                className="bulk-actions-button"
+                                onClick={() => handleBulkComplete(false)}
+                                disabled={isBulkWorking}
+                                aria-label="Mark in progress"
+                            >
+                                Mark in progress
+                            </button>
+                            <div className="bulk-priority">
+                                <select
+                                    className="bulk-actions-select"
+                                    value={bulkPriority}
+                                    onChange={(e) => setBulkPriority(e.target.value)}
+                                    disabled={isBulkWorking}
+                                    aria-label="Select priority"
+                                >
+                                    <option value="">Set priority…</option>
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                </select>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button"
+                                    onClick={handleBulkPriorityApply}
+                                    disabled={isBulkWorking || !bulkPriority}
+                                    aria-label="Apply priority"
+                                >
+                                    Apply
+                                </button>
+                            </div>
+                            <button
+                                type="button"
+                                className="bulk-actions-button"
+                                onClick={handleBulkDuplicate}
+                                disabled={isBulkWorking || list.filter(g => selectedIds.has(g.id)).some(g => g.goal_type === 'event')}
+                                aria-label="Duplicate"
+                            >
+                                Duplicate
+                            </button>
+                            <button
+                                type="button"
+                                className="bulk-actions-button danger"
+                                onClick={handleBulkDelete}
+                                disabled={isBulkWorking}
+                                aria-label="Delete"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                        <div className="bulk-actions-right">
+                            <button
+                                type="button"
+                                className="bulk-actions-button secondary"
+                                onClick={() => setSelectedIds(new Set())}
+                                disabled={isBulkWorking}
+                                aria-label="Clear selection"
+                            >
+                                Clear selection
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="table-container">
                     <div className="table-wrapper">
                         <table className="goals-table">
                             <thead className="table-header">
                                 <tr>
+                                    <th className="selection-header" style={{ width: '40px', cursor: 'default' }} onClick={(e) => e.stopPropagation()}>
+                                        <input
+                                            ref={headerCheckboxRef}
+                                            type="checkbox"
+                                            aria-label="Select all"
+                                            checked={allVisibleSelected}
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                toggleSelectAllVisible(!allVisibleSelected);
+                                            }}
+                                            disabled={sortedList.length === 0}
+                                        />
+                                    </th>
                                     {FIELD_CONFIG.map(({ key, label, width }) => (
                                         <th
                                             key={key}
@@ -481,6 +831,18 @@ const List: React.FC = () => {
                                             onClick={() => handleGoalClick(goal)}
                                             onContextMenu={(e) => handleGoalContextMenu(e, goal)}
                                         >
+                                            <td className="selection-cell" onClick={(e) => e.stopPropagation()} style={{ width: '40px' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    aria-label={`Select ${goal.name}`}
+                                                    checked={selectedIds.has(goal.id)}
+                                                    onChange={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleSelectOne(goal.id, e.target.checked);
+                                                    }}
+                                                    disabled={isBulkWorking}
+                                                />
+                                            </td>
                                             <td className="table-cell">{goal.name}</td>
                                             <td className="table-cell">
                                                 <span
@@ -531,7 +893,7 @@ const List: React.FC = () => {
                                             <td className="table-cell">
                                                 {goal.duration && (
                                                     <span className="duration-badge">
-                                                        {goal.duration} min
+                                                        {goal.duration === 1440 ? 'All day' : `${goal.duration} min`}
                                                     </span>
                                                 )}
                                             </td>
