@@ -45,20 +45,20 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
 
   // Check if the app is running in standalone mode (installed as PWA)
   const checkStandaloneMode = useCallback(() => {
-    const isStandalone = 
+    const isStandalone =
       window.matchMedia('(display-mode: standalone)').matches ||
       // @ts-ignore - iOS specific
       window.navigator.standalone === true ||
       document.referrer.includes('android-app://');
-    
+
     return isStandalone;
   }, []);
 
   // Check if push notifications are supported
   const checkSupport = useCallback(() => {
-    return 'serviceWorker' in navigator && 
-           'PushManager' in window && 
-           'Notification' in window;
+    return 'serviceWorker' in navigator &&
+      'PushManager' in window &&
+      'Notification' in window;
   }, []);
 
   // Check current subscription status
@@ -80,7 +80,7 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
     const init = async () => {
       const isSupported = checkSupport();
       const isStandalone = checkStandaloneMode();
-      
+
       setState(prev => ({
         ...prev,
         isSupported,
@@ -111,17 +111,17 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
 
     try {
       const permission = await Notification.requestPermission();
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         permission,
-        isLoading: false 
+        isLoading: false
       }));
       return permission === 'granted';
     } catch (error) {
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         error: 'Failed to request permission',
-        isLoading: false 
+        isLoading: false
       }));
       return false;
     }
@@ -146,7 +146,7 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
 
     try {
       const registration = await navigator.serviceWorker.ready;
-      
+
       // Get VAPID public key from environment
       const vapidPublicKey = process.env.REACT_APP_VAPID_PUBLIC_KEY;
       if (!vapidPublicKey) {
@@ -162,19 +162,19 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
       // Send subscription to backend
       await privateRequest('push/subscribe', 'POST', subscription.toJSON());
 
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         isSubscribed: true,
-        isLoading: false 
+        isLoading: false
       }));
 
       return true;
     } catch (error: any) {
       console.error('Subscription error:', error);
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         error: error.message || 'Failed to subscribe',
-        isLoading: false 
+        isLoading: false
       }));
       return false;
     }
@@ -191,7 +191,7 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
     try {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
-      
+
       if (subscription) {
         // Notify backend to remove subscription
         await privateRequest('push/unsubscribe', 'POST', {
@@ -202,19 +202,19 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
         await subscription.unsubscribe();
       }
 
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         isSubscribed: false,
-        isLoading: false 
+        isLoading: false
       }));
 
       return true;
     } catch (error: any) {
       console.error('Unsubscribe error:', error);
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         error: error.message || 'Failed to unsubscribe',
-        isLoading: false 
+        isLoading: false
       }));
       return false;
     }
@@ -235,10 +235,10 @@ export const usePushNotifications = (): [PushNotificationState, PushNotification
       return true;
     } catch (error: any) {
       console.error('Test notification error:', error);
-      setState(prev => ({ 
-        ...prev, 
+      setState(prev => ({
+        ...prev,
         error: error.message || 'Failed to send test notification',
-        isLoading: false 
+        isLoading: false
       }));
       return false;
     }
@@ -261,9 +261,9 @@ export const useInstallPrompt = () => {
   useEffect(() => {
     // Check if running on iOS
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    
+
     // Check if not in standalone mode
-    const isStandalone = 
+    const isStandalone =
       window.matchMedia('(display-mode: standalone)').matches ||
       // @ts-ignore
       window.navigator.standalone === true;

@@ -60,11 +60,11 @@ pub async fn save_subscription(
     let endpoint = subscription["endpoint"]
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "Missing endpoint".to_string()))?;
-    
+
     let p256dh = subscription["keys"]["p256dh"]
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "Missing p256dh key".to_string()))?;
-    
+
     let auth = subscription["keys"]["auth"]
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "Missing auth key".to_string()))?;
@@ -136,7 +136,10 @@ pub async fn remove_subscription(
             println!("✅ [PUSH] Subscription removed for user {}", user_id);
             Ok(StatusCode::OK)
         } else {
-            println!("⚠️ [PUSH] No subscription found to remove for user {}", user_id);
+            println!(
+                "⚠️ [PUSH] No subscription found to remove for user {}",
+                user_id
+            );
             Ok(StatusCode::NOT_FOUND)
         }
     } else {
@@ -200,7 +203,7 @@ pub async fn send_test_notification(
             }
             Err(e) => {
                 eprintln!("❌ [PUSH] Failed to send to endpoint: {}", e);
-                
+
                 // Check if subscription is invalid (410 Gone or 404 Not Found)
                 if e.contains("410") || e.contains("404") || e.contains("InvalidSubscription") {
                     failed_endpoints.push(sub.endpoint.clone());
@@ -245,8 +248,8 @@ pub async fn send_notification_to_user(
         return Err("No push subscriptions found".to_string());
     }
 
-    let payload_json = serde_json::to_vec(payload)
-        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let payload_json =
+        serde_json::to_vec(payload).map_err(|e| format!("Failed to serialize payload: {}", e))?;
 
     let mut success_count = 0;
     let mut failed_endpoints = Vec::new();
@@ -259,7 +262,7 @@ pub async fn send_notification_to_user(
             }
             Err(e) => {
                 eprintln!("❌ [PUSH] Failed to send notification: {}", e);
-                
+
                 // Check if subscription is invalid
                 if e.contains("410") || e.contains("404") || e.contains("InvalidSubscription") {
                     failed_endpoints.push(sub.endpoint.clone());
@@ -344,28 +347,24 @@ async fn send_push_notification(
 ) -> Result<(), String> {
     // For now, we'll just log the notification attempt
     // In production, this should use the web-push crate to actually send notifications
-    
+
     println!(
         "📤 [PUSH] Would send notification to endpoint: {}",
         subscription.endpoint
     );
-    println!(
-        "📦 [PUSH] Payload size: {} bytes",
-        payload.len()
-    );
-    
+    println!("📦 [PUSH] Payload size: {} bytes", payload.len());
+
     // Check if we have VAPID keys configured
-    let has_vapid = env::var("VAPID_PRIVATE_KEY").is_ok() 
-        && env::var("VAPID_PUBLIC_KEY").is_ok();
-    
+    let has_vapid = env::var("VAPID_PRIVATE_KEY").is_ok() && env::var("VAPID_PUBLIC_KEY").is_ok();
+
     if !has_vapid {
         println!("⚠️ [PUSH] VAPID keys not configured - notifications disabled");
         return Err("VAPID keys not configured".to_string());
     }
-    
+
     // TODO: Implement actual push sending once web-push dependency is fixed
     // For now, we simulate success to allow the rest of the system to work
-    
+
     println!("✅ [PUSH] Notification queued (simulation mode)");
     Ok(())
 }

@@ -19,11 +19,11 @@ import {
     CircularProgress,
     Snackbar,
 } from "@mui/material";
-import { 
-    Google, 
-    Key, 
-    LinkOff, 
-    Notifications, 
+import {
+    Google,
+    Key,
+    LinkOff,
+    Notifications,
     NotificationsOff,
     NotificationsActive,
     PhoneIphone,
@@ -299,7 +299,7 @@ const AccountSettings: React.FC = () => {
                                 <Typography variant="h6" gutterBottom>
                                     Push Notifications
                                 </Typography>
-                                
+
                                 {/* iOS Install Prompt */}
                                 {showInstallPrompt && (
                                     <Card sx={{ mb: 3, bgcolor: 'info.light', color: 'info.contrastText' }}>
@@ -319,8 +319,8 @@ const AccountSettings: React.FC = () => {
                                                 <li>Tap "Add" to install</li>
                                                 <li>Open the app from your home screen</li>
                                             </Typography>
-                                            <Button 
-                                                variant="contained" 
+                                            <Button
+                                                variant="contained"
                                                 size="small"
                                                 onClick={dismissPrompt}
                                             >
@@ -345,15 +345,15 @@ const AccountSettings: React.FC = () => {
                                                         {notificationState.isSubscribed ? 'Notifications Enabled' : 'Notifications Disabled'}
                                                     </Typography>
                                                     <Typography variant="body2" color="text.secondary">
-                                                        {notificationState.isSupported ? 
-                                                            (notificationState.isStandalone ? 
-                                                                `Permission: ${notificationState.permission}` : 
-                                                                'App not installed to home screen') : 
+                                                        {notificationState.isSupported ?
+                                                            (notificationState.isStandalone ?
+                                                                `Permission: ${notificationState.permission}` :
+                                                                'App not installed to home screen') :
                                                             'Not supported in this browser'}
                                                     </Typography>
                                                 </Box>
                                             </Box>
-                                            
+
                                             {notificationState.isLoading && <CircularProgress size={24} />}
                                         </Box>
 
@@ -375,7 +375,7 @@ const AccountSettings: React.FC = () => {
                                                         }
                                                     }}
                                                     disabled={
-                                                        notificationState.isLoading || 
+                                                        notificationState.isLoading ||
                                                         !notificationState.isSupported ||
                                                         (!notificationState.isStandalone && /iPad|iPhone|iPod/.test(navigator.userAgent))
                                                     }
