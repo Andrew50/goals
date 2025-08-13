@@ -124,6 +124,14 @@ jobs:
         run: cargo test --lib
       
       # Run integration tests that require the Neo4j test database
+      - name: Create test .env file
+        run: |
+          echo "GOALS_CLOUDFLARED_TOKEN=test_token" > $GITHUB_WORKSPACE/.env
+          echo "BACKUP_PATH=/tmp/backups" >> $GITHUB_WORKSPACE/.env
+          echo "GOALS_GEMINI_API_KEY=test_api_key" >> $GITHUB_WORKSPACE/.env
+          echo "JWT_SECRET=test_jwt_secret" >> $GITHUB_WORKSPACE/.env
+          echo "JWT_EXPIRATION=86400" >> $GITHUB_WORKSPACE/.env
+      
       - name: Run backend integration tests
         run: bash run_integration_tests.sh
       

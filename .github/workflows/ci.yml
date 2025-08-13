@@ -35,6 +35,14 @@ jobs:
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      
+      - name: Create test .env file
+        run: |
+          echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
+          echo "BACKUP_PATH=/tmp/backups" >> .env
+          echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
+          echo "JWT_SECRET=test_jwt_secret" >> .env
+          echo "JWT_EXPIRATION=86400" >> .env
           
       - name: Start test stack
         run: |

@@ -751,6 +751,90 @@ const List: React.FC = () => {
                             <button
                                 type="button"
                                 className="bulk-actions-button"
+                                onClick={() => {
+                                    // Open GoalMenu in edit mode with a blank template, prefilled with common filtered values
+                                    const template: Partial<Goal> = {};
+                                    // Prefill goal_type if a single filter value is set
+                                    if (filters.goal_type && filters.goal_type.length === 1) {
+                                        (template as any).goal_type = filters.goal_type[0];
+                                    }
+                                    // Prefill priority if exactly one selected
+                                    if (filters.priority && filters.priority.length === 1 && filters.priority[0] !== '__none__') {
+                                        (template as any).priority = filters.priority[0];
+                                    }
+                                    // Prefill completed if exactly one selected
+                                    if (filters.completed && filters.completed.length === 1) {
+                                        (template as any).completed = filters.completed[0];
+                                    }
+
+                                    const blank: Goal = {
+                                        id: -1,
+                                        name: '',
+                                        goal_type: (template as any).goal_type || 'task',
+                                        ...template as any,
+                                    } as Goal;
+
+                                    const selectedGoals = getSelectedGoals();
+
+                                    const submit = async (updated: Goal) => {
+                                        setIsBulkWorking(true);
+                                        try {
+                                            // Compute changed fields vs the template blank
+                                            const changed: Partial<Goal> = {};
+                                            const keys: (keyof Goal)[] = [
+                                                'name', 'description', 'goal_type', 'priority', 'completed', 'start_timestamp', 'end_timestamp', 'scheduled_timestamp', 'next_timestamp', 'frequency', 'duration', 'due_date', 'start_date', 'routine_time'
+                                            ];
+                                            for (const k of keys) {
+                                                const newVal = (updated as any)[k];
+                                                const oldVal = (blank as any)[k];
+                                                const isDate = newVal instanceof Date || oldVal instanceof Date;
+                                                const equal = isDate
+                                                    ? (newVal instanceof Date && oldVal instanceof Date && newVal.getTime() === oldVal.getTime())
+                                                    : newVal === oldVal;
+                                                if (!equal && newVal !== undefined) {
+                                                    (changed as any)[k] = newVal;
+                                                }
+                                            }
+
+                                            // Apply changed fields to all selected
+                                            await Promise.all(selectedGoals.map(async (g) => {
+                                                // Skip goal_type changes for events
+                                                const payload: Partial<Goal> = { ...changed };
+                                                if (g.goal_type === 'event') {
+                                                    // Map applicable fields to updateEvent
+                                                    const eventUpdates: any = {};
+                                                    if (payload.name !== undefined) eventUpdates.name = payload.name;
+                                                    if (payload.description !== undefined) eventUpdates.description = payload.description;
+                                                    if (payload.priority !== undefined) eventUpdates.priority = payload.priority;
+                                                    if (payload.duration !== undefined) eventUpdates.duration = payload.duration;
+                                                    if (payload.completed !== undefined) eventUpdates.completed = payload.completed;
+                                                    if (payload.scheduled_timestamp !== undefined) eventUpdates.scheduled_timestamp = payload.scheduled_timestamp as any;
+                                                    if (Object.keys(eventUpdates).length > 0) {
+                                                        await updateEvent(g.id, eventUpdates);
+                                                    }
+                                                } else {
+                                                    // Non-events
+                                                    const goalUpdates: Goal = { ...g, ...payload } as Goal;
+                                                    await updateGoal(g.id, goalUpdates);
+                                                }
+                                            }));
+                                            refreshAndClearSelection();
+                                        } finally {
+                                            setIsBulkWorking(false);
+                                        }
+                                    };
+
+                                    // Use GoalMenu with submit override
+                                    (GoalMenu as any).openWithSubmitOverride(blank, 'edit', async (u: Goal) => submit(u), () => { });
+                                }}
+                                disabled={isBulkWorking}
+                                aria-label="Bulk edit"
+                            >
+                                Edit…
+                            </button>
+                            <button
+                                type="button"
+                                className="bulk-actions-button"
                                 onClick={handleBulkDuplicate}
                                 disabled={isBulkWorking || list.filter(g => selectedIds.has(g.id)).some(g => g.goal_type === 'event')}
                                 aria-label="Duplicate"

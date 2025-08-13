@@ -65,6 +65,7 @@ interface GoalMenuProps {
     mode: Mode;
     onClose: () => void;
     onSuccess: (goal: Goal) => void;
+    submitOverride?: (updatedGoal: Goal, originalGoal: Goal, mode: Mode) => Promise<void>;
 }
 
 // Stats interfaces
@@ -100,7 +101,7 @@ interface RoutineUpdateDialogState {
     onConfirm: (scope: 'single' | 'all' | 'future') => Promise<void>;
 }
 
-const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess }) => {
+const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
@@ -919,6 +920,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const handleSubmit = async (another: boolean = false) => {
         if (another && state.mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
+        }
+
+        // Delegate to external submit if provided (bulk-edit use case)
+        if (submitOverride) {
+            try {
+                await submitOverride(state.goal, initialGoal, state.mode);
+                if (onSuccess) onSuccess(state.goal);
+                if (another && state.mode === 'create') {
+                    const { id, ...restGoal } = state.goal;
+                    const newGoal: Goal = { ...restGoal, name: '', description: '' } as Goal;
+                    close();
+                    setTimeout(() => {
+                        GoalMenuWithStatic.open(newGoal, 'create', onSuccess);
+                    }, 300);
+                } else {
+                    close();
+                }
+            } catch (error) {
+                console.error('Failed external submit:', error);
+                setState({ ...state, error: error instanceof Error ? error.message : 'Failed to submit changes' });
+            }
+            return;
         }
 
         // Check if this is a routine event being modified
@@ -2243,6 +2266,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         const RateTile = (props: { label: string; tooltip: string; value: number; icon: React.ReactNode; color?: string; }) => {
             const pct = Number.isFinite(props.value) ? Math.max(0, Math.min(1, props.value)) : 0;
+            const ringSize = 48;
             return (
                 <Tooltip title={props.tooltip} placement="top" arrow>
                     <Box sx={{
@@ -2250,7 +2274,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         borderRadius: 1,
                         bgcolor: 'action.hover',
                         display: 'grid',
-                        gridTemplateColumns: '24px 28px 1fr',
+                        gridTemplateColumns: `24px ${ringSize}px 1fr`,
                         alignItems: 'center',
                         columnGap: 1,
                         minHeight: 56,
@@ -2259,8 +2283,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24 }}>
                             {props.icon}
                         </Box>
-                        <Box sx={{ position: 'relative', width: 28, height: 28, flexShrink: 0 }}>
-                            <CircularProgress size={28} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
+                        <Box sx={{ position: 'relative', width: ringSize, height: ringSize, flexShrink: 0 }}>
+                            <CircularProgress size={ringSize} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
                             <Typography
                                 variant="caption"
                                 sx={{
@@ -2273,7 +2297,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     zIndex: 1,
                                     pointerEvents: 'none',
                                     color: 'text.primary',
-                                    fontSize: '0.7rem'
+                                    fontSize: '0.85rem'
                                 }}
                             >
                                 {(pct * 100).toFixed(0)}%
@@ -2921,6 +2945,7 @@ let currentRoot: Root | null = null;
 interface GoalMenuComponent extends React.FC<GoalMenuProps> {
     open: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
     close: () => void;
+    openWithSubmitOverride: (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void) => void;
 }
 
 const GoalMenuBase = GoalMenu;
@@ -2965,6 +2990,42 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
     );
 
     console.log('[GoalMenu.open] Goal menu rendered');
+};
+
+GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void) => {
+    console.log('[GoalMenu.openWithSubmitOverride] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+
+    const cleanup = () => {
+        if (currentRoot) {
+            const rootToUnmount = currentRoot;
+            currentRoot = null;
+            setTimeout(() => {
+                rootToUnmount.unmount();
+            });
+        }
+        if (document.body.contains(container)) {
+            document.body.removeChild(container);
+        }
+        currentInstance = null;
+    };
+
+    currentInstance = cleanup;
+
+    currentRoot = createRoot(container);
+    currentRoot.render(
+        <GoalMenuBase
+            goal={goal}
+            mode={initialMode}
+            onClose={cleanup}
+            onSuccess={(updatedGoal: Goal) => {
+                if (onSuccess) onSuccess(updatedGoal);
+            }}
+            submitOverride={submit}
+        />
+    );
 };
 
 GoalMenuWithStatic.close = () => {
