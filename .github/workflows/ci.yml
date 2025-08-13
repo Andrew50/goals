@@ -28,8 +28,6 @@ jobs:
         with:
           node-version: 20
           
-      # Rust toolchain not needed on host when running tests inside containers
-          
       - name: Cache npm
         uses: actions/cache@v4
         with:

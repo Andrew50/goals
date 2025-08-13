@@ -6,11 +6,24 @@ BACKUP_DIR="/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINAL_DUMP="${BACKUP_DIR}/neo4j_dump_${TIMESTAMP}.dump"
 TMP_DIR="${BACKUP_DIR}/tmp_${TIMESTAMP}"
+DB_NAME="${NEO4J_DATABASE:-neo4j}"
+
+# Determine path to neo4j-admin (works for Neo4j 4.x and 5.x official images)
+NEO4J_ADMIN_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
+if [ ! -x "${NEO4J_ADMIN_BIN}" ]; then
+    if command -v neo4j-admin >/dev/null 2>&1; then
+        NEO4J_ADMIN_BIN="$(command -v neo4j-admin)"
+    else
+        echo "[$(date)] neo4j-admin binary not found in PATH or at ${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
+        exit 1
+    fi
+fi
 
 echo "----------------------------------------"
 echo "[$(date)] Starting backup process"
 echo "[$(date)] Backup directory: ${BACKUP_DIR}"
 echo "[$(date)] Final dump path: ${FINAL_DUMP}"
+echo "[$(date)] Target database: ${DB_NAME}"
 
 # Ensure backup directory exists
 mkdir -p "${BACKUP_DIR}"
@@ -25,7 +38,7 @@ mkdir -p "${TMP_DIR}"
 
 echo "[$(date)] Starting database dump to temporary directory..."
 # In Neo4j 5, --to-path must be a directory. The dump file will be named neo4j.dump inside that directory.
-if neo4j-admin database dump neo4j --to-path="${TMP_DIR}" --overwrite-destination; then
+if "${NEO4J_ADMIN_BIN}" database dump "${DB_NAME}" --to-path="${TMP_DIR}" --overwrite-destination; then
     echo "[$(date)] Database dump completed successfully"
 else
     echo "[$(date)] Database dump failed"

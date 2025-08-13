@@ -29,19 +29,34 @@ jobs:
         id: compute
         shell: bash
         run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          echo "Base: $BASE_SHA"
-          echo "Head: $HEAD_SHA"
-          git fetch --no-tags --depth=1 origin "+$BASE_SHA:$BASE_SHA" "+$HEAD_SHA:$HEAD_SHA" || true
-          CHANGED_FILES=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA" || true)
-          echo "Changed files:\n$CHANGED_FILES"
+          set -euo pipefail
+          echo "Event: ${{ github.event_name }}"
+          echo "Base ref: ${{ github.base_ref }}"
+          echo "Base sha: ${{ github.event.pull_request.base.sha }}"
+          echo "Current sha (merge or head): ${{ github.sha }}"
+
+          # Ensure we have full history available
+          if git rev-parse --is-shallow-repository >/dev/null 2>&1; then
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              git fetch --no-tags --prune --unshallow || true
+            fi
+          fi
+
+          # Ensure base branch is fetched locally
+          git fetch --no-tags origin "${{ github.base_ref }}:${{ github.base_ref }}" || git fetch --no-tags origin "${{ github.base_ref }}"
+
+          # Diff base branch against the checked-out commit (merge commit for PRs)
+          CHANGED_FILES=$(git diff --name-only "${{ github.base_ref }}...${{ github.sha }}" || true)
+          printf "Changed files:\n%s\n" "$CHANGED_FILES"
+
           backend_changed=false
           frontend_changed=false
           if echo "$CHANGED_FILES" | grep -q '^backend/'; then backend_changed=true; fi
           if echo "$CHANGED_FILES" | grep -q '^frontend/'; then frontend_changed=true; fi
+
           any_changes=false
           if [ "$backend_changed" = true ] || [ "$frontend_changed" = true ]; then any_changes=true; fi
+
           echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend_changed" >> "$GITHUB_OUTPUT"
           echo "any_changes=$any_changes" >> "$GITHUB_OUTPUT"
