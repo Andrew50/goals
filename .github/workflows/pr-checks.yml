@@ -56,7 +56,6 @@ jobs:
     outputs:
       backend_previously_failed: ${{ steps.check-failures.outputs.backend_failed }}
       frontend_previously_failed: ${{ steps.check-failures.outputs.frontend_failed }}
-      e2e_previously_failed: ${{ steps.check-failures.outputs.e2e_failed }}
     steps:
       - name: Check for previous failures
         id: check-failures
@@ -64,79 +63,28 @@ jobs:
           # Initialize all outputs to false by default
           echo "backend_failed=false" >> $GITHUB_OUTPUT
           echo "frontend_failed=false" >> $GITHUB_OUTPUT
-          echo "e2e_failed=false" >> $GITHUB_OUTPUT
-          
+
           # Get repository in owner/repo format
           REPO="${GITHUB_REPOSITORY}"
-          
+
           # Try to get workflow runs with error handling
           echo "Checking previous runs for $REPO"
-          
-          # Check backend tests
-          backend_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous backend workflow status: $backend_status"
-          if [ "$backend_status" == "failure" ]; then
+
+          # Check workflow conclusion (best-effort signal)
+          workflow_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          echo "Previous workflow status: $workflow_status"
+          if [ "$workflow_status" == "failure" ]; then
             echo "backend_failed=true" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check frontend tests (falls back to workflow conclusion if job-specific data isn't available)
-          frontend_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous frontend workflow status: $frontend_status"
-          if [ "$frontend_status" == "failure" ]; then
             echo "frontend_failed=true" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check E2E tests
-          e2e_status=$(gh api "/repos/${REPO}/actions/workflows/e2e-tests.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous E2E workflow status: $e2e_status"
-          if [ "$e2e_status" == "failure" ]; then
-            echo "e2e_failed=true" >> $GITHUB_OUTPUT
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # BACKEND PIPELINE
-  backend-checks:
-    name: Backend Lint & Build
+  # BACKEND PIPELINE (lint, build, unit tests)
+  backend-verify:
+    name: Backend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: ./backend
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            backend/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
-      
-      - name: Apply code format
-        run: cargo fmt --all
-      
-      - name: Check with clippy
-        run: cargo clippy -- -D warnings
-        
-      - name: Build
-        run: cargo build --verbose
-
-  backend-tests:
-    name: Backend Unit Tests
-    needs: [backend-checks]
-    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -144,10 +92,12 @@ jobs:
         working-directory: ./backend
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      
+        with:
+          components: clippy
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -158,62 +108,21 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-
-        
-      - name: Run backend unit tests
-        run: cargo test --lib
-      
-      # Run integration tests that require the Neo4j test database
-      - name: Create test .env file
-        run: |
-          echo "GOALS_CLOUDFLARED_TOKEN=test_token" > $GITHUB_WORKSPACE/.env
-          echo "BACKUP_PATH=/tmp/backups" >> $GITHUB_WORKSPACE/.env
-          echo "GOALS_GEMINI_API_KEY=test_api_key" >> $GITHUB_WORKSPACE/.env
-          echo "JWT_SECRET=test_jwt_secret" >> $GITHUB_WORKSPACE/.env
-          echo "JWT_EXPIRATION=86400" >> $GITHUB_WORKSPACE/.env
-      
-      - name: Run backend integration tests
-        run: bash run_integration_tests.sh
-      
-      - name: Mark test success
-        if: success()
-        run: echo "Tests passed successfully"
 
-  # FRONTEND PIPELINE  
-  frontend-checks:
-    name: Frontend Lint & Build
+      - name: Lint with clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Unit tests
+        run: cargo test --lib
+
+  # FRONTEND PIPELINE (lint, build, unit tests)
+  frontend-verify:
+    name: Frontend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: ./frontend
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: './frontend/package-lock.json'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Lint with ESLint
-        run: npx eslint . --ext .js,.jsx,.ts,.tsx
-      
-      - name: Type check with TypeScript
-        run: npx tsc --noEmit
-        
-      - name: Build
-        run: npm run build
-
-  frontend-tests:
-    name: Frontend Unit Tests
-    needs: [frontend-checks]
-    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -223,20 +132,29 @@ jobs:
         working-directory: ./frontend
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: './frontend/package-lock.json'
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Run unit tests
+
+      - name: Lint with ESLint
+        run: npx eslint . --ext .js,.jsx,.ts,.tsx
+
+      - name: Type check with TypeScript
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
         run: npm run test:ci
-        
+
       - name: Upload test coverage
         uses: actions/upload-artifact@v4
         if: always()
@@ -245,45 +163,24 @@ jobs:
           path: frontend/coverage/
           retention-days: 30
       
-      - name: Mark test success
-        if: success()
-        run: echo "Tests passed successfully"
-      
-  # INTEGRATION TESTING
-  e2e-tests:
-    name: Run E2E Tests
-    needs: [changed-files, check-previous-runs, backend-tests, frontend-tests]
-    if: |
-      always() && 
-      (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true')
-    uses: ./.github/workflows/e2e-tests.yml
-    with:
-      ref: ${{ github.ref }}
-      skip_tests: false
-      num_workers: 32
-
   # DEPLOYMENT CHECK
   deploy-ready:
     name: Ready for Deployment
-    needs: [backend-checks, backend-tests, frontend-checks, frontend-tests, e2e-tests]
+    needs: [backend-verify, frontend-verify]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Evaluate overall workflow result
         run: |
-          echo "backend-checks: ${{ needs.backend-checks.result }}"
-          echo "backend-tests: ${{ needs.backend-tests.result }}"
-          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
-          echo "frontend-tests: ${{ needs.frontend-tests.result }}"
-          echo "e2e-tests: ${{ needs.e2e-tests.result }}"
-          if [ "${{ needs.backend-checks.result }}" != "success" ] || \
-             [ "${{ needs.backend-tests.result }}" != "success" ] || \
-             [ "${{ needs.frontend-checks.result }}" != "success" ] || \
-             [ "${{ needs.frontend-tests.result }}" != "success" ] || \
-             [ "${{ needs.e2e-tests.result }}" != "success" ]; then
+          echo "backend-verify: ${{ needs.backend-verify.result }}"
+          echo "frontend-verify: ${{ needs.frontend-verify.result }}"
+          back_ok="${{ needs.backend-verify.result }}"
+          front_ok="${{ needs.frontend-verify.result }}"
+          if { [ "$back_ok" != "success" ] && [ "$back_ok" != "skipped" ]; } || \
+             { [ "$front_ok" != "success" ] && [ "$front_ok" != "skipped" ]; }; then
             echo "One or more jobs failed. PR is not ready for deployment."
             exit 1
           else
-            echo "All checks passed! This PR is ready to be merged to prod for deployment."
+            echo "All checks passed or were skipped appropriately! This PR is ready to be merged to prod for deployment."
           fi

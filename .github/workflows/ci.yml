@@ -83,6 +83,12 @@ jobs:
             done
           done
           echo "All services are ready"
+      
+      - name: Clean potentially root-owned node_modules
+        run: |
+          if [ -e frontend/node_modules ]; then
+            rm -rf frontend/node_modules 2>/dev/null || mv -f frontend/node_modules "frontend/node_modules.bak.$(date +%s)" || true
+          fi
           
       - name: Backend integration tests
         env:
@@ -95,6 +101,7 @@ jobs:
           mkdir -p "$CARGO_TARGET_DIR"
           cd backend
           cargo test --test routine_integration_test -- --nocapture
+      
           
       - name: E2E Playwright tests
         env:
