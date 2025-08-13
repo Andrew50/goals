@@ -9,7 +9,6 @@ services:
       - NEO4J_PASSWORD=password123
       - TEST_MODE=true
       - JWT_SECRET=default_secret
-    environment:
       - RUST_BACKTRACE=1
       - RUST_LOG=info
     command: ["bash","-lc","cargo build --release && ./target/release/backend"]
