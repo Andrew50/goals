@@ -226,12 +226,12 @@ const List: React.FC = () => {
         const next = new Set<number>();
         selectedIds.forEach(id => { if (present.has(id)) next.add(id); });
         if (next.size !== selectedIds.size) setSelectedIds(next);
-    }, [list]);
+    }, [list, selectedIds]);
 
     // Clear selection on filter or search change for simplicity
     useEffect(() => {
         if (selectedIds.size > 0) setSelectedIds(new Set());
-    }, [filters, searchQuery]);
+    }, [filters, searchQuery, selectedIds.size]);
 
     const toggleSelectOne = (goalId: number, checked: boolean) => {
         setSelectedIds(prev => {

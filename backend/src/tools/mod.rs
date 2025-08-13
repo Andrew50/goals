@@ -7,6 +7,7 @@ pub mod goal;
 pub mod list;
 pub mod migration;
 pub mod network;
+pub mod push;
 pub mod routine;
 pub mod stats;
 pub mod traversal;

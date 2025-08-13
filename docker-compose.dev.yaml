@@ -13,6 +13,9 @@ services:
       - .env
     environment:
       HOST_URL: ${HOST_URL:-localhost}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: ${VAPID_SUBJECT}
     networks:
       - dev_network
       #    db:
@@ -49,6 +52,7 @@ services:
       CHOKIDAR_USEPOLLING: "true" #enable polling
       HOST_URL: ${HOST_URL:-localhost}
       REACT_APP_API_URL: "http://${HOST_URL:-localhost}:5059"
+      REACT_APP_VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
     env_file:
       - .env
     ports:

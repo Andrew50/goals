@@ -416,7 +416,7 @@ async fn update_sync_state(
     calendar_id: &str,
     sync_token: Option<String>,
 ) -> Result<(), String> {
-    let query = if sync_token.is_some() {
+    let query = if let Some(token) = sync_token {
         query(
             "MERGE (s:SyncState {user_id: $user_id, calendar_id: $calendar_id})
              SET s.sync_token = $sync_token, s.last_synced = timestamp()
@@ -424,7 +424,7 @@ async fn update_sync_state(
         )
         .param("user_id", user_id)
         .param("calendar_id", calendar_id.to_string())
-        .param("sync_token", sync_token.unwrap())
+        .param("sync_token", token)
     } else {
         query(
             "MERGE (s:SyncState {user_id: $user_id, calendar_id: $calendar_id})
@@ -716,7 +716,7 @@ pub async fn sync_to_gcal(
         candidate_count += 1;
         let scheduled_human = goal
             .scheduled_timestamp
-            .and_then(|ts| chrono::DateTime::<Utc>::from_timestamp_millis(ts))
+            .and_then(chrono::DateTime::<Utc>::from_timestamp_millis)
             .map(|dt| dt.to_rfc3339())
             .unwrap_or_else(|| "<none>".to_string());
 

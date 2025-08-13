@@ -6,9 +6,20 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
     
     steps:
       - uses: actions/checkout@v4
@@ -17,9 +28,11 @@ jobs:
         with:
           node-version: 20
           
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      - name: Install Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --component rustfmt,clippy
+          rustup default stable
           
       - name: Cache cargo
         uses: actions/cache@v4
@@ -27,7 +40,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            backend/target
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
           
       - name: Cache npm
@@ -75,7 +87,9 @@ jobs:
           NEO4J_TEST_URI: bolt://localhost:7688
           NEO4J_TEST_USERNAME: neo4j
           NEO4J_TEST_PASSWORD: password123
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
         run: |
+          mkdir -p "$CARGO_TARGET_DIR"
           cd backend
           cargo test --test routine_integration_test -- --nocapture
           

@@ -380,8 +380,6 @@ async fn create_or_get_google_user(
     println!("🔄 Starting Google user creation/lookup process");
     eprintln!("🔄 Checking if user exists by Google ID: {}", user_info.id);
     let access_token = String::new();
-    let refresh_token: Option<String> = None;
-    let expires_at: Option<i64> = None;
 
     // First, check if user exists by Google ID
     println!("🔍 Querying database for existing user by Google ID...");
@@ -475,8 +473,8 @@ async fn create_or_get_google_user(
         .param("google_email", user_info.email.clone())
         .param("display_name", user_info.name.clone())
         .param("access_token", access_token.to_string())
-        .param("refresh_token", refresh_token.unwrap_or_default())
-        .param("token_expiry", expires_at.unwrap_or(0));
+        .param("refresh_token", "")
+        .param("token_expiry", 0_i64);
 
         match graph.run(update_query).await {
             Ok(_) => {
@@ -518,8 +516,8 @@ async fn create_or_get_google_user(
     .param("google_email", user_info.email.clone())
     .param("display_name", user_info.name.clone())
     .param("access_token", access_token.to_string())
-    .param("refresh_token", refresh_token.unwrap_or_default())
-    .param("token_expiry", expires_at.unwrap_or(0));
+    .param("refresh_token", "")
+    .param("token_expiry", 0_i64);
 
     let mut result = match graph.execute(create_query).await {
         Ok(result) => {
@@ -1013,6 +1011,7 @@ pub async fn set_password_for_user(
 }
 
 // Original Sign-in function for backwards compatibility
+#[allow(dead_code)]
 pub async fn sign_in(
     graph: Graph,
     username: String,

@@ -1,0 +1,159 @@
+// Service Worker for Goals PWA
+// Handles push notifications and offline caching
+
+const CACHE_NAME = 'goals-v1';
+const urlsToCache = [
+  '/',
+  '/index.html',
+  '/static/css/main.css',
+  '/static/js/main.js',
+  '/manifest.json',
+  '/logo192.png',
+  '/logo512.png'
+];
+
+// Install event - cache essential files
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('[ServiceWorker] Caching app shell');
+        // Don't fail install if some resources can't be cached
+        return cache.addAll(urlsToCache).catch(err => {
+          console.warn('[ServiceWorker] Failed to cache some resources:', err);
+        });
+      })
+  );
+  // Force the waiting service worker to become active
+  self.skipWaiting();
+});
+
+// Activate event - clean up old caches
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          if (cacheName !== CACHE_NAME) {
+            console.log('[ServiceWorker] Removing old cache:', cacheName);
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+  // Claim all clients immediately
+  self.clients.claim();
+});
+
+// Fetch event - serve from cache when possible
+self.addEventListener('fetch', event => {
+  // Skip non-GET requests and API calls
+  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request)
+      .then(response => {
+        // Return cached version or fetch from network
+        return response || fetch(event.request).catch(() => {
+          // If both cache and network fail, return a fallback for navigation requests
+          if (event.request.mode === 'navigate') {
+            return caches.match('/index.html');
+          }
+        });
+      })
+  );
+});
+
+// Push event - show notification
+self.addEventListener('push', event => {
+  console.log('[ServiceWorker] Push received:', event);
+  
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    console.error('[ServiceWorker] Error parsing push data:', e);
+  }
+
+  const title = data.title || 'Goals Notification';
+  const options = {
+    body: data.body || 'You have a new notification',
+    icon: data.icon || '/logo192.png',
+    badge: data.badge || '/logo192.png',
+    vibrate: data.vibrate || [100, 50, 100],
+    data: data.data || {},
+    actions: data.actions || [],
+    tag: data.tag || 'default',
+    requireInteraction: data.requireInteraction || false,
+    renotify: data.renotify || false,
+    silent: data.silent || false,
+    timestamp: data.timestamp || Date.now()
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+      .catch(err => {
+        console.error('[ServiceWorker] Error showing notification:', err);
+      })
+  );
+});
+
+// Notification click event - handle notification interactions
+self.addEventListener('notificationclick', event => {
+  console.log('[ServiceWorker] Notification clicked:', event);
+  
+  event.notification.close();
+
+  const data = event.notification.data || {};
+  const url = data.url || '/';
+  
+  // Handle action buttons
+  if (event.action) {
+    console.log('[ServiceWorker] Action clicked:', event.action);
+    // You can handle different actions here
+    // For example: mark task complete, snooze reminder, etc.
+  }
+
+  event.waitUntil(
+    clients.matchAll({ 
+      type: 'window', 
+      includeUncontrolled: true 
+    }).then(clientList => {
+      // Check if there's already a window/tab open
+      for (const client of clientList) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          // Navigate to the URL if provided
+          if (url !== '/' && client.url !== new URL(url, self.location.origin).href) {
+            client.navigate(url);
+          }
+          return client.focus();
+        }
+      }
+      // If no window is open, open a new one
+      if (clients.openWindow) {
+        return clients.openWindow(url);
+      }
+    })
+  );
+});
+
+// Background sync event (for future use)
+self.addEventListener('sync', event => {
+  console.log('[ServiceWorker] Background sync:', event.tag);
+  if (event.tag === 'sync-goals') {
+    // Implement background sync logic here
+    // For example: sync offline changes with server
+  }
+});
+
+// Periodic background sync (for future use)
+self.addEventListener('periodicsync', event => {
+  console.log('[ServiceWorker] Periodic background sync:', event.tag);
+  if (event.tag === 'update-routines') {
+    // Implement periodic sync logic here
+    // For example: update routine events periodically
+  }
+});

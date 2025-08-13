@@ -406,13 +406,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             all_rate: allTimeCompletionRate
                         });
 
-                        // Calculate standard deviation of completion times (as a measure of consistency)
-                        let completionStdev = 0;
-                        if (allEvents.length > 1) {
-                            const completionRates = allEvents.map(e => e.completed === true ? 1 : 0);
-                            const mean = allTimeCompletionRate;
-                            const variance = completionRates.reduce((sum: number, rate: number) => sum + Math.pow(rate - mean, 2), 0) / completionRates.length;
-                            completionStdev = Math.sqrt(variance);
+                        // Calculate standard error of completion rate (accounts for sample size)
+                        let completionStdErr = 0;
+                        const n = allEvents.length;
+                        if (n > 0) {
+                            const p = allTimeCompletionRate;
+                            completionStdErr = Math.sqrt(Math.max(0, p * (1 - p) / n));
                         }
 
                         stats = {
@@ -421,7 +420,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             completed_events: allCompletedEvents,
                             last_30_days_completion_rate: allTimeCompletionRate, // Reusing this field for all-time rate
                             reschedule_count: recentEvents.length, // Reusing this field for recent events count
-                            avg_reschedule_distance_hours: completionStdev * 100 // Reusing this field for stdev %
+                            avg_reschedule_distance_hours: completionStdErr * 100 // Reusing this field for stderr %
                         };
 
                         console.log('[GoalMenu] Final calculated stats:', stats);
@@ -779,7 +778,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setDurationHoursInput('');
             setDurationMinutesInput('');
         }
-    }, [state.goal.id, isOpen]);
+    }, [state.goal.id, isOpen, state.goal.duration]);
 
     // Initialize per-event input strings when taskEvents list changes size (e.g., fetched or item added/removed)
     useEffect(() => {
@@ -2357,7 +2356,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         <CompletedTile />
                     )}
                     <SimpleTile label={isEvent ? '' : 'Reschedules'} tooltip={isEvent ? 'Events completed' : 'Number of reschedules'} primary={isEvent ? `${completed}/${total}` : String(reschedules)} icon={<EventAvailableIcon sx={{ fontSize: 16 }} />} />
-                    <SimpleTile label={isEvent ? 'Cons' : 'Avg move'} tooltip={isEvent ? 'Consistency (std dev)' : 'Average move distance (hours)'} primary={isEvent ? `${(avgMove || 0).toFixed(1)}%` : `${(avgMove || 0).toFixed(1)}h`} icon={<AvTimerIcon sx={{ fontSize: 16 }} />} />
+                    <SimpleTile label={isEvent ? 'Cons' : 'Avg move'} tooltip={isEvent ? 'Consistency (standard error of completion rate)' : 'Average move distance (hours)'} primary={isEvent ? `${(avgMove || 0).toFixed(1)}%` : `${(avgMove || 0).toFixed(1)}h`} icon={<AvTimerIcon sx={{ fontSize: 16 }} />} />
                 </Box>
             </Box>
         );

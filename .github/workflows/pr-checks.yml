@@ -4,32 +4,52 @@ on:
   pull_request:
     branches: [ prod ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changed-files:
     name: Detect Changed Files
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      any_changes: ${{ steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' }}
+      backend: ${{ steps.compute.outputs.backend }}
+      frontend: ${{ steps.compute.outputs.frontend }}
+      any_changes: ${{ steps.compute.outputs.any_changes }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
-      - name: Check for file changes
-        uses: dorny/paths-filter@v2
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-            frontend:
-              - 'frontend/**'
+      - name: Compute changed files
+        id: compute
+        shell: bash
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "Base: $BASE_SHA"
+          echo "Head: $HEAD_SHA"
+          git fetch --no-tags --depth=1 origin "+$BASE_SHA:$BASE_SHA" "+$HEAD_SHA:$HEAD_SHA" || true
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA" || true)
+          echo "Changed files:\n$CHANGED_FILES"
+          backend_changed=false
+          frontend_changed=false
+          if echo "$CHANGED_FILES" | grep -q '^backend/'; then backend_changed=true; fi
+          if echo "$CHANGED_FILES" | grep -q '^frontend/'; then frontend_changed=true; fi
+          any_changes=false
+          if [ "$backend_changed" = true ] || [ "$frontend_changed" = true ]; then any_changes=true; fi
+          echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend_changed" >> "$GITHUB_OUTPUT"
+          echo "any_changes=$any_changes" >> "$GITHUB_OUTPUT"
 
   check-previous-runs:
     name: Check Previous Test Runs
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     outputs:
       backend_previously_failed: ${{ steps.check-failures.outputs.backend_failed }}
       frontend_previously_failed: ${{ steps.check-failures.outputs.frontend_failed }}
@@ -78,21 +98,27 @@ jobs:
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # Add write permission for pushing changes
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: ./backend
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --component rustfmt,clippy
+          rustup default stable
       
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
       
       - name: Apply code format
         run: cargo fmt --all
@@ -108,17 +134,27 @@ jobs:
     needs: [backend-checks]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: ./backend
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+          rustup default stable
       
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
         
       - name: Run backend unit tests
         run: cargo test --lib
@@ -145,14 +181,15 @@ jobs:
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: ./frontend
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -175,14 +212,15 @@ jobs:
     needs: [frontend-checks]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: ./frontend
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -214,6 +252,7 @@ jobs:
       always() && 
       (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true')
     uses: ./.github/workflows/e2e-tests.yml
+    timeout-minutes: 60
     with:
       ref: ${{ github.ref }}
       skip_tests: false
@@ -225,6 +264,7 @@ jobs:
     needs: [backend-checks, backend-tests, frontend-checks, frontend-tests, e2e-tests]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Evaluate overall workflow result
         run: |

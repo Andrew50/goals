@@ -19,7 +19,7 @@ use crate::server::middleware;
 use crate::tools::{
     achievements, calendar, day, event, gcal_client,
     goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
-    list, migration, network, stats, traversal,
+    list, migration, network, push, stats, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -119,6 +119,12 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let routine_generation_routes =
         Router::new().route("/:end_timestamp", post(handle_generate_routine_events));
 
+    // Push notification routes
+    let push_routes = Router::new()
+        .route("/subscribe", post(handle_push_subscribe))
+        .route("/unsubscribe", post(handle_push_unsubscribe))
+        .route("/test", post(handle_push_test));
+
     // Protected routes with auth middleware
     let protected_routes = Router::new()
         .nest("/goals", goal_routes)
@@ -135,6 +141,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
         .nest("/routine", routine_generation_routes)
+        .nest("/push", push_routes)
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -853,4 +860,28 @@ async fn handle_delete_gcal_event(
     Path(goal_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     gcal_client::delete_gcal_event_handler(graph, user_id, goal_id).await
+}
+
+// Push notification handlers
+async fn handle_push_subscribe(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    push::save_subscription(graph, user_id, payload).await
+}
+
+async fn handle_push_unsubscribe(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    push::remove_subscription(graph, user_id, payload).await
+}
+
+async fn handle_push_test(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    push::send_test_notification(graph, user_id).await
 }
