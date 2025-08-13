@@ -4,8 +4,8 @@ use neo4rs::{query, Graph};
 
 pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String> {
     let now = Utc::now().timestamp_millis();
-    let three_months = Duration::days(90).num_milliseconds();
-    let horizon = now + three_months;
+    let six_months = Duration::days(180).num_milliseconds();
+    let horizon = now + six_months;
 
     // Find routines that need more events generated
     let query_str = "
@@ -43,7 +43,7 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
             .map(|t| t + 86400000) // Start from day after last event
             .unwrap_or_else(|| routine.start_timestamp.unwrap_or(now));
 
-        // Respect the routine's explicit end date if it exists and is sooner than the 90-day horizon
+        // Respect the routine's explicit end date if it exists and is sooner than the 180-day horizon
         let effective_until = match routine.end_timestamp {
             Some(end_ts) if end_ts < horizon => end_ts,
             _ => horizon,

@@ -2,6 +2,10 @@ use axum::{http::StatusCode, Json};
 use chrono::{Datelike, Duration, Timelike, Utc};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
+use std::env;
+
+// HTTP client for OpenRouter
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 
 use crate::tools::goal::{Goal, GoalType};
 use crate::tools::stats::EventMove;
@@ -46,6 +50,8 @@ pub struct SmartScheduleRequest {
     pub preferred_time_start: Option<i32>, // Hour of day (0-23)
     pub preferred_time_end: Option<i32>,   // Hour of day (0-23)
     pub start_after_timestamp: Option<i64>, // For rescheduling - start suggestions after this time
+    pub event_name: Option<String>,
+    pub event_description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -605,90 +611,7 @@ pub async fn delete_event_handler(
     Ok(StatusCode::OK)
 }
 
-pub async fn split_event_handler(
-    graph: Graph,
-    event_id: i64,
-) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
-    // Fetch the event to split
-    let fetch_query = query(
-        "MATCH (e:Goal)
-         WHERE id(e) = $event_id
-         RETURN e",
-    )
-    .param("event_id", event_id);
-
-    let mut result = graph
-        .execute(fetch_query)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let event_row = result
-        .next()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "Event not found".to_string()))?;
-
-    let event: Goal = event_row
-        .get("e")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let half_duration = event.duration.unwrap_or(60) / 2;
-    let start_time = event.scheduled_timestamp.unwrap();
-    let mid_time = start_time + (half_duration as i64 * 60 * 1000);
-
-    // Create two new events
-    let mut event1 = event.clone();
-    event1.id = None;
-    event1.duration = Some(half_duration);
-
-    let mut event2 = event.clone();
-    event2.id = None;
-    event2.scheduled_timestamp = Some(mid_time);
-    event2.duration = Some(half_duration);
-
-    let created1 = event1
-        .create_goal(&graph)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let created2 = event2
-        .create_goal(&graph)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Copy the HAS_EVENT relationship
-    let copy_rel_query = query(
-        "MATCH (p:Goal)-[:HAS_EVENT]->(e:Goal)
-         WHERE id(e) = $old_event_id
-         WITH p
-         MATCH (e1:Goal), (e2:Goal)
-         WHERE id(e1) = $event1_id AND id(e2) = $event2_id
-         CREATE (p)-[:HAS_EVENT]->(e1)
-         CREATE (p)-[:HAS_EVENT]->(e2)",
-    )
-    .param("old_event_id", event_id)
-    .param("event1_id", created1.id.unwrap())
-    .param("event2_id", created2.id.unwrap());
-
-    graph
-        .run(copy_rel_query)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Delete original event
-    let delete_query = query(
-        "MATCH (e:Goal)
-         WHERE id(e) = $event_id
-         DETACH DELETE e",
-    )
-    .param("event_id", event_id);
-
-    graph
-        .run(delete_query)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    Ok(Json(vec![created1, created2]))
-}
+// split_event_handler removed; use duplicate goal endpoint instead
 
 pub async fn get_task_events_handler(
     graph: Graph,
@@ -1237,25 +1160,11 @@ pub async fn get_smart_schedule_options_handler(
     user_id: i64,
     request: SmartScheduleRequest,
 ) -> Result<Json<RescheduleOptionsResponse>, (StatusCode, String)> {
-    let look_ahead_days = request.look_ahead_days.unwrap_or(7);
-    let duration = request.duration as i64;
-    let current_timestamp = Utc::now().timestamp_millis();
-    let start_timestamp = request.start_after_timestamp.unwrap_or(current_timestamp);
-
-    // Use the shared scheduling algorithm
-    let suggestions = generate_schedule_suggestions(
-        &graph,
-        user_id,
-        duration,
-        start_timestamp,
-        look_ahead_days,
-        None, // No event to exclude for new scheduling
-        request.preferred_time_start,
-        request.preferred_time_end,
-    )
-    .await?;
-
-    Ok(Json(RescheduleOptionsResponse { suggestions }))
+    // Use only the LLM-powered suggestion engine via OpenRouter. If it fails, surface the error to the frontend.
+    match get_llm_smart_schedule_suggestions(&graph, user_id, &request).await {
+        Ok(suggestions) => Ok(Json(RescheduleOptionsResponse { suggestions })),
+        Err((status, msg)) => Err((status, msg)),
+    }
 }
 
 // Shared scheduling algorithm for both reschedule and smart schedule
@@ -1540,6 +1449,330 @@ async fn generate_schedule_suggestions(
     // Limit final results
     suggestions.truncate(15);
 
+    Ok(suggestions)
+}
+
+// ------------------------------
+// LLM-powered scheduling helpers
+// ------------------------------
+
+#[derive(Serialize)]
+struct EventBrief {
+    id: Option<i64>,
+    name: String,
+    description: Option<String>,
+    scheduled_timestamp: Option<i64>,
+    duration: Option<i32>,
+    completed: Option<bool>,
+}
+
+async fn fetch_event_briefs(
+    graph: &Graph,
+    user_id: i64,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<Vec<EventBrief>, (StatusCode, String)> {
+    let q = query(
+        "MATCH (g:Goal)\n         WHERE g.goal_type = 'event'\n         AND g.user_id = $user_id\n         AND coalesce(g.is_deleted, false) <> true\n         AND g.scheduled_timestamp >= $start_ts\n         AND g.scheduled_timestamp <= $end_ts\n         RETURN g ORDER BY g.scheduled_timestamp",
+    )
+    .param("user_id", user_id)
+    .param("start_ts", start_ts)
+    .param("end_ts", end_ts);
+
+    let mut res = graph
+        .execute(q)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut items = Vec::new();
+    while let Some(row) = res
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        let g: crate::tools::goal::Goal = row
+            .get("g")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        items.push(EventBrief {
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            scheduled_timestamp: g.scheduled_timestamp,
+            duration: g.duration,
+            completed: g.completed,
+        });
+    }
+    Ok(items)
+}
+
+#[derive(Serialize)]
+struct LlmCalendarContext<'a> {
+    past_two_weeks_events: &'a [EventBrief],
+    next_month_events: &'a [EventBrief],
+}
+
+#[derive(Serialize)]
+struct LlmSchedulingInput<'a> {
+    event_name: Option<&'a str>,
+    event_description: Option<&'a str>,
+    duration_minutes: i32,
+    preferred_time_start_hour: Option<i32>,
+    preferred_time_end_hour: Option<i32>,
+    start_after_timestamp: Option<i64>,
+    look_ahead_days: i32,
+}
+
+async fn get_llm_smart_schedule_suggestions(
+    graph: &Graph,
+    user_id: i64,
+    request: &SmartScheduleRequest,
+) -> Result<Vec<RescheduleSuggestion>, (StatusCode, String)> {
+    let overall_start = std::time::Instant::now();
+    let now = Utc::now().timestamp_millis();
+    let past_two_weeks_start = now - (14 * 24 * 60 * 60 * 1000);
+    let next_month_end = now + (30 * 24 * 60 * 60 * 1000);
+
+    eprintln!(
+        "🔍 [SMART_SCHEDULE][CTX] user_id={} building context: past_two_weeks_start={} now={} next_month_end={}",
+        user_id, past_two_weeks_start, now, next_month_end
+    );
+    let ctx_start = std::time::Instant::now();
+    let past_events = fetch_event_briefs(graph, user_id, past_two_weeks_start, now).await?;
+    let next_events = fetch_event_briefs(graph, user_id, now, next_month_end).await?;
+    eprintln!(
+        "✅ [SMART_SCHEDULE][CTX] fetched events: past={} next={} in {}ms",
+        past_events.len(),
+        next_events.len(),
+        ctx_start.elapsed().as_millis()
+    );
+
+    let context = LlmCalendarContext {
+        past_two_weeks_events: &past_events,
+        next_month_events: &next_events,
+    };
+
+    // Prepare scheduling input
+    let look_ahead_days = request.look_ahead_days.unwrap_or(7);
+    let input = LlmSchedulingInput {
+        event_name: request.event_name.as_deref(),
+        event_description: request.event_description.as_deref(),
+        duration_minutes: request.duration,
+        preferred_time_start_hour: request.preferred_time_start,
+        preferred_time_end_hour: request.preferred_time_end,
+        start_after_timestamp: request.start_after_timestamp,
+        look_ahead_days,
+    };
+
+    // Build prompt instructing strict JSON output
+    let system_prompt = "You are a scheduling assistant. Based on the user's recent (past two weeks) and upcoming (next month) calendar, propose optimal times to schedule a new event. Return ONLY strict JSON in the following format: {\n  \"suggestions\": [ { \"timestamp\": <epoch_ms>, \"reason\": \"short natural-language sentence explaining why this slot is good\", \"score\": <0.0-1.0> }, ... ]\n}. The timestamps must be epoch milliseconds in the user's local timezone context. Do not return tag lists; write concise sentences.";
+
+    let user_prompt = serde_json::json!({
+        "task": "Suggest optimal times for a new event.",
+        "scheduling_input": input,
+        "calendar_context": context,
+        "constraints": {
+            "return_json_only": true,
+            "timestamps": "epoch_ms",
+            "max_suggestions": 15
+        }
+    })
+    .to_string();
+
+    // Call OpenRouter chat/completions with GPT-5
+    let api_key = env::var("OPENROUTER_API_KEY").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OPENROUTER_API_KEY not set".to_string(),
+        )
+    })?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    // Authorization: Bearer <KEY>
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+    );
+    // Optional but recommended by OpenRouter
+    if let Ok(referer) = env::var("OPENROUTER_HTTP_REFERER") {
+        headers.insert(
+            "http-referer",
+            HeaderValue::from_str(&referer).unwrap_or(HeaderValue::from_static("https://local")),
+        );
+    }
+    if let Ok(title) = env::var("OPENROUTER_TITLE") {
+        headers.insert(
+            "x-title",
+            HeaderValue::from_str(&title).unwrap_or(HeaderValue::from_static("GoalsApp")),
+        );
+    }
+
+    let body = serde_json::json!({
+        "model": "openai/gpt-5-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+    });
+
+    let client = reqwest::Client::new();
+    eprintln!(
+        "📤 [SMART_SCHEDULE][LLM] calling OpenRouter model=openai/gpt-5-mini messages_bytes={} ctx_sizes=(past:{}, next:{})",
+        user_prompt.len(),
+        past_events.len(),
+        next_events.len()
+    );
+    let resp = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .headers(headers)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            eprintln!("❌ [LLM] OpenRouter request failed: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("OpenRouter request failed: {}", e),
+            )
+        })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "<no body>".to_string());
+        eprintln!(
+            "❌ [LLM] OpenRouter non-success status: {} body: {}",
+            status, text
+        );
+        let snippet = if text.len() > 500 {
+            &text[..500]
+        } else {
+            &text
+        };
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("OpenRouter returned status: {} {}", status, snippet),
+        ));
+    }
+
+    let value: serde_json::Value = resp.json().await.map_err(|e| {
+        eprintln!("❌ [LLM] Failed to parse OpenRouter JSON: {}", e);
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to read OpenRouter response: {}", e),
+        )
+    })?;
+
+    // Extract content from choices[0].message.content
+    let content = value
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c0| c0.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| {
+            eprintln!(
+                "❌ [LLM] Unexpected OpenRouter response format (missing content): {:?}",
+                value
+            );
+            (
+                StatusCode::BAD_GATEWAY,
+                "Unexpected OpenRouter response format (missing content)".to_string(),
+            )
+        })?;
+
+    // Ensure we have non-empty content
+    let content_trimmed = content.trim();
+    if content_trimmed.is_empty() {
+        eprintln!(
+            "❌ [LLM] Empty content from provider. Full response object: {:?}",
+            value
+        );
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "LLM returned empty content".to_string(),
+        ));
+    }
+
+    // Try strict JSON parse first; if that fails, try to extract a JSON block from the text
+    let parsed: serde_json::Value = match serde_json::from_str::<serde_json::Value>(content_trimmed)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // Attempt to locate a JSON object within the content
+            if let (Some(start), Some(end)) =
+                (content_trimmed.find('{'), content_trimmed.rfind('}'))
+            {
+                let slice = &content_trimmed[start..=end];
+                match serde_json::from_str::<serde_json::Value>(slice) {
+                    Ok(v2) => v2,
+                    Err(e2) => {
+                        eprintln!(
+                            "❌ [LLM] Failed to parse JSON. Primary error: {} | Fallback error: {} | content: {}",
+                            e, e2, content_trimmed
+                        );
+                        return Err((
+                            StatusCode::BAD_GATEWAY,
+                            "Failed to parse LLM JSON content".to_string(),
+                        ));
+                    }
+                }
+            } else {
+                eprintln!(
+                    "❌ [LLM] No JSON object found in content. Error: {} | content: {}",
+                    e, content_trimmed
+                );
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    "LLM did not return JSON content".to_string(),
+                ));
+            }
+        }
+    };
+
+    let suggestions_val = parsed
+        .get("suggestions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            eprintln!(
+                "❌ [LLM] LLM did not return 'suggestions' array: {}",
+                content
+            );
+            (
+                StatusCode::BAD_GATEWAY,
+                "LLM did not return 'suggestions' array".to_string(),
+            )
+        })?;
+
+    let mut suggestions: Vec<RescheduleSuggestion> = Vec::new();
+    for s in suggestions_val {
+        let ts = s.get("timestamp").and_then(|v| v.as_i64()).ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                "suggestion.timestamp missing".to_string(),
+            )
+        })?;
+        let reason = s
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let score = s.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5);
+        suggestions.push(RescheduleSuggestion {
+            timestamp: ts,
+            reason,
+            score,
+        });
+    }
+
+    eprintln!(
+        "✅ [SMART_SCHEDULE][LLM] got {} suggestions in {}ms",
+        suggestions.len(),
+        overall_start.elapsed().as_millis()
+    );
     Ok(suggestions)
 }
 

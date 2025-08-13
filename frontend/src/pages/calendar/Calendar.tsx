@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, getGoogleCalendars, CalendarListEntry } from '../../shared/utils/api';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -18,7 +18,11 @@ import {
   Radio,
   RadioGroup,
   FormControlLabel,
-  FormControl
+  FormControl,
+  Select,
+  MenuItem,
+  InputLabel,
+  CircularProgress
 } from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
@@ -224,12 +228,16 @@ const Calendar: React.FC = () => {
     lastResult: GCalSyncResult | null;
     calendarId: string;
     syncDirection: 'bidirectional' | 'to_gcal' | 'from_gcal';
+    calendars: CalendarListEntry[];
+    loadingCalendars: boolean;
   }>({
     isOpen: false,
     isLoading: false,
     lastResult: null,
     calendarId: 'primary',
-    syncDirection: 'bidirectional'
+    syncDirection: 'bidirectional',
+    calendars: [],
+    loadingCalendars: false
   });
 
   // Debugging mode toggles global logs, etc.
@@ -1038,11 +1046,30 @@ const Calendar: React.FC = () => {
   };
 
   // Google Calendar sync handlers
-  const handleGoogleCalendarSync = () => {
+  const handleGoogleCalendarSync = async () => {
     setGcalSyncDialog({
       ...gcalSyncDialog,
-      isOpen: true
+      isOpen: true,
+      loadingCalendars: true
     });
+
+    try {
+      const calendars = await getGoogleCalendars();
+      setGcalSyncDialog(prev => ({
+        ...prev,
+        calendars,
+        loadingCalendars: false,
+        // Set primary calendar as default if available
+        calendarId: calendars.find(c => c.primary)?.id || calendars[0]?.id || 'primary'
+      }));
+    } catch (error) {
+      console.error('Failed to load calendars:', error);
+      setGcalSyncDialog(prev => ({
+        ...prev,
+        loadingCalendars: false,
+        calendars: []
+      }));
+    }
   };
 
   const handleGcalSyncConfirm = async () => {
@@ -1352,6 +1379,37 @@ const Calendar: React.FC = () => {
                 Sync your events with Google Calendar.
               </Typography>
 
+              {gcalSyncDialog.loadingCalendars ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              ) : gcalSyncDialog.calendars.length > 0 ? (
+                <Box sx={{ mb: 2 }}>
+                  <FormControl fullWidth>
+                    <InputLabel id="calendar-select-label">Calendar</InputLabel>
+                    <Select
+                      labelId="calendar-select-label"
+                      value={gcalSyncDialog.calendarId}
+                      label="Calendar"
+                      onChange={(e) => setGcalSyncDialog({
+                        ...gcalSyncDialog,
+                        calendarId: e.target.value as string
+                      })}
+                    >
+                      {gcalSyncDialog.calendars.map((calendar) => (
+                        <MenuItem key={calendar.id} value={calendar.id}>
+                          {calendar.summary} {calendar.primary && '(Primary)'}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              ) : (
+                <Typography variant="body2" color="error" sx={{ mb: 2 }}>
+                  No calendars found. Please ensure you have linked your Google account and granted calendar permissions.
+                </Typography>
+              )}
+
               <Box sx={{ mb: 2 }}>
                 <FormControl component="fieldset" fullWidth>
                   <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -1429,7 +1487,7 @@ const Calendar: React.FC = () => {
               onClick={handleGcalSyncConfirm}
               color="primary"
               variant="contained"
-              disabled={gcalSyncDialog.isLoading}
+              disabled={gcalSyncDialog.isLoading || gcalSyncDialog.loadingCalendars || gcalSyncDialog.calendars.length === 0}
             >
               {gcalSyncDialog.isLoading ? 'Syncing...' : 'Sync Now'}
             </Button>

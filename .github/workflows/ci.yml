@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+          
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          
+      - name: Start test stack
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
+          
+      - name: Wait for services
+        shell: bash
+        run: |
+          echo "Waiting for services to be ready..."
+          for port in 5057 3031 7688; do
+            echo "Checking port $port..."
+            for i in {1..60}; do
+              if nc -z localhost $port 2>/dev/null; then
+                echo "Port $port is ready"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Port $port failed to become ready"
+                docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+          echo "All services are ready"
+          
+      - name: Backend integration tests
+        env:
+          CI: "true"
+          NEO4J_TEST_URI: bolt://localhost:7688
+          NEO4J_TEST_USERNAME: neo4j
+          NEO4J_TEST_PASSWORD: password123
+        run: |
+          cd backend
+          cargo test --test routine_integration_test -- --nocapture
+          
+      - name: E2E Playwright tests
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: http://localhost:3031
+        run: |
+          cd frontend
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test tests/routine --project=chromium
+          
+      - name: Dump docker logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs --no-color
+          
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+          
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+          
+      - name: Stop test stack
+        if: always()
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+

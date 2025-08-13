@@ -159,7 +159,7 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
             axum::http::header::AUTHORIZATION,
             axum::http::header::ACCEPT,
         ])
-        .allow_credentials(false);
+        .allow_credentials(true);
 
     println!("🔐 Initializing user locks for routine processing...");
     let user_locks: UserLocks = Arc::new(Mutex::new(HashMap::new()));

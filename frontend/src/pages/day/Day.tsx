@@ -32,6 +32,9 @@ const Day: React.FC = () => {
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
     const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
+    // Determine if an event is an all-day task
+    const isAllDay = (event: DayEvent) => event.duration === 1440;
+
     // Helper function to get start and end of a given date
     const getDayBounds = (date: Date) => {
         const start = new Date(date);
@@ -168,9 +171,9 @@ const Day: React.FC = () => {
             description: event.description,
             goal_type: 'event',
             priority: event.priority,
-            color: event.color,
             scheduled_timestamp: new Date(event.scheduled_timestamp),
             parent_id: event.parent_id,
+            parent_type: event.parent_goal_type === 'routine' ? 'routine' : 'task',
             duration: event.duration,
         };
 
@@ -188,9 +191,9 @@ const Day: React.FC = () => {
             description: event.description,
             goal_type: 'event',
             priority: event.priority,
-            color: event.color,
             scheduled_timestamp: new Date(event.scheduled_timestamp),
             parent_id: event.parent_id,
+            parent_type: event.parent_goal_type === 'routine' ? 'routine' : 'task',
             duration: event.duration,
         };
 
@@ -205,8 +208,8 @@ const Day: React.FC = () => {
 
         const sortByScheduled = (a: DayEvent, b: DayEvent) => {
             // All-day events (duration = 1440 minutes) should be sorted to the bottom
-            const aIsAllDay = a.duration === 1440;
-            const bIsAllDay = b.duration === 1440;
+            const aIsAllDay = isAllDay(a);
+            const bIsAllDay = isAllDay(b);
 
             if (aIsAllDay && !bIsAllDay) return 1; // a goes after b
             if (!aIsAllDay && bIsAllDay) return -1; // a goes before b
@@ -274,10 +277,13 @@ const Day: React.FC = () => {
     };
 
     const handleCreateGoal = () => {
-        const { start } = getDayBounds(currentDate);
+        // Use current local time-of-day on the selected date instead of midnight
+        const now = new Date();
+        const scheduled = new Date(currentDate);
+        scheduled.setHours(now.getHours(), now.getMinutes(), 0, 0);
 
         openGoalMenu(
-            { scheduled_timestamp: start, goal_type: 'task' } as any,
+            { scheduled_timestamp: scheduled, goal_type: 'task' } as any,
             'create',
             (newGoal) => {
                 fetchEventsForDate(currentDate);
@@ -375,8 +381,10 @@ const Day: React.FC = () => {
                                     }
 
                                     const event = item.event!;
-                                    const goalStyle = getGoalStyle({ priority: event.priority, color: event.color } as any);
-                                    const timeString = event.duration === 1440 ? 'all day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
+                                    const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
+                                    const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
+                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, completed: event.completed } as any);
+                                    const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
                                     return (
                                         <Paper
                                             key={event.id}
@@ -439,7 +447,9 @@ const Day: React.FC = () => {
                                 </div>
                             ) : (
                                 organizedEvents().completed.map(event => {
-                                    const goalStyle = getGoalStyle({ priority: event.priority, color: event.color } as any);
+                                    const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
+                                    const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
+                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, completed: event.completed } as any);
                                     return (
                                         <Paper
                                             key={event.id}
@@ -454,9 +464,14 @@ const Day: React.FC = () => {
                                                 onClick={() => handleEventClick(event)}
                                                 onContextMenu={(e) => handleEventContextMenu(e, event)}
                                             >
-                                                <Typography variant="body1" className="task-name completed">
-                                                    {event.name}
-                                                </Typography>
+                                                <div className="task-header">
+                                                    <Typography variant="body1" className="task-name completed">
+                                                        {event.name}
+                                                    </Typography>
+                                                    {isAllDay(event) && (
+                                                        <span className="task-time">All day</span>
+                                                    )}
+                                                </div>
                                             </div>
 
                                             <label className="checkbox-container">

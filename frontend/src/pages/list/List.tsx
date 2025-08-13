@@ -8,11 +8,48 @@ import './List.css';
 import Fuse from 'fuse.js';
 import { formatFrequency } from '../../shared/utils/frequency';
 
-const dontRender = ['id', 'description', 'next_timestamp', 'name'];
+type FieldType = 'text' | 'enum' | 'number' | 'boolean' | 'date';
+type ColumnKey = keyof Goal;
+
+type FieldConfig = {
+    key: ColumnKey;
+    label: string;
+    width?: string;
+    type: FieldType;
+    sortable?: boolean;
+    filterable?: boolean;
+};
+
+const FIELD_CONFIG: FieldConfig[] = [
+    { key: 'name', label: 'Name', width: '15%', type: 'text', sortable: true, filterable: false },
+    { key: 'goal_type', label: 'Type', width: '8%', type: 'enum', sortable: true, filterable: true },
+    { key: 'description', label: 'Description', width: '20%', type: 'text', sortable: false, filterable: false },
+    { key: 'priority', label: 'Priority', width: '7%', type: 'enum', sortable: true, filterable: true },
+    { key: 'completed', label: 'Status', width: '8%', type: 'boolean', sortable: true, filterable: true },
+    { key: 'start_timestamp', label: 'Start Date', width: '8%', type: 'date', sortable: true, filterable: true },
+    { key: 'end_timestamp', label: 'End Date', width: '8%', type: 'date', sortable: true, filterable: true },
+    { key: 'scheduled_timestamp', label: 'Scheduled', width: '8%', type: 'date', sortable: true, filterable: true },
+    { key: 'next_timestamp', label: 'Next Due', width: '8%', type: 'date', sortable: true, filterable: true },
+    { key: 'frequency', label: 'Frequency', width: '5%', type: 'enum', sortable: true, filterable: true },
+    { key: 'duration', label: 'Duration', width: '5%', type: 'number', sortable: true, filterable: true },
+];
+
+type DateRange = { from?: string; to?: string };
+type FiltersState = {
+    goal_type?: string;
+    priority?: string; // 'low' | 'medium' | 'high' | '__none__'
+    completed?: boolean;
+    frequency?: string;
+    duration?: number;
+    start_timestamp?: DateRange;
+    end_timestamp?: DateRange;
+    scheduled_timestamp?: DateRange;
+    next_timestamp?: DateRange;
+};
 
 const List: React.FC = () => {
     const [list, setList] = useState<Goal[]>([]);
-    const [filters, setFilters] = useState<Partial<Record<keyof Goal, any>>>({});
+    const [filters, setFilters] = useState<FiltersState>({});
     const [sortConfig, setSortConfig] = useState<{
         key: keyof Goal | null;
         direction: 'asc' | 'desc';
@@ -29,23 +66,21 @@ const List: React.FC = () => {
         });
     }, [refreshTrigger]);
 
-    // Dynamically generate filter options based on the data
-    const filterOptions = useMemo(() => {
-        const options: Record<string, Set<any>> = {};
-
-        list.forEach(item => {
-            Object.entries(item).forEach(([key, value]) => {
-                if (dontRender.includes(key)) return; // Skip the description field
-                if (value !== undefined && value !== null) {
-                    if (!options[key]) {
-                        options[key] = new Set();
-                    }
-                    options[key].add(value);
-                }
+    // Enum options derived from current list for declared enum fields
+    const enumOptions = useMemo(() => {
+        const unique = <K extends keyof Goal>(key: K): Array<string | number | boolean> => {
+            const set = new Set<string | number | boolean>();
+            list.forEach(item => {
+                const v = item[key] as unknown as string | number | boolean | undefined | null;
+                if (v !== undefined && v !== null) set.add(v);
             });
-        });
-
-        return options;
+            return Array.from(set);
+        };
+        return {
+            goal_type: unique('goal_type'),
+            frequency: unique('frequency'),
+            priority: ['__none__', 'low', 'medium', 'high'] as const,
+        } as const;
     }, [list]);
 
     const fuse = useMemo(() => {
@@ -55,30 +90,52 @@ const List: React.FC = () => {
         });
     }, [list]);
 
-    const handleFilterChange = (field: keyof Goal, value: any) => {
-        setFilters(prev => ({
-            ...prev,
-            [field]: value === '' ? undefined : value,
-        }));
+    const updateFilter = <K extends keyof FiltersState>(key: K, value: FiltersState[K] | undefined) => {
+        setFilters(prev => ({ ...prev, [key]: value }));
     };
 
     const filteredList = useMemo(() => {
         let filtered = list;
 
-        // Apply filters
-        Object.entries(filters).forEach(([key, value]) => {
-            if (value !== undefined) {
-                filtered = filtered.filter(item => {
-                    const itemValue = item[key as keyof Goal];
-                    return itemValue?.toString() === value.toString();
-                });
+        const inRange = (val?: string | number | null, range?: DateRange): boolean => {
+            if (val === undefined || val === null) return range === undefined; // treat no value as pass unless a range is set
+            if (!range || (!range.from && !range.to)) return true;
+            const t = new Date(val as any).getTime();
+            const from = range.from ? new Date(range.from).getTime() : -Infinity;
+            const to = range.to ? new Date(range.to).getTime() : Infinity;
+            return t >= from && t <= to;
+        };
+
+        // Enum and primitive filters
+        if (filters.goal_type !== undefined) {
+            filtered = filtered.filter(g => g.goal_type === filters.goal_type);
+        }
+        if (filters.frequency !== undefined) {
+            filtered = filtered.filter(g => g.frequency === filters.frequency);
+        }
+        if (filters.completed !== undefined) {
+            filtered = filtered.filter(g => g.completed === filters.completed);
+        }
+        if (filters.priority !== undefined) {
+            if (filters.priority === '__none__') {
+                filtered = filtered.filter(g => g.priority === undefined || g.priority === null);
+            } else {
+                filtered = filtered.filter(g => g.priority === filters.priority);
             }
-        });
+        }
+        if (filters.duration !== undefined) {
+            filtered = filtered.filter(g => (g.duration as any) === filters.duration);
+        }
+
+        // Date range filters
+        filtered = filtered.filter(g => inRange(g.start_timestamp as any, filters.start_timestamp));
+        filtered = filtered.filter(g => inRange(g.end_timestamp as any, filters.end_timestamp));
+        filtered = filtered.filter(g => inRange(g.scheduled_timestamp as any, filters.scheduled_timestamp));
+        filtered = filtered.filter(g => inRange(g.next_timestamp as any, filters.next_timestamp));
 
         // Apply search query to the filtered list
         if (searchQuery) {
             const searchResults = fuse.search(searchQuery);
-            // Only keep items that are both in the filtered list and search results
             filtered = filtered.filter(item =>
                 searchResults.some(result => result.item.id === item.id)
             );
@@ -87,20 +144,39 @@ const List: React.FC = () => {
         return filtered;
     }, [list, filters, searchQuery, fuse]);
 
-    // Add sorted list computation
+    // Add sorted list computation (type-aware)
     const sortedList = useMemo(() => {
         const sorted = [...filteredList];
         if (sortConfig.key) {
+            const cfg = FIELD_CONFIG.find(c => c.key === sortConfig.key);
+            const type = cfg?.type ?? 'text';
             sorted.sort((a, b) => {
                 const aValue = a[sortConfig.key!];
                 const bValue = b[sortConfig.key!];
 
+                // Undefined/nulls go last
                 if (aValue === null || aValue === undefined) return 1;
                 if (bValue === null || bValue === undefined) return -1;
 
-                if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-                if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-                return 0;
+                let cmp = 0;
+                if (type === 'date') {
+                    const at = new Date(aValue as any).getTime();
+                    const bt = new Date(bValue as any).getTime();
+                    cmp = at === bt ? 0 : at < bt ? -1 : 1;
+                } else if (type === 'number') {
+                    const an = Number(aValue as any);
+                    const bn = Number(bValue as any);
+                    cmp = an === bn ? 0 : an < bn ? -1 : 1;
+                } else if (type === 'boolean') {
+                    const ab = Boolean(aValue as any) ? 1 : 0;
+                    const bb = Boolean(bValue as any) ? 1 : 0;
+                    cmp = ab - bb;
+                } else {
+                    const as = String(aValue as any);
+                    const bs = String(bValue as any);
+                    cmp = as.localeCompare(bs);
+                }
+                return sortConfig.direction === 'asc' ? cmp : -cmp;
             });
         }
         return sorted;
@@ -135,59 +211,176 @@ const List: React.FC = () => {
         }));
     };
 
-    const renderFilterInput = (field: string, values: Set<any>) => {
-        if (dontRender.includes(field)) return null;
-
-        const sortedValues = Array.from(values).sort((a, b) => {
-            if (typeof a === 'number' && typeof b === 'number') {
-                return a - b; // Sort numbers low to high
-            }
-            return a.toString().localeCompare(b.toString()); // Sort strings A-Z
-        });
-
-        const isDateField = field.includes('time') || field.includes('date');
-        const isTimeField = field.includes('routine_time');
-
-        if (isDateField) {
+    const renderFilterControl = (cfg: FieldConfig) => {
+        if (!cfg.filterable) return null;
+        if (cfg.type === 'date') {
+            const range = filters[cfg.key as keyof FiltersState] as DateRange | undefined;
             return (
-                <input
-                    type="date"
-                    onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
-                    value={filters[field as keyof Goal] || ''}
-                    className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
-                    spellCheck="false"
-                    autoComplete="off"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                    <div className="filter-input-wrapper">
+                        <input
+                            type="date"
+                            placeholder="From"
+                            onChange={(e) => {
+                                const v = e.target.value || undefined;
+                                const prev = (filters[cfg.key as keyof FiltersState] as DateRange | undefined) || {};
+                                updateFilter(cfg.key as keyof FiltersState, { ...prev, from: v } as any);
+                            }}
+                            value={range?.from || ''}
+                            className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                            spellCheck="false"
+                            autoComplete="off"
+                        />
+                        {(range?.from) && (
+                            <button
+                                type="button"
+                                className="filter-clear"
+                                onClick={() => {
+                                    const prev = (filters[cfg.key as keyof FiltersState] as DateRange | undefined) || {};
+                                    const next: DateRange = { ...prev };
+                                    delete next.from;
+                                    if (!next.to) {
+                                        updateFilter(cfg.key as keyof FiltersState, undefined);
+                                    } else {
+                                        updateFilter(cfg.key as keyof FiltersState, next as any);
+                                    }
+                                }}
+                                aria-label={`Clear ${cfg.label} from`}
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                    <div className="filter-input-wrapper">
+                        <input
+                            type="date"
+                            placeholder="To"
+                            onChange={(e) => {
+                                const v = e.target.value || undefined;
+                                const prev = (filters[cfg.key as keyof FiltersState] as DateRange | undefined) || {};
+                                updateFilter(cfg.key as keyof FiltersState, { ...prev, to: v } as any);
+                            }}
+                            value={range?.to || ''}
+                            className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                            spellCheck="false"
+                            autoComplete="off"
+                        />
+                        {(range?.to) && (
+                            <button
+                                type="button"
+                                className="filter-clear"
+                                onClick={() => {
+                                    const prev = (filters[cfg.key as keyof FiltersState] as DateRange | undefined) || {};
+                                    const next: DateRange = { ...prev };
+                                    delete next.to;
+                                    if (!next.from) {
+                                        updateFilter(cfg.key as keyof FiltersState, undefined);
+                                    } else {
+                                        updateFilter(cfg.key as keyof FiltersState, next as any);
+                                    }
+                                }}
+                                aria-label={`Clear ${cfg.label} to`}
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                </div>
             );
         }
-
-        if (isTimeField) {
+        if (cfg.type === 'boolean') {
+            const value = (filters[cfg.key as keyof FiltersState] as boolean | undefined);
             return (
-                <input
-                    type="time"
-                    onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
-                    value={filters[field as keyof Goal] || ''}
-                    className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
-                    spellCheck="false"
-                    autoComplete="off"
-                />
+                <div className="filter-input-wrapper">
+                    <select
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            updateFilter(cfg.key as keyof FiltersState, (v === '' ? undefined : (v === 'true')) as any);
+                        }}
+                        value={value === undefined ? '' : value ? 'true' : 'false'}
+                        className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                    >
+                        <option value="">All</option>
+                        <option value="false">In Progress</option>
+                        <option value="true">Completed</option>
+                    </select>
+                    {(value !== undefined) && (
+                        <button
+                            type="button"
+                            className="filter-clear"
+                            onClick={() => updateFilter(cfg.key as keyof FiltersState, undefined)}
+                            aria-label={`Clear ${cfg.label}`}
+                        >
+                            ×
+                        </button>
+                    )}
+                </div>
             );
         }
-
-        return (
-            <select
-                onChange={(e) => handleFilterChange(field as keyof Goal, e.target.value)}
-                value={filters[field as keyof Goal] || ''}
-                className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
-            >
-                <option value="">All</option>
-                {sortedValues.map(value => (
-                    <option key={value} value={value}>
-                        {value.toString()}
-                    </option>
-                ))}
-            </select>
-        );
+        if (cfg.type === 'number') {
+            const value = filters[cfg.key as keyof FiltersState] as number | undefined;
+            return (
+                <div className="filter-input-wrapper">
+                    <input
+                        type="number"
+                        onChange={(e) => {
+                            const raw = e.target.value;
+                            updateFilter(cfg.key as keyof FiltersState, (raw === '' ? undefined : Number(raw)) as any);
+                        }}
+                        value={value ?? ''}
+                        className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                        spellCheck="false"
+                        autoComplete="off"
+                    />
+                    {(value !== undefined) && (
+                        <button
+                            type="button"
+                            className="filter-clear"
+                            onClick={() => updateFilter(cfg.key as keyof FiltersState, undefined)}
+                            aria-label={`Clear ${cfg.label}`}
+                        >
+                            ×
+                        </button>
+                    )}
+                </div>
+            );
+        }
+        if (cfg.type === 'enum') {
+            const value = filters[cfg.key as keyof FiltersState] as string | undefined;
+            const options = cfg.key === 'goal_type' ? enumOptions.goal_type : cfg.key === 'frequency' ? enumOptions.frequency : cfg.key === 'priority' ? enumOptions.priority : [];
+            const sortedValues = cfg.key === 'priority' ? options : [...options].sort((a, b) => a.toString().localeCompare(b.toString()));
+            return (
+                <div className="filter-input-wrapper">
+                    <select
+                        onChange={(e) => updateFilter(cfg.key as keyof FiltersState, (e.target.value || undefined) as any)}
+                        value={value || ''}
+                        className="border border-gray-300 rounded-md py-2 px-3 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                    >
+                        <option value="">All</option>
+                        {sortedValues.map(v => {
+                            const str = String(v);
+                            const label = cfg.key === 'priority'
+                                ? (str === '__none__' ? 'None' : str.charAt(0).toUpperCase() + str.slice(1))
+                                : str;
+                            return (
+                                <option key={str} value={str}>{label}</option>
+                            );
+                        })}
+                    </select>
+                    {(value !== undefined && value !== '') && (
+                        <button
+                            type="button"
+                            className="filter-clear"
+                            onClick={() => updateFilter(cfg.key as keyof FiltersState, undefined)}
+                            aria-label={`Clear ${cfg.label}`}
+                        >
+                            ×
+                        </button>
+                    )}
+                </div>
+            );
+        }
+        return null;
     };
 
     return (
@@ -241,18 +434,12 @@ const List: React.FC = () => {
                             </button>
                         </div>
                         <div className="filters-grid">
-                            {Object.entries(filterOptions).map(([field, values]) => {
-                                if (values.size <= 1) return null;
-
-                                return (
-                                    <div key={field} className="filter-control">
-                                        <label className="filter-label">
-                                            {field.replace(/_/g, ' ')}
-                                        </label>
-                                        {renderFilterInput(field, values)}
-                                    </div>
-                                );
-                            })}
+                            {FIELD_CONFIG.filter(c => c.filterable).map(cfg => (
+                                <div key={String(cfg.key)} className="filter-control">
+                                    <label className="filter-label">{cfg.label}</label>
+                                    {renderFilterControl(cfg)}
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}
@@ -262,19 +449,7 @@ const List: React.FC = () => {
                         <table className="goals-table">
                             <thead className="table-header">
                                 <tr>
-                                    {[
-                                        { key: 'name' as keyof Goal, label: 'Name', width: '15%' },
-                                        { key: 'goal_type' as keyof Goal, label: 'Type', width: '8%' },
-                                        { key: 'description' as keyof Goal, label: 'Description', width: '20%' },
-                                        { key: 'priority' as keyof Goal, label: 'Priority', width: '7%' },
-                                        { key: 'completed' as keyof Goal, label: 'Status', width: '8%' },
-                                        { key: 'start_timestamp' as keyof Goal, label: 'Start Date', width: '8%' },
-                                        { key: 'end_timestamp' as keyof Goal, label: 'End Date', width: '8%' },
-                                        { key: 'scheduled_timestamp' as keyof Goal, label: 'Scheduled', width: '8%' },
-                                        { key: 'next_timestamp' as keyof Goal, label: 'Next Due', width: '8%' },
-                                        { key: 'frequency' as keyof Goal, label: 'Frequency', width: '5%' },
-                                        { key: 'duration' as keyof Goal, label: 'Duration', width: '5%' }
-                                    ].map(({ key, label, width }) => (
+                                    {FIELD_CONFIG.map(({ key, label, width }) => (
                                         <th
                                             key={key}
                                             style={{ width }}

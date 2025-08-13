@@ -165,7 +165,7 @@ const NetworkView: React.FC = () => {
       zoomView: true,
       hover: true,
       navigationButtons: false,
-      keyboard: { enabled: true, bindToWindow: true }
+      keyboard: { enabled: true, bindToWindow: false }
     },
     manipulation: {
       enabled: false,

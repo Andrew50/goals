@@ -118,8 +118,17 @@ pub async fn generate_google_auth_url(
 
     let (auth_url, csrf_token) = client
         .authorize_url(CsrfToken::new_random)
+        .add_scope(Scope::new("openid".to_string()))
         .add_scope(Scope::new("profile".to_string()))
         .add_scope(Scope::new("email".to_string()))
+        .add_scope(Scope::new(
+            "https://www.googleapis.com/auth/calendar.events".to_string(),
+        ))
+        .add_scope(Scope::new(
+            "https://www.googleapis.com/auth/calendar.readonly".to_string(),
+        ))
+        .add_extra_param("access_type", "offline")
+        .add_extra_param("prompt", "consent")
         .url();
 
     Ok(Json(GoogleAuthUrlResponse {
@@ -133,6 +142,7 @@ pub async fn handle_google_callback(
     graph: Graph,
     code: String,
     state: String,
+    existing_user_id: Option<i64>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<AuthResponse>)> {
     eprintln!("🔄 Starting Google OAuth callback processing...");
     eprintln!(
@@ -175,30 +185,103 @@ pub async fn handle_google_callback(
 
     eprintln!("✅ Successfully exchanged code for access token");
 
+    // Extract tokens
+    let access_token = token_result.access_token().secret().to_string();
+    let refresh_token = token_result.refresh_token().map(|t| t.secret().to_string());
+    let expires_in = token_result.expires_in().map(|d| d.as_secs() as i64);
+    let expires_at = expires_in.map(|secs| Utc::now().timestamp_millis() + (secs * 1000));
+
     // Get user info from Google
     eprintln!("🔄 Fetching user info from Google...");
-    let user_info = get_google_user_info(token_result.access_token().secret())
-        .await
-        .map_err(|e| {
-            eprintln!("❌ Failed to get user info: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(AuthResponse {
-                    message: "Failed to get user information".to_string(),
-                    token: "".to_string(),
-                    username: None,
-                }),
-            )
-        })?;
+    let user_info = get_google_user_info(&access_token).await.map_err(|e| {
+        eprintln!("❌ Failed to get user info: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(AuthResponse {
+                message: "Failed to get user information".to_string(),
+                token: "".to_string(),
+                username: None,
+            }),
+        )
+    })?;
 
     eprintln!(
         "✅ Successfully fetched user info: email={}, name={}",
         user_info.email, user_info.name
     );
 
-    // Create or get user in database using improved function
-    eprintln!("🔄 Creating or retrieving user in database...");
-    let user_id = improved_create_or_get_google_user(&graph, &user_info)
+    // If we have an existing logged-in user, link Google to that account to avoid creating a new user
+    let user_id = if let Some(current_user_id) = existing_user_id {
+        eprintln!(
+            "🔗 Existing session detected (user_id={}), linking Google account...",
+            current_user_id
+        );
+
+        // Ensure this Google account isn't already linked to a different user
+        let check_conflict = Query::new(
+            "MATCH (u:User {google_id: $google_id}) WHERE id(u) <> $user_id RETURN id(u) as uid"
+                .to_string(),
+        )
+        .param("google_id", user_info.id.clone())
+        .param("user_id", current_user_id);
+
+        let mut conflict_res = graph.execute(check_conflict).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AuthResponse {
+                    message: format!("Database error during account link check: {}", e),
+                    token: "".to_string(),
+                    username: None,
+                }),
+            )
+        })?;
+
+        if conflict_res.next().await.ok().flatten().is_some() {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(AuthResponse {
+                    message: "This Google account is already linked to another user".to_string(),
+                    token: "".to_string(),
+                    username: None,
+                }),
+            ));
+        }
+
+        // Link Google data and tokens to the existing user
+        let link_update = Query::new(
+            "MATCH (u:User) WHERE id(u) = $user_id \n             SET u.google_id = $google_id,\n                 u.google_email = $google_email,\n                 u.display_name = COALESCE(u.display_name, $display_name),\n                 u.is_email_verified = true,\n                 u.google_access_token = $access_token,\n                 u.google_refresh_token = $refresh_token,\n                 u.google_token_expiry = $token_expiry,\n                 u.updated_at = timestamp()\n             RETURN id(u) as user_id"
+                .to_string(),
+        )
+        .param("user_id", current_user_id)
+        .param("google_id", user_info.id.clone())
+        .param("google_email", user_info.email.clone())
+        .param("display_name", user_info.name.clone())
+        .param("access_token", access_token.to_string())
+        .param("refresh_token", refresh_token.clone().unwrap_or_default())
+        .param("token_expiry", expires_at.unwrap_or(0));
+
+        graph.run(link_update).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AuthResponse {
+                    message: format!("Failed to link Google account: {}", e),
+                    token: "".to_string(),
+                    username: None,
+                }),
+            )
+        })?;
+
+        current_user_id
+    } else {
+        // Create or get user in database using improved function
+        eprintln!("🔄 Creating or retrieving user in database...");
+        improved_create_or_get_google_user(
+            &graph,
+            &user_info,
+            &access_token,
+            refresh_token.as_deref(),
+            expires_at,
+        )
         .await
         .map_err(|e| {
             eprintln!("❌ Database error: {}", e);
@@ -210,7 +293,8 @@ pub async fn handle_google_callback(
                     username: None,
                 }),
             )
-        })?;
+        })?
+    };
 
     eprintln!(
         "✅ Successfully created/retrieved user with ID: {}",
@@ -295,6 +379,9 @@ async fn create_or_get_google_user(
 ) -> Result<i64, String> {
     println!("🔄 Starting Google user creation/lookup process");
     eprintln!("🔄 Checking if user exists by Google ID: {}", user_info.id);
+    let access_token = String::new();
+    let refresh_token: Option<String> = None;
+    let expires_at: Option<i64> = None;
 
     // First, check if user exists by Google ID
     println!("🔍 Querying database for existing user by Google ID...");
@@ -376,6 +463,9 @@ async fn create_or_get_google_user(
                  u.google_email = $google_email, 
                  u.display_name = COALESCE(u.display_name, $display_name),
                  u.is_email_verified = true,
+                 u.google_access_token = $access_token,
+                 u.google_refresh_token = $refresh_token,
+                 u.google_token_expiry = $token_expiry,
                  u.updated_at = timestamp()
              RETURN id(u) as user_id"
                 .to_string(),
@@ -383,7 +473,10 @@ async fn create_or_get_google_user(
         .param("user_id", user_id)
         .param("google_id", user_info.id.clone())
         .param("google_email", user_info.email.clone())
-        .param("display_name", user_info.name.clone());
+        .param("display_name", user_info.name.clone())
+        .param("access_token", access_token.to_string())
+        .param("refresh_token", refresh_token.unwrap_or_default())
+        .param("token_expiry", expires_at.unwrap_or(0));
 
         match graph.run(update_query).await {
             Ok(_) => {
@@ -412,6 +505,9 @@ async fn create_or_get_google_user(
             display_name: $display_name,
             created_via: 'google',
             is_email_verified: true,
+            google_access_token: $access_token,
+            google_refresh_token: $refresh_token,
+            google_token_expiry: $token_expiry,
             created_at: timestamp(),
             updated_at: timestamp()
         }) RETURN id(u) as user_id"
@@ -420,7 +516,10 @@ async fn create_or_get_google_user(
     .param("email", user_info.email.clone())
     .param("google_id", user_info.id.clone())
     .param("google_email", user_info.email.clone())
-    .param("display_name", user_info.name.clone());
+    .param("display_name", user_info.name.clone())
+    .param("access_token", access_token.to_string())
+    .param("refresh_token", refresh_token.unwrap_or_default())
+    .param("token_expiry", expires_at.unwrap_or(0));
 
     let mut result = match graph.execute(create_query).await {
         Ok(result) => {
@@ -929,6 +1028,9 @@ pub async fn sign_in(
 async fn improved_create_or_get_google_user(
     graph: &Graph,
     user_info: &GoogleUserInfo,
+    access_token: &str,
+    refresh_token: Option<&str>,
+    expires_at: Option<i64>,
 ) -> Result<i64, String> {
     println!("🔄 Starting improved Google user creation/lookup process");
     eprintln!("🔄 Checking if user exists by Google ID: {}", user_info.id);
@@ -955,6 +1057,24 @@ async fn improved_create_or_get_google_user(
         let user_id: i64 = record.get("user_id").unwrap();
         println!("✅ Found existing user by Google ID: {}", user_id);
         eprintln!("✅ Found existing user by Google ID: {}", user_id);
+
+        // Update tokens for existing user
+        let update_tokens_query = Query::new(
+            "MATCH (u:User) WHERE id(u) = $user_id 
+             SET u.google_access_token = $access_token,
+                 u.google_refresh_token = $refresh_token,
+                 u.google_token_expiry = $token_expiry,
+                 u.updated_at = timestamp()
+             RETURN u"
+                .to_string(),
+        )
+        .param("user_id", user_id)
+        .param("access_token", access_token.to_string())
+        .param("refresh_token", refresh_token.unwrap_or_default())
+        .param("token_expiry", expires_at.unwrap_or(0));
+
+        let _ = graph.run(update_tokens_query).await;
+
         return Ok(user_id);
     }
 
@@ -1013,6 +1133,9 @@ async fn improved_create_or_get_google_user(
                  u.google_email = $google_email, 
                  u.display_name = COALESCE(u.display_name, $display_name),
                  u.is_email_verified = true,
+                 u.google_access_token = $access_token,
+                 u.google_refresh_token = $refresh_token,
+                 u.google_token_expiry = $token_expiry,
                  u.updated_at = timestamp()
              RETURN id(u) as user_id"
                 .to_string(),
@@ -1020,7 +1143,10 @@ async fn improved_create_or_get_google_user(
         .param("user_id", user_id)
         .param("google_id", user_info.id.clone())
         .param("google_email", user_info.email.clone())
-        .param("display_name", user_info.name.clone());
+        .param("display_name", user_info.name.clone())
+        .param("access_token", access_token.to_string())
+        .param("refresh_token", refresh_token.unwrap_or_default())
+        .param("token_expiry", expires_at.unwrap_or(0));
 
         match graph.run(update_query).await {
             Ok(_) => {
@@ -1049,6 +1175,9 @@ async fn improved_create_or_get_google_user(
             display_name: $display_name,
             created_via: 'google',
             is_email_verified: true,
+            google_access_token: $access_token,
+            google_refresh_token: $refresh_token,
+            google_token_expiry: $token_expiry,
             created_at: timestamp(),
             updated_at: timestamp()
         }) RETURN id(u) as user_id"
@@ -1057,7 +1186,10 @@ async fn improved_create_or_get_google_user(
     .param("email", user_info.email.clone())
     .param("google_id", user_info.id.clone())
     .param("google_email", user_info.email.clone())
-    .param("display_name", user_info.name.clone());
+    .param("display_name", user_info.name.clone())
+    .param("access_token", access_token.to_string())
+    .param("refresh_token", refresh_token.unwrap_or_default())
+    .param("token_expiry", expires_at.unwrap_or(0));
 
     let mut result = match graph.execute(create_query).await {
         Ok(result) => {
@@ -1087,6 +1219,7 @@ async fn improved_create_or_get_google_user(
 #[derive(Debug, Serialize)]
 pub struct AccountLinkResponse {
     pub message: String,
+
     pub success: bool,
 }
 

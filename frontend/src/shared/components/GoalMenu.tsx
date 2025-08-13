@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, ChangeEvent, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, ChangeEvent, useMemo, useRef } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { useHistoryState } from '../hooks/useHistoryState';
 import {
@@ -19,14 +19,18 @@ import {
     FormControl,
     RadioGroup,
     Radio,
-    Card,
-    CardContent,
-    Grid,
+    CircularProgress,
+    LinearProgress,
+    Tooltip,
+    Skeleton,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AssessmentIcon from '@mui/icons-material/Assessment';
-import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, splitEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError } from '../utils/api';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import EventAvailableIcon from '@mui/icons-material/EventAvailable';
+import AvTimerIcon from '@mui/icons-material/AvTimer';
+import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -110,11 +114,34 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             goalCopy._tz = 'user';
         }
 
+        // Default scheduled time in create mode for time-based goal types if missing
+        if (
+            initialMode === 'create' &&
+            (goalCopy.goal_type === 'task' || goalCopy.goal_type === 'event' || goalCopy.goal_type === 'routine') &&
+            !goalCopy.scheduled_timestamp
+        ) {
+            goalCopy.scheduled_timestamp = new Date();
+        }
+
         // Set start_timestamp for create mode if not already set
         if (initialMode === 'create' && !goalCopy.start_timestamp) {
             // If we have a scheduled_timestamp (from calendar click), use that as start_timestamp
             // Otherwise default to today
             goalCopy.start_timestamp = goalCopy.scheduled_timestamp || new Date();
+        }
+
+        // For routines, ensure routine_time defaults sensibly
+        if (initialMode === 'create' && goalCopy.goal_type === 'routine' && !goalCopy.routine_time) {
+            goalCopy.routine_time = goalCopy.scheduled_timestamp || new Date();
+        }
+
+        // Provide a reasonable default duration for time-based items
+        if (
+            initialMode === 'create' &&
+            (goalCopy.goal_type === 'event' || goalCopy.goal_type === 'routine') &&
+            !goalCopy.duration
+        ) {
+            goalCopy.duration = 60;
         }
 
         return goalCopy;
@@ -178,6 +205,23 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         eventName: '',
         selectedScope: 'single'
     });
+
+    // Ensure the error at the top is visible by resetting scroll to top when errors appear
+    const contentRef = useRef<HTMLDivElement | null>(null);
+    const scrollDialogToTop = useCallback(() => {
+        if (contentRef.current) {
+            contentRef.current.scrollTo({ top: 0, behavior: 'auto' });
+            return;
+        }
+        const fallback = document.querySelector('.MuiDialogContent-root') as HTMLDivElement | null;
+        if (fallback) fallback.scrollTop = 0;
+    }, []);
+    useEffect(() => {
+        if (isOpen && state.error) {
+            // Scroll after render so the error element is in the DOM
+            setTimeout(() => scrollDialogToTop(), 0);
+        }
+    }, [isOpen, state.error, scrollDialogToTop]);
 
     // Fetch task events
     const fetchTaskEvents = useCallback(async (taskId: number) => {
@@ -1254,20 +1298,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }, 100);
     };
 
-    const handleSplitEvent = async () => {
-        if (!state.goal.id || !state.goal.scheduled_timestamp) return;
-
+    const handleDuplicate = async () => {
+        if (!state.goal.id) return;
         try {
-            const newEvents = await splitEvent(state.goal.id);
-            onSuccess(newEvents[0]); // Return the first new event
+            const duplicated = await duplicateGoal(state.goal.id);
+            if (onSuccess) onSuccess(duplicated);
+            // Optionally open the duplicate in edit mode for quick rename
             setIsOpen(false);
+            setTimeout(() => {
+                GoalMenuWithStatic.open(duplicated, 'edit', onSuccess);
+            }, 100);
         } catch (error) {
-            console.error('Failed to split event:', error);
-            if (isTaskDateValidationError(error)) {
-                showTaskDateWarning(error, `New event for "${state.goal.name}"`, handleSplitEvent);
-            } else {
-                setState({ ...state, error: 'Failed to split event' });
-            }
+            console.error('Failed to duplicate goal:', error);
+            setState({ ...state, error: 'Failed to duplicate goal' });
         }
     };
 
@@ -1624,6 +1667,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({ ...state.goal, name: e.target.value })}
                 fullWidth
                 margin="dense"
+                autoFocus
                 required={state.goal.goal_type !== 'event'}
                 disabled={isViewOnly}
                 placeholder={state.goal.goal_type === 'event' && selectedParents.length > 0 ? `Event: ${selectedParents[0].name}` : ''}
@@ -1733,15 +1777,20 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     return (
                         <Box component="li" {...props}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                                <Chip
-                                    label={option.goal_type}
-                                    size="small"
-                                    sx={{
-                                        ...getGoalStyle(option),
-                                        color: 'white',
-                                        fontSize: '0.75rem'
-                                    }}
-                                />
+                                {(() => {
+                                    const style = getGoalStyle(option);
+                                    return (
+                                        <Chip
+                                            label={option.goal_type}
+                                            size="small"
+                                            sx={{
+                                                ...style,
+                                                color: style.textColor,
+                                                fontSize: '0.75rem'
+                                            }}
+                                        />
+                                    );
+                                })()}
                                 <Typography variant="body2" sx={{ flexGrow: 1 }}>
                                     {option.name}
                                 </Typography>
@@ -1752,17 +1801,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 renderTags={(value, getTagProps) =>
                     value.filter((option): option is Goal => !isCreatePlaceholder(option)).map((option, index) => {
                         const { key, ...tagProps } = getTagProps({ index });
+                        const style = getGoalStyle(option);
                         return (
                             <Chip
                                 key={key}
-                                variant="outlined"
                                 label={option.name}
                                 size="small"
                                 sx={{
-                                    ...getGoalStyle(option),
-                                    color: 'white',
+                                    ...style,
+                                    color: style.textColor,
                                     '& .MuiChip-deleteIcon': {
-                                        color: 'white'
+                                        color: style.textColor
                                     }
                                 }}
                                 {...tagProps}
@@ -1877,14 +1926,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                                 {!isViewOnly && (
                                     <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-                                        {/* <Button
+                                        <Button
                                             size="small"
                                             onClick={() => handleSmartSchedule('new-task-event', 60, state.goal.name)}
                                             variant="outlined"
                                             color="secondary"
                                         >
                                             Smart Schedule
-                                        </Button> */}
+                                        </Button>
                                         <IconButton
                                             size="small"
                                             onClick={addTempEvent}
@@ -1985,6 +2034,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <>
                         {priorityField}
                         {scheduleField}
+                        <Box sx={{ mt: 1, mb: 2, display: 'flex', gap: 1 }}>
+                            <Button
+                                onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
+                                variant="outlined"
+                                color="secondary"
+                                size="small"
+                            >
+                                Smart Schedule
+                            </Button>
+                        </Box>
                         {durationField}
                         {completedField}
 
@@ -2048,6 +2107,120 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     };
 
+    const renderStatsTiles = () => {
+        if (state.mode !== 'view') return null;
+        if (!(state.goal.goal_type === 'routine' || state.goal.goal_type === 'task' || state.goal.goal_type === 'event')) return null;
+
+        if (statsLoading) {
+            return (
+                <Box sx={{ mt: 2 }}>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 1 }}>
+                        {[0, 1, 2, 3].map((idx) => (
+                            <Box key={idx} sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover' }}>
+                                <Skeleton variant="rectangular" height={64} />
+                            </Box>
+                        ))}
+                    </Box>
+                </Box>
+            );
+        }
+
+        const isEvent = state.goal.goal_type === 'event';
+        const normalizeRate = (value: unknown): number => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric) || Number.isNaN(numeric)) return 0;
+            return Math.max(0, Math.min(1, numeric));
+        };
+        const completionRate = normalizeRate(goalStats?.completion_rate);
+        const allTimeRate = isEvent ? normalizeRate(goalStats?.last_30_days_completion_rate) : completionRate;
+        const total = goalStats?.total_events || 0;
+        const completed = goalStats?.completed_events || 0;
+        const completedPct = total > 0 ? completed / total : 0;
+        const reschedules = goalStats?.reschedule_count ?? 0;
+        const avgMove = goalStats?.avg_reschedule_distance_hours ?? 0;
+
+        const RateTile = (props: { label: string; tooltip: string; value: number; icon: React.ReactNode; color?: string; }) => {
+            const pct = Number.isFinite(props.value) ? Math.max(0, Math.min(1, props.value)) : 0;
+            return (
+                <Tooltip title={props.tooltip} placement="top" arrow>
+                    <Box sx={{
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: 'action.hover',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        minHeight: 56,
+                        overflow: 'hidden'
+                    }}>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24, flexShrink: 0 }}>
+                            {props.icon}
+                        </Box>
+                        <Box sx={{ position: 'relative', width: 32, height: 32, flexShrink: 0 }}>
+                            <CircularProgress size={32} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
+                        </Box>
+                        <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {(pct * 100).toFixed(0)}%
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
+                                {props.label}
+                            </Typography>
+                        </Box>
+                    </Box>
+                </Tooltip>
+            );
+        };
+
+        const SimpleTile = (props: { label: string; tooltip: string; primary: string; icon: React.ReactNode; }) => (
+            <Tooltip title={props.tooltip} placement="top" arrow>
+                <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', display: 'flex', alignItems: 'center', gap: 1, minHeight: 56 }}>
+                    <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 28, height: 28, color: 'text.secondary' }}>
+                        {props.icon}
+                    </Box>
+                    <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
+                            {props.primary}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
+                            {props.label}
+                        </Typography>
+                    </Box>
+                </Box>
+            </Tooltip>
+        );
+
+        const CompletedTile = () => (
+            <Tooltip title="Completed vs total events" placement="top" arrow>
+                <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', minHeight: 56, overflow: 'hidden' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 28, height: 28, color: 'text.secondary' }}>
+                            <EventAvailableIcon sx={{ fontSize: 16 }} />
+                        </Box>
+                        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>Done</Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>{completed}/{total}</Typography>
+                    <LinearProgress variant="determinate" value={completedPct * 100} sx={{ height: 6, borderRadius: 999 }} />
+                </Box>
+            </Tooltip>
+        );
+
+        return (
+            <Box sx={{ mt: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 1 }}>
+                    <RateTile label={isEvent ? '10d' : 'Completion'} tooltip={isEvent ? '10-day completion rate' : 'Completion rate'} value={completionRate} icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />} />
+                    {isEvent ? (
+                        <RateTile label="All" tooltip="All-time completion rate" value={allTimeRate} icon={<TrendingUpIcon sx={{ fontSize: 16, color: 'secondary.main' }} />} color={'secondary.main'} />
+                    ) : (
+                        <CompletedTile />
+                    )}
+                    <SimpleTile label={isEvent ? 'Done' : 'Reschedules'} tooltip={isEvent ? 'Events completed' : 'Number of reschedules'} primary={isEvent ? `${completed}/${total}` : String(reschedules)} icon={<EventAvailableIcon sx={{ fontSize: 16 }} />} />
+                    <SimpleTile label={isEvent ? 'Cons' : 'Avg move'} tooltip={isEvent ? 'Consistency (std dev)' : 'Average move distance (hours)'} primary={isEvent ? `${(avgMove || 0).toFixed(1)}%` : `${(avgMove || 0).toFixed(1)}h`} icon={<AvTimerIcon sx={{ fontSize: 16 }} />} />
+                </Box>
+            </Box>
+        );
+    };
+
     const handleEdit = () => {
         setState({
             ...state,
@@ -2055,7 +2228,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         });
         setTitle('Edit Goal');
     };
-    const handleRelations = () => { setRelationsOpen(true); };
 
     const handleSmartSchedule = (type: 'event' | 'new-task-event', duration: number, eventName?: string, currentScheduledTime?: Date) => {
         setSmartScheduleContext({ type, duration, eventName, currentScheduledTime });
@@ -2082,10 +2254,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 }
             } else if (smartScheduleContext.type === 'new-task-event') {
-                // For new task events, add a new event with the smart scheduled time
-                const tempEvent = makeTempEvent(timestamp, smartScheduleContext.duration);
-                setTaskEvents(prev => [...prev, tempEvent]);
-                setTotalDuration(prev => prev + smartScheduleContext.duration);
+                // For tasks: if task already exists, create the event immediately via API
+                if (state.goal.goal_type === 'task' && state.goal.id) {
+                    const newEvent = makeTempEvent(timestamp, smartScheduleContext.duration);
+                    await createEventForExistingTask(newEvent, state.goal.id);
+                } else {
+                    // For unsaved tasks, add a new temporary event with the smart scheduled time
+                    const tempEvent = makeTempEvent(timestamp, smartScheduleContext.duration);
+                    setTaskEvents(prev => [...prev, tempEvent]);
+                    setTotalDuration(prev => prev + smartScheduleContext.duration);
+                }
             }
 
             setSmartScheduleOpen(false);
@@ -2387,9 +2565,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             {/* ---- Dialog Title ---- */}
             <DialogTitle>{title}</DialogTitle>
             {/* ---- Dialog Content ---- */}
-            <DialogContent>
+            <DialogContent ref={contentRef}>
                 {state.error && (
-                    <Box sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
+                    <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
                 )}
                 {/* Parent display (view mode only) */}
                 {state.mode === 'view' && parentGoals.length > 0 && (
@@ -2459,157 +2637,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     </Box>
                 )}
 
-                {/* Stats display (view mode only) */}
-                {state.mode === 'view' && (state.goal.goal_type === 'routine' || state.goal.goal_type === 'task' || state.goal.goal_type === 'event') && (
-                    <Box sx={{ mb: 3 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                            <AssessmentIcon sx={{ fontSize: '1.2rem', color: 'text.secondary' }} />
-                            <Typography variant="subtitle2" sx={{ color: 'text.secondary', fontSize: '0.875rem' }}>
-                                Statistics
-                            </Typography>
-                        </Box>
-
-                        {statsLoading ? (
-                            <Box sx={{ textAlign: 'center', py: 2 }}>
-                                <Typography variant="body2" color="text.secondary">Loading stats...</Typography>
-                            </Box>
-                        ) : goalStats && (goalStats.total_events > 0 || state.goal.goal_type === 'routine' || state.goal.goal_type === 'event') ? (
-                            <Card variant="outlined" sx={{ mb: 2 }}>
-                                <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
-                                    {state.goal.goal_type === 'event' ? (
-                                        <>
-                                            <Box sx={{ textAlign: 'center', mb: 2, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
-                                                <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                                                    Sibling Events Completion Statistics
-                                                </Typography>
-                                                <Typography variant="caption" color="text.secondary">
-                                                    Performance of all events from the same {state.goal.parent_type || 'parent'}
-                                                </Typography>
-                                            </Box>
-
-                                            <Grid container spacing={2}>
-                                                <Grid item xs={6}>
-                                                    <Box sx={{ textAlign: 'center' }}>
-                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                                                            {goalStats.completion_rate !== undefined ?
-                                                                (goalStats.completion_rate * 100).toFixed(1) : '0.0'}%
-                                                        </Typography>
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            10-Day Completion Rate
-                                                        </Typography>
-                                                    </Box>
-                                                </Grid>
-                                                <Grid item xs={6}>
-                                                    <Box sx={{ textAlign: 'center' }}>
-                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'secondary.main' }}>
-                                                            {goalStats.last_30_days_completion_rate !== undefined ?
-                                                                (goalStats.last_30_days_completion_rate * 100).toFixed(1) : '0.0'}%
-                                                        </Typography>
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            All-Time Completion Rate
-                                                        </Typography>
-                                                    </Box>
-                                                </Grid>
-                                                <Grid item xs={6}>
-                                                    <Box sx={{ textAlign: 'center' }}>
-                                                        <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                                            {goalStats.completed_events}/{goalStats.total_events}
-                                                        </Typography>
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            Events Completed
-                                                        </Typography>
-                                                    </Box>
-                                                </Grid>
-                                                <Grid item xs={6}>
-                                                    <Box sx={{ textAlign: 'center' }}>
-                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'info.main' }}>
-                                                            {goalStats.avg_reschedule_distance_hours !== undefined ?
-                                                                goalStats.avg_reschedule_distance_hours.toFixed(1) : '0.0'}%
-                                                        </Typography>
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            Consistency (StdDev)
-                                                        </Typography>
-                                                    </Box>
-                                                </Grid>
-                                                {goalStats.reschedule_count !== undefined && goalStats.reschedule_count > 0 && (
-                                                    <Grid item xs={12}>
-                                                        <Box sx={{ textAlign: 'center' }}>
-                                                            <Typography variant="body2" color="text.secondary">
-                                                                Recent Events (10 days): {goalStats.reschedule_count}
-                                                            </Typography>
-                                                        </Box>
-                                                    </Grid>
-                                                )}
-                                            </Grid>
-                                        </>
-                                    ) : (
-                                        <Grid container spacing={2}>
-                                            {goalStats.completion_rate !== undefined && (
-                                                <Grid item xs={6}>
-                                                    <Box sx={{ textAlign: 'center' }}>
-                                                        <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                                                            {(goalStats.completion_rate * 100).toFixed(1)}%
-                                                        </Typography>
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            Completion Rate
-                                                        </Typography>
-                                                    </Box>
-                                                </Grid>
-                                            )}
-                                            <Grid item xs={6}>
-                                                <Box sx={{ textAlign: 'center' }}>
-                                                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                                        {goalStats.completed_events}/{goalStats.total_events}
-                                                    </Typography>
-                                                    <Typography variant="caption" color="text.secondary">
-                                                        Events Completed
-                                                    </Typography>
-                                                </Box>
-                                            </Grid>
-
-                                            {goalStats.reschedule_count !== undefined && goalStats.reschedule_count > 0 && (
-                                                <>
-                                                    <Grid item xs={6}>
-                                                        <Box sx={{ textAlign: 'center' }}>
-                                                            <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'warning.main' }}>
-                                                                {goalStats.reschedule_count}
-                                                            </Typography>
-                                                            <Typography variant="caption" color="text.secondary">
-                                                                Reschedules
-                                                            </Typography>
-                                                        </Box>
-                                                    </Grid>
-                                                    {goalStats.avg_reschedule_distance_hours !== undefined && (
-                                                        <Grid item xs={6}>
-                                                            <Box sx={{ textAlign: 'center' }}>
-                                                                <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'info.main' }}>
-                                                                    {goalStats.avg_reschedule_distance_hours.toFixed(1)}h
-                                                                </Typography>
-                                                                <Typography variant="caption" color="text.secondary">
-                                                                    Avg Move Distance
-                                                                </Typography>
-                                                            </Box>
-                                                        </Grid>
-                                                    )}
-                                                </>
-                                            )}
-                                        </Grid>
-                                    )}
-                                </CardContent>
-                            </Card>
-                        ) : (
-                            <Box sx={{ textAlign: 'center', py: 2 }}>
-                                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                    No statistics available yet.
-                                    {state.goal.goal_type === 'task' ? ' Add some events to see stats.' : ' Complete some routine events to see stats.'}
-                                </Typography>
-                            </Box>
-                        )}
-                    </Box>
-                )}
                 {commonFields}
                 {parentSelectorField}
                 {renderTypeSpecificFields()}
+                {renderStatsTiles()}
             </DialogContent>
             {/* ---- Dialog Actions ---- */}
             <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
@@ -2623,14 +2654,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         <Button onClick={handleCreateQueue} color="secondary">Create Queue</Button>
                                     )}
                                     <Button onClick={handleEdit} color="primary">Edit</Button>
+                                    <Button onClick={handleDuplicate} color="secondary">Duplicate</Button>
+                                    <Button onClick={handleDelete} color="error">Delete</Button>
                                     {/* <Button onClick={handleRelations} color="secondary">Relationships</Button> */}
                                 </>
                             )}
                             {state.goal.goal_type === 'event' && (
                                 <>
                                     <Button onClick={handleEdit} color="primary">Edit</Button>
-                                    <Button onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)} color="secondary">Smart Schedule</Button>
-                                    <Button onClick={handleSplitEvent} color="secondary">Split Event</Button>
+                                    <Button onClick={handleDuplicate} color="secondary">Duplicate</Button>
+                                    <Button onClick={handleDelete} color="error">Delete</Button>
                                 </>
                             )}
                         </>
@@ -2656,6 +2689,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     open={smartScheduleOpen}
                     duration={smartScheduleContext.duration}
                     eventName={smartScheduleContext.eventName}
+                    eventDescription={state.goal.description}
                     currentScheduledTime={smartScheduleContext.currentScheduledTime}
                     onClose={handleSmartScheduleClose}
                     onSelect={handleSmartScheduleSuccess}
@@ -2788,7 +2822,6 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
                 if (onSuccess) {
                     onSuccess(updatedGoal);
                 }
-                cleanup();
             }}
         />
     );

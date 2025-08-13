@@ -231,8 +231,8 @@
 /* Event styling */
 .fc-event {
     border-radius: 0.375rem !important;
-    padding: 0.25rem 0.5rem !important;
-    font-size: 0.875rem !important;
+    padding: 0.125rem 0.25rem !important;
+    font-size: 1rem !important;
     font-weight: 500 !important;
     transition: all 0.2s !important;
     overflow: visible !important;
@@ -260,6 +260,7 @@
 /* Force event background to be visible */
 .fc-event-main {
     background-color: inherit !important;
+    padding: 0 2px !important;
 }
 
 .fc-event-title-container {
@@ -353,9 +354,19 @@
     text-overflow: ellipsis;
 }
 
+/* Slightly larger titles in time-based views for readability */
+.fc-timegrid-event .fc-event-title {
+    font-size: 1.05rem !important;
+}
+
+/* Moderately larger titles in month (daygrid) view */
+.fc-daygrid-event .fc-event-title {
+    font-size: 0.95rem !important;
+}
+
 /* Micro event overrides */
 .fc-micro-event {
-    padding: 0 4px !important;
+    padding: 0 2px !important;
     /* tighten vertical padding */
 }
 
@@ -369,4 +380,5 @@
     height: 100%;
     padding: 0 !important;
     line-height: 1.1;
+    font-size: 0.9rem !important;
 }
