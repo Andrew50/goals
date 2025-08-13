@@ -14,7 +14,7 @@ concurrency:
 jobs:
   changed-files:
     name: Detect Changed Files
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.compute.outputs.backend }}
@@ -48,7 +48,7 @@ jobs:
 
   check-previous-runs:
     name: Check Previous Test Runs
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       actions: read
@@ -85,7 +85,7 @@ jobs:
     name: Backend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 45
     defaults:
       run:
@@ -123,7 +123,7 @@ jobs:
     name: Frontend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     timeout-minutes: 30
@@ -168,7 +168,7 @@ jobs:
     name: Ready for Deployment
     needs: [backend-verify, frontend-verify]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Evaluate overall workflow result
