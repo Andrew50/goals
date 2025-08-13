@@ -2158,11 +2158,21 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         </Box>
                         <Box sx={{ position: 'relative', width: 32, height: 32, flexShrink: 0 }}>
                             <CircularProgress size={32} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
-                        </Box>
-                        <Box sx={{ minWidth: 0, flex: 1 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <Typography
+                                variant="caption"
+                                sx={{
+                                    position: 'absolute',
+                                    top: '50%',
+                                    left: '50%',
+                                    transform: 'translate(-50%, -50%)',
+                                    fontWeight: 700,
+                                    lineHeight: 1
+                                }}
+                            >
                                 {(pct * 100).toFixed(0)}%
                             </Typography>
+                        </Box>
+                        <Box sx={{ flex: 1, minWidth: 48, overflow: 'hidden' }}>
                             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
                                 {props.label}
                             </Typography>
@@ -2207,7 +2217,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         return (
             <Box sx={{ mt: 2 }}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 1 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 1 }}>
                     <RateTile label={isEvent ? '10d' : 'Completion'} tooltip={isEvent ? '10-day completion rate' : 'Completion rate'} value={completionRate} icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />} />
                     {isEvent ? (
                         <RateTile label="All" tooltip="All-time completion rate" value={allTimeRate} icon={<TrendingUpIcon sx={{ fontSize: 16, color: 'secondary.main' }} />} color={'secondary.main'} />
