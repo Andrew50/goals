@@ -12,7 +12,7 @@ COPY . .
 RUN cargo build --release
 FROM debian:bookworm-slim
 WORKDIR /usr/src/app
-COPY --from=builder /usr/src/app/target/release/backend ./backend
+COPY --from=builder /usr/src/app/target/release/backend /usr/local/bin/backend
 ENV NEO4J_URI=bolt://goals_db:7687
 ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
@@ -40,7 +40,7 @@ RUN echo '#!/bin/bash\n\
     sleep 5; \
     done"\n\
     echo "Neo4j is ready, starting backend..."\n\
-    exec ./backend' > /start.sh && chmod +x /start.sh
+    exec /usr/local/bin/backend' > /start.sh && chmod +x /start.sh
 
 EXPOSE 5059
 CMD ["/start.sh"]

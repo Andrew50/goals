@@ -24,6 +24,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          clean: false
+
+      - name: Fix workspace permissions (changed-files)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
       
       - name: Compute changed files
         id: compute
@@ -107,6 +119,19 @@ jobs:
         working-directory: ./backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Fix workspace permissions (backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -147,6 +172,29 @@ jobs:
         working-directory: ./frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Fix workspace permissions and stale node_modules (frontend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
+          if [ -d frontend/node_modules ]; then
+            rm -rf frontend/node_modules 2>/dev/null || true
+            if [ -d frontend/node_modules ]; then
+              if command -v sudo >/dev/null 2>&1; then
+                sudo rm -rf frontend/node_modules || true
+              else
+                docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules' || true
+              fi
+            fi
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

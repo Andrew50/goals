@@ -23,6 +23,33 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Fix workspace permissions and stale node_modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Ensuring workspace is owned by the runner (uid=$(id -u) gid=$(id -g))"
+          # First try without privileges
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          # Fallback to sudo if available, else use a root container to fix ownership
+          if [ -n "${SUDO_USER-}" ] || command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
+          # Proactively remove any stale node_modules that may be root-owned from prior runs
+          if [ -d frontend/node_modules ]; then
+            rm -rf frontend/node_modules 2>/dev/null || true
+            if [ -d frontend/node_modules ]; then
+              if command -v sudo >/dev/null 2>&1; then
+                sudo rm -rf frontend/node_modules || true
+              else
+                docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules' || true
+              fi
+            fi
+          fi
       
       - uses: actions/setup-node@v4
         with:

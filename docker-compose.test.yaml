@@ -25,6 +25,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
+    user: "${UID:-1000}:${GID:-1000}"
     # Mount source for fast edit/test cycles and shared target cache
     volumes:
       - ./backend/:/usr/src/app
@@ -38,6 +39,7 @@ services:
 
   # Override the frontend to use different port for testing
   goals_frontend:
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "3031:3030" # Map external port 3031 to internal port 3030 to avoid conflict with dev
     environment:
