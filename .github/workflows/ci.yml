@@ -34,14 +34,14 @@ jobs:
             else
               docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
             fi
-            # If an old repo directory exists from previous runs, remove it proactively
-            if [ -d "$GITHUB_WORKSPACE/goals" ]; then
-              rm -rf "$GITHUB_WORKSPACE/goals" 2>/dev/null || true
-              if [ -d "$GITHUB_WORKSPACE/goals" ]; then
+            # Proactively remove known problematic root-owned dirs before checkout attempts to clean
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
                 if command -v sudo >/dev/null 2>&1; then
-                  sudo rm -rf "$GITHUB_WORKSPACE/goals" || true
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
                 else
-                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/goals' || true
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
                 fi
               fi
             fi
