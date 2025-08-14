@@ -22,6 +22,31 @@ jobs:
       actions: write
     
     steps:
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            # If an old repo directory exists from previous runs, remove it proactively
+            if [ -d "$GITHUB_WORKSPACE/goals" ]; then
+              rm -rf "$GITHUB_WORKSPACE/goals" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/goals" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/goals" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/goals' || true
+                fi
+              fi
+            fi
+          fi
+
       - uses: actions/checkout@v4
         with:
           clean: false

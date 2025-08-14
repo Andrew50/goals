@@ -21,6 +21,19 @@ jobs:
       frontend: ${{ steps.compute.outputs.frontend }}
       any_changes: ${{ steps.compute.outputs.any_changes }}
     steps:
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -84,6 +97,19 @@ jobs:
       backend_previously_failed: ${{ steps.check-failures.outputs.backend_failed }}
       frontend_previously_failed: ${{ steps.check-failures.outputs.frontend_failed }}
     steps:
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+          fi
       - name: Check for previous failures
         id: check-failures
         run: |
@@ -118,6 +144,19 @@ jobs:
       run:
         working-directory: ./backend
     steps:
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+          fi
       - uses: actions/checkout@v4
         with:
           clean: false
