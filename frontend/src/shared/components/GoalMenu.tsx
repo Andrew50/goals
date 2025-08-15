@@ -66,6 +66,8 @@ interface GoalMenuProps {
     onClose: () => void;
     onSuccess: (goal: Goal) => void;
     submitOverride?: (updatedGoal: Goal, originalGoal: Goal, mode: Mode) => Promise<void>;
+    defaultSelectedParents?: Goal[];
+    defaultRelationshipType?: 'child' | 'queue';
 }
 
 // Stats interfaces
@@ -101,7 +103,7 @@ interface RoutineUpdateDialogState {
     onConfirm: (scope: 'single' | 'all' | 'future') => Promise<void>;
 }
 
-const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride }) => {
+const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
@@ -162,9 +164,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     );
     const [title, setTitle] = useState<string>('');
     const [allGoals, setAllGoals] = useState<Goal[]>([]);
-    const [selectedParents, setSelectedParents] = useState<Goal[]>([]);
+    const [selectedParents, setSelectedParents] = useState<Goal[]>(defaultSelectedParents || []);
     const [parentSearchQuery, setParentSearchQuery] = useState('');
-    const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>('child');
+    const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>(defaultRelationshipType || 'child');
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -1363,10 +1365,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         close();
         setTimeout(() => {
-            // Set the parent goal and relationship type, then open the dialog
-            setSelectedParents([parentGoal]);
-            setRelationshipType('child');
-            open(newGoal, 'create', onSuccess);
+            GoalMenuWithStatic.open(newGoal, 'create', onSuccess, {
+                defaultSelectedParents: [parentGoal],
+                defaultRelationshipType: 'child'
+            });
         }, 100);
     };
 
@@ -1376,10 +1378,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         close();
         setTimeout(() => {
-            // Set the parent goal and relationship type, then open the dialog
-            setSelectedParents([previousGoal]);
-            setRelationshipType('queue');
-            open(newGoal, 'create', onSuccess);
+            GoalMenuWithStatic.open(newGoal, 'create', onSuccess, {
+                defaultSelectedParents: [previousGoal],
+                defaultRelationshipType: 'queue'
+            });
         }, 100);
     };
 
@@ -2943,15 +2945,26 @@ let currentInstance: (() => void) | null = null;
 let currentRoot: Root | null = null;
 
 interface GoalMenuComponent extends React.FC<GoalMenuProps> {
-    open: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
+    open: (
+        goal: Goal,
+        initialMode: Mode,
+        onSuccess?: (goal: Goal) => void,
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }
+    ) => void;
     close: () => void;
-    openWithSubmitOverride: (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void) => void;
+    openWithSubmitOverride: (
+        goal: Goal,
+        initialMode: Mode,
+        submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>,
+        onSuccess?: (goal: Goal) => void,
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }
+    ) => void;
 }
 
 const GoalMenuBase = GoalMenu;
 const GoalMenuWithStatic = GoalMenuBase as GoalMenuComponent;
 
-GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }) => {
     console.log('[GoalMenu.open] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -2986,13 +2999,15 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
                     onSuccess(updatedGoal);
                 }
             }}
+            defaultSelectedParents={options?.defaultSelectedParents}
+            defaultRelationshipType={options?.defaultRelationshipType}
         />
     );
 
     console.log('[GoalMenu.open] Goal menu rendered');
 };
 
-GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void) => {
+GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }) => {
     console.log('[GoalMenu.openWithSubmitOverride] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -3024,6 +3039,8 @@ GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, subm
                 if (onSuccess) onSuccess(updatedGoal);
             }}
             submitOverride={submit}
+            defaultSelectedParents={options?.defaultSelectedParents}
+            defaultRelationshipType={options?.defaultRelationshipType}
         />
     );
 };

@@ -64,6 +64,11 @@ const List: React.FC = () => {
     const [bulkPriority, setBulkPriority] = useState<string>('');
     const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
 
+    // Debug refs to track previous values for logging
+    const prevSelectedSizeRef = useRef<number>(0);
+    const prevFiltersRef = useRef<string>(JSON.stringify(filters));
+    const prevSearchRef = useRef<string>(searchQuery);
+
     useEffect(() => {
         // Expect ApiGoal[] from the API
         privateRequest<ApiGoal[]>('list').then(apiGoals => {
@@ -230,18 +235,44 @@ const List: React.FC = () => {
 
     // Clear selection on filter or search change for simplicity
     useEffect(() => {
-        if (selectedIds.size > 0) setSelectedIds(new Set());
+        const prevSelectedSize = prevSelectedSizeRef.current;
+        const prevFiltersStr = prevFiltersRef.current;
+        const prevSearch = prevSearchRef.current;
+        const currFiltersStr = JSON.stringify(filters);
+
+        const changedBecauseSelectedSize = prevSelectedSize !== selectedIds.size;
+        const changedBecauseFilters = prevFiltersStr !== currFiltersStr;
+        const changedBecauseSearch = prevSearch !== searchQuery;
+
+        console.log('[List] Clear-selection effect fired', {
+            selectedSize: selectedIds.size,
+            changedBecauseSelectedSize,
+            changedBecauseFilters,
+            changedBecauseSearch,
+        });
+
+        if (selectedIds.size > 0) {
+            console.log('[List] Clearing selection due to effect');
+            setSelectedIds(new Set());
+        }
+
+        prevSelectedSizeRef.current = selectedIds.size;
+        prevFiltersRef.current = currFiltersStr;
+        prevSearchRef.current = searchQuery;
     }, [filters, searchQuery, selectedIds.size]);
 
     const toggleSelectOne = (goalId: number, checked: boolean) => {
+        console.log('[List] toggleSelectOne', { goalId, checked, beforeIds: Array.from(selectedIds) });
         setSelectedIds(prev => {
             const next = new Set(prev);
             if (checked) next.add(goalId); else next.delete(goalId);
+            console.log('[List] toggleSelectOne -> nextIds', Array.from(next));
             return next;
         });
     };
 
     const toggleSelectAllVisible = (checked: boolean) => {
+        console.log('[List] toggleSelectAllVisible', { checked, visibleIds });
         setSelectedIds(prev => {
             const next = new Set(prev);
             if (checked) {
@@ -249,9 +280,15 @@ const List: React.FC = () => {
             } else {
                 visibleIds.forEach(id => next.delete(id));
             }
+            console.log('[List] toggleSelectAllVisible -> nextIds', Array.from(next));
             return next;
         });
     };
+
+    // Log whenever selectedIds reference changes
+    useEffect(() => {
+        console.log('[List] selectedIds changed', Array.from(selectedIds));
+    }, [selectedIds]);
 
     const getSelectedGoals = (): Goal[] => list.filter(g => selectedIds.has(g.id));
 
