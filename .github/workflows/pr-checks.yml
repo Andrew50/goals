@@ -49,9 +49,11 @@ jobs:
         with:
           fetch-depth: 0
           clean: false
+          path: repo_changed_files
 
       - name: Fix workspace permissions (changed-files)
         shell: bash
+        working-directory: repo_changed_files
         run: |
           set -euo pipefail
           chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
@@ -64,6 +66,7 @@ jobs:
       - name: Compute changed files
         id: compute
         shell: bash
+        working-directory: repo_changed_files
         run: |
           set -euo pipefail
           echo "Event: ${{ github.event_name }}"
