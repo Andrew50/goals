@@ -17,6 +17,51 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 60
     steps:
+      - name: Stop existing Docker Compose stacks (pre-checkout)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Stopping any existing Docker Compose stacks before checkout..."
+          # Try to stop the prod stack by project name first
+          docker compose -p p down --remove-orphans 2>/dev/null || true
+          # If a previous workspace exists with compose files, use them explicitly
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE" || true
+            if [ -f docker-compose.prod.yaml ]; then
+              docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
+            fi
+            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+            fi
+          fi
+          # Fallback: force remove any containers with expected name prefixes
+          docker ps --format '{{.Names}}' | awk '/^(goals_|p_)/{print $1}' | xargs -r docker rm -f || true
+
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            # Proactively remove known problematic root-owned dirs before checkout attempts to clean
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
+                fi
+              fi
+            fi
+          fi
+
       - uses: actions/checkout@v4
         with:
           clean: true

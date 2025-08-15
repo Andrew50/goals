@@ -22,6 +22,18 @@ jobs:
       actions: write
     
     steps:
+      - name: Stop residual test stacks (pre-checkout)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Stopping any existing dev/test compose stacks before checkout..."
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE" || exit 0
+            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+            fi
+          fi
+
       - name: Pre-fix workspace ownership
         shell: bash
         run: |
