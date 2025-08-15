@@ -192,6 +192,43 @@ jobs:
           path: frontend/test-results
           retention-days: 7
           if-no-files-found: ignore
+
+      - name: Create dev .env artifact (no logging)
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cat > .env.dev << 'EOF'
+          # === Backend ===
+          HOST_URL=${{ vars.HOST_URL }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URL=${{ vars.GOOGLE_REDIRECT_URL }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          JWT_EXPIRATION=${{ vars.JWT_EXPIRATION }}
+          GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
+          NEO4J_URI=${{ vars.NEO4J_URI }}
+          NEO4J_USERNAME=${{ secrets.NEO4J_USERNAME }}
+          NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
+          VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT=${{ vars.VAPID_SUBJECT }}
+          
+          # === Frontend ===
+          REACT_APP_API_URL=${{ vars.REACT_APP_API_URL }}
+          REACT_APP_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          REACT_APP_VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
+          EOF
+
+      - name: Upload dev .env artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-env
+          path: .env.dev
+          retention-days: 3
+          if-no-files-found: error
           
       - name: Stop test stack
         if: always()
