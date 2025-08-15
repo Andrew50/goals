@@ -629,10 +629,10 @@ async fn migrate_existing_child_relationships(
 async fn generate_routine_events(graph: &Graph, state: &mut MigrationState) -> Result<(), String> {
     println!("Generating routine events...");
 
-    // Generate 3 months of events for each routine
-    let three_months_ms = 90 * 24 * 60 * 60 * 1000;
+    // Generate 6 months of events for each routine
+    let six_months_ms = 180 * 24 * 60 * 60 * 1000;
     let now = chrono::Utc::now().timestamp_millis();
-    let end_time = now + three_months_ms;
+    let end_time = now + six_months_ms;
 
     let query_str = "
         MATCH (r:Goal)

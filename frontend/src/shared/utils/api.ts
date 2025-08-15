@@ -1,4 +1,5 @@
 import axios, { AxiosResponse, Method } from 'axios';
+import { forceLogout } from './authEvents';
 import { Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { goalToUTC, goalToLocal } from './time';
 
@@ -11,6 +12,7 @@ if (!API_URL) {
 axios.defaults.timeout = 10000; // 10 second timeout
 axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.common['Content-Type'] = 'application/json';
+axios.defaults.withCredentials = true; // Include cookies on cross-origin requests
 
 // Add retry logic for connection issues
 const axiosRetry = async (fn: () => Promise<any>, retries = 3): Promise<any> => {
@@ -50,32 +52,44 @@ export async function privateRequest<T>(
     endpoint: string,
     method: Method = 'GET',
     data?: any,
-    params?: any
+    params?: any,
+    timeoutMs?: number
 ): Promise<T> {
     const token = localStorage.getItem('authToken');
     try {
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const response: AxiosResponse<T> = await axios({
             url: `${API_URL}/${endpoint}`,
             method,
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-            },
+            headers,
             data,
             params,
+            withCredentials: true,
+            ...(timeoutMs ? { timeout: timeoutMs } : {}),
         });
 
         return response.data as T;
     } catch (error: any) {
         if (error.response?.status === 401) {
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('routineUpdateTimeout');
-            localStorage.removeItem('nextRoutineUpdate');
-            throw error;
-        } else {
-            console.error(`API request failed for ${endpoint}:`, error);
+            // Clear storage as a fallback and broadcast a global logout event
+            try {
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('routineUpdateTimeout');
+                localStorage.removeItem('nextRoutineUpdate');
+                localStorage.removeItem('username');
+            } catch (_) { }
+            forceLogout();
             throw error;
         }
+
+        console.error(`API request failed for ${endpoint}:`, error);
+        throw error;
     }
 }
 
@@ -92,6 +106,7 @@ export async function publicRequest<T>(
             data,
             params,
             timeout: 10000,
+            withCredentials: true,
         });
         return response.data;
     });
@@ -226,9 +241,17 @@ export const deleteEvent = async (eventId: number, deleteFuture: boolean = false
     await privateRequest(`events/${eventId}/delete?delete_future=${deleteFuture}`, 'DELETE');
 };
 
-export const splitEvent = async (eventId: number): Promise<Goal[]> => {
-    const response = await privateRequest<ApiGoal[]>(`events/${eventId}/split`, 'POST');
-    return response.map(processGoalFromAPI);
+// Duplicate goal
+export interface DuplicateOptions {
+    include_children?: boolean;
+    keep_parent_links?: boolean;
+    name_suffix?: string;
+    clear_external_ids?: boolean;
+}
+
+export const duplicateGoal = async (goalId: number, options: DuplicateOptions = {}): Promise<Goal> => {
+    const response = await privateRequest<ApiGoal>(`goals/${goalId}/duplicate`, 'POST', options);
+    return processGoalFromAPI(response);
 };
 
 export const getTaskEvents = async (taskId: number): Promise<{
@@ -387,6 +410,8 @@ export const getSmartScheduleOptions = async (options: {
     preferredTimeStart?: number; // Hour of day (0-23)
     preferredTimeEnd?: number;   // Hour of day (0-23)
     startAfterTimestamp?: Date;  // For rescheduling - start suggestions after this time
+    eventName?: string;
+    eventDescription?: string;
 }): Promise<{
     suggestions: Array<{
         timestamp: Date;
@@ -399,7 +424,9 @@ export const getSmartScheduleOptions = async (options: {
         look_ahead_days: options.lookAheadDays,
         preferred_time_start: options.preferredTimeStart,
         preferred_time_end: options.preferredTimeEnd,
-        start_after_timestamp: options.startAfterTimestamp ? options.startAfterTimestamp.getTime() : undefined
+        start_after_timestamp: options.startAfterTimestamp ? options.startAfterTimestamp.getTime() : undefined,
+        event_name: options.eventName,
+        event_description: options.eventDescription,
     };
 
     const response = await privateRequest<{
@@ -408,7 +435,7 @@ export const getSmartScheduleOptions = async (options: {
             reason: string;
             score: number;
         }>;
-    }>('events/smart-schedule', 'POST', requestData);
+    }>('events/smart-schedule', 'POST', requestData, undefined, 60000);
 
     return {
         suggestions: response.suggestions.map(s => ({
@@ -472,4 +499,15 @@ export const syncToGoogleCalendar = async (request: GCalSyncRequest): Promise<GC
 
 export const syncBidirectionalGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
     return privateRequest<GCalSyncResult>('gcal/sync-bidirectional', 'POST', request);
+};
+
+export interface CalendarListEntry {
+    id: string;
+    summary: string;
+    primary?: boolean;
+    access_role: string;
+}
+
+export const getGoogleCalendars = async (): Promise<CalendarListEntry[]> => {
+    return privateRequest<CalendarListEntry[]>('gcal/calendars', 'GET');
 };

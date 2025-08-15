@@ -38,11 +38,9 @@ const Signup: React.FC = () => {
       setSuccess(response.message);
       setTimeout(() => navigate("/signin"), 0); // Redirect to sign-in after 2 seconds
     } catch (err: any) {
-      if (err.response?.status === 409) {
-        setError("Username already exists");
-      } else {
-        setError("An error occurred during signup");
-      }
+      // `publicRequest` normalizes errors; prefer its message but keep fallback
+      const message = err?.message || (err.response?.status === 409 ? 'Username already exists' : 'An error occurred during signup');
+      setError(message);
     }
   };
 

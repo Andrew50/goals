@@ -14,9 +14,23 @@ import {
     ListItemText,
     ListItemSecondaryAction,
     IconButton,
+    Card,
+    CardContent,
+    CircularProgress,
+    Snackbar,
 } from "@mui/material";
-import { Google, Key, LinkOff } from "@mui/icons-material";
+import {
+    Google,
+    Key,
+    LinkOff,
+    Notifications,
+    NotificationsOff,
+    NotificationsActive,
+    PhoneIphone,
+    CheckCircle,
+} from "@mui/icons-material";
 import { privateRequest } from "../../shared/utils/api";
+import { usePushNotifications, useInstallPrompt } from "../../shared/hooks/usePushNotifications";
 
 interface AuthMethod {
     method_type: string;
@@ -43,6 +57,9 @@ const AccountSettings: React.FC = () => {
     const [success, setSuccess] = useState<string | null>(null);
     const [password, setPassword] = useState("");
     const [showPasswordForm, setShowPasswordForm] = useState(false);
+    const [notificationState, notificationActions] = usePushNotifications();
+    const { showPrompt: showInstallPrompt, dismissPrompt } = useInstallPrompt();
+    const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
 
     const loadAccountInfo = async () => {
         try {
@@ -274,10 +291,155 @@ const AccountSettings: React.FC = () => {
                                     </Box>
                                 )}
                             </Box>
+
+                            <Divider sx={{ mb: 4 }} />
+
+                            {/* Push Notifications Section */}
+                            <Box sx={{ mb: 4 }}>
+                                <Typography variant="h6" gutterBottom>
+                                    Push Notifications
+                                </Typography>
+
+                                {/* iOS Install Prompt */}
+                                {showInstallPrompt && (
+                                    <Card sx={{ mb: 3, bgcolor: 'info.light', color: 'info.contrastText' }}>
+                                        <CardContent>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                                                <PhoneIphone />
+                                                <Typography variant="subtitle1">
+                                                    Install App for Notifications
+                                                </Typography>
+                                            </Box>
+                                            <Typography variant="body2" sx={{ mb: 2 }}>
+                                                To receive push notifications on iOS, you need to add this app to your home screen:
+                                            </Typography>
+                                            <Typography variant="body2" component="ol" sx={{ pl: 2, mb: 2 }}>
+                                                <li>Tap the Share button <span style={{ fontFamily: 'system-ui' }}>􀈂</span> in Safari</li>
+                                                <li>Select "Add to Home Screen"</li>
+                                                <li>Tap "Add" to install</li>
+                                                <li>Open the app from your home screen</li>
+                                            </Typography>
+                                            <Button
+                                                variant="contained"
+                                                size="small"
+                                                onClick={dismissPrompt}
+                                            >
+                                                Got it
+                                            </Button>
+                                        </CardContent>
+                                    </Card>
+                                )}
+
+                                {/* Notification Status */}
+                                <Card sx={{ mb: 2 }}>
+                                    <CardContent>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                {notificationState.isSubscribed ? (
+                                                    <NotificationsActive color="success" />
+                                                ) : (
+                                                    <NotificationsOff color="disabled" />
+                                                )}
+                                                <Box>
+                                                    <Typography variant="subtitle1">
+                                                        {notificationState.isSubscribed ? 'Notifications Enabled' : 'Notifications Disabled'}
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        {notificationState.isSupported ?
+                                                            (notificationState.isStandalone ?
+                                                                `Permission: ${notificationState.permission}` :
+                                                                'App not installed to home screen') :
+                                                            'Not supported in this browser'}
+                                                    </Typography>
+                                                </Box>
+                                            </Box>
+
+                                            {notificationState.isLoading && <CircularProgress size={24} />}
+                                        </Box>
+
+                                        {notificationState.error && (
+                                            <Alert severity="error" sx={{ mt: 2 }}>
+                                                {notificationState.error}
+                                            </Alert>
+                                        )}
+
+                                        <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
+                                            {!notificationState.isSubscribed ? (
+                                                <Button
+                                                    variant="contained"
+                                                    startIcon={<Notifications />}
+                                                    onClick={async () => {
+                                                        const success = await notificationActions.subscribe();
+                                                        if (success) {
+                                                            setSnackbarMessage('Push notifications enabled successfully!');
+                                                        }
+                                                    }}
+                                                    disabled={
+                                                        notificationState.isLoading ||
+                                                        !notificationState.isSupported ||
+                                                        (!notificationState.isStandalone && /iPad|iPhone|iPod/.test(navigator.userAgent))
+                                                    }
+                                                >
+                                                    Enable Notifications
+                                                </Button>
+                                            ) : (
+                                                <>
+                                                    <Button
+                                                        variant="outlined"
+                                                        startIcon={<NotificationsOff />}
+                                                        onClick={async () => {
+                                                            const success = await notificationActions.unsubscribe();
+                                                            if (success) {
+                                                                setSnackbarMessage('Push notifications disabled');
+                                                            }
+                                                        }}
+                                                        disabled={notificationState.isLoading}
+                                                    >
+                                                        Disable Notifications
+                                                    </Button>
+                                                    <Button
+                                                        variant="outlined"
+                                                        startIcon={<CheckCircle />}
+                                                        onClick={async () => {
+                                                            const success = await notificationActions.sendTestNotification();
+                                                            if (success) {
+                                                                setSnackbarMessage('Test notification sent!');
+                                                            }
+                                                        }}
+                                                        disabled={notificationState.isLoading}
+                                                    >
+                                                        Send Test
+                                                    </Button>
+                                                </>
+                                            )}
+                                        </Box>
+                                    </CardContent>
+                                </Card>
+
+                                {/* Information about notifications */}
+                                <Typography variant="body2" color="text.secondary">
+                                    Push notifications can alert you about upcoming events, task deadlines, and routine reminders.
+                                    {' '}
+                                    {/iPad|iPhone|iPod/.test(navigator.userAgent) && !notificationState.isStandalone && (
+                                        <>
+                                            <strong>Note:</strong> On iOS devices, the app must be installed to your home screen to receive notifications.
+                                        </>
+                                    )}
+                                </Typography>
+                            </Box>
                         </>
                     )}
                 </Paper>
             </Box>
+
+            {/* Snackbar for success messages */}
+            <Snackbar
+                open={!!snackbarMessage}
+                autoHideDuration={4000}
+                onClose={() => setSnackbarMessage(null)}
+                message={snackbarMessage}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            />
         </Container>
     );
 };

@@ -1,6 +1,6 @@
 use axum::{http::StatusCode, Json};
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use neo4rs::{query, Graph};
 use serde::Serialize;
 
@@ -13,25 +13,6 @@ pub struct CalendarData {
     routines: Vec<Goal>,     // Keep for reference if needed
     achievements: Vec<Goal>, // Keep for reference if needed
     parents: Vec<Goal>,      // Parent tasks/routines for events
-}
-
-#[derive(Debug, Serialize)]
-pub struct CalendarEvent {
-    id: i64,
-    title: String,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    #[serde(rename = "type")]
-    event_type: String,
-    description: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UnscheduledTask {
-    id: i64,
-    title: String,
-    end_timestamp: i64,
-    description: Option<String>,
 }
 
 #[allow(dead_code)]

@@ -110,8 +110,20 @@ const NetworkView: React.FC = () => {
         // GoalMenu expects a Goal object (with Dates)
         // nodeData from DataSet might still be ApiGoal-like if not fully processed,
         // Assuming nodeData here is effectively a Goal or NetworkNode.
-        GoalMenu.open(nodeData as Goal, goalDialogMode, (updatedGoal: Goal) => {
+        GoalMenu.open(nodeData as Goal, goalDialogMode, async (updatedGoal: Goal) => {
           console.log('[Network] onSuccess priority:', updatedGoal.priority);
+
+          // Check if the node still exists (might have been deleted in GoalMenu)
+          if (updatedGoal.id) {
+            const nodeExists = await checkNodeExists(updatedGoal.id);
+
+            if (!nodeExists) {
+              // Node was deleted, remove it from the network
+              removeNodeFromNetwork(updatedGoal.id);
+              return;
+            }
+          }
+
           // After editing/viewing, update the node's properties
           // GoalMenu returns an updated Goal object.
           const updatedNode = formatNetworkNode(updatedGoal); // Pass updatedGoal (Goal), isAlreadyGoal = true
@@ -123,6 +135,11 @@ const NetworkView: React.FC = () => {
             x: existingNode?.x, // Preserve existing position
             y: existingNode?.y
           });
+
+          // Refresh edges for this node (in case relationships were changed in GoalMenu)
+          if (updatedGoal.id) {
+            await refreshEdgesForNode(updatedGoal.id);
+          }
         });
       }
     }
@@ -165,7 +182,7 @@ const NetworkView: React.FC = () => {
       zoomView: true,
       hover: true,
       navigationButtons: false,
-      keyboard: { enabled: true, bindToWindow: true }
+      keyboard: { enabled: true, bindToWindow: false }
     },
     manipulation: {
       enabled: false,
@@ -369,7 +386,7 @@ const NetworkView: React.FC = () => {
       setDeleteMode(false);
       deleteModeRef.current = false;
       // GoalMenu creates a Goal object
-      GoalMenu.open({} as Goal, 'create', (newGoal: Goal) => {
+      GoalMenu.open({} as Goal, 'create', async (newGoal: Goal) => {
         // GoalMenu returns a new Goal object.
         const newNode = formatNetworkNode(newGoal); // Pass newGoal (Goal), isAlreadyGoal = true
         // Get existing nodes from the DataSet and calculate a new position
@@ -378,6 +395,30 @@ const NetworkView: React.FC = () => {
         newNode.x = position.x;
         newNode.y = position.y;
         nodesDataSetRef.current?.add(newNode);
+
+        // Refresh edges for the new node (in case relationships were created in GoalMenu)
+        if (newGoal.id) {
+          await refreshEdgesForNode(newGoal.id);
+
+          // Persist the new node position
+          try {
+            await saveNodePosition(newGoal.id, position.x, position.y);
+          } catch (error) {
+            console.error('Failed to save new node position:', error);
+          }
+
+          // Fit the view to show the new node
+          setTimeout(() => {
+            networkRef.current?.fit({
+              nodes: [newGoal.id],
+              animation: {
+                duration: 500,
+                easingFunction: 'easeInOutQuad'
+              }
+            });
+          }, 100);
+        }
+
         setAddNodeMode(false);
       });
     }
@@ -417,6 +458,81 @@ const NetworkView: React.FC = () => {
         networkRef.current.addEdgeMode();
       }
     }, 100);
+  };
+
+  // Helper function to refresh edges for a specific node
+  const refreshEdgesForNode = async (nodeId: number) => {
+    if (!edgesDataSetRef.current) return;
+
+    try {
+      // Fetch current network data from backend
+      const networkData = await privateRequest<{ nodes: ApiGoal[], edges: NetworkEdge[] }>('network');
+
+      // Find edges that involve this node
+      const nodeEdges = networkData.edges.filter(edge =>
+        edge.from === nodeId || edge.to === nodeId
+      );
+
+      // Get current edges from the DataSet
+      const currentEdges = edgesDataSetRef.current.get();
+      const currentEdgeIds = new Set(currentEdges.map(e => e.id));
+
+      // Add new edges that aren't already in the DataSet
+      const newEdges = nodeEdges
+        .map(edge => ({
+          ...edge,
+          id: `${edge.from}-${edge.to}`
+        }))
+        .filter(edge => !currentEdgeIds.has(edge.id));
+
+      if (newEdges.length > 0) {
+        edgesDataSetRef.current.add(newEdges);
+      }
+
+      // Remove edges that no longer exist on the backend
+      const backendEdgeIds = new Set(nodeEdges.map(e => `${e.from}-${e.to}`));
+      const edgesToRemove = currentEdges
+        .filter(edge =>
+          (edge.from === nodeId || edge.to === nodeId) &&
+          !backendEdgeIds.has(edge.id)
+        )
+        .map(edge => edge.id);
+
+      if (edgesToRemove.length > 0) {
+        edgesDataSetRef.current.remove(edgesToRemove);
+      }
+    } catch (error) {
+      console.error('Failed to refresh edges for node:', nodeId, error);
+    }
+  };
+
+  // Helper function to check if a node still exists on the backend
+  const checkNodeExists = async (nodeId: number): Promise<boolean> => {
+    try {
+      await privateRequest(`goals/${nodeId}`);
+      return true;
+    } catch (error) {
+      // If we get a 404 or similar error, the node was deleted
+      return false;
+    }
+  };
+
+  // Helper function to remove node and its edges from the network
+  const removeNodeFromNetwork = (nodeId: number) => {
+    if (nodesDataSetRef.current && edgesDataSetRef.current) {
+      // Remove the node
+      nodesDataSetRef.current.remove(nodeId);
+
+      // Remove all edges connected to this node
+      const currentEdges = edgesDataSetRef.current.get();
+      const edgesToRemove = currentEdges
+        .filter(edge => edge.from === nodeId || edge.to === nodeId)
+        .map(edge => edge.id);
+
+      if (edgesToRemove.length > 0) {
+        edgesDataSetRef.current.remove(edgesToRemove);
+      }
+    }
   };
 
   // Add this new function inside NetworkView component:

@@ -1,4 +1,15 @@
 FROM rust:latest
+
+# Install build dependencies needed by crates like reqwest (OpenSSL)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure cargo binaries are on PATH
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+# Make sure login shells also pick up cargo on PATH
+RUN printf '%s\n' 'export PATH=/usr/local/cargo/bin:$PATH' > /etc/profile.d/cargo.sh && chmod 644 /etc/profile.d/cargo.sh
+
 RUN cargo install cargo-watch
 WORKDIR /usr/src/app
 COPY . .
