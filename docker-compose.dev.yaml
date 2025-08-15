@@ -14,6 +14,9 @@ services:
       - .env
     environment:
       HOST_URL: ${HOST_URL:-localhost}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://${HOST_URL:-localhost}:3030/auth/callback}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
       VAPID_SUBJECT: ${VAPID_SUBJECT}
@@ -46,7 +49,6 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
-    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -54,6 +56,7 @@ services:
       CHOKIDAR_USEPOLLING: "true" #enable polling
       HOST_URL: ${HOST_URL:-localhost}
       REACT_APP_API_URL: "http://${HOST_URL:-localhost}:5059"
+      REACT_APP_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       REACT_APP_VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
     env_file:
       - .env

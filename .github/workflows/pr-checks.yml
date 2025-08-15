@@ -23,6 +23,7 @@ jobs:
     steps:
       - name: Pre-fix workspace ownership
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           echo "Fixing ownership on $GITHUB_WORKSPACE"
@@ -109,6 +110,7 @@ jobs:
     steps:
       - name: Pre-fix workspace ownership
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           echo "Fixing ownership on $GITHUB_WORKSPACE"
@@ -160,12 +162,10 @@ jobs:
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
     timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: ./backend
     steps:
       - name: Pre-fix workspace ownership
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           echo "Fixing ownership on $GITHUB_WORKSPACE"
@@ -193,6 +193,7 @@ jobs:
 
       - name: Fix workspace permissions (backend)
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
@@ -219,12 +220,15 @@ jobs:
             cargo-${{ runner.os }}-
 
       - name: Lint with clippy
+        working-directory: ./backend
         run: cargo clippy -- -D warnings
 
       - name: Build
+        working-directory: ./backend
         run: cargo build --verbose
 
       - name: Unit tests
+        working-directory: ./backend
         run: cargo test --lib
 
   # FRONTEND PIPELINE (lint, build, unit tests)
@@ -236,9 +240,6 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: ./frontend
     steps:
       - uses: actions/checkout@v4
         with:
@@ -273,18 +274,23 @@ jobs:
           cache-dependency-path: './frontend/package-lock.json'
 
       - name: Install dependencies
+        working-directory: ./frontend
         run: npm ci
 
       - name: Lint with ESLint
+        working-directory: ./frontend
         run: npx eslint . --ext .js,.jsx,.ts,.tsx
 
       - name: Type check with TypeScript
+        working-directory: ./frontend
         run: npx tsc --noEmit
 
       - name: Build
+        working-directory: ./frontend
         run: npm run build
 
       - name: Unit tests
+        working-directory: ./frontend
         run: npm run test:ci
 
       - name: Upload test coverage
