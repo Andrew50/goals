@@ -1,4 +1,5 @@
 /* eslint-env serviceworker */
+/* eslint-disable no-restricted-globals */
 // Service Worker for Goals PWA
 // Handles push notifications and offline caching
 
