@@ -22,7 +22,7 @@ export default defineConfig({
     /* Retry on CI only */
     retries: process.env.CI ? 2 : 0,
     /* Enable multiple workers with proper isolation */
-    workers: process.env.CI ? 4 : undefined, // Change from 1 to 4 workers
+    workers: process.env.CI ? 1 : undefined,
     /* Reporter to use. See https://playwright.dev/docs/test-reporters */
     reporter: 'html',
     /* Path to the global setup file. */

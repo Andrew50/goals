@@ -29,7 +29,13 @@ const Signin: React.FC = () => {
       setSuccess(message);
       navigate("/day");
     } catch (err: any) {
-      let errorMessage = err.message || "An error occurred during sign in";
+      const status = err?.status || err?.response?.status;
+      let errorMessage = err?.message || "An error occurred during sign in";
+      if (status === 401) {
+        errorMessage = "Invalid username or password";
+      } else if (status === 404) {
+        errorMessage = "Service unavailable. Please try again.";
+      }
 
       // Check for specific error messages and provide helpful guidance
       if (errorMessage.includes("Google sign-in")) {

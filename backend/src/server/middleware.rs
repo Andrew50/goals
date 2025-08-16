@@ -61,6 +61,23 @@ fn get_token_from_request(request: &Request) -> Result<String, Box<Response>> {
         }
     }
 
+    // Next, try to get token from Cookie header (HttpOnly cookie-based auth)
+    if let Some(cookie_header) = request
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+    {
+        // Simple parsing of the Cookie header
+        // Format: "key=value; key2=value2; ..."
+        for part in cookie_header.split(';') {
+            let trimmed = part.trim();
+            if let Some(value) = trimmed.strip_prefix("auth_token=") {
+                info!("Extracted token from auth_token cookie");
+                return Ok(value.to_string());
+            }
+        }
+    }
+
     // If not found in header, *always* check query parameters as a fallback
     if let Some(query) = request.uri().query() {
         info!(query = %query, "Checking query parameters for token");

@@ -26,6 +26,7 @@ interface SmartScheduleDialogProps {
     open: boolean;
     duration: number;
     eventName?: string;
+    eventDescription?: string;
     currentScheduledTime?: Date;
     onClose: () => void;
     onSelect: (timestamp: Date) => void;
@@ -41,6 +42,7 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
     open,
     duration,
     eventName,
+    eventDescription,
     currentScheduledTime,
     onClose,
     onSelect
@@ -65,8 +67,21 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
                 lookAheadDays: days,
                 preferredTimeStart,
                 preferredTimeEnd,
-                startAfterTimestamp: currentScheduledTime && suggestAfterCurrent ? currentScheduledTime : undefined
+                startAfterTimestamp: currentScheduledTime && suggestAfterCurrent ? currentScheduledTime : undefined,
+                eventName: eventName,
+                eventDescription: eventDescription,
             });
+
+            // Debug print the raw suggestions
+            try {
+                const debug = result.suggestions.map(s => ({
+                    timestampMs: s.timestamp.getTime(),
+                    iso: s.timestamp.toISOString(),
+                    score: s.score,
+                    reason: s.reason,
+                }));
+                console.log('[SmartScheduleDialog] Suggestions fetched:', debug);
+            } catch (_) { }
 
             if (additionalDays) {
                 // Add to existing suggestions, removing duplicates
@@ -75,17 +90,20 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
                     const newSuggestions = result.suggestions.filter(s => !existingTimestamps.has(s.timestamp.getTime()));
                     return [...prev, ...newSuggestions];
                 });
+                console.log('[SmartScheduleDialog] Appended suggestions, new total:', suggestions.length);
                 setLookAheadDays(days);
             } else {
                 setSuggestions(result.suggestions);
+                console.log('[SmartScheduleDialog] Replaced suggestions, count:', result.suggestions.length);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to load smart schedule suggestions:', error);
-            setError('Failed to load schedule suggestions. Please try again.');
+            const message = error?.message || 'Failed to load schedule suggestions.';
+            setError(message);
         } finally {
             setLoading(false);
         }
-    }, [duration, lookAheadDays, preferredTimeStart, preferredTimeEnd, currentScheduledTime, suggestAfterCurrent]);
+    }, [duration, lookAheadDays, preferredTimeStart, preferredTimeEnd, currentScheduledTime, suggestAfterCurrent, eventName, eventDescription, suggestions.length]);
 
     // Load initial suggestions when dialog opens
     useEffect(() => {
@@ -110,6 +128,12 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
     };
 
     const handlePreferencesUpdate = () => {
+        console.log('[SmartScheduleDialog] Updating suggestions with preferences', {
+            preferredTimeStart,
+            preferredTimeEnd,
+            suggestAfterCurrent,
+            lookAheadDays,
+        });
         setSuggestions([]);
         setSelectedOption(null);
         loadSuggestions();

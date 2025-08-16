@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { onForceLogout } from '../utils/authEvents';
 import { publicRequest, privateRequest, updateRoutines } from "../utils/api";
 
 interface SigninResponse {
@@ -52,14 +53,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return localStorage.getItem('authToken');
     };
 
+    const logout = useCallback(() => {
+        // Best-effort request to clear HttpOnly cookie on the server
+        publicRequest('auth/logout', 'GET').catch(() => { });
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('routineUpdateTimeout');
+        localStorage.removeItem('nextRoutineUpdate');
+        localStorage.removeItem('username');
+        setUsername(null);
+        setIsAuthenticated(false);
+    }, []);
+
     // Function to validate token and update auth state if invalid
     const validateAndUpdateAuthState = useCallback(async () => {
-        const token = localStorage.getItem('authToken');
-        if (!token) {
-            setIsAuthenticated(false);
-            return;
-        }
-
         // Skip validation in test mode to prevent token clearing during tests
         const isTestMode = localStorage.getItem('testMode') === 'true';
         if (isTestMode) {
@@ -73,9 +79,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         try {
-            // Try to make a request to validate the token using privateRequest
+            // Try to make a request to validate the session (cookie or bearer)
             await privateRequest('auth/validate', 'GET');
             // Token is valid, we're already authenticated
+            // Mark as authenticated in case we only have an HttpOnly cookie (no local token)
+            setIsAuthenticated(true);
+            // If we don't have a local username yet, keep existing
         } catch (error) {
             console.error('Token validation failed:', error);
             localStorage.removeItem('authToken');
@@ -87,10 +96,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
-    // Validate token on mount
+    // Validate token on mount and subscribe to force-logout events
     useEffect(() => {
         validateAndUpdateAuthState();
-    }, [validateAndUpdateAuthState]);
+
+        const unsubscribe = onForceLogout(() => {
+            logout();
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [validateAndUpdateAuthState, logout]);
 
     const scheduleRoutineUpdate = useCallback(() => {
         // Clear any existing timeout
@@ -129,15 +146,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [isAuthenticated, scheduleRoutineUpdate]);
 
-    const logout = useCallback(() => {
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('routineUpdateTimeout');
-        localStorage.removeItem('nextRoutineUpdate');
-        localStorage.removeItem('username');
-        setUsername(null);
-        setIsAuthenticated(false);
-    }, []);
-
     const login = useCallback(async (username: string, password: string): Promise<string> => {
         const response = await publicRequest<SigninResponse>(
             'auth/signin',
@@ -146,6 +154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
 
         try {
+            // Keep token for now for compatibility; backend also sets HttpOnly cookie
             localStorage?.setItem("authToken", response.token);
             localStorage?.setItem("username", username);
         } catch (error) {
@@ -226,6 +235,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('👤 [AUTH] Username from response:', response.username);
 
             // Store token and update auth state
+            // Keep token for compatibility; backend also set cookie
             localStorage.setItem('authToken', response.token);
 
             // Extract username from the response
