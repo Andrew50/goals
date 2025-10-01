@@ -480,13 +480,41 @@ export const expandTaskDateRange = async (options: {
 export interface GCalSyncRequest {
     calendar_id: string;
     sync_direction: 'bidirectional' | 'to_gcal' | 'from_gcal';
+    dry_run?: boolean;
 }
 
 export interface GCalSyncResult {
     imported_events: number;
     exported_events: number;
     updated_events: number;
+    deleted_events: number;
+    conflicts_resolved: number;
     errors: string[];
+    conflicts: ConflictInfo[];
+    dry_run: boolean;
+    preview?: SyncPreview;
+}
+
+export interface ConflictInfo {
+    event_name: string;
+    local_updated: number;
+    remote_updated: string;
+    resolution: string;
+}
+
+export interface SyncPreview {
+    events_to_import: EventPreview[];
+    events_to_export: EventPreview[];
+    events_to_update: EventPreview[];
+    events_to_delete: EventPreview[];
+}
+
+export interface EventPreview {
+    name: string;
+    start: string;
+    end?: string;
+    action: string;
+    reason?: string;
 }
 
 export const syncFromGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
@@ -510,4 +538,8 @@ export interface CalendarListEntry {
 
 export const getGoogleCalendars = async (): Promise<CalendarListEntry[]> => {
     return privateRequest<CalendarListEntry[]>('gcal/calendars', 'GET');
+};
+
+export const setDefaultGoogleCalendar = async (calendarId: string): Promise<{ calendar_id: string; message: string }> => {
+    return privateRequest<{ calendar_id: string; message: string }>('gcal/calendars/default', 'PUT', { calendar_id: calendarId });
 };

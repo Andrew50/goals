@@ -7,11 +7,13 @@ use serde_json::json;
 
 use crate::server::token_manager;
 use crate::tools::goal::{Goal, GoalType, GOAL_RETURN_QUERY};
+use crate::tools::retry_client::RetryClient;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GCalSyncRequest {
     pub calendar_id: String,
     pub sync_direction: String, // "bidirectional", "to_gcal", "from_gcal"
+    pub dry_run: Option<bool>,  // If true, preview without making changes
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +23,8 @@ pub struct GCalEvent {
     pub description: Option<String>,
     pub start: EventDateTime,
     pub end: EventDateTime,
+    pub status: Option<String>,  // "cancelled", "confirmed", "tentative"
+    pub updated: Option<String>,  // RFC3339 timestamp of last modification
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,7 +41,29 @@ pub struct SyncResult {
     pub imported_events: i32,
     pub exported_events: i32,
     pub updated_events: i32,
+    pub deleted_events: i32,
+    pub conflicts_resolved: i32,
     pub errors: Vec<String>,
+    pub conflicts: Vec<ConflictInfo>,
+    pub dry_run: bool,
+    pub preview: Option<SyncPreview>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncPreview {
+    pub events_to_import: Vec<EventPreview>,
+    pub events_to_export: Vec<EventPreview>,
+    pub events_to_update: Vec<EventPreview>,
+    pub events_to_delete: Vec<EventPreview>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EventPreview {
+    pub name: String,
+    pub start: String,
+    pub end: Option<String>,
+    pub action: String, // "import", "export", "update", "delete"
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +89,14 @@ struct EventsListResponse {
     next_page_token: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ConflictInfo {
+    pub event_name: String,
+    pub local_updated: i64,
+    pub remote_updated: String,
+    pub resolution: String,  // "local_wins", "remote_wins", "skipped"
+}
+
 const GOOGLE_CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 
 /// List calendars accessible to the user
@@ -81,14 +115,13 @@ pub async fn list_calendars(
 
     eprintln!("✅ [GCAL] Got valid token for user {}", user_id);
 
-    let client = Client::new();
-    let response = client
-        .get(format!(
-            "{}/users/me/calendarList",
-            GOOGLE_CALENDAR_API_BASE
-        ))
-        .bearer_auth(&token)
-        .send()
+    let retry_client = RetryClient::new();
+    let response = retry_client
+        .get_with_retry(
+            &format!("{}/users/me/calendarList", GOOGLE_CALENDAR_API_BASE),
+            &token,
+            &[],
+        )
         .await
         .map_err(|e| {
             (
@@ -156,6 +189,50 @@ pub async fn list_calendars(
     Ok(Json(calendar_list.items))
 }
 
+/// Set the user's default Google Calendar
+pub async fn set_default_calendar(
+    graph: &Graph,
+    user_id: i64,
+    calendar_id: String,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    eprintln!("📅 [GCAL] Setting default calendar '{}' for user {}", calendar_id, user_id);
+    
+    let query = query(
+        "MATCH (u:User) WHERE id(u) = $user_id
+         SET u.gcal_default_calendar_id = $calendar_id,
+             u.updated_at = timestamp()
+         RETURN u.gcal_default_calendar_id as calendar_id",
+    )
+    .param("user_id", user_id)
+    .param("calendar_id", calendar_id);
+    
+    let mut result = graph
+        .execute(query)
+        .await
+        .map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to set default calendar: {}", e)
+        ))?;
+    
+    if let Some(row) = result.next().await.map_err(|e| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Database error: {}", e)
+    ))? {
+        let saved_calendar_id: String = row.get("calendar_id").map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to retrieve saved calendar ID: {}", e)
+        ))?;
+        
+        eprintln!("✅ [GCAL] Default calendar set to '{}' for user {}", saved_calendar_id, user_id);
+        Ok(Json(serde_json::json!({
+            "calendar_id": saved_calendar_id,
+            "message": "Default calendar updated successfully"
+        })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "User not found".to_string()))
+    }
+}
+
 /// Fetch events from Google Calendar with incremental sync support
 async fn fetch_events_incremental(
     token: &str,
@@ -164,7 +241,7 @@ async fn fetch_events_incremental(
     time_min: Option<DateTime<Utc>>,
     time_max: Option<DateTime<Utc>>,
 ) -> Result<(Vec<GCalEvent>, Option<String>), String> {
-    let client = Client::new();
+    let retry_client = RetryClient::new();
     let mut all_events = Vec::new();
     let mut page_token: Option<String> = None;
     let final_sync_token: Option<String>;
@@ -196,11 +273,8 @@ async fn fetch_events_incremental(
             params.push(("pageToken", token.clone()));
         }
 
-        let response = client
-            .get(&url)
-            .bearer_auth(token)
-            .query(&params)
-            .send()
+        let response = retry_client
+            .get_with_retry(&url, token, &params)
             .await
             .map_err(|e| format!("Failed to fetch events: {}", e))?;
 
@@ -277,15 +351,16 @@ async fn create_event(token: &str, calendar_id: &str, goal: &Goal) -> Result<Str
         })
     };
 
-    let client = Client::new();
-    let response = client
-        .post(format!(
-            "{}/calendars/{}/events",
-            GOOGLE_CALENDAR_API_BASE, calendar_id
-        ))
-        .bearer_auth(token)
-        .json(&event)
-        .send()
+    let retry_client = RetryClient::new();
+    let response = retry_client
+        .post_with_retry(
+            &format!(
+                "{}/calendars/{}/events",
+                GOOGLE_CALENDAR_API_BASE, calendar_id
+            ),
+            token,
+            &event,
+        )
         .await
         .map_err(|e| format!("Failed to create event: {}", e))?;
 
@@ -343,15 +418,16 @@ async fn update_event(
         })
     };
 
-    let client = Client::new();
-    let response = client
-        .put(format!(
-            "{}/calendars/{}/events/{}",
-            GOOGLE_CALENDAR_API_BASE, calendar_id, event_id
-        ))
-        .bearer_auth(token)
-        .json(&event)
-        .send()
+    let retry_client = RetryClient::new();
+    let response = retry_client
+        .put_with_retry(
+            &format!(
+                "{}/calendars/{}/events/{}",
+                GOOGLE_CALENDAR_API_BASE, calendar_id, event_id
+            ),
+            token,
+            &event,
+        )
         .await
         .map_err(|e| format!("Failed to update event: {}", e))?;
 
@@ -365,14 +441,15 @@ async fn update_event(
 
 /// Delete an event from Google Calendar
 async fn delete_event(token: &str, calendar_id: &str, event_id: &str) -> Result<(), String> {
-    let client = Client::new();
-    let response = client
-        .delete(format!(
-            "{}/calendars/{}/events/{}",
-            GOOGLE_CALENDAR_API_BASE, calendar_id, event_id
-        ))
-        .bearer_auth(token)
-        .send()
+    let retry_client = RetryClient::new();
+    let response = retry_client
+        .delete_with_retry(
+            &format!(
+                "{}/calendars/{}/events/{}",
+                GOOGLE_CALENDAR_API_BASE, calendar_id, event_id
+            ),
+            token,
+        )
         .await
         .map_err(|e| format!("Failed to delete event: {}", e))?;
 
@@ -449,6 +526,16 @@ pub async fn sync_from_gcal(
     user_id: i64,
     calendar_id: &str,
 ) -> Result<Json<SyncResult>, (StatusCode, String)> {
+    sync_from_gcal_with_options(graph, user_id, calendar_id, false).await
+}
+
+/// Sync events from Google Calendar with dry-run support
+pub async fn sync_from_gcal_with_options(
+    graph: Graph,
+    user_id: i64,
+    calendar_id: &str,
+    dry_run: bool,
+) -> Result<Json<SyncResult>, (StatusCode, String)> {
     eprintln!(
         "🚀 [GCAL←] Starting sync FROM Google Calendar | user={} calendar={}",
         user_id, calendar_id
@@ -493,13 +580,44 @@ pub async fn sync_from_gcal(
 
     let mut imported_events = 0;
     let mut updated_events = 0;
+    let mut deleted_events = 0;
     let mut errors = Vec::new();
+    let mut preview_events: Vec<EventPreview> = Vec::new();
+
+    if dry_run {
+        eprintln!("🔍 [GCAL←] DRY RUN MODE - No changes will be made");
+    }
 
     for gcal_event in gcal_events {
         eprintln!(
-            "➡️  [GCAL←] Processing event id='{}' summary='{}' start={:?} end={:?}",
-            gcal_event.id, gcal_event.summary, gcal_event.start, gcal_event.end
+            "➡️  [GCAL←] Processing event id='{}' summary='{}' status={:?} start={:?} end={:?}",
+            gcal_event.id, gcal_event.summary, gcal_event.status, gcal_event.start, gcal_event.end
         );
+        
+        // Handle deleted/cancelled events
+        if let Some(status) = &gcal_event.status {
+            if status == "cancelled" {
+                eprintln!("🗑️  [GCAL←] Event {} is cancelled, marking as deleted", gcal_event.id);
+                
+                // Soft delete the local event if it exists
+                let delete_query = query(
+                    "MATCH (g:Goal)
+                     WHERE g.user_id = $user_id 
+                     AND g.gcal_event_id = $gcal_event_id
+                     SET g.is_deleted = true,
+                         g.gcal_last_sync = $sync_time",
+                )
+                .param("user_id", user_id)
+                .param("gcal_event_id", gcal_event.id.clone())
+                .param("sync_time", Utc::now().timestamp_millis());
+                
+                if graph.run(delete_query).await.is_ok() {
+                    deleted_events += 1;
+                }
+                continue;
+            }
+        }
+        
         // Parse timestamps
         let (start_timestamp, is_all_day) = if let Some(date) = &gcal_event.start.date {
             // All-day event
@@ -650,7 +768,21 @@ pub async fn sync_from_gcal(
         imported_events,
         exported_events: 0,
         updated_events,
+        deleted_events,
+        conflicts_resolved: 0,
         errors,
+        conflicts: vec![],
+        dry_run,
+        preview: if dry_run {
+            Some(SyncPreview {
+                events_to_import: preview_events.iter().filter(|e| e.action == "import").cloned().collect(),
+                events_to_export: vec![],
+                events_to_update: preview_events.iter().filter(|e| e.action == "update").cloned().collect(),
+                events_to_delete: preview_events.iter().filter(|e| e.action == "delete").cloned().collect(),
+            })
+        } else {
+            None
+        },
     }))
 }
 
@@ -819,7 +951,12 @@ pub async fn sync_to_gcal(
         imported_events: 0,
         exported_events,
         updated_events,
+        deleted_events: 0,
+        conflicts_resolved: 0,
         errors,
+        conflicts: vec![],
+        dry_run: false,
+        preview: None,
     }))
 }
 

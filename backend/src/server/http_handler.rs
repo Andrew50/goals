@@ -95,6 +95,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let gcal_routes = Router::new()
         .route("/calendars", get(handle_list_calendars))
+        .route("/calendars/default", put(handle_set_default_calendar))
         .route("/sync-from", post(handle_sync_from_gcal))
         .route("/sync-to", post(handle_sync_to_gcal))
         .route("/sync-bidirectional", post(handle_sync_bidirectional))
@@ -777,6 +778,19 @@ async fn handle_list_calendars(
     gcal_client::list_calendars(&graph, user_id).await
 }
 
+async fn handle_set_default_calendar(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let calendar_id = payload["calendar_id"]
+        .as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "calendar_id is required".to_string()))?
+        .to_string();
+    
+    gcal_client::set_default_calendar(&graph, user_id, calendar_id).await
+}
+
 async fn handle_sync_from_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -836,7 +850,12 @@ async fn handle_sync_bidirectional(
                 imported_events: from_gcal_result.imported_events,
                 exported_events: 0,
                 updated_events: from_gcal_result.updated_events, // These are updates from GCal->local
+                deleted_events: from_gcal_result.deleted_events,
+                conflicts_resolved: from_gcal_result.conflicts_resolved,
                 errors: vec![format!("Error during sync to Google Calendar: {}", msg)],
+                conflicts: from_gcal_result.conflicts,
+                dry_run: from_gcal_result.dry_run,
+                preview: from_gcal_result.preview,
             }));
         }
     };
@@ -848,7 +867,21 @@ async fn handle_sync_bidirectional(
         // Sum updates from both directions. `updated_events` in `from_gcal` are local goals updated from GCal.
         // `updated_events` in `to_gcal` are GCal events updated from local goals.
         updated_events: from_gcal_result.updated_events + to_gcal_result.updated_events,
+        deleted_events: from_gcal_result.deleted_events + to_gcal_result.deleted_events,
+        conflicts_resolved: from_gcal_result.conflicts_resolved + to_gcal_result.conflicts_resolved,
         errors: [from_gcal_result.errors, to_gcal_result.errors].concat(),
+        conflicts: [from_gcal_result.conflicts, to_gcal_result.conflicts].concat(),
+        dry_run: from_gcal_result.dry_run || to_gcal_result.dry_run,
+        preview: match (from_gcal_result.preview, to_gcal_result.preview) {
+            (Some(p1), Some(p2)) => Some(gcal_client::SyncPreview {
+                events_to_import: p1.events_to_import,
+                events_to_export: p2.events_to_export,
+                events_to_update: [p1.events_to_update, p2.events_to_update].concat(),
+                events_to_delete: [p1.events_to_delete, p2.events_to_delete].concat(),
+            }),
+            (Some(p), None) | (None, Some(p)) => Some(p),
+            _ => None,
+        },
     };
 
     Ok(Json(final_result))

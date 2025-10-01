@@ -1058,21 +1058,39 @@ async fn improved_create_or_get_google_user(
         eprintln!("✅ Found existing user by Google ID: {}", user_id);
 
         // Update tokens for existing user
-        let update_tokens_query = Query::new(
-            "MATCH (u:User) WHERE id(u) = $user_id 
-             SET u.google_access_token = $access_token,
-                 u.google_refresh_token = $refresh_token,
-                 u.google_token_expiry = $token_expiry,
-                 u.updated_at = timestamp()
-             RETURN u"
-                .to_string(),
-        )
-        .param("user_id", user_id)
-        .param("access_token", access_token.to_string())
-        .param("refresh_token", refresh_token.unwrap_or_default())
-        .param("token_expiry", expires_at.unwrap_or(0));
+        // IMPORTANT: Only update refresh_token if we received a new one
+        let update_tokens_query = if let Some(ref_token) = refresh_token.as_ref() {
+            Query::new(
+                "MATCH (u:User) WHERE id(u) = $user_id 
+                 SET u.google_access_token = $access_token,
+                     u.google_refresh_token = $refresh_token,
+                     u.google_token_expiry = $token_expiry,
+                     u.updated_at = timestamp()
+                 RETURN u"
+                    .to_string(),
+            )
+            .param("user_id", user_id)
+            .param("access_token", access_token.to_string())
+            .param("refresh_token", ref_token.clone())
+            .param("token_expiry", expires_at.unwrap_or(0))
+        } else {
+            // Don't overwrite existing refresh token if we didn't get a new one
+            Query::new(
+                "MATCH (u:User) WHERE id(u) = $user_id 
+                 SET u.google_access_token = $access_token,
+                     u.google_token_expiry = $token_expiry,
+                     u.updated_at = timestamp()
+                 RETURN u"
+                    .to_string(),
+            )
+            .param("user_id", user_id)
+            .param("access_token", access_token.to_string())
+            .param("token_expiry", expires_at.unwrap_or(0))
+        };
 
         let _ = graph.run(update_tokens_query).await;
+        eprintln!("✅ Updated tokens for user {} (refresh_token_updated={})", 
+                 user_id, refresh_token.is_some());
 
         return Ok(user_id);
     }

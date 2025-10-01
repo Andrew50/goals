@@ -3,6 +3,7 @@ manage operations on goals and relationships between goals
 doesnt include fetching of all goals as that is handled by endpoints specific to that frontend view
 */
 use axum::{http::StatusCode, Json};
+use chrono::Utc;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -533,6 +534,10 @@ pub async fn update_goal_handler(
         );
     }
 
+    // Always update the updated_at timestamp for conflict detection
+    set_clauses.push("g.updated_at = $updated_at");
+    params.push(("updated_at", Utc::now().timestamp_millis().into()));
+    
     let query_str = format!(
         "MATCH (g:Goal) WHERE id(g) = $id SET {}",
         set_clauses.join(", ")
@@ -1141,6 +1146,13 @@ impl Goal {
                 params.push((name, value));
             }
         }
+        
+        // Always add created_at and updated_at for new goals
+        let now = Utc::now().timestamp_millis();
+        properties.push("created_at: $created_at".to_string());
+        params.push(("created_at", neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: now })));
+        properties.push("updated_at: $updated_at".to_string());
+        params.push(("updated_at", neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: now })));
 
         let query_str = format!(
             "CREATE (g:Goal {{ {} }}) RETURN g, id(g) as id",

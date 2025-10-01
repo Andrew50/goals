@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, getGoogleCalendars, CalendarListEntry } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, getGoogleCalendars, CalendarListEntry, setDefaultGoogleCalendar } from '../../shared/utils/api';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -22,8 +22,19 @@ import {
   Select,
   MenuItem,
   InputLabel,
-  CircularProgress
+  CircularProgress,
+  Checkbox,
+  IconButton,
+  Tooltip,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  List,
+  ListItem,
+  ListItemText
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import SaveIcon from '@mui/icons-material/Save';
 
 import FullCalendar from '@fullcalendar/react';
 import { EventContentArg } from '@fullcalendar/core';
@@ -230,6 +241,8 @@ const Calendar: React.FC = () => {
     syncDirection: 'bidirectional' | 'to_gcal' | 'from_gcal';
     calendars: CalendarListEntry[];
     loadingCalendars: boolean;
+    dryRun: boolean;
+    showPreview: boolean;
   }>({
     isOpen: false,
     isLoading: false,
@@ -237,7 +250,9 @@ const Calendar: React.FC = () => {
     calendarId: 'primary',
     syncDirection: 'bidirectional',
     calendars: [],
-    loadingCalendars: false
+    loadingCalendars: false,
+    dryRun: false,
+    showPreview: false
   });
 
   // Debugging mode toggles global logs, etc.
@@ -1082,7 +1097,8 @@ const Calendar: React.FC = () => {
       let result: GCalSyncResult;
       const request = {
         calendar_id: gcalSyncDialog.calendarId,
-        sync_direction: gcalSyncDialog.syncDirection
+        sync_direction: gcalSyncDialog.syncDirection,
+        dry_run: gcalSyncDialog.dryRun
       };
 
       switch (gcalSyncDialog.syncDirection) {
@@ -1125,8 +1141,20 @@ const Calendar: React.FC = () => {
     setGcalSyncDialog({
       ...gcalSyncDialog,
       isOpen: false,
-      lastResult: null
+      lastResult: null,
+      dryRun: false,
+      showPreview: false
     });
+  };
+
+  const handleSaveDefaultCalendar = async () => {
+    try {
+      await setDefaultGoogleCalendar(gcalSyncDialog.calendarId);
+      // Could show a success toast here
+      console.log('Default calendar saved:', gcalSyncDialog.calendarId);
+    } catch (error) {
+      console.error('Failed to save default calendar:', error);
+    }
   };
 
   // -----------------------------
@@ -1385,24 +1413,31 @@ const Calendar: React.FC = () => {
                 </Box>
               ) : gcalSyncDialog.calendars.length > 0 ? (
                 <Box sx={{ mb: 2 }}>
-                  <FormControl fullWidth>
-                    <InputLabel id="calendar-select-label">Calendar</InputLabel>
-                    <Select
-                      labelId="calendar-select-label"
-                      value={gcalSyncDialog.calendarId}
-                      label="Calendar"
-                      onChange={(e) => setGcalSyncDialog({
-                        ...gcalSyncDialog,
-                        calendarId: e.target.value as string
-                      })}
-                    >
-                      {gcalSyncDialog.calendars.map((calendar) => (
-                        <MenuItem key={calendar.id} value={calendar.id}>
-                          {calendar.summary} {calendar.primary && '(Primary)'}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                    <FormControl fullWidth>
+                      <InputLabel id="calendar-select-label">Calendar</InputLabel>
+                      <Select
+                        labelId="calendar-select-label"
+                        value={gcalSyncDialog.calendarId}
+                        label="Calendar"
+                        onChange={(e) => setGcalSyncDialog({
+                          ...gcalSyncDialog,
+                          calendarId: e.target.value as string
+                        })}
+                      >
+                        {gcalSyncDialog.calendars.map((calendar) => (
+                          <MenuItem key={calendar.id} value={calendar.id}>
+                            {calendar.summary} {calendar.primary && '(Primary)'}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <Tooltip title="Save as default calendar">
+                      <IconButton onClick={handleSaveDefaultCalendar} color="primary">
+                        <SaveIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
                 </Box>
               ) : (
                 <Typography variant="body2" color="error" sx={{ mb: 2 }}>
@@ -1441,6 +1476,24 @@ const Calendar: React.FC = () => {
                 </FormControl>
               </Box>
 
+              <Box sx={{ mb: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={gcalSyncDialog.dryRun}
+                      onChange={(e) => setGcalSyncDialog({
+                        ...gcalSyncDialog,
+                        dryRun: e.target.checked
+                      })}
+                    />
+                  }
+                  label="Preview only (dry run)"
+                />
+                <Typography variant="caption" display="block" color="text.secondary" sx={{ ml: 4 }}>
+                  See what would be synced without making any changes
+                </Typography>
+              </Box>
+
               <Typography variant="caption" color="text.secondary">
                 Note: Google Calendar sync requires proper configuration on the server.
               </Typography>
@@ -1461,6 +1514,14 @@ const Calendar: React.FC = () => {
                 <Typography variant="body2">
                   🔄 Updated: {gcalSyncDialog.lastResult.updated_events} events
                 </Typography>
+                <Typography variant="body2">
+                  🗑️ Deleted: {gcalSyncDialog.lastResult.deleted_events} events
+                </Typography>
+                {gcalSyncDialog.lastResult.conflicts_resolved > 0 && (
+                  <Typography variant="body2">
+                    ⚡ Conflicts resolved: {gcalSyncDialog.lastResult.conflicts_resolved}
+                  </Typography>
+                )}
               </Box>
 
               {gcalSyncDialog.lastResult.errors.length > 0 && (
