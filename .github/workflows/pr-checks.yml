@@ -61,7 +61,7 @@ jobs:
               fi
             fi
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           clean: false
@@ -206,7 +206,7 @@ jobs:
               fi
             fi
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           clean: false
 
@@ -260,7 +260,7 @@ jobs:
       contents: read
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           clean: false
 
