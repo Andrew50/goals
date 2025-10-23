@@ -39,3 +39,4 @@ backups/
 
 node_modules
 .cargo/
+.target/
