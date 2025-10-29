@@ -189,7 +189,7 @@ jobs:
           
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: playwright-report
           path: frontend/playwright-report
@@ -198,7 +198,7 @@ jobs:
           
       - name: Upload Playwright test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-results
           path: frontend/test-results
@@ -235,7 +235,7 @@ jobs:
 
       - name: Upload dev .env artifact
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: dev-env
           path: .env.dev
