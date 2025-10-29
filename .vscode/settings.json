@@ -1,0 +1,7 @@
+{
+  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": false,
+  "typescript.tsserver.maxTsServerMemory": 4096
+}
+
+
