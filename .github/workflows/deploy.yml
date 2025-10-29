@@ -92,22 +92,22 @@ jobs:
           BP="${BACKUP_PATH:-/var/lib/goals/backups}"
           docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
           docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
-      - name: Prepare backup directories (idempotent)
-        env:
-          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-          BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
-        run: |
-          set -euxo pipefail
-          : "${BACKUP_PATH:=/var/lib/goals/backups}"
-          : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
-          sudo mkdir -p "$BACKUP_PATH" "$BACKUP_LOGS_PATH"
-          # Set permissive ownership/permissions to avoid container write issues
-          sudo chown -R 7474:7474 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
-          sudo chmod -R 0775 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
-          # Cleanup zero-byte or partial backups from previous runs, retain last 30
-          find "$BACKUP_PATH" -type f -name 'neo4j_dump_*.dump' -size 0 -delete || true
-          # Retention: keep last 30 dumps, delete older
-          ls -1t "$BACKUP_PATH"/neo4j_dump_*.dump 2>/dev/null | tail -n +31 | xargs -r rm -f || true
+      #- name: Prepare backup directories (idempotent)
+      #  env:
+      #    BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+      #    BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
+      #  run: |
+      #    set -euxo pipefail
+      #    : "${BACKUP_PATH:=/var/lib/goals/backups}"
+      #    : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
+      #    sudo mkdir -p "$BACKUP_PATH" "$BACKUP_LOGS_PATH"
+      #    # Set permissive ownership/permissions to avoid container write issues
+      #    sudo chown -R 7474:7474 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
+      #    sudo chmod -R 0775 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
+      #    # Cleanup zero-byte or partial backups from previous runs, retain last 30
+      #    find "$BACKUP_PATH" -type f -name 'neo4j_dump_*.dump' -size 0 -delete || true
+      #    # Retention: keep last 30 dumps, delete older
+      #    ls -1t "$BACKUP_PATH"/neo4j_dump_*.dump 2>/dev/null | tail -n +31 | xargs -r rm -f || true
 
       - name: Pre-deploy backup (required)
         env:
