@@ -9,11 +9,12 @@ services:
       - "5059:5059"
     volumes:
       - ./backend/:/usr/src/app
-      - /usr/src/app/target
     env_file:
       - .env
     environment:
       HOST_URL: ${HOST_URL:-localhost}
+      CARGO_HOME: /tmp/cargo-home
+      CARGO_TARGET_DIR: /tmp/cargo-target
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://${HOST_URL:-localhost}:3030/auth/callback}

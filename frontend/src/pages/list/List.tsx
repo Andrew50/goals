@@ -5,6 +5,7 @@ import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
+import '../../shared/styles/badges.css';
 import Fuse from 'fuse.js';
 import { formatFrequency } from '../../shared/utils/frequency';
 import { deleteGoal, duplicateGoal, updateGoal, completeGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
@@ -117,6 +118,9 @@ const List: React.FC = () => {
 
     const filteredList = useMemo(() => {
         let filtered = list;
+
+        // Hide soft-deleted events from the List view
+        filtered = filtered.filter(g => !(g.goal_type === 'event' && g.is_deleted === true));
 
         const inRange = (val?: string | number | null, range?: DateRange): boolean => {
             if (val === undefined || val === null) return range === undefined; // treat no value as pass unless a range is set
@@ -233,7 +237,7 @@ const List: React.FC = () => {
         if (next.size !== selectedIds.size) setSelectedIds(next);
     }, [list, selectedIds]);
 
-    // Clear selection on filter or search change for simplicity
+    // Clear selection when filters or search change (not when selection changes)
     useEffect(() => {
         const prevSelectedSize = prevSelectedSizeRef.current;
         const prevFiltersStr = prevFiltersRef.current;
@@ -251,8 +255,8 @@ const List: React.FC = () => {
             changedBecauseSearch,
         });
 
-        if (selectedIds.size > 0) {
-            console.log('[List] Clearing selection due to effect');
+        if (selectedIds.size > 0 && (changedBecauseFilters || changedBecauseSearch)) {
+            console.log('[List] Clearing selection due to filters/search change');
             setSelectedIds(new Set());
         }
 
@@ -695,24 +699,188 @@ const List: React.FC = () => {
                     </button>
                 </div>
 
-                <div className="search-section">
-                    <input
-                        type="text"
-                        placeholder="Search goals..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="search-input"
-                        spellCheck="false"
-                        autoComplete="off"
-                    />
-                    <button
-                        onClick={() => setShowFilters(!showFilters)}
-                        className="filter-toggle-button"
-                    >
-                        <svg className="filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707l-5.414 5.414a1 1 0 00-.293.707v4.586a1 1 0 01-.293.707l-2 2A1 1 0 0112 20v-5.586a1 1 0 00-.293-.707L6.293 7.707A1 1 0 016 7V4z" />
-                        </svg>
-                    </button>
+                <div className="toolbar-row">
+                    {selectedIds.size > 0 ? (
+                        <div className="bulk-actions-bar">
+                            <div className="bulk-actions-left">
+                                <span>{selectedIds.size} selected</span>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button"
+                                    onClick={() => handleBulkComplete(true)}
+                                    disabled={isBulkWorking}
+                                    aria-label="Mark completed"
+                                >
+                                    Mark completed
+                                </button>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button"
+                                    onClick={() => handleBulkComplete(false)}
+                                    disabled={isBulkWorking}
+                                    aria-label="Mark in progress"
+                                >
+                                    Mark in progress
+                                </button>
+                                <div className="bulk-priority">
+                                    <select
+                                        className="bulk-actions-select"
+                                        value={bulkPriority}
+                                        onChange={(e) => setBulkPriority(e.target.value)}
+                                        disabled={isBulkWorking}
+                                        aria-label="Select priority"
+                                    >
+                                        <option value="">Set priority…</option>
+                                        <option value="high">High</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
+                                    </select>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button"
+                                    onClick={handleBulkPriorityApply}
+                                    disabled={isBulkWorking || !bulkPriority}
+                                    aria-label="Apply priority"
+                                >
+                                    Apply
+                                </button>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button"
+                                    onClick={() => {
+                                        // Open GoalMenu in edit mode with a blank template, prefilled with common filtered values
+                                        const template: Partial<Goal> = {};
+                                        // Prefill goal_type if a single filter value is set
+                                        if (filters.goal_type && filters.goal_type.length === 1) {
+                                            (template as any).goal_type = filters.goal_type[0];
+                                        }
+                                        // Prefill priority if exactly one selected
+                                        if (filters.priority && filters.priority.length === 1 && filters.priority[0] !== '__none__') {
+                                            (template as any).priority = filters.priority[0];
+                                        }
+                                        // Prefill completed if exactly one selected
+                                        if (filters.completed && filters.completed.length === 1) {
+                                            (template as any).completed = filters.completed[0];
+                                        }
+
+                                        const blank: Goal = {
+                                            id: -1,
+                                            name: '',
+                                            goal_type: (template as any).goal_type || 'task',
+                                            ...template as any,
+                                        } as Goal;
+
+                                        const selectedGoals = getSelectedGoals();
+
+                                        const submit = async (updated: Goal) => {
+                                            setIsBulkWorking(true);
+                                            try {
+                                                // Compute changed fields vs the template blank
+                                                const changed: Partial<Goal> = {};
+                                                const keys: (keyof Goal)[] = [
+                                                    'name', 'description', 'goal_type', 'priority', 'completed', 'start_timestamp', 'end_timestamp', 'scheduled_timestamp', 'next_timestamp', 'frequency', 'duration', 'due_date', 'start_date', 'routine_time'
+                                                ];
+                                                for (const k of keys) {
+                                                    const newVal = (updated as any)[k];
+                                                    const oldVal = (blank as any)[k];
+                                                    const isDate = newVal instanceof Date || oldVal instanceof Date;
+                                                    const equal = isDate
+                                                        ? (newVal instanceof Date && oldVal instanceof Date && newVal.getTime() === oldVal.getTime())
+                                                        : newVal === oldVal;
+                                                    if (!equal && newVal !== undefined) {
+                                                        (changed as any)[k] = newVal;
+                                                    }
+                                                }
+
+                                                // Apply changed fields to all selected
+                                                await Promise.all(selectedGoals.map(async (g) => {
+                                                    // Skip goal_type changes for events
+                                                    const payload: Partial<Goal> = { ...changed };
+                                                    if (g.goal_type === 'event') {
+                                                        // Map applicable fields to updateEvent
+                                                        const eventUpdates: any = {};
+                                                        if (payload.name !== undefined) eventUpdates.name = payload.name;
+                                                        if (payload.description !== undefined) eventUpdates.description = payload.description;
+                                                        if (payload.priority !== undefined) eventUpdates.priority = payload.priority;
+                                                        if (payload.duration !== undefined) eventUpdates.duration = payload.duration;
+                                                        if (payload.completed !== undefined) eventUpdates.completed = payload.completed;
+                                                        if (payload.scheduled_timestamp !== undefined) eventUpdates.scheduled_timestamp = payload.scheduled_timestamp as any;
+                                                        if (Object.keys(eventUpdates).length > 0) {
+                                                            await updateEvent(g.id, eventUpdates);
+                                                        }
+                                                    } else {
+                                                        // Non-events
+                                                        const goalUpdates: Goal = { ...g, ...payload } as Goal;
+                                                        await updateGoal(g.id, goalUpdates);
+                                                    }
+                                                }));
+                                                refreshAndClearSelection();
+                                            } finally {
+                                                setIsBulkWorking(false);
+                                            }
+                                        };
+
+                                        // Use GoalMenu with submit override
+                                        (GoalMenu as any).openWithSubmitOverride(blank, 'edit', async (u: Goal) => submit(u), () => { });
+                                    }}
+                                    disabled={isBulkWorking}
+                                    aria-label="Bulk edit"
+                                >
+                                    Edit…
+                                </button>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button"
+                                    onClick={handleBulkDuplicate}
+                                    disabled={isBulkWorking || list.filter(g => selectedIds.has(g.id)).some(g => g.goal_type === 'event')}
+                                    aria-label="Duplicate"
+                                >
+                                    Duplicate
+                                </button>
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button danger"
+                                    onClick={handleBulkDelete}
+                                    disabled={isBulkWorking}
+                                    aria-label="Delete"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                            <div className="bulk-actions-right">
+                                <button
+                                    type="button"
+                                    className="bulk-actions-button secondary"
+                                    onClick={() => setSelectedIds(new Set())}
+                                    disabled={isBulkWorking}
+                                    aria-label="Clear selection"
+                                >
+                                    Clear selection
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="search-section">
+                            <input
+                                type="text"
+                                placeholder="Search goals..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="search-input"
+                                spellCheck="false"
+                                autoComplete="off"
+                            />
+                            <button
+                                onClick={() => setShowFilters(!showFilters)}
+                                className="filter-toggle-button"
+                            >
+                                <svg className="filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707l-5.414 5.414a1 1 0 00-.293.707v4.586a1 1 0 01-.293.707l-2 2A1 1 0 0112 20v-5.586a1 1 0 00-.293-.707L6.293 7.707A1 1 0 016 7V4z" />
+                                </svg>
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {showFilters && (
@@ -740,167 +908,6 @@ const List: React.FC = () => {
                     </div>
                 )}
 
-                {selectedIds.size > 0 && (
-                    <div className="bulk-actions-bar">
-                        <div className="bulk-actions-left">
-                            <span>{selectedIds.size} selected</span>
-                            <button
-                                type="button"
-                                className="bulk-actions-button"
-                                onClick={() => handleBulkComplete(true)}
-                                disabled={isBulkWorking}
-                                aria-label="Mark completed"
-                            >
-                                Mark completed
-                            </button>
-                            <button
-                                type="button"
-                                className="bulk-actions-button"
-                                onClick={() => handleBulkComplete(false)}
-                                disabled={isBulkWorking}
-                                aria-label="Mark in progress"
-                            >
-                                Mark in progress
-                            </button>
-                            <div className="bulk-priority">
-                                <select
-                                    className="bulk-actions-select"
-                                    value={bulkPriority}
-                                    onChange={(e) => setBulkPriority(e.target.value)}
-                                    disabled={isBulkWorking}
-                                    aria-label="Select priority"
-                                >
-                                    <option value="">Set priority…</option>
-                                    <option value="high">High</option>
-                                    <option value="medium">Medium</option>
-                                    <option value="low">Low</option>
-                                </select>
-                                <button
-                                    type="button"
-                                    className="bulk-actions-button"
-                                    onClick={handleBulkPriorityApply}
-                                    disabled={isBulkWorking || !bulkPriority}
-                                    aria-label="Apply priority"
-                                >
-                                    Apply
-                                </button>
-                            </div>
-                            <button
-                                type="button"
-                                className="bulk-actions-button"
-                                onClick={() => {
-                                    // Open GoalMenu in edit mode with a blank template, prefilled with common filtered values
-                                    const template: Partial<Goal> = {};
-                                    // Prefill goal_type if a single filter value is set
-                                    if (filters.goal_type && filters.goal_type.length === 1) {
-                                        (template as any).goal_type = filters.goal_type[0];
-                                    }
-                                    // Prefill priority if exactly one selected
-                                    if (filters.priority && filters.priority.length === 1 && filters.priority[0] !== '__none__') {
-                                        (template as any).priority = filters.priority[0];
-                                    }
-                                    // Prefill completed if exactly one selected
-                                    if (filters.completed && filters.completed.length === 1) {
-                                        (template as any).completed = filters.completed[0];
-                                    }
-
-                                    const blank: Goal = {
-                                        id: -1,
-                                        name: '',
-                                        goal_type: (template as any).goal_type || 'task',
-                                        ...template as any,
-                                    } as Goal;
-
-                                    const selectedGoals = getSelectedGoals();
-
-                                    const submit = async (updated: Goal) => {
-                                        setIsBulkWorking(true);
-                                        try {
-                                            // Compute changed fields vs the template blank
-                                            const changed: Partial<Goal> = {};
-                                            const keys: (keyof Goal)[] = [
-                                                'name', 'description', 'goal_type', 'priority', 'completed', 'start_timestamp', 'end_timestamp', 'scheduled_timestamp', 'next_timestamp', 'frequency', 'duration', 'due_date', 'start_date', 'routine_time'
-                                            ];
-                                            for (const k of keys) {
-                                                const newVal = (updated as any)[k];
-                                                const oldVal = (blank as any)[k];
-                                                const isDate = newVal instanceof Date || oldVal instanceof Date;
-                                                const equal = isDate
-                                                    ? (newVal instanceof Date && oldVal instanceof Date && newVal.getTime() === oldVal.getTime())
-                                                    : newVal === oldVal;
-                                                if (!equal && newVal !== undefined) {
-                                                    (changed as any)[k] = newVal;
-                                                }
-                                            }
-
-                                            // Apply changed fields to all selected
-                                            await Promise.all(selectedGoals.map(async (g) => {
-                                                // Skip goal_type changes for events
-                                                const payload: Partial<Goal> = { ...changed };
-                                                if (g.goal_type === 'event') {
-                                                    // Map applicable fields to updateEvent
-                                                    const eventUpdates: any = {};
-                                                    if (payload.name !== undefined) eventUpdates.name = payload.name;
-                                                    if (payload.description !== undefined) eventUpdates.description = payload.description;
-                                                    if (payload.priority !== undefined) eventUpdates.priority = payload.priority;
-                                                    if (payload.duration !== undefined) eventUpdates.duration = payload.duration;
-                                                    if (payload.completed !== undefined) eventUpdates.completed = payload.completed;
-                                                    if (payload.scheduled_timestamp !== undefined) eventUpdates.scheduled_timestamp = payload.scheduled_timestamp as any;
-                                                    if (Object.keys(eventUpdates).length > 0) {
-                                                        await updateEvent(g.id, eventUpdates);
-                                                    }
-                                                } else {
-                                                    // Non-events
-                                                    const goalUpdates: Goal = { ...g, ...payload } as Goal;
-                                                    await updateGoal(g.id, goalUpdates);
-                                                }
-                                            }));
-                                            refreshAndClearSelection();
-                                        } finally {
-                                            setIsBulkWorking(false);
-                                        }
-                                    };
-
-                                    // Use GoalMenu with submit override
-                                    (GoalMenu as any).openWithSubmitOverride(blank, 'edit', async (u: Goal) => submit(u), () => { });
-                                }}
-                                disabled={isBulkWorking}
-                                aria-label="Bulk edit"
-                            >
-                                Edit…
-                            </button>
-                            <button
-                                type="button"
-                                className="bulk-actions-button"
-                                onClick={handleBulkDuplicate}
-                                disabled={isBulkWorking || list.filter(g => selectedIds.has(g.id)).some(g => g.goal_type === 'event')}
-                                aria-label="Duplicate"
-                            >
-                                Duplicate
-                            </button>
-                            <button
-                                type="button"
-                                className="bulk-actions-button danger"
-                                onClick={handleBulkDelete}
-                                disabled={isBulkWorking}
-                                aria-label="Delete"
-                            >
-                                Delete
-                            </button>
-                        </div>
-                        <div className="bulk-actions-right">
-                            <button
-                                type="button"
-                                className="bulk-actions-button secondary"
-                                onClick={() => setSelectedIds(new Set())}
-                                disabled={isBulkWorking}
-                                aria-label="Clear selection"
-                            >
-                                Clear selection
-                            </button>
-                        </div>
-                    </div>
-                )}
 
                 <div className="table-container">
                     <div className="table-wrapper">
@@ -946,8 +953,7 @@ const List: React.FC = () => {
                                             key={goal.id}
                                             className="table-row"
                                             style={{
-                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`,
-                                                border: goalStyle.border,
+                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`
                                             }}
                                             onClick={() => handleGoalClick(goal)}
                                             onContextMenu={(e) => handleGoalContextMenu(e, goal)}

@@ -47,9 +47,35 @@ const EventMenuBase: React.FC<EventMenuProps> = ({ event, parent, onAction, onCl
         };
     }, [onClose]);
 
-    const handleAction = (action: string) => {
-        onAction(action);
-        onClose();
+    const handleAction = async (action: string) => {
+        try {
+            // Perform built-in logic for certain actions before delegating
+            if (action === 'duplicate') {
+                // Duplicate the current event by creating a new event with same parent, time, and duration
+                // We keep logic local so callers don't need to special-case it
+                if (event.goal_type === 'event' && event.scheduled_timestamp && event.duration) {
+                    try {
+                        const { createEvent } = await import('../../shared/utils/api');
+                        const parentId = (event as any).parent_id as number | undefined;
+                        const parentType = (event as any).parent_type as string | undefined;
+                        if (parentId && parentType) {
+                            await createEvent({
+                                parent_id: parentId,
+                                parent_type: parentType,
+                                scheduled_timestamp: event.scheduled_timestamp as Date,
+                                duration: event.duration as number,
+                                priority: event.priority
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Failed to duplicate event:', e);
+                    }
+                }
+            }
+        } finally {
+            onAction(action);
+            onClose();
+        }
     };
 
     return ReactDOM.createPortal(
@@ -79,11 +105,11 @@ const EventMenuBase: React.FC<EventMenuProps> = ({ event, parent, onAction, onCl
                     </button>
 
                     <button
-                        className="event-menu-action split"
-                        onClick={() => handleAction('split')}
+                        className="event-menu-action duplicate"
+                        onClick={() => handleAction('duplicate')}
                     >
-                        <i className="icon-split"></i>
-                        Split Event
+                        <i className="icon-duplicate"></i>
+                        Duplicate Event
                     </button>
 
                     <button

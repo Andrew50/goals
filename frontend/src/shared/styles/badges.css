@@ -1,0 +1,94 @@
+/* Shared badge styles extracted from List.css for reuse across app */
+
+.goal-type-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.priority-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.priority-badge[data-priority="high"] {
+    background-color: #fed7d7;
+    color: #c53030;
+}
+
+.priority-badge[data-priority="medium"] {
+    background-color: #feebc8;
+    color: #c05621;
+}
+
+.priority-badge[data-priority="low"] {
+    background-color: #c6f6d5;
+    color: #276749;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.status-badge.completed {
+    background-color: #c6f6d5;
+    color: #276749;
+}
+
+.status-badge.in-progress {
+    background-color: #feebc8;
+    color: #c05621;
+}
+
+.frequency-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    background-color: #dbeafe;
+    color: #1e40af;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.duration-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    background-color: #e0e7ff;
+    color: #4338ca;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* Neutral pill for short descriptive text in compact spaces */
+.description-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    background-color: #edf2f7; /* neutral light */
+    color: #4a5568; /* slate text */
+    font-size: 0.75rem;
+    font-weight: 500;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
