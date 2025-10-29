@@ -85,6 +85,13 @@ jobs:
           NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
           EOF
 
+      - name: Ensure backup paths exist (no sudo)
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+        run: |
+          BP="${BACKUP_PATH:-/var/lib/goals/backups}"
+          docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
+          docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
       - name: Prepare backup directories (idempotent)
         env:
           BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
