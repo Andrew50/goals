@@ -37,3 +37,6 @@ backups/
 /frontend/blob-report/
 /frontend/playwright/.cache/
 
+
+.cargo/
+.target/
