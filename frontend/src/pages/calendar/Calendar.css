@@ -30,7 +30,7 @@
     /* Account for navbar */
     background-color: #f5f7fa;
     padding: 2rem;
-    overflow: hidden;
+    overflow: auto;
 }
 
 .calendar-content {
@@ -72,7 +72,7 @@
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
     padding: 1.5rem;
     position: relative;
-    overflow: hidden;
+    overflow: visible;
     display: flex;
     flex-direction: column;
 }
@@ -281,6 +281,19 @@
     color: #2d3748 !important;
 }
 
+/* Keep the “+N more” popover visible and within the viewport */
+.fc-popover {
+    z-index: 1600;
+    max-height: calc(100vh - 24px);
+    max-width: min(420px, calc(100vw - 24px));
+    overflow: auto;
+}
+
+.fc-popover .fc-popover-body {
+    max-height: inherit;
+    overflow: auto;
+}
+
 /* Task list in sidebar */
 .task-list {
     display: flex;
@@ -364,21 +377,35 @@
     font-size: 0.95rem !important;
 }
 
-/* Micro event overrides */
-.fc-micro-event {
-    padding: 0 2px !important;
-    /* tighten vertical padding */
-}
-
-.fc-micro-event .fc-event-main {
-    padding: 0 !important;
-}
-
-.fc-micro-event .fc-event-title {
-    display: flex;
-    align-items: center;
-    height: 100%;
-    padding: 0 !important;
+/* Compact event chrome */
+.calendar-container .fc .event-compact {
+    padding: 1px 3px;
+    border-width: 1px;
+    border-radius: 3px;
     line-height: 1.1;
-    font-size: 0.9rem !important;
+    box-shadow: none;
+}
+
+.calendar-container .fc .event-compact .fc-event-main {
+    padding: 0;
+}
+
+/* Ensure any residual time nodes are hidden */
+.calendar-container .fc .event-compact .fc-event-time {
+    display: none;
+}
+
+/* Title: single-line with ellipsis */
+.calendar-container .fc .event-compact .fc-event-title,
+.calendar-container .fc .event-compact .fc-event-main-frame {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+    font-size: 12px;
+}
+
+/* Slightly tighter dayGrid blocks */
+.calendar-container .fc .fc-daygrid-event.event-compact {
+    margin: 1px 0;
 }

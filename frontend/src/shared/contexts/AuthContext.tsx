@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { onForceLogout } from '../utils/authEvents';
 import { publicRequest, privateRequest, updateRoutines } from "../utils/api";
-
+ // test auth token expiration functio0nality by running:
+ /*
+ localStorage.removeItem('authToken'); 
+ localStorage.setItem('testMode','false');
+ */
 interface SigninResponse {
     token: string;
     message: string;
@@ -96,7 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
-    // Validate token on mount and subscribe to force-logout events
+    // Validate token on mount; subscribe to force-logout; revalidate on focus/visibility
     useEffect(() => {
         validateAndUpdateAuthState();
 
@@ -104,8 +108,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             logout();
         });
 
+        let refocusDebounce: number | undefined;
+        const debouncedValidate = () => {
+            // Skip in tests
+            if (localStorage.getItem('testMode') === 'true') return;
+            if (refocusDebounce) window.clearTimeout(refocusDebounce);
+            refocusDebounce = window.setTimeout(() => {
+                validateAndUpdateAuthState();
+            }, 150);
+        };
+
+        const onWindowFocus = () => debouncedValidate();
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') debouncedValidate();
+        };
+
+        window.addEventListener('focus', onWindowFocus);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
         return () => {
             unsubscribe();
+            window.removeEventListener('focus', onWindowFocus);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            if (refocusDebounce) window.clearTimeout(refocusDebounce);
         };
     }, [validateAndUpdateAuthState, logout]);
 

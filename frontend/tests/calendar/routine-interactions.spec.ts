@@ -529,9 +529,9 @@ test.describe('Calendar Routine Interactions', () => {
         });
     });
 
-    test.describe('Event Split Functionality', () => {
-        test('should split routine events', async ({ page, request }) => {
-            const routineName = `Test Routine Split ${Date.now()}`;
+    test.describe('Event Duplicate Functionality', () => {
+        test('should duplicate routine events', async ({ page, request }) => {
+            const routineName = `Test Routine Duplicate ${Date.now()}`;
             await createTestRoutine(request, routineName);
 
             await page.reload();
@@ -547,16 +547,16 @@ test.describe('Calendar Routine Interactions', () => {
 
             await expect(page.locator('div[role="dialog"]')).toBeVisible();
 
-            // Look for Split Event button
-            const splitButton = page.locator('button:has-text("Split Event")');
-            if (await splitButton.isVisible()) {
-                await splitButton.click();
+            // Look for Duplicate Event button
+            const duplicateButton = page.locator('button:has-text("Duplicate Event")');
+            if (await duplicateButton.isVisible()) {
+                await duplicateButton.click();
 
                 // Wait for the split operation to complete
                 await waitForDialogToClose(page);
                 await expect(page.locator('.calendar-container')).toBeVisible();
             } else {
-                // Close the dialog if split is not available
+                // Close the dialog if duplicate is not available
                 await page.locator('button:has-text("Close")').click();
                 await waitForDialogToClose(page);
             }
