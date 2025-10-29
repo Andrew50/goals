@@ -14,6 +14,40 @@ axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.common['Content-Type'] = 'application/json';
 axios.defaults.withCredentials = true; // Include cookies on cross-origin requests
 
+// Global 401 handler: redirect flow via forceLogout on any 401 from our API
+let axios401InterceptorInstalled = false;
+let logoutCooldownUntilMs = 0;
+if (!axios401InterceptorInstalled) {
+    axios.interceptors.response.use(
+        (response) => response,
+        (error) => {
+            const status = error?.response?.status;
+            const url: string | undefined = error?.config?.url;
+            const isFromApi =
+                typeof url === 'string' &&
+                typeof API_URL === 'string' &&
+                url.startsWith(API_URL);
+            if (status === 401 && isFromApi) {
+                const now = Date.now();
+                if (now >= logoutCooldownUntilMs) {
+                    logoutCooldownUntilMs = now + 1000; // throttle duplicate events
+                    try {
+                        localStorage.removeItem('authToken');
+                        localStorage.removeItem('routineUpdateTimeout');
+                        localStorage.removeItem('nextRoutineUpdate');
+                        localStorage.removeItem('username');
+                    } catch {
+                        // ignore storage errors
+                    }
+                    forceLogout();
+                }
+            }
+            return Promise.reject(error);
+        }
+    );
+    axios401InterceptorInstalled = true;
+}
+
 // Add retry logic for connection issues
 const axiosRetry = async (fn: () => Promise<any>, retries = 3): Promise<any> => {
     for (let i = 0; i < retries; i++) {

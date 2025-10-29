@@ -74,12 +74,12 @@
     background: #c8e6c9;
 }
 
-.event-menu-action.split {
+.event-menu-action.duplicate {
     background: #e3f2fd;
     color: #1976d2;
 }
 
-.event-menu-action.split:hover {
+.event-menu-action.duplicate:hover {
     background: #bbdefb;
 }
 
@@ -110,8 +110,8 @@
     content: "✓";
 }
 
-.icon-split::before {
-    content: "⑃";
+.icon-duplicate::before {
+    content: "+";
 }
 
 .icon-delete::before {
