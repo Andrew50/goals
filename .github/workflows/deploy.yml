@@ -5,11 +5,64 @@ on:
     branches: [ prod ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
     runs-on: self-hosted
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v3
+      - name: Stop existing Docker Compose stacks (pre-checkout)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Stopping any existing Docker Compose stacks before checkout..."
+          # Try to stop the prod stack by project name first
+          docker compose -p p down --remove-orphans 2>/dev/null || true
+          # If a previous workspace exists with compose files, use them explicitly
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE" || true
+            if [ -f docker-compose.prod.yaml ]; then
+              docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
+            fi
+            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+            fi
+          fi
+          # Fallback: force remove any containers with expected name prefixes
+          docker ps --format '{{.Names}}' | awk '/^(goals_|p_)/{print $1}' | xargs -r docker rm -f || true
+
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            # Proactively remove known problematic root-owned dirs before checkout attempts to clean
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
+                fi
+              fi
+            fi
+          fi
+
+      - uses: actions/checkout@v5
         with:
           clean: true
 
@@ -18,6 +71,7 @@ jobs:
           cat > .env << EOF
           GOALS_CLOUDFLARED_TOKEN=${{ secrets.GOALS_CLOUDFLARED_TOKEN }}
           BACKUP_PATH=${{ secrets.BACKUP_PATH }}
+          BACKUP_LOGS_PATH=${{ secrets.BACKUP_LOGS_PATH }}
           GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
           REACT_APP_API_URL=${{ secrets.REACT_APP_API_URL }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
@@ -38,6 +92,57 @@ jobs:
           BP="${BACKUP_PATH:-/var/lib/goals/backups}"
           docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
           docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
+      - name: Prepare backup directories (idempotent)
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+          BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
+        run: |
+          set -euxo pipefail
+          : "${BACKUP_PATH:=/var/lib/goals/backups}"
+          : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
+          sudo mkdir -p "$BACKUP_PATH" "$BACKUP_LOGS_PATH"
+          # Set permissive ownership/permissions to avoid container write issues
+          sudo chown -R 7474:7474 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
+          sudo chmod -R 0775 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
+          # Cleanup zero-byte or partial backups from previous runs, retain last 30
+          find "$BACKUP_PATH" -type f -name 'neo4j_dump_*.dump' -size 0 -delete || true
+          # Retention: keep last 30 dumps, delete older
+          ls -1t "$BACKUP_PATH"/neo4j_dump_*.dump 2>/dev/null | tail -n +31 | xargs -r rm -f || true
+
+      - name: Pre-deploy backup (required)
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+        run: |
+          set -euxo pipefail
+          if docker ps -q -f name=goals_db | grep -q .; then
+            echo "goals_db is running; taking a pre-deploy backup (in-place)"
+            before_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            # Prefer script (shebang uses bash); fallback to inline dump via sh
+            if docker exec goals_db test -x /scripts/backup.sh; then
+              docker exec goals_db /scripts/backup.sh
+            else
+              docker exec goals_db sh -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
+            fi
+            after_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            if [ "$after_count" -le "$before_count" ]; then
+              echo "Pre-deploy backup did not increase backup count" >&2
+              exit 1
+            fi
+          else
+            echo "goals_db not running; running one-off backup container to verify backup system"
+            before_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
+            # Prefer script; fallback to inline dump
+            if docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'test -x /scripts/backup.sh' >/dev/null 2>&1; then
+              docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint /scripts/backup.sh goals_db
+            else
+              docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
+            fi
+            after_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
+            if [ "${after_count}" -le "${before_count}" ]; then
+              echo "Pre-deploy backup (one-off) did not increase backup count" >&2
+              exit 1
+            fi
+          fi
 
       - name: Stop and remove existing containers
         run: |
@@ -49,3 +154,57 @@ jobs:
 
       - name: Deploy stack
         run: docker compose -p p -f docker-compose.prod.yaml up -d
+
+      - name: Run immediate test backup and then wait for healthy
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+        run: |
+          set -euxo pipefail
+          # Wait for container to be running
+          for i in {1..60}; do
+            state=$(docker inspect -f '{{.State.Status}}' goals_db || echo 'starting')
+            if [ "$state" = "running" ]; then break; fi
+            sleep 5
+          done
+          # Trigger immediate backup and verify a new file appears
+          before_count=$(docker exec goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+          docker exec goals_db bash -lc '/scripts/backup.sh'
+          after_count=$(docker exec goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+          if [ "$after_count" -le "$before_count" ]; then
+            echo "Backup count did not increase after manual backup" >&2
+            exit 1
+          fi
+          # Now wait for healthcheck to pass (should be quick after manual backup)
+          for i in {1..30}; do
+            status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')
+            if [ "$status" = "healthy" ]; then break; fi
+            sleep 10
+          done
+
+      - name: Collect backup logs to workspace
+        if: always()
+        run: |
+          set -euxo pipefail
+          mkdir -p "${{ github.workspace }}/backup-artifacts"
+          docker cp goals_db:/var/log/cron/backup.log "${{ github.workspace }}/backup-artifacts/backup.log" || true
+
+      - name: Show backup logs on failure
+        if: failure()
+        env:
+          BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
+        run: |
+          set -euxo pipefail
+          : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
+          echo '===== goals_db container logs ====='
+          docker logs goals_db || true
+          echo '===== cron/backup.log (host bind) ====='
+          sudo tail -n 200 "$BACKUP_LOGS_PATH/backup.log" || true
+
+      - name: Upload backup logs artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: backup-logs
+          path: |
+            ${{ github.workspace }}/backup-artifacts/backup.log
+            ${{ github.workspace }}/.env

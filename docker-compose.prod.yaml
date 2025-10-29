@@ -16,11 +16,15 @@ services:
           - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
           - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
           - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL}
+          - REACT_APP_GOOGLE_CLIENT_ID=${REACT_APP_GOOGLE_CLIENT_ID}
           - HOST_URL=${HOST_URL}
           - NEO4J_URI=${NEO4J_URI}
           - NEO4J_USERNAME=${NEO4J_USERNAME}
           - NEO4J_PASSWORD=${NEO4J_PASSWORD}
           - NEO4J_CONNECTION_TIMEOUT=300
+          - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
+          - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+          - VAPID_SUBJECT=${VAPID_SUBJECT}
         networks:
             - prod_network
 
@@ -32,8 +36,16 @@ services:
         volumes:
           - prod_goal_db:/data
           - ${BACKUP_PATH:-/var/lib/goals/backups}:/backups
+          - ${BACKUP_LOGS_PATH:-/var/lib/goals/backup-logs}:/var/log/cron
         networks:
           - prod_network
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "bash -lc 'find /backups -maxdepth 1 -name neo4j_dump_*.dump -mmin -90 | grep -q .' "]
+            interval: 5m
+            timeout: 10s
+            retries: 3
+            start_period: 10m
 
     goals_frontend:
         container_name: goals_frontend
@@ -45,6 +57,7 @@ services:
         restart: unless-stopped
         environment:
           - REACT_APP_API_URL=${REACT_APP_API_URL}
+          - REACT_APP_VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
         networks:
           - prod_network
         

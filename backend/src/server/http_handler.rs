@@ -1,27 +1,25 @@
 use axum::{
     extract::{Extension, Path, Query},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::from_fn,
     response::IntoResponse,
     routing::{delete, get, post, put},
     Json, Router,
 };
+use jsonwebtoken::{decode, DecodingKey, Validation};
 use neo4rs::Graph;
 use std::collections::HashMap;
-use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use yup_oauth2::ServiceAccountKey;
 
 use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
 use crate::server::auth::{self};
 use crate::server::middleware;
 use crate::tools::{
-    achievements, calendar, day, event,
-    gcal::{self, GCalService, GCalSyncRequest, SyncResult},
-    goal::{self, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
-    list, migration, network, stats, traversal,
+    achievements, calendar, day, event, gcal_client,
+    goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
+    list, migration, network, push, stats, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -33,7 +31,8 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/signup", post(handle_signup))
         .route("/google", get(handle_google_auth))
         .route("/callback", get(handle_google_callback))
-        .route("/validate", get(handle_validate_token));
+        .route("/validate", get(handle_validate_token))
+        .route("/logout", get(handle_logout));
 
     let goal_routes = Router::new()
         .route("/create", post(handle_create_goal))
@@ -43,13 +42,13 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/relationship", post(handle_create_relationship))
         .route("/relationship", delete(handle_delete_relationship))
         .route("/:id/complete", put(handle_complete_goal))
+        .route("/:id/duplicate", post(handle_duplicate_goal))
         .route("/expand-date-range", post(handle_expand_task_date_range));
 
     let event_routes = Router::new()
         .route("/", post(handle_create_event))
         .route("/:id/complete", put(handle_complete_event))
         .route("/:id/delete", delete(handle_delete_event))
-        .route("/:id/split", post(handle_split_event))
         .route("/task/:id", get(handle_get_task_events))
         .route("/:id/update", put(handle_update_event))
         .route("/:id/routine-update", put(handle_update_routine_event))
@@ -95,6 +94,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/migrate-to-events", post(handle_migrate_to_events));
 
     let gcal_routes = Router::new()
+        .route("/calendars", get(handle_list_calendars))
         .route("/sync-from", post(handle_sync_from_gcal))
         .route("/sync-to", post(handle_sync_to_gcal))
         .route("/sync-bidirectional", post(handle_sync_bidirectional))
@@ -119,6 +119,13 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let routine_generation_routes =
         Router::new().route("/:end_timestamp", post(handle_generate_routine_events));
 
+    // Push notification routes
+    let push_routes = Router::new()
+        .route("/subscribe", post(handle_push_subscribe))
+        .route("/unsubscribe", post(handle_push_unsubscribe))
+        .route("/test", post(handle_push_test))
+        .route("/check-notifications", post(handle_check_notifications));
+
     // Protected routes with auth middleware
     let protected_routes = Router::new()
         .nest("/goals", goal_routes)
@@ -135,6 +142,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
         .nest("/routine", routine_generation_routes)
+        .nest("/push", push_routes)
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -156,20 +164,48 @@ async fn handle_signin(
     Extension(graph): Extension<Graph>,
     Json(payload): Json<auth::AuthPayload>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    auth::sign_in(graph, payload.username, payload.password).await
+    // Use enhanced_sign_in to get token
+    match auth::enhanced_sign_in(graph, payload.username.clone(), payload.password).await {
+        Ok(Json(resp)) => {
+            // Build Set-Cookie header for HttpOnly session cookie
+            let cookie_value = build_auth_cookie(&resp.token);
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::SET_COOKIE,
+                HeaderValue::from_str(&cookie_value)
+                    .unwrap_or_else(|_| HeaderValue::from_static("")),
+            );
+            Ok((StatusCode::OK, headers, Json(resp)))
+        }
+        Err((status, _json)) => Err(status),
+    }
 }
 
 async fn handle_validate_token(
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Extract token from Authorization header
-    let token = headers
+    // Extract token from Authorization header first
+    let mut token_opt = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map(|s| s.to_string());
 
-    auth::validate_token(token).await
+    // Fallback to cookie if no Authorization header
+    if token_opt.is_none() {
+        if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+            for part in cookie_header.split(';') {
+                let trimmed = part.trim();
+                if let Some(value) = trimmed.strip_prefix("auth_token=") {
+                    token_opt = Some(value.to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    let token = token_opt.ok_or(StatusCode::UNAUTHORIZED)?;
+    auth::validate_token(&token).await
 }
 
 // Google OAuth handlers
@@ -179,6 +215,7 @@ async fn handle_google_auth() -> Result<impl IntoResponse, impl IntoResponse> {
 
 async fn handle_google_callback(
     Extension(graph): Extension<Graph>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
     eprintln!("🌐 [ROUTE] Google OAuth callback handler called");
@@ -211,20 +248,70 @@ async fn handle_google_callback(
     eprintln!("✅ [ROUTE] Both code and state parameters extracted successfully");
     eprintln!("🔄 [ROUTE] Calling auth::handle_google_callback...");
 
-    let result = auth::handle_google_callback(graph, code.clone(), state.clone()).await;
+    // Try to extract existing session token to link Google to current user if logged in
+    let mut token_opt = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
 
-    match &result {
-        Ok(_) => eprintln!("✅ [ROUTE] Google OAuth callback completed successfully"),
+    if token_opt.is_none() {
+        if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+            for part in cookie_header.split(';') {
+                let trimmed = part.trim();
+                if let Some(value) = trimmed.strip_prefix("auth_token=") {
+                    token_opt = Some(value.to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    let existing_user_id: Option<i64> = if let Some(token) = token_opt {
+        let jwt_secret =
+            std::env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
+        match decode::<auth::Claims>(
+            &token,
+            &DecodingKey::from_secret(jwt_secret.as_bytes()),
+            &Validation::default(),
+        ) {
+            Ok(data) => Some(data.claims.user_id),
+            Err(e) => {
+                eprintln!(
+                    "⚠️ [ROUTE] Failed to decode existing auth token during Google callback: {:?}",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let result =
+        auth::handle_google_callback(graph, code.clone(), state.clone(), existing_user_id).await;
+
+    match result {
+        Ok(Json(resp)) => {
+            eprintln!("✅ [ROUTE] Google OAuth callback completed successfully");
+            let cookie_value = build_auth_cookie(&resp.token);
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::SET_COOKIE,
+                HeaderValue::from_str(&cookie_value)
+                    .unwrap_or_else(|_| HeaderValue::from_static("")),
+            );
+            Ok((StatusCode::OK, headers, Json(resp)))
+        }
         Err((status, response)) => {
             eprintln!(
                 "❌ [ROUTE] Google OAuth callback failed with status: {:?}",
                 status
             );
             eprintln!("❌ [ROUTE] Error response: {:?}", response);
+            Err((status, response))
         }
     }
-
-    result
 }
 
 // Goal handlers
@@ -392,12 +479,7 @@ async fn handle_delete_event(
     event::delete_event_handler(graph, id, delete_future).await
 }
 
-async fn handle_split_event(
-    Extension(graph): Extension<Graph>,
-    Path(id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    event::split_event_handler(graph, id).await
-}
+// removed split handler; replaced by duplicate goal API at /goals/:id/duplicate
 
 async fn handle_get_task_events(
     Extension(graph): Extension<Graph>,
@@ -421,7 +503,27 @@ async fn handle_get_smart_schedule_options(
     Extension(user_id): Extension<i64>,
     Json(request): Json<event::SmartScheduleRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    event::get_smart_schedule_options_handler(graph, user_id, request).await
+    let start = std::time::Instant::now();
+    eprintln!(
+        "📡 [SMART_SCHEDULE][ROUTE] user_id={} duration={} look_ahead_days={:?} preferred_time_start={:?} preferred_time_end={:?} start_after={:?}",
+        user_id,
+        request.duration,
+        request.look_ahead_days,
+        request.preferred_time_start,
+        request.preferred_time_end,
+        request.start_after_timestamp
+    );
+    match event::get_smart_schedule_options_handler(graph, user_id, request).await {
+        Ok(res) => Ok(res),
+        Err((status, msg)) => {
+            let elapsed = start.elapsed().as_millis();
+            eprintln!(
+                "❌ [SMART_SCHEDULE][ROUTE] failed status={} after {}ms message={}",
+                status, elapsed, msg
+            );
+            Err((status, msg))
+        }
+    }
 }
 
 // Network handlers
@@ -586,6 +688,15 @@ async fn handle_expand_task_date_range(
     goal::expand_task_date_range_handler(graph, user_id, request).await
 }
 
+async fn handle_duplicate_goal(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+    Json(options): Json<DuplicateOptions>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    goal::duplicate_goal_handler(graph, user_id, id, options).await
+}
+
 // Migration management handlers
 async fn handle_run_migration(
     Extension(graph): Extension<Graph>,
@@ -626,73 +737,84 @@ async fn handle_generate_routine_events(
     Ok(StatusCode::OK)
 }
 
-// Helper function to create GCalService
-async fn create_gcal_service() -> Result<GCalService, (StatusCode, String)> {
-    let gcal_sa_key_path = env::var("GCAL_SERVICE_ACCOUNT_PATH").map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "GCAL_SERVICE_ACCOUNT_PATH not set".to_string(),
-        )
-    })?;
+// Helper to build HttpOnly auth cookie string
+fn build_auth_cookie(token: &str) -> String {
+    let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "localhost".to_string());
+    let is_development = host_url == "localhost" || host_url.starts_with("127.0.0.1");
+    // Cross-site XHR requires SameSite=None. In production we must also set Secure.
+    // In development, many browsers still accept SameSite=None without Secure for localhost.
+    let same_site = "; SameSite=None";
+    let secure_attr = if is_development { "" } else { "; Secure" };
 
-    let gcal_sa_key_json = std::fs::read_to_string(&gcal_sa_key_path).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "Failed to read Google service account key file at {}: {}",
-                gcal_sa_key_path, e
-            ),
-        )
-    })?;
+    // Default to 30 days for persistence
+    let max_age_seconds = 60 * 60 * 24 * 30;
 
-    let gcal_sa_key: ServiceAccountKey = serde_json::from_str(&gcal_sa_key_json).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to parse Google service account key: {}", e),
-        )
-    })?;
+    format!(
+        "auth_token={}; Max-Age={}; Path=/; HttpOnly{}{}",
+        token, max_age_seconds, same_site, secure_attr
+    )
+}
 
-    GCalService::new(gcal_sa_key).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create Google Calendar service: {}", e),
-        )
-    })
+// Logout handler clears the auth cookie
+async fn handle_logout() -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static("auth_token=deleted; Max-Age=0; Path=/; HttpOnly; SameSite=None"),
+    );
+    (
+        StatusCode::OK,
+        headers,
+        Json(serde_json::json!({"message": "Logged out"})),
+    )
 }
 
 // Google Calendar handlers
+async fn handle_list_calendars(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    gcal_client::list_calendars(&graph, user_id).await
+}
+
 async fn handle_sync_from_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Json(request): Json<GCalSyncRequest>,
-) -> Result<Json<SyncResult>, (StatusCode, String)> {
-    let gcal_service = create_gcal_service().await?;
-    gcal::sync_from_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
+    Json(request): Json<gcal_client::GCalSyncRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    eprintln!(
+        "📨 [ROUTE][GCAL←] /gcal/sync-from | user={} calendar={} direction={}",
+        user_id, request.calendar_id, request.sync_direction
+    );
+    gcal_client::sync_from_gcal(graph, user_id, &request.calendar_id).await
 }
 
 #[axum::debug_handler]
 async fn handle_sync_to_gcal(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Json(request): Json<GCalSyncRequest>,
-) -> Result<Json<SyncResult>, (StatusCode, String)> {
-    let gcal_service = create_gcal_service().await?;
-    gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await
+    Json(request): Json<gcal_client::GCalSyncRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    eprintln!(
+        "📨 [ROUTE][GCAL→] /gcal/sync-to | user={} calendar={} direction={}",
+        user_id, request.calendar_id, request.sync_direction
+    );
+    gcal_client::sync_to_gcal(graph, user_id, &request.calendar_id).await
 }
 
 #[axum::debug_handler]
 async fn handle_sync_bidirectional(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Json(request): Json<GCalSyncRequest>,
-) -> Result<Json<SyncResult>, (StatusCode, String)> {
-    let gcal_service = create_gcal_service().await?;
-
+    Json(request): Json<gcal_client::GCalSyncRequest>,
+) -> Result<Json<gcal_client::SyncResult>, (StatusCode, String)> {
+    eprintln!(
+        "📨 [ROUTE][GCAL↔] /gcal/sync-bidirectional | user={} calendar={}",
+        user_id, request.calendar_id
+    );
     // Step 1: Sync from GCal to our app
     let from_gcal_result =
-        match gcal::sync_from_gcal(graph.clone(), user_id, &gcal_service, &request.calendar_id)
-            .await
-        {
+        match gcal_client::sync_from_gcal(graph.clone(), user_id, &request.calendar_id).await {
             Ok(Json(res)) => res,
             Err((status, msg)) => {
                 // If sync_from fails, we should stop and return the error
@@ -704,23 +826,23 @@ async fn handle_sync_bidirectional(
         };
 
     // Step 2: Sync from our app to GCal
-    let to_gcal_result =
-        match gcal::sync_to_gcal(graph, user_id, &gcal_service, &request.calendar_id).await {
-            Ok(Json(res)) => res,
-            Err((_status, msg)) => {
-                // Even if sync_to fails, we have still imported events.
-                // It's better to return a partial success with error details.
-                return Ok(Json(SyncResult {
-                    imported_events: from_gcal_result.imported_events,
-                    exported_events: 0,
-                    updated_events: from_gcal_result.updated_events, // These are updates from GCal->local
-                    errors: vec![format!("Error during sync to Google Calendar: {}", msg)],
-                }));
-            }
-        };
+    let to_gcal_result = match gcal_client::sync_to_gcal(graph, user_id, &request.calendar_id).await
+    {
+        Ok(Json(res)) => res,
+        Err((_status, msg)) => {
+            // Even if sync_to fails, we have still imported events.
+            // It's better to return a partial success with error details.
+            return Ok(Json(gcal_client::SyncResult {
+                imported_events: from_gcal_result.imported_events,
+                exported_events: 0,
+                updated_events: from_gcal_result.updated_events, // These are updates from GCal->local
+                errors: vec![format!("Error during sync to Google Calendar: {}", msg)],
+            }));
+        }
+    };
 
     // Step 3: Combine results
-    let final_result = SyncResult {
+    let final_result = gcal_client::SyncResult {
         imported_events: from_gcal_result.imported_events,
         exported_events: to_gcal_result.exported_events,
         // Sum updates from both directions. `updated_events` in `from_gcal` are local goals updated from GCal.
@@ -735,8 +857,54 @@ async fn handle_sync_bidirectional(
 #[axum::debug_handler]
 async fn handle_delete_gcal_event(
     Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
     Path(goal_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let gcal_service = create_gcal_service().await?;
-    gcal::delete_gcal_event_handler(graph, &gcal_service, goal_id).await
+    gcal_client::delete_gcal_event_handler(graph, user_id, goal_id).await
+}
+
+// Push notification handlers
+async fn handle_push_subscribe(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    push::save_subscription(graph, user_id, payload).await
+}
+
+async fn handle_push_unsubscribe(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    push::remove_subscription(graph, user_id, payload).await
+}
+
+async fn handle_push_test(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    push::send_test_notification(graph, user_id).await
+}
+
+async fn handle_check_notifications(
+    Extension(graph): Extension<Graph>,
+    Extension(_user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    // Manually trigger notification check (useful for testing)
+    println!("📢 [PUSH] Manual notification check triggered");
+
+    // Import the notification scheduler
+    use crate::jobs::notification_scheduler;
+
+    // Run the notification checks
+    if let Err(e) = notification_scheduler::check_and_send_event_notifications(&graph).await {
+        eprintln!("❌ [PUSH] Error during manual notification check: {}", e);
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Notification check failed: {}", e),
+        ));
+    }
+
+    Ok(StatusCode::OK)
 }

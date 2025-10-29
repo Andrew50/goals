@@ -2,236 +2,342 @@ name: Pull Request Checks
 
 on:
   pull_request:
-    branches: [ prod ]
+    branches: [ main , prod]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   changed-files:
     name: Detect Changed Files
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 5
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      any_changes: ${{ steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' }}
+      backend: ${{ steps.compute.outputs.backend }}
+      frontend: ${{ steps.compute.outputs.frontend }}
+      any_changes: ${{ steps.compute.outputs.any_changes }}
     steps:
-      - uses: actions/checkout@v3
+      - name: Stop residual compose stacks (pre-checkout)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          echo "Stopping any existing compose stacks before checkout..."
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE" || exit 0
+            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+            fi
+            if [ -f docker-compose.prod.yaml ]; then
+              docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
+            fi
+          fi
+
+      - name: Pre-fix workspace ownership
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
+                fi
+              fi
+            fi
+          fi
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          clean: false
+          path: repo_changed_files
+
+      - name: Fix workspace permissions (changed-files)
+        shell: bash
+        working-directory: repo_changed_files
+        run: |
+          set -euo pipefail
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
       
-      - name: Check for file changes
-        uses: dorny/paths-filter@v2
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-            frontend:
-              - 'frontend/**'
+      - name: Compute changed files
+        id: compute
+        shell: bash
+        working-directory: repo_changed_files
+        run: |
+          set -euo pipefail
+          echo "Event: ${{ github.event_name }}"
+          echo "Base ref: ${{ github.base_ref }}"
+          echo "Base sha: ${{ github.event.pull_request.base.sha }}"
+          echo "Current sha (merge or head): ${{ github.sha }}"
+
+          # Ensure we have full history available
+          if git rev-parse --is-shallow-repository >/dev/null 2>&1; then
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              git fetch --no-tags --prune --unshallow || true
+            fi
+          fi
+
+          # Ensure base branch is fetched locally
+          git fetch --no-tags origin "${{ github.base_ref }}:${{ github.base_ref }}" || git fetch --no-tags origin "${{ github.base_ref }}"
+
+          # Diff base branch against the checked-out commit (merge commit for PRs)
+          CHANGED_FILES=$(git diff --name-only "${{ github.base_ref }}...${{ github.sha }}" || true)
+          printf "Changed files:\n%s\n" "$CHANGED_FILES"
+
+          backend_changed=false
+          frontend_changed=false
+          if echo "$CHANGED_FILES" | grep -q '^backend/'; then backend_changed=true; fi
+          if echo "$CHANGED_FILES" | grep -q '^frontend/'; then frontend_changed=true; fi
+
+          any_changes=false
+          if [ "$backend_changed" = true ] || [ "$frontend_changed" = true ]; then any_changes=true; fi
+
+          echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend_changed" >> "$GITHUB_OUTPUT"
+          echo "any_changes=$any_changes" >> "$GITHUB_OUTPUT"
 
   check-previous-runs:
     name: Check Previous Test Runs
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 3
     outputs:
       backend_previously_failed: ${{ steps.check-failures.outputs.backend_failed }}
       frontend_previously_failed: ${{ steps.check-failures.outputs.frontend_failed }}
-      e2e_previously_failed: ${{ steps.check-failures.outputs.e2e_failed }}
     steps:
+      - name: Pre-fix workspace ownership
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
+                fi
+              fi
+            fi
+          fi
       - name: Check for previous failures
         id: check-failures
         run: |
           # Initialize all outputs to false by default
           echo "backend_failed=false" >> $GITHUB_OUTPUT
           echo "frontend_failed=false" >> $GITHUB_OUTPUT
-          echo "e2e_failed=false" >> $GITHUB_OUTPUT
-          
+
           # Get repository in owner/repo format
           REPO="${GITHUB_REPOSITORY}"
-          
+
           # Try to get workflow runs with error handling
           echo "Checking previous runs for $REPO"
-          
-          # Check backend tests
-          backend_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous backend workflow status: $backend_status"
-          if [ "$backend_status" == "failure" ]; then
+
+          # Check workflow conclusion (best-effort signal)
+          workflow_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          echo "Previous workflow status: $workflow_status"
+          if [ "$workflow_status" == "failure" ]; then
             echo "backend_failed=true" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check frontend tests (falls back to workflow conclusion if job-specific data isn't available)
-          frontend_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous frontend workflow status: $frontend_status"
-          if [ "$frontend_status" == "failure" ]; then
             echo "frontend_failed=true" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check E2E tests
-          e2e_status=$(gh api "/repos/${REPO}/actions/workflows/e2e-tests.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous E2E workflow status: $e2e_status"
-          if [ "$e2e_status" == "failure" ]; then
-            echo "e2e_failed=true" >> $GITHUB_OUTPUT
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # BACKEND PIPELINE
-  backend-checks:
-    name: Backend Lint & Build
+  # BACKEND PIPELINE (lint, build, unit tests)
+  backend-verify:
+    name: Backend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # Add write permission for pushing changes
-    defaults:
-      run:
-        working-directory: ./backend
+    runs-on: self-hosted
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v3
-      
+      - name: Pre-fix workspace ownership
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
+                fi
+              fi
+            fi
+          fi
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      - name: Fix workspace permissions (backend)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-      
-      - name: Apply code format
-        run: cargo fmt --all
-      
-      - name: Check with clippy
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Lint with clippy
+        working-directory: ./backend
         run: cargo clippy -- -D warnings
-        
+
       - name: Build
+        working-directory: ./backend
         run: cargo build --verbose
 
-  backend-tests:
-    name: Backend Unit Tests
-    needs: [backend-checks]
-    if: always()
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+      - name: Unit tests
         working-directory: ./backend
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        
-      - name: Run backend unit tests
         run: cargo test --lib
-      
-      # Run integration tests that require the Neo4j test database
-      - name: Run backend integration tests
-        run: bash run_integration_tests.sh
-      
-      - name: Mark test success
-        if: success()
-        run: echo "Tests passed successfully"
 
-  # FRONTEND PIPELINE  
-  frontend-checks:
-    name: Frontend Lint & Build
+  # FRONTEND PIPELINE (lint, build, unit tests)
+  frontend-verify:
+    name: Frontend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./frontend
+    runs-on: self-hosted
+    permissions:
+      contents: read
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      - name: Fix workspace permissions and stale node_modules (frontend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
+          if [ -d frontend/node_modules ]; then
+            rm -rf frontend/node_modules 2>/dev/null || true
+            if [ -d frontend/node_modules ]; then
+              if command -v sudo >/dev/null 2>&1; then
+                sudo rm -rf frontend/node_modules || true
+              else
+                docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules' || true
+              fi
+            fi
+          fi
+
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: './frontend/package-lock.json'
-      
+
       - name: Install dependencies
+        working-directory: ./frontend
         run: npm ci
-      
+
       - name: Lint with ESLint
+        working-directory: ./frontend
         run: npx eslint . --ext .js,.jsx,.ts,.tsx
-      
+
       - name: Type check with TypeScript
+        working-directory: ./frontend
         run: npx tsc --noEmit
-        
+
       - name: Build
+        working-directory: ./frontend
         run: npm run build
 
-  frontend-tests:
-    name: Frontend Unit Tests
-    needs: [frontend-checks]
-    if: always()
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+      - name: Unit tests
         working-directory: ./frontend
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: './frontend/package-lock.json'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Run unit tests
         run: npm run test:ci
-        
+
       - name: Upload test coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: frontend-test-coverage
           path: frontend/coverage/
           retention-days: 30
       
-      - name: Mark test success
-        if: success()
-        run: echo "Tests passed successfully"
-      
-  # INTEGRATION TESTING
-  e2e-tests:
-    name: Run E2E Tests
-    needs: [changed-files, check-previous-runs, backend-tests, frontend-tests]
-    if: |
-      always() && 
-      (needs.changed-files.outputs.any_changes == 'true' || needs.check-previous-runs.outputs.e2e_previously_failed == 'true')
-    uses: ./.github/workflows/e2e-tests.yml
-    with:
-      ref: ${{ github.ref }}
-      skip_tests: false
-      num_workers: 32
-
   # DEPLOYMENT CHECK
   deploy-ready:
     name: Ready for Deployment
-    needs: [backend-checks, backend-tests, frontend-checks, frontend-tests, e2e-tests]
+    needs: [backend-verify, frontend-verify]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 5
     steps:
       - name: Evaluate overall workflow result
         run: |
-          echo "backend-checks: ${{ needs.backend-checks.result }}"
-          echo "backend-tests: ${{ needs.backend-tests.result }}"
-          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
-          echo "frontend-tests: ${{ needs.frontend-tests.result }}"
-          echo "e2e-tests: ${{ needs.e2e-tests.result }}"
-          if [ "${{ needs.backend-checks.result }}" != "success" ] || \
-             [ "${{ needs.backend-tests.result }}" != "success" ] || \
-             [ "${{ needs.frontend-checks.result }}" != "success" ] || \
-             [ "${{ needs.frontend-tests.result }}" != "success" ] || \
-             [ "${{ needs.e2e-tests.result }}" != "success" ]; then
+          echo "backend-verify: ${{ needs.backend-verify.result }}"
+          echo "frontend-verify: ${{ needs.frontend-verify.result }}"
+          back_ok="${{ needs.backend-verify.result }}"
+          front_ok="${{ needs.frontend-verify.result }}"
+          if { [ "$back_ok" != "success" ] && [ "$back_ok" != "skipped" ]; } || \
+             { [ "$front_ok" != "success" ] && [ "$front_ok" != "skipped" ]; }; then
             echo "One or more jobs failed. PR is not ready for deployment."
             exit 1
           else
-            echo "All checks passed! This PR is ready to be merged to prod for deployment."
+            echo "All checks passed or were skipped appropriately! This PR is ready to be merged to prod for deployment."
           fi

@@ -282,16 +282,20 @@ export async function buildHierarchy(networkData: {
         const baseWidth = 1;
         const width = Math.max(baseWidth, Math.min(baseWidth + importance * 0.5, 8));
         const fromNode = networkData.nodes.find(n => n.id === edge.from);
-        const parentColor = fromNode ? getGoalStyle(fromNode).backgroundColor : '#2196F3';
+        const toNode = networkData.nodes.find(n => n.id === edge.to);
+        const parentColor = fromNode
+            ? getGoalStyle(fromNode).backgroundColor
+            : (toNode ? getGoalStyle(toNode).backgroundColor : undefined as string | undefined);
         const arrowScale = Math.max(0.5, Math.min(width * 0.3, 2));
-        return {
+        const base = {
             ...edge,
             id: `${edge.from}-${edge.to}`,
             width,
-            color: {
-                color: edge.relationship_type === 'queue' ? '#ff9800' : parentColor,
-                opacity: Math.min(0.4 + importance * 0.1, 0.9),
-            },
+            color: edge.relationship_type === 'queue'
+                ? { color: '#ff9800', opacity: Math.min(0.4 + importance * 0.1, 0.9) }
+                : (parentColor
+                    ? { color: parentColor, opacity: Math.min(0.4 + importance * 0.1, 0.9) }
+                    : undefined),
             arrows: {
                 to: {
                     enabled: true,
@@ -306,7 +310,9 @@ export async function buildHierarchy(networkData: {
                 roundness: edge.relationship_type === 'queue' ? 0.3 : 0.2,
                 forceDirection: 'radial',
             },
-        };
+        } as any;
+
+        return base;
     });
 
     //console.log('Final node positions:', positions);

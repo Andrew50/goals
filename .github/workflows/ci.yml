@@ -1,0 +1,249 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: self-hosted
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
+    
+    steps:
+      - name: Stop residual test stacks (pre-checkout)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Stopping any existing dev/test compose stacks before checkout..."
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE" || exit 0
+            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+            fi
+          fi
+
+      - name: Pre-fix workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fixing ownership on $GITHUB_WORKSPACE"
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+            else
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            fi
+            # Proactively remove known problematic root-owned dirs before checkout attempts to clean
+            if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+              rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+              if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                else
+                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
+                fi
+              fi
+            fi
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      - name: Fix workspace permissions and stale node_modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Ensuring workspace is owned by the runner (uid=$(id -u) gid=$(id -g))"
+          # First try without privileges
+          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
+          # Fallback to sudo if available, else use a root container to fix ownership
+          if [ -n "${SUDO_USER-}" ] || command -v sudo >/dev/null 2>&1; then
+            sudo chown -R $(id -u):$(id -g) "$PWD" || true
+          else
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          fi
+          # Proactively remove any stale node_modules that may be root-owned from prior runs
+          if [ -d frontend/node_modules ]; then
+            rm -rf frontend/node_modules 2>/dev/null || true
+            if [ -d frontend/node_modules ]; then
+              if command -v sudo >/dev/null 2>&1; then
+                sudo rm -rf frontend/node_modules || true
+              else
+                docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules' || true
+              fi
+            fi
+          fi
+      
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      
+      - name: Create test .env file
+        run: |
+          echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
+          echo "BACKUP_PATH=/tmp/backups" >> .env
+          echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
+          echo "JWT_SECRET=test_jwt_secret" >> .env
+          echo "JWT_EXPIRATION=86400" >> .env
+          echo "UID=$(id -u)" >> .env
+          echo "GID=$(id -g)" >> .env
+          echo "VAPID_PUBLIC_KEY=dummy_public" >> .env
+          echo "VAPID_PRIVATE_KEY=dummy_private" >> .env
+          echo "VAPID_SUBJECT=mailto:test@example.com" >> .env
+          
+      - name: Start test stack
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
+          
+      - name: Wait for services
+        shell: bash
+        run: |
+          echo "Waiting for services to be ready..."
+          for port in 5057 3031 7688; do
+            echo "Checking port $port..."
+            for i in {1..60}; do
+              if nc -z localhost $port 2>/dev/null; then
+                echo "Port $port is ready"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Port $port failed to become ready"
+                docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+          echo "All services are ready"
+
+      - name: Backup smoke test (Neo4j dump)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Preparing backup script inside test DB container..."
+          CID=$(docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml ps -q goals_db_test)
+          if [ -z "$CID" ]; then
+            echo "Failed to resolve container ID for goals_db_test"
+            docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml ps
+            exit 1
+          fi
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'mkdir -p /scripts /backups && chown -R neo4j:neo4j /scripts /backups'
+          docker cp db/backup.sh "$CID":/scripts/backup.sh
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'chmod +x /scripts/backup.sh'
+          echo "Running backup..."
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T --user neo4j goals_db_test bash -lc '/scripts/backup.sh'
+          echo "Verifying backup output..."
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'ls -l /backups && test -n "$(ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | head -n1)"'
+      
+      - name: Clean potentially root-owned node_modules
+        run: |
+          if [ -e frontend/node_modules ]; then
+            rm -rf frontend/node_modules 2>/dev/null || mv -f frontend/node_modules "frontend/node_modules.bak.$(date +%s)" || true
+          fi
+          
+      - name: Backend integration tests (in container)
+        env:
+          CI: "true"
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml run --rm \
+            goals_backend_test bash -lc 'NEO4J_TEST_URI=bolt://goals_db_test:7687 \
+                                         NEO4J_TEST_USERNAME=neo4j \
+                                         NEO4J_TEST_PASSWORD=password123 \
+                                         cargo test --test routine_integration_test -- --nocapture'
+      
+          
+      - name: E2E Playwright tests
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: http://localhost:3031
+        run: |
+          cd frontend
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test tests/routine --project=chromium
+          
+      - name: Dump docker logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs --no-color
+          
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+          
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results
+          path: frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Create dev .env artifact (no logging)
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cat > .env.dev << 'EOF'
+          # === Backend ===
+          HOST_URL=${{ vars.HOST_URL }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URL=${{ vars.GOOGLE_REDIRECT_URL }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          JWT_EXPIRATION=${{ vars.JWT_EXPIRATION }}
+          GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
+          NEO4J_URI=${{ vars.NEO4J_URI }}
+          NEO4J_USERNAME=${{ secrets.NEO4J_USERNAME }}
+          NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
+          VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT=${{ vars.VAPID_SUBJECT }}
+          
+          # === Frontend ===
+          REACT_APP_API_URL=${{ vars.REACT_APP_API_URL }}
+          REACT_APP_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          REACT_APP_VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
+          EOF
+
+      - name: Upload dev .env artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: dev-env
+          path: .env.dev
+          retention-days: 3
+          if-no-files-found: error
+          
+      - name: Stop test stack
+        if: always()
+        run: |
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+

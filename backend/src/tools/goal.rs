@@ -182,6 +182,14 @@ pub struct ExpandTaskDateRangeRequest {
     pub new_end_timestamp: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DuplicateOptions {
+    pub include_children: Option<bool>,
+    pub keep_parent_links: Option<bool>,
+    pub name_suffix: Option<String>,
+    pub clear_external_ids: Option<bool>,
+}
+
 pub async fn delete_relationship_handler(
     graph: Graph,
     from_id: i64,
@@ -875,6 +883,119 @@ pub async fn expand_task_date_range_handler(
     }
 }
 
+pub async fn duplicate_goal_handler(
+    graph: Graph,
+    user_id: i64,
+    goal_id: i64,
+    options: DuplicateOptions,
+) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
+    // 1) Fetch source goal and validate ownership
+    let mut fetch_result = graph
+        .execute(
+            query("MATCH (g:Goal) WHERE id(g) = $id AND g.user_id = $user_id RETURN g")
+                .param("id", goal_id)
+                .param("user_id", user_id),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let row = fetch_result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Goal not found".to_string()))?;
+
+    let source: Goal = row
+        .get("g")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let name_suffix = options.name_suffix.unwrap_or_else(|| " (Copy)".to_string());
+    let keep_parent_links = options.keep_parent_links.unwrap_or(true);
+    let include_children = options.include_children.unwrap_or(false);
+    let clear_external_ids = options.clear_external_ids.unwrap_or(true);
+
+    if include_children {
+        // Not implemented by design (explicitly out of scope)
+        // Return an error to make behavior explicit.
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "include_children is not supported".to_string(),
+        ));
+    }
+
+    // 2) Build duplicated goal
+    let mut duplicated = source.clone();
+    duplicated.id = None;
+    duplicated.user_id = source.user_id.or(Some(user_id));
+    duplicated.name = format!("{}{}", source.name, name_suffix);
+    duplicated.completed = Some(false);
+    duplicated.completion_date = None;
+
+    if clear_external_ids {
+        duplicated.gcal_event_id = None;
+        duplicated.gcal_last_sync = None;
+        duplicated.is_gcal_imported = None;
+        // Keep sync configuration and calendar_id as-is so user intent persists
+    }
+
+    // 3) Create duplicated node
+    let created = duplicated
+        .create_goal(&graph)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 4) Copy inbound relationships for non-event goals (parents)
+    if keep_parent_links && source.goal_type != GoalType::Event {
+        // CHILD relationships
+        let copy_child_parents = query(
+            "MATCH (p:Goal)-[:CHILD]->(o:Goal) WHERE id(o) = $old_id
+             WITH p
+             MATCH (n:Goal) WHERE id(n) = $new_id
+             MERGE (p)-[:CHILD]->(n)",
+        )
+        .param("old_id", goal_id)
+        .param("new_id", created.id.unwrap());
+        graph
+            .run(copy_child_parents)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // QUEUE relationships (for achievements)
+        let copy_queue_parents = query(
+            "MATCH (p:Goal)-[:QUEUE]->(o:Goal) WHERE id(o) = $old_id
+             WITH p
+             MATCH (n:Goal) WHERE id(n) = $new_id
+             MERGE (p)-[:QUEUE]->(n)",
+        )
+        .param("old_id", goal_id)
+        .param("new_id", created.id.unwrap());
+        graph
+            .run(copy_queue_parents)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // 5) For events: ensure HAS_EVENT relationship to parent exists
+    if source.goal_type == GoalType::Event {
+        if let (Some(parent_id), Some(_parent_type)) = (source.parent_id, &source.parent_type) {
+            let rel_query = query(
+                "MATCH (p:Goal), (e:Goal)
+                 WHERE id(p) = $parent_id AND id(e) = $event_id
+                 MERGE (p)-[:HAS_EVENT]->(e)",
+            )
+            .param("parent_id", parent_id)
+            .param("event_id", created.id.unwrap());
+
+            graph
+                .run(rel_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+    }
+
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
 impl Goal {
     pub async fn create_goal(&self, graph: &Graph) -> Result<Goal, neo4rs::Error> {
         // Enhanced logging for routine_time specifically
@@ -1091,11 +1212,7 @@ impl Goal {
                         "Events cannot have children".to_string(),
                     ))
                 }
-                (GoalType::Directive, GoalType::Achievement, _) => {
-                    return Err(neo4rs::Error::UnexpectedMessage(
-                        "Directives cannot directly connect to achievements".to_string(),
-                    ))
-                }
+                // Allow directives to connect to achievements
                 (GoalType::Routine, GoalType::Task, "CHILD") => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Tasks cannot be children of routines".to_string(),

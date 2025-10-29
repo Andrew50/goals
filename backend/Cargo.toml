@@ -29,6 +29,9 @@ oauth2 = "4.4"
 google-calendar3 = "5.0"
 yup-oauth2 = "9.0"
 hyper-rustls = "0.25"
+# Temporarily comment out web-push due to dependency issues
+# web-push = "0.9"
+base64 = "0.21"
 
 [[bin]]
 name = "backend"

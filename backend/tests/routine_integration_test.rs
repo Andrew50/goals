@@ -68,6 +68,12 @@ async fn create_test_routine(
         is_deleted: Some(false),
         due_date: None,
         start_date: None,
+        gcal_event_id: None,
+        gcal_calendar_id: None,
+        gcal_sync_enabled: None,
+        gcal_last_sync: None,
+        gcal_sync_direction: None,
+        is_gcal_imported: None,
     };
 
     // Create the routine using the goal creation logic
@@ -308,7 +314,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore]
     async fn test_daily_routine_event_generation() {
         // Set up test database connection
         let graph = create_test_graph()
@@ -572,7 +577,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_routine_time_application() {
         // Set up test database connection
         let graph = create_test_graph()
@@ -647,7 +651,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_routine_event_relationship() {
         // Set up test database connection
         let graph = create_test_graph()
@@ -1068,6 +1071,12 @@ mod tests {
             is_deleted: Some(false),
             due_date: None,
             start_date: None,
+            gcal_event_id: None,
+            gcal_calendar_id: None,
+            gcal_sync_enabled: None,
+            gcal_last_sync: None,
+            gcal_sync_direction: None,
+            is_gcal_imported: None,
         };
 
         // Create the routine via API (like frontend does)
@@ -1228,6 +1237,12 @@ mod tests {
             is_deleted: Some(false),
             due_date: None,
             start_date: None,
+            gcal_event_id: None,
+            gcal_calendar_id: None,
+            gcal_sync_enabled: None,
+            gcal_last_sync: None,
+            gcal_sync_direction: None,
+            is_gcal_imported: None,
         };
 
         // Create via Goal API (simulates what the frontend does)
@@ -1382,6 +1397,12 @@ mod tests {
             is_deleted: Some(false),
             due_date: None,
             start_date: None,
+            gcal_event_id: None,
+            gcal_calendar_id: None,
+            gcal_sync_enabled: None,
+            gcal_last_sync: None,
+            gcal_sync_direction: None,
+            is_gcal_imported: None,
         };
 
         println!(

@@ -5,6 +5,7 @@ ENV NEO4J_AUTH=neo4j/password123
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
+    bash \
     cron \
     util-linux \
     tini \
