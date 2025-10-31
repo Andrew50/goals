@@ -809,10 +809,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                 .earliest()
                 .ok_or("Invalid timestamp")?;
             let next_date = add_months_clamped(dt.date_naive(), 1)?;
-            Ok(next_date
+            next_date
                 .and_time(dt.time())
                 .and_utc()
-                .timestamp_millis())?
+                .timestamp_millis()
         }
         _ => {
             // Try to parse custom frequency like "every 2 days" or compact tokens like "1D", "2W", "1M", "1Y"
@@ -832,10 +832,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                                 .earliest()
                                 .ok_or("Invalid timestamp")?;
                             let next_date = add_months_clamped(dt.date_naive(), number)?;
-                            Ok(next_date
+                            next_date
                                 .and_time(dt.time())
                                 .and_utc()
-                                .timestamp_millis())?
+                                .timestamp_millis()
                         }
                         "year" | "years" => {
                             let dt = chrono::Utc
@@ -843,10 +843,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                                 .earliest()
                                 .ok_or("Invalid timestamp")?;
                             let next_date = add_months_clamped(dt.date_naive(), number * 12)?;
-                            Ok(next_date
+                            next_date
                                 .and_time(dt.time())
                                 .and_utc()
-                                .timestamp_millis())?
+                                .timestamp_millis()
                         }
                         _ => return Err(format!("Unknown frequency unit: {}", parts[2])),
                     }
@@ -878,10 +878,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                     .earliest()
                     .ok_or("Invalid timestamp")?;
                 let next_date = add_months_clamped(dt.date_naive(), number)?;
-                Ok(next_date
+                next_date
                     .and_time(dt.time())
                     .and_utc()
-                    .timestamp_millis())?
+                    .timestamp_millis()
             } else if lower.ends_with('y') {
                 // Handle formats like "1Y", "2y", etc. (calendar-aware years)
                 let number_str = &frequency[..frequency.len() - 1];
@@ -893,10 +893,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                     .earliest()
                     .ok_or("Invalid timestamp")?;
                 let next_date = add_months_clamped(dt.date_naive(), number * 12)?;
-                Ok(next_date
+                next_date
                     .and_time(dt.time())
                     .and_utc()
-                    .timestamp_millis())?
+                    .timestamp_millis()
             } else {
                 return Err(format!("Unknown frequency: {}", frequency));
             }
@@ -910,7 +910,7 @@ fn add_months_clamped(date: chrono::NaiveDate, months: i64) -> Result<chrono::Na
     use chrono::NaiveDate;
     let year = date.year();
     let month0 = (date.month() - 1) as i64; // 0-based
-    let total_months = year as i64 + (month0 + months) / 12; // We'll compute below for clarity
+    let _total_months = year as i64 + (month0 + months) / 12; // We'll compute below for clarity
     let total = year as i64 * 12 + month0 + months;
     let new_year = (total.div_euclid(12)) as i32;
     let new_month0 = (total.rem_euclid(12)) as u32;

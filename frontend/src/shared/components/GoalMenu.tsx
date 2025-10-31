@@ -1287,10 +1287,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 }
 
+                // Refresh near-term routine instances so UI reflects inherited changes
+                if (scope === 'all' || scope === 'future') {
+                    try { await updateRoutines(); } catch (e) {}
+                }
+
                 setState({ ...state, goal: updatedEvents[0] || updatedGoal });
             } else if ((updateType === 'duration' || updateType === 'other') && (scope === 'all' || scope === 'future')) {
                 // For duration or other property changes, update multiple events
                 await updateMultipleRoutineEvents(updatedGoal, updateType === 'duration' ? 'duration' : 'other', scope);
+                // Refresh near-term routine instances so UI reflects inherited changes
+                try { await updateRoutines(); } catch (e) {}
             } else {
                 // For single updates or other changes, use regular update
                 const result = await updateGoal(updatedGoal.id!, updatedGoal);

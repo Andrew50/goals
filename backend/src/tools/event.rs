@@ -953,6 +953,20 @@ pub async fn update_routine_event_handler(
                 new_time_of_day
             );
 
+            // Also update the parent routine so future generated events inherit this time-of-day
+            let update_parent_time_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $parent_id AND r.goal_type = 'routine'
+                 SET r.routine_time = $new_timestamp",
+            )
+            .param("parent_id", parent_id)
+            .param("new_timestamp", request.new_timestamp);
+
+            graph
+                .run(update_parent_time_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
             // For "all" scope, update ALL events for this routine to the new time-of-day
             let check_query = query(
                 "MATCH (e:Goal)
@@ -1030,6 +1044,20 @@ pub async fn update_routine_event_handler(
                 "🕐 [ROUTINE_UPDATE] New time of day: {} ms",
                 new_time_of_day
             );
+
+            // Also update the parent routine so future generated events inherit this time-of-day
+            let update_parent_time_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $parent_id AND r.goal_type = 'routine'
+                 SET r.routine_time = $new_timestamp",
+            )
+            .param("parent_id", parent_id)
+            .param("new_timestamp", request.new_timestamp);
+
+            graph
+                .run(update_parent_time_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
             // For "future" scope, update ALL future events for this routine to the new time-of-day
             let check_query = query(
@@ -1977,6 +2005,59 @@ pub async fn update_routine_event_properties_handler(
                     StatusCode::BAD_REQUEST,
                     "No properties to update".to_string(),
                 ));
+            }
+
+            // Update parent routine so future generated events inherit these properties
+            let mut routine_set_clauses: Vec<&str> = Vec::new();
+            let mut routine_params = vec![
+                (
+                    "parent_id".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(parent_id)),
+                ),
+            ];
+
+            if request.duration.is_some() {
+                routine_set_clauses.push("r.duration = $r_duration");
+                routine_params.push((
+                    "r_duration".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(request.duration.unwrap() as i64)),
+                ));
+            }
+            if let Some(name) = &request.name {
+                routine_set_clauses.push("r.name = $r_name");
+                routine_params.push((
+                    "r_name".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(name)),
+                ));
+            }
+            if let Some(description) = &request.description {
+                routine_set_clauses.push("r.description = $r_description");
+                routine_params.push((
+                    "r_description".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(description)),
+                ));
+            }
+            if let Some(priority) = &request.priority {
+                routine_set_clauses.push("r.priority = $r_priority");
+                routine_params.push((
+                    "r_priority".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(priority)),
+                ));
+            }
+
+            if !routine_set_clauses.is_empty() {
+                let routine_query_str = format!(
+                    "MATCH (r:Goal) WHERE id(r) = $parent_id AND r.goal_type = 'routine' SET {} RETURN id(r) as id",
+                    routine_set_clauses.join(", ")
+                );
+                let mut routine_update_query = query(&routine_query_str);
+                for (key, value) in routine_params {
+                    routine_update_query = routine_update_query.param(&key, value);
+                }
+                graph
+                    .run(routine_update_query)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             }
 
             // Build the query based on scope
