@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { generateTestToken } from '../helpers/auth';
 
 // Base URL for backend API
-const API_URL = 'http://localhost:5057';
+const API_URL = 'http://localhost:6060';
 
 // Helper function to wait for dialog to close with error handling
 async function waitForDialogToClose(page: any, timeout = 20000) {

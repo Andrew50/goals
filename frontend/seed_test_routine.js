@@ -30,7 +30,7 @@ const createRoutine = async () => {
 
     try {
         console.log('Creating routine via API...');
-        const response = await fetch('http://localhost:5057/goals/create', {
+        const response = await fetch('http://localhost:6060/goals/create', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -51,7 +51,7 @@ const createRoutine = async () => {
         // Generate routine events
         console.log('Generating routine events...');
         const endOfWeek = Date.now() + (7 * 24 * 60 * 60 * 1000);
-        const routineResponse = await fetch(`http://localhost:5057/routine/${endOfWeek}`, {
+        const routineResponse = await fetch(`http://localhost:6060/routine/${endOfWeek}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -69,7 +69,7 @@ const createRoutine = async () => {
 
         // Verify by fetching calendar data
         console.log('Verifying calendar data...');
-        const calendarResponse = await fetch('http://localhost:5057/calendar', {
+        const calendarResponse = await fetch('http://localhost:6060/calendar', {
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
