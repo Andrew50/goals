@@ -88,7 +88,7 @@ fi
 
 # Test backend connection
 echo "🔍 Testing backend connection..."
-if curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:5057/health &> /dev/null; then
+if curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:6060/health &> /dev/null; then
     echo "✅ Backend is responding"
 else
     echo "⚠️  Backend health check failed (this might be expected if no health endpoint exists)"

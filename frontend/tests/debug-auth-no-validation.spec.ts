@@ -70,7 +70,7 @@ test.describe('Debug Authentication - Skip Validation', () => {
         console.log('Testing with blocked network...');
 
         // Block all network requests to simulate backend being down
-        await page.route('http://localhost:5057/**', route => {
+        await page.route('http://localhost:6060/**', route => {
             console.log('Blocked request to:', route.request().url());
             route.abort();
         });

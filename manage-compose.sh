@@ -19,6 +19,7 @@ preflight() {
     # Ensure dev ports are free to avoid bind conflicts
     free_port 3030
     free_port 5059
+    free_port 6060
 }
 
 case "$1" in
@@ -39,7 +40,7 @@ case "$1" in
         docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --remove-orphans
         echo "✅ Test environment running on:"
         echo "   Frontend: http://localhost:3031"
-        echo "   Backend: http://localhost:5057"
+        echo "   Backend: http://localhost:6060"
         echo "   Neo4j: http://localhost:7475"
         echo "   Test DB: http://localhost:7475"
         echo "📜 Streaming test logs (Ctrl-C to stop streaming)..."
