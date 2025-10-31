@@ -40,9 +40,10 @@ services:
 
   # Override the frontend to use different port for testing
   goals_frontend:
-    # No host port binding is required during CI runs, so disable the mapping to
-    # avoid conflicts when another process already uses the default port.
-    ports: []
+    # Bind the frontend to an alternate host port to avoid conflicts with
+    # developer machines or other CI jobs that may already be using 3030.
+    ports:
+      - "3031:3030"
     environment:
       - REACT_APP_API_URL=http://localhost:5057
       - HOST_URL=localhost
