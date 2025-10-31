@@ -574,18 +574,31 @@ pub async fn delete_event_handler(
     delete_future: bool,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if delete_future {
-        // For routine events, delete this and all future
+        // Delete this and all future occurrences for the parent routine,
+        // and set the routine's end_timestamp so no new events are generated.
+        // Note: Scope by parent_id (entire routine), not by routine_instance_id.
         let delete_query = query(
             "MATCH (e:Goal)
-             WHERE id(e) = $event_id
-             WITH e, e.routine_instance_id as instance_id, e.scheduled_timestamp as cutoff
-             MATCH (r:Goal)-[:HAS_EVENT]->(events:Goal)
-             WHERE events.routine_instance_id = instance_id
-             AND events.scheduled_timestamp >= cutoff
-             SET events.is_deleted = true
-             WITH r, max(events.scheduled_timestamp) as last_timestamp
-             WHERE last_timestamp IS NOT NULL
-             SET r.end_date = last_timestamp",
+             WHERE id(e) = $event_id AND e.goal_type = 'event'
+             WITH e, e.scheduled_timestamp AS cutoff, e.parent_id AS parent_id
+             // Soft-delete all future events for this routine
+             MATCH (r:Goal)
+             WHERE id(r) = parent_id AND r.goal_type = 'routine'
+             WITH r, cutoff
+             OPTIONAL MATCH (r)-[:HAS_EVENT]->(f:Goal)
+             WHERE f.goal_type = 'event'
+               AND (f.is_deleted IS NULL OR f.is_deleted = false)
+               AND f.scheduled_timestamp >= cutoff
+             SET f.is_deleted = true
+             WITH r, cutoff
+             // Find latest remaining non-deleted event before cutoff
+             OPTIONAL MATCH (r)-[:HAS_EVENT]->(keep:Goal)
+             WHERE keep.goal_type = 'event'
+               AND (keep.is_deleted IS NULL OR keep.is_deleted = false)
+               AND keep.scheduled_timestamp < cutoff
+             WITH r, cutoff, max(keep.scheduled_timestamp) AS last_kept
+             // If none remain, set end just before cutoff to prevent regeneration
+             SET r.end_timestamp = coalesce(last_kept, cutoff - 1)"
         )
         .param("event_id", event_id);
 

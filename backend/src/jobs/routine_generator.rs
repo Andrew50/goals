@@ -14,7 +14,7 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
         AND (r.end_timestamp IS NULL OR r.end_timestamp > $now)
         WITH r
         OPTIONAL MATCH (r)-[:HAS_EVENT]->(e:Goal)
-        WHERE e.is_deleted <> true
+        WHERE (e.is_deleted IS NULL OR e.is_deleted = false)
         WITH r, max(e.scheduled_timestamp) as last_event_time
         WHERE last_event_time < $horizon OR last_event_time IS NULL
         RETURN r, id(r) as routine_id, last_event_time
@@ -39,9 +39,35 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
             .map_err(|e| format!("Failed to get routine_id: {}", e))?;
         let last_event_time: Option<i64> = row.get("last_event_time").ok();
 
-        let start_from = last_event_time
-            .map(|t| t + 86400000) // Start from day after last event
-            .unwrap_or_else(|| routine.start_timestamp.unwrap_or(now));
+        // Determine the correct starting point for generation:
+        // - If we have a last event, start from the NEXT occurrence (not +1 day)
+        // - Otherwise, advance from the routine start to the first occurrence >= now
+        let start_from = if let Some(last) = last_event_time {
+            match calculate_next_occurrence(last, routine.frequency.as_ref().ok_or("Routine missing frequency")?) {
+                Ok(next) => next,
+                Err(e) => {
+                    eprintln!("[routine_generator] Failed to calculate next occurrence from last event: {}. Falling back to +1 day.", e);
+                    last + 86_400_000
+                }
+            }
+        } else {
+            let mut t = routine.start_timestamp.unwrap_or(now);
+            if let Some(freq) = &routine.frequency {
+                let guard_limit = 10_000; // safety guard
+                let mut guard = 0;
+                while t < now && guard < guard_limit {
+                    t = match calculate_next_occurrence(t, freq) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("[routine_generator] Failed to advance to now for routine id {:?}: {}", routine.id, e);
+                            break;
+                        }
+                    };
+                    guard += 1;
+                }
+            }
+            t
+        };
 
         // Respect the routine's explicit end date if it exists and is sooner than the 180-day horizon
         let effective_until = match routine.end_timestamp {
@@ -71,8 +97,9 @@ fn is_valid_day_for_routine(timestamp: i64, frequency: &str) -> Result<bool, Str
 
     if let Some(unit_pos) = freq_part.find(|c: char| !c.is_numeric()) {
         let unit = &freq_part[unit_pos..];
+        let unit_upper = unit.to_ascii_uppercase();
 
-        match unit {
+        match unit_upper.as_str() {
             "W" => {
                 if let Some(days) = parts.get(1) {
                     // Get selected days as numbers (0-6)
@@ -97,7 +124,7 @@ fn is_valid_day_for_routine(timestamp: i64, frequency: &str) -> Result<bool, Str
                 Ok(true)
             }
             _ => {
-                // Unknown unit - assume valid
+                // Unknown unit - assume valid (we will warn and skip creation elsewhere)
                 Ok(true)
             }
         }
@@ -248,9 +275,10 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
             .parse()
             .map_err(|_| format!("Invalid frequency multiplier: {}", &freq_part[..unit_pos]))?;
         let unit = &freq_part[unit_pos..];
+        let unit_upper = unit.to_ascii_uppercase();
 
         // Calculate next date (date component only for calendar calculations)
-        let next_date = match unit {
+        let next_date = match unit_upper.as_str() {
             "D" => current_dt.date_naive() + Duration::days(multiplier),
             "W" => {
                 if let Some(days) = parts.get(1) {
@@ -280,9 +308,12 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                     current_dt.date_naive() + Duration::weeks(multiplier)
                 }
             }
-            "M" => current_dt.date_naive() + Duration::days(multiplier * 30),
-            "Y" => current_dt.date_naive() + Duration::days(multiplier * 365),
-            _ => current_dt.date_naive() + Duration::days(multiplier),
+            "M" => add_months_clamped(current_dt.date_naive(), multiplier)?,
+            "Y" => add_months_clamped(current_dt.date_naive(), multiplier * 12)?,
+            _ => {
+                eprintln!("[routine_generator] Unknown frequency unit '{}', defaulting to daily step.", unit);
+                current_dt.date_naive() + Duration::days(multiplier)
+            }
         };
 
         // Combine the calculated date with the preserved time-of-day
@@ -295,6 +326,28 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
         let next_dt = current_dt + Duration::days(1);
         Ok(next_dt.timestamp_millis())
     }
+}
+
+fn add_months_clamped(date: chrono::NaiveDate, months: i64) -> Result<chrono::NaiveDate, String> {
+    use chrono::NaiveDate;
+    let year = date.year();
+    let month0 = (date.month() - 1) as i64; // 0-based month
+    let total_months = year as i64 * 12 + month0 + months;
+    let new_year = (total_months.div_euclid(12)) as i32;
+    let new_month0 = (total_months.rem_euclid(12)) as u32;
+    let new_month = new_month0 + 1; // 1-based
+    let last_dom = last_day_of_month(new_year, new_month);
+    let new_day = date.day().min(last_dom);
+    NaiveDate::from_ymd_opt(new_year, new_month, new_day)
+        .ok_or_else(|| "Invalid date after month addition".to_string())
+}
+
+fn last_day_of_month(year: i32, month: u32) -> u32 {
+    use chrono::NaiveDate;
+    let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).expect("valid next month");
+    let last = first_next - Duration::days(1);
+    last.day()
 }
 
 // This function can be called periodically (e.g., daily) by a scheduler

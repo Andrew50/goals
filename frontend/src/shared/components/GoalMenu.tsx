@@ -24,6 +24,7 @@ import {
     Tooltip,
     Skeleton,
     InputAdornment,
+    Alert,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -3119,6 +3120,21 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <Typography variant="body1" sx={{ mb: 2 }}>
                         What would you like to delete?
                     </Typography>
+                    {routineDeleteDialog.selectedScope === 'single' && (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            Only this occurrence will be deleted. The routine stays active and otherwise unaffected.
+                        </Alert>
+                    )}
+                    {routineDeleteDialog.selectedScope === 'future' && (
+                        <Alert severity="warning" sx={{ mb: 2 }}>
+                            This and all future occurrences will be deleted. The routine’s end date will be set so no new occurrences are created.
+                        </Alert>
+                    )}
+                    {routineDeleteDialog.selectedScope === 'all' && (
+                        <Alert severity="error" sx={{ mb: 2 }}>
+                            All occurrences will be deleted and the routine itself will be permanently removed.
+                        </Alert>
+                    )}
                     <FormControl component="fieldset">
                         <RadioGroup
                             value={routineDeleteDialog.selectedScope}
@@ -3132,7 +3148,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleRoutineDeleteCancel}>Cancel</Button>
-                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">Delete</Button>
+                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">
+                        {routineDeleteDialog.selectedScope === 'single'
+                            ? 'Delete occurrence'
+                            : routineDeleteDialog.selectedScope === 'future'
+                                ? 'Delete future and end routine'
+                                : 'Delete all and remove routine'}
+                    </Button>
                 </DialogActions>
             </Dialog>
         </Dialog>
