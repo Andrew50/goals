@@ -45,17 +45,19 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         let user_node_id: i64 = row.get("user_node_id").map_err(|e| format!("Failed to get user_node_id: {}", e))?;
         
         // Get event details
-        let event_name: String = row.get::<neo4rs::Node>("g")
-            .ok()
+        let event_node = row.get::<neo4rs::Node>("g").ok();
+
+        let event_name: String = event_node
+            .as_ref()
             .and_then(|node| node.get::<String>("name").ok())
             .unwrap_or_else(|| "Event".to_string());
-            
-        let event_description: Option<String> = row.get::<neo4rs::Node>("g")
-            .ok()
+
+        let event_description: Option<String> = event_node
+            .as_ref()
             .and_then(|node| node.get::<String>("description").ok());
-            
-        let scheduled_timestamp: i64 = row.get::<neo4rs::Node>("g")
-            .ok()
+
+        let scheduled_timestamp: i64 = event_node
+            .as_ref()
             .and_then(|node| node.get::<i64>("scheduled_timestamp").ok())
             .unwrap_or(now);
         
@@ -63,10 +65,21 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         let minutes_until = (scheduled_timestamp - now) / 60000;
         
         // Create notification payload
+        let description_suffix = event_description
+            .as_ref()
+            .map(|description| format!("\n{}", description))
+            .unwrap_or_default();
+
         let notification_body = if minutes_until <= 1 {
-            format!("High priority: '{}' is starting now!", event_name)
+            format!(
+                "High priority: '{}' is starting now!{}",
+                event_name, description_suffix
+            )
         } else {
-            format!("High priority: '{}' starts in {} minutes", event_name, minutes_until)
+            format!(
+                "High priority: '{}' starts in {} minutes{}",
+                event_name, minutes_until, description_suffix
+            )
         };
         
         let payload = push::PushPayload {
@@ -80,6 +93,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
                 "event_id": event_id,
                 "event_name": event_name,
                 "event_time": scheduled_timestamp,
+                "event_description": event_description,
                 "type": "high_priority_event",
                 "priority": "high"
             })),
@@ -188,24 +202,35 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
             let event_id: i64 = row.get("event_id").unwrap_or(0);
             let user_id: i64 = row.get("user_id").unwrap_or(0);
             
-            let event_name: String = row.get::<neo4rs::Node>("g")
-                .ok()
+            let event_node = row.get::<neo4rs::Node>("g").ok();
+
+            let event_name: String = event_node
+                .as_ref()
                 .and_then(|node| node.get::<String>("name").ok())
                 .unwrap_or_else(|| "Event".to_string());
-            
-            let priority: Option<String> = row.get::<neo4rs::Node>("g")
-                .ok()
+
+            let event_description: Option<String> = event_node
+                .as_ref()
+                .and_then(|node| node.get::<String>("description").ok());
+
+            let priority: Option<String> = event_node
+                .as_ref()
                 .and_then(|node| node.get::<String>("priority").ok());
-            
-            let scheduled_timestamp: i64 = row.get::<neo4rs::Node>("g")
-                .ok()
+
+            let scheduled_timestamp: i64 = event_node
+                .as_ref()
                 .and_then(|node| node.get::<i64>("scheduled_timestamp").ok())
                 .unwrap_or(now);
-            
+
             // Send reminder notification
+            let reminder_body = event_description
+                .as_ref()
+                .map(|description| format!("'{}' is coming up\n{}", event_name, description))
+                .unwrap_or_else(|| format!("'{}' is coming up", event_name));
+
             let payload = push::PushPayload {
                 title: format!("⏰ Reminder: {}", reminder_text),
-                body: format!("'{}' is coming up", event_name),
+                body: reminder_body,
                 icon: Some("/logo192.png".to_string()),
                 badge: Some("/logo192.png".to_string()),
                 tag: Some(format!("reminder-{}-{}", event_id, reminder_offset)),
@@ -213,6 +238,7 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                     "url": format!("/calendar?event={}", event_id),
                     "event_id": event_id,
                     "event_time": scheduled_timestamp,
+                    "event_description": event_description,
                     "type": "event_reminder",
                     "reminder_type": reminder_text
                 })),
@@ -229,7 +255,10 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                 timestamp: Some(now),
             };
             
-            if let Ok(_) = push::send_notification_to_user(graph, user_id, &payload).await {
+            if push::send_notification_to_user(graph, user_id, &payload)
+                .await
+                .is_ok()
+            {
                 // Mark this reminder as sent
                 let mark_query = query(
                     "MATCH (g:Goal)

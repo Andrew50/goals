@@ -60,74 +60,6 @@ const NetworkView: React.FC = () => {
   const deleteModeRef = useRef(deleteMode);
   const draggedNodeRef = useRef<number | null>(null);
 
-  // Handle clicks (and context clicks) to open the GoalMenu or perform deletion
-  const handleClick = useCallback((params: any, goalDialogMode: "edit" | "view") => {
-    if (!networkRef.current) return;
-    params.event.preventDefault();
-
-    if (addEdgeMode) return; // Do not open menu in edge mode
-
-    if (deleteModeRef.current) {
-      if (params.nodes.length > 0) {
-        // We'll handle this after handleDeleteNode is defined
-        const nodeId = params.nodes[0];
-        if (networkRef.current && nodesDataSetRef.current && edgesDataSetRef.current) {
-          privateRequest('goals/' + nodeId, 'DELETE')
-            .then(() => {
-              nodesDataSetRef.current?.remove(nodeId);
-              const currentEdges = edgesDataSetRef.current?.get();
-              currentEdges?.forEach(edge => {
-                if (edge.from === nodeId || edge.to === nodeId) {
-                  edgesDataSetRef.current?.remove(edge.id);
-                }
-              });
-            })
-            .catch(error => {
-              console.error('Failed to delete node:', error);
-            });
-        }
-      } else if (params.edges.length > 0) {
-        // We'll handle this after handleDeleteEdge is defined
-        const edgeId = params.edges[0];
-        if (edgesDataSetRef.current) {
-          const [fromId, toId] = edgeId.split('-').map(Number);
-          privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE')
-            .then(() => {
-              edgesDataSetRef.current?.remove(edgeId);
-            })
-            .catch(error => {
-              console.error('Failed to delete edge:', error);
-            });
-        }
-      }
-      return;
-    }
-
-    const nodeId = networkRef.current.getNodeAt(params.pointer.DOM);
-    if (nodeId && nodesDataSetRef.current) {
-      const nodeData = nodesDataSetRef.current?.get(nodeId);
-      if (nodeData) {
-        // GoalMenu expects a Goal object (with Dates)
-        // nodeData from DataSet might still be ApiGoal-like if not fully processed,
-        // Assuming nodeData here is effectively a Goal or NetworkNode.
-        GoalMenu.open(nodeData as Goal, goalDialogMode, async (updatedGoal: Goal) => {
-          console.log('[Network] onSuccess priority:', updatedGoal.priority);
-
-          if (updatedGoal.id) {
-            const exists = await checkNodeExists(updatedGoal.id);
-            if (!exists) {
-              await refreshFullNetwork();
-              return;
-            }
-            await refreshNodeById(updatedGoal.id);
-          } else {
-            await refreshFullNetwork();
-          }
-        });
-      }
-    }
-  }, [addEdgeMode]);
-
   // vis‑network configuration options
   const options = useMemo(() => ({
     nodes: {
@@ -222,23 +154,6 @@ const NetworkView: React.FC = () => {
     return { nodes: visited, edges: connectedEdges };
   };
 
-  // Refresh a single node from the server, normalize, update dataset, refresh edges, and redraw
-  const refreshNodeById = useCallback(async (nodeId: number) => {
-    if (!nodesDataSetRef.current || !edgesDataSetRef.current) return;
-    try {
-      const apiGoal = await privateRequest<ApiGoal>(`goals/${nodeId}`);
-      const local = goalToLocal(apiGoal);
-      const formatted = formatNetworkNode(local);
-      const existing = nodesDataSetRef.current.get(nodeId);
-      nodesDataSetRef.current.update({ ...formatted, x: existing?.x, y: existing?.y });
-      await refreshEdgesForNode(nodeId);
-      networkRef.current?.redraw();
-    } catch (e) {
-      // If the node no longer exists or failed, fall back to a full refresh
-      await refreshFullNetwork();
-    }
-  }, []);
-
   // Full network refresh: re-fetch nodes+edges, preserve x/y when possible, and redraw
   const refreshFullNetwork = useCallback(async () => {
     if (!nodesDataSetRef.current || !edgesDataSetRef.current) return;
@@ -274,6 +189,86 @@ const NetworkView: React.FC = () => {
       console.error('Failed to refresh full network:', e);
     }
   }, []);
+
+  // Refresh a single node from the server, normalize, update dataset, refresh edges, and redraw
+  const refreshNodeById = useCallback(async (nodeId: number) => {
+    if (!nodesDataSetRef.current || !edgesDataSetRef.current) return;
+    try {
+      const apiGoal = await privateRequest<ApiGoal>(`goals/${nodeId}`);
+      const local = goalToLocal(apiGoal);
+      const formatted = formatNetworkNode(local);
+      const existing = nodesDataSetRef.current.get(nodeId);
+      nodesDataSetRef.current.update({ ...formatted, x: existing?.x, y: existing?.y });
+      await refreshEdgesForNode(nodeId);
+      networkRef.current?.redraw();
+    } catch (e) {
+      // If the node no longer exists or failed, fall back to a full refresh
+      await refreshFullNetwork();
+    }
+  }, [refreshFullNetwork]);
+
+  // Handle clicks (and context clicks) to open the GoalMenu or perform deletion
+  const handleClick = useCallback((params: any, goalDialogMode: "edit" | "view") => {
+    if (!networkRef.current) return;
+    params.event.preventDefault();
+
+    if (addEdgeMode) return; // Do not open menu in edge mode
+
+    if (deleteModeRef.current) {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        if (networkRef.current && nodesDataSetRef.current && edgesDataSetRef.current) {
+          privateRequest('goals/' + nodeId, 'DELETE')
+            .then(() => {
+              nodesDataSetRef.current?.remove(nodeId);
+              const currentEdges = edgesDataSetRef.current?.get();
+              currentEdges?.forEach(edge => {
+                if (edge.from === nodeId || edge.to === nodeId) {
+                  edgesDataSetRef.current?.remove(edge.id);
+                }
+              });
+            })
+            .catch(error => {
+              console.error('Failed to delete node:', error);
+            });
+        }
+      } else if (params.edges.length > 0) {
+        const edgeId = params.edges[0];
+        if (edgesDataSetRef.current) {
+          const [fromId, toId] = edgeId.split('-').map(Number);
+          privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE')
+            .then(() => {
+              edgesDataSetRef.current?.remove(edgeId);
+            })
+            .catch(error => {
+              console.error('Failed to delete edge:', error);
+            });
+        }
+      }
+      return;
+    }
+
+    const nodeId = networkRef.current.getNodeAt(params.pointer.DOM);
+    if (nodeId && nodesDataSetRef.current) {
+      const nodeData = nodesDataSetRef.current?.get(nodeId);
+      if (nodeData) {
+        GoalMenu.open(nodeData as Goal, goalDialogMode, async (updatedGoal: Goal) => {
+          console.log('[Network] onSuccess priority:', updatedGoal.priority);
+
+          if (updatedGoal.id) {
+            const exists = await checkNodeExists(updatedGoal.id);
+            if (!exists) {
+              await refreshFullNetwork();
+              return;
+            }
+            await refreshNodeById(updatedGoal.id);
+          } else {
+            await refreshFullNetwork();
+          }
+        });
+      }
+    }
+  }, [addEdgeMode, refreshFullNetwork, refreshNodeById]);
 
   // Initialize the network once on mount
   useEffect(() => {
@@ -567,24 +562,6 @@ const NetworkView: React.FC = () => {
     } catch (error) {
       // If we get a 404 or similar error, the node was deleted
       return false;
-    }
-  };
-
-  // Helper function to remove node and its edges from the network
-  const removeNodeFromNetwork = (nodeId: number) => {
-    if (nodesDataSetRef.current && edgesDataSetRef.current) {
-      // Remove the node
-      nodesDataSetRef.current.remove(nodeId);
-
-      // Remove all edges connected to this node
-      const currentEdges = edgesDataSetRef.current.get();
-      const edgesToRemove = currentEdges
-        .filter(edge => edge.from === nodeId || edge.to === nodeId)
-        .map(edge => edge.id);
-
-      if (edgesToRemove.length > 0) {
-        edgesDataSetRef.current.remove(edgesToRemove);
-      }
     }
   };
 

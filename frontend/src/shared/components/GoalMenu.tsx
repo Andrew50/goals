@@ -244,7 +244,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         });
         ro.observe(el);
         return () => ro.disconnect();
-    }, [isOpen]);
+    }, [isOpen, statsLoading, goalStats]);
 
     // Local string states for duration inputs to allow temporary empty values and smooth editing
     const [durationHoursInput, setDurationHoursInput] = useState<string>('');
@@ -1647,7 +1647,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
             setState({ ...state, error: 'Failed to move event to now' });
         }
-    }, [state, isRoutineParentEvent, onSuccess]);
+    }, [
+        state,
+        isRoutineParentEvent,
+        onSuccess,
+        handleChange,
+        handleRoutineEventUpdate,
+        setState
+    ]);
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}

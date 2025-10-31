@@ -353,6 +353,11 @@ async fn send_push_notification(
         subscription.endpoint
     );
     println!("📦 [PUSH] Payload size: {} bytes", payload.len());
+    println!(
+        "🔑 [PUSH] Subscription key lengths: p256dh={}, auth={}",
+        subscription.p256dh.len(),
+        subscription.auth.len()
+    );
 
     // Check if we have VAPID keys configured
     let has_vapid = env::var("VAPID_PRIVATE_KEY").is_ok() && env::var("VAPID_PUBLIC_KEY").is_ok();
