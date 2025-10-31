@@ -37,8 +37,6 @@ services:
     environment:
       - RUST_BACKTRACE=1
       - RUST_LOG=info
-    networks:
-      - dev_network
 
   # Override the frontend to use different port for testing
   goals_frontend:
@@ -62,13 +60,6 @@ services:
       - ./db/seed_test_db.sh:/data/seed_test_db.sh # Mount the seed script
     environment:
       - NEO4J_AUTH=neo4j/password123
-    networks:
-      - dev_network
 
 volumes:
   goal_db_test:
-
-
-networks:
-  dev_network:
-    driver: bridge
