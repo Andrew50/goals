@@ -21,8 +21,6 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
       VAPID_SUBJECT: ${VAPID_SUBJECT}
-    networks:
-      - dev_network
       #    db:
       #build:
       #context: ./db
@@ -43,8 +41,6 @@ services:
       - "7687:7687"
     volumes:
       - goal_db:/data
-    networks:
-      - dev_network
 
   goals_frontend:
     build:
@@ -64,13 +60,6 @@ services:
     ports:
       - "3030:3030"
     restart: unless-stopped
-    networks:
-      - dev_network
 
 volumes:
   goal_db:
-
-
-networks:
-  dev_network:
-    driver: bridge
