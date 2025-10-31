@@ -2,7 +2,6 @@ name: Pull Request Checks
 
 on:
   pull_request:
-    branches: [ main , prod]
 
 permissions:
   contents: read
@@ -19,6 +18,7 @@ jobs:
     outputs:
       backend: ${{ steps.compute.outputs.backend }}
       frontend: ${{ steps.compute.outputs.frontend }}
+      ci: ${{ steps.compute.outputs.ci }}
       any_changes: ${{ steps.compute.outputs.any_changes }}
     steps:
       - name: Stop residual compose stacks (pre-checkout)
@@ -106,14 +106,17 @@ jobs:
 
           backend_changed=false
           frontend_changed=false
+          ci_changed=false
           if echo "$CHANGED_FILES" | grep -q '^backend/'; then backend_changed=true; fi
           if echo "$CHANGED_FILES" | grep -q '^frontend/'; then frontend_changed=true; fi
+          if echo "$CHANGED_FILES" | grep -q '^\.github/workflows/'; then ci_changed=true; fi
 
           any_changes=false
-          if [ "$backend_changed" = true ] || [ "$frontend_changed" = true ]; then any_changes=true; fi
+          if [ "$backend_changed" = true ] || [ "$frontend_changed" = true ] || [ "$ci_changed" = true ]; then any_changes=true; fi
 
           echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend_changed" >> "$GITHUB_OUTPUT"
+          echo "ci=$ci_changed" >> "$GITHUB_OUTPUT"
           echo "any_changes=$any_changes" >> "$GITHUB_OUTPUT"
 
   check-previous-runs:
@@ -178,7 +181,7 @@ jobs:
   backend-verify:
     name: Backend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
-    if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
+    if: ${{ needs.changed-files.outputs.backend == 'true' || needs.changed-files.outputs.ci == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
     timeout-minutes: 45
     steps:
@@ -254,7 +257,7 @@ jobs:
   frontend-verify:
     name: Frontend Lint, Build & Unit Tests
     needs: [changed-files, check-previous-runs]
-    if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
+    if: ${{ needs.changed-files.outputs.frontend == 'true' || needs.changed-files.outputs.ci == 'true' || needs.check-previous-runs.outputs.frontend_previously_failed == 'true' }}
     runs-on: self-hosted
     permissions:
       contents: read
