@@ -66,12 +66,16 @@ done
 
 # Start test stack
 echo -e "${YELLOW}Starting test stack...${NC}"
+export GOALS_BACKEND_PORT=${GOALS_BACKEND_PORT:-6060}
+export GOALS_FRONTEND_PORT=${GOALS_FRONTEND_PORT:-3031}
+TEST_DB_BOLT_PORT=${TEST_DB_BOLT_PORT:-7688}
+
 docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
 
 # Wait for services
-wait_for_port 6060 "Backend API" || exit 1
-wait_for_port 3031 "Frontend" || exit 1
-wait_for_port 7688 "Neo4j Test DB" || exit 1
+wait_for_port "$GOALS_BACKEND_PORT" "Backend API" || exit 1
+wait_for_port "$GOALS_FRONTEND_PORT" "Frontend" || exit 1
+wait_for_port "$TEST_DB_BOLT_PORT" "Neo4j Test DB" || exit 1
 
 echo ""
 echo -e "${GREEN}All services are ready!${NC}"
@@ -81,7 +85,7 @@ echo ""
 if [ "$SKIP_BACKEND" = false ]; then
     echo -e "${YELLOW}Running backend integration tests...${NC}"
     cd backend
-    export NEO4J_TEST_URI=bolt://localhost:7688
+    export NEO4J_TEST_URI=bolt://localhost:${TEST_DB_BOLT_PORT}
     export NEO4J_TEST_USERNAME=neo4j
     export NEO4J_TEST_PASSWORD=password123
     
@@ -116,7 +120,7 @@ if [ "$SKIP_FRONTEND" = false ]; then
         npx playwright install chromium
     fi
     
-    export PLAYWRIGHT_BASE_URL=http://localhost:3031
+    export PLAYWRIGHT_BASE_URL=http://localhost:${GOALS_FRONTEND_PORT}
     
     if npx playwright test tests/routine --project=chromium; then
         echo -e "${GREEN}✓ Frontend tests passed${NC}"

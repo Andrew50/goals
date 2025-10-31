@@ -60,6 +60,10 @@ fi
 
 # Start test environment
 echo "🚀 Starting test environment..."
+export GOALS_BACKEND_PORT=${GOALS_BACKEND_PORT:-6060}
+export GOALS_FRONTEND_PORT=${GOALS_FRONTEND_PORT:-3031}
+TEST_DB_BOLT_PORT=${TEST_DB_BOLT_PORT:-7688}
+
 docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
 
 # Wait for services
@@ -71,7 +75,7 @@ echo "🔍 Testing database connection..."
 max_attempts=30
 attempt=1
 while [[ $attempt -le $max_attempts ]]; do
-    if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" &> /dev/null; then
+    if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:${TEST_DB_BOLT_PORT} -u neo4j -p password123 "RETURN 1;" &> /dev/null; then
         echo "✅ Neo4j test database is ready!"
         break
     fi
@@ -88,7 +92,7 @@ fi
 
 # Test backend connection
 echo "🔍 Testing backend connection..."
-if curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:6060/health &> /dev/null; then
+if curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:${GOALS_BACKEND_PORT}/health &> /dev/null; then
     echo "✅ Backend is responding"
 else
     echo "⚠️  Backend health check failed (this might be expected if no health endpoint exists)"
@@ -110,7 +114,7 @@ timeout 60s npm start &
 FRONTEND_PID=$!
 sleep 30
 
-if curl --retry 5 --retry-delay 2 --retry-connrefused http://localhost:3031 &> /dev/null; then
+if curl --retry 5 --retry-delay 2 --retry-connrefused http://localhost:${GOALS_FRONTEND_PORT} &> /dev/null; then
     echo "✅ Frontend is responding"
     kill $FRONTEND_PID 2>/dev/null || true
 else
