@@ -97,7 +97,7 @@ export default defineConfig({
     //     reuseExistingServer: true,
     //     timeout: 120 * 1000, // 2 minutes
     //     env: {
-    //         REACT_APP_API_URL: process.env.REACT_APP_API_URL || 'http://localhost:5057',
+    //         REACT_APP_API_URL: process.env.REACT_APP_API_URL || 'http://localhost:6060',
     //     },
     // },
 });

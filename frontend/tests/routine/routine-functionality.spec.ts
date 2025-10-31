@@ -2,7 +2,7 @@ import { test, expect, APIRequestContext } from '@playwright/test';
 import { generateTestToken } from '../helpers/auth';
 
 // Base URL for backend API
-const API_URL = 'http://localhost:5057';
+const API_URL = 'http://localhost:6060';
 
 /**
  * Routine E2E – ensure creating a daily routine produces calendar events
@@ -283,7 +283,7 @@ test.describe('Routine Functionality', () => {
                 const token = localStorage.getItem('authToken');
                 console.log('Making test API call with token:', token ? token.substring(0, 20) + '...' : 'null');
 
-                const response = await fetch('http://localhost:5057/calendar', {
+                const response = await fetch('http://localhost:6060/calendar', {
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'

@@ -69,7 +69,7 @@ echo -e "${YELLOW}Starting test stack...${NC}"
 docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
 
 # Wait for services
-wait_for_port 5057 "Backend API" || exit 1
+wait_for_port 6060 "Backend API" || exit 1
 wait_for_port 3031 "Frontend" || exit 1
 wait_for_port 7688 "Neo4j Test DB" || exit 1
 

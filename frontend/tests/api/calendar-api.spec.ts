@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { generateTestToken } from '../helpers/auth'; // Import from helper
 
 // Base URL for your backend API
-const API_URL = 'http://localhost:5057';
+const API_URL = 'http://localhost:6060';
 
 test.describe('Calendar API Tests', () => {
     test('GET /calendar should return calendar data', async ({ request }) => {
