@@ -44,6 +44,7 @@ import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
 import SmartScheduleDialog from "./SmartScheduleDialog";
+import MiniNetworkGraph from './MiniNetworkGraph';
 import { getGoalStyle } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
@@ -232,7 +233,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 goalType: state.goal.goal_type
             });
         } else {
-            console.log('[GoalMenu][Stats] container not mounted:', { time: now, statsLoading, hasGoalStats: !!goalStats });
+            //console.log('[GoalMenu][Stats] container not mounted:', { time: now, statsLoading, hasGoalStats: !!goalStats });
         }
     }, [statsLoading, goalStats, state.mode, state.goal.goal_type]);
     useEffect(() => {
@@ -243,12 +244,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 const h = entry.contentRect.height;
                 const prev = prevStatsHeightRef.current;
                 prevStatsHeightRef.current = h;
-                console.log('[GoalMenu][Stats] resize observer:', {
-                    height: h,
-                    heightDelta: prev == null ? null : h - prev,
-                    statsLoading,
-                    hasGoalStats: !!goalStats
-                });
+                //console.log('[GoalMenu][Stats] resize observer:', {
+                //    height: h,
+                //    heightDelta: prev == null ? null : h - prev,
+                //    statsLoading,
+                //    hasGoalStats: !!goalStats
+                //});
             }
         });
         ro.observe(el);
@@ -353,7 +354,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         if (!goal.id || state.mode !== 'view') return;
 
         statsLoadStartRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        console.log('[GoalMenu][Stats] fetch start:', { goalId: goal.id, goalType: goal.goal_type, mode: state.mode });
+        //console.log('[GoalMenu][Stats] fetch start:', { goalId: goal.id, goalType: goal.goal_type, mode: state.mode });
         setStatsLoading(true);
         try {
             let stats: BasicGoalStats = {
@@ -547,7 +548,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
             const start = statsLoadStartRef.current || end;
             const durationMs = Math.max(0, end - start);
-            console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
+            //console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
             setStatsLoading(false);
         }
     }, [state.mode, taskEvents, parentGoals]);
@@ -644,7 +645,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const children = hierarchyResponse
                 .filter(g => childIds.includes(g.id!))
                 .map(goalToLocal);
-            // console.log('[GoalMenu] fetchChildGoals children:', children);
 
             // Sort by hierarchy level (immediate children first)
             setChildGoals(children);
@@ -658,8 +658,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //create copy, might need to be date.
         const goalCopy = { ...goal }
 
-        // console.log('[GoalMenu] open() called with goal:', goalCopy);
-        // console.log('[GoalMenu] goal.id:', goalCopy.id, 'goal.goal_type:', goalCopy.goal_type);
 
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
@@ -701,10 +699,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }[actualMode]);
         setIsOpen(true);
 
-        // console.log('[GoalMenu] About to check goal.id:', goalCopy.id, 'typeof:', typeof goalCopy.id);
         // Fetch parent and child goals if we have a goal ID
         if (goal.id) {
-            // console.log('[GoalMenu] Goal has ID:', goal.id, 'and goal_type:', goal.goal_type);
             // Skip fetchParentGoals for events - they use their own parent logic
             if (goal.goal_type !== 'event') {
                 fetchParentGoals(goal.id, actualMode);
@@ -713,13 +709,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
             // Fetch task events if this is a task
             if (goal.goal_type === 'task') {
-                // console.log('[GoalMenu] Fetching task events for task ID:', goal.id);
                 fetchTaskEvents(goal.id);
             } else {
-                // console.log('[GoalMenu] Not a task, goal_type is:', goal.goal_type);
             }
         } else {
-            // console.log('[GoalMenu] Goal has no ID, skipping fetchTaskEvents');
             // Don't clear parentGoals for events as they have their own parent management
             if (goalCopy.goal_type !== 'event') {
                 setParentGoals([]);
@@ -819,11 +812,22 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Additional high-level state logs for diagnosing layout shifts
     useEffect(() => {
-        console.log('[GoalMenu] mode changed:', { mode: state.mode, isViewOnly });
+        //console.log('[GoalMenu] mode changed:', { mode: state.mode, isViewOnly });
     }, [state.mode, isViewOnly]);
     useEffect(() => {
-        console.log('[GoalMenu] dialog open state changed:', { isOpen });
+        //console.log('[GoalMenu] dialog open state changed:', { isOpen });
     }, [isOpen]);
+
+    // Debug visibility of the mini network panel
+    useEffect(() => {
+        const showMini = isViewOnly && !!state.goal.id && state.goal.goal_type !== 'event';
+        console.log('[GoalMenu][MiniNetwork] visibility:', {
+            show: showMini,
+            goalId: state.goal.id,
+            goalType: state.goal.goal_type,
+            isViewOnly
+        });
+    }, [isViewOnly, state.goal.id, state.goal.goal_type]);
 
     // Set title based on initial mode when component mounts
     useEffect(() => {
@@ -2474,13 +2478,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Keep existing tiles visible during background refreshes
         const shouldShowSkeleton = !goalStats;
         if (lastSkeletonStateRef.current !== shouldShowSkeleton) {
-            console.log('[GoalMenu][Stats] render decision:', {
-                shouldShowSkeleton,
-                statsLoading,
-                hasGoalStats: !!goalStats,
-                mode: state.mode,
-                goalType: state.goal.goal_type
-            });
+            //console.log('[GoalMenu][Stats] render decision:', {
+                //shouldShowSkeleton,
+                //statsLoading,
+                //hasGoalStats: !!goalStats,
+                //mode: state.mode,
+                //goalType: state.goal.goal_type
+            //});
             lastSkeletonStateRef.current = shouldShowSkeleton;
         }
 
@@ -3062,6 +3066,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                             </Box>
                                         ))}
                                     </Box>
+                                </Box>
+                            )}
+                            {state.goal.id && state.goal.goal_type !== 'event' && (
+                                <Box sx={{ mb: 3 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                                        Network
+                                    </Typography>
+                                    <MiniNetworkGraph
+                                        centerId={state.goal.id}
+                                        height={220}
+                                        onNodeClick={(node) => {
+                                            try {
+                                                if (!node?.id || node.id === state.goal.id) {
+                                                    return;
+                                                }
+                                                close();
+                                                setTimeout(() => {
+                                                    GoalMenuWithStatic.open(node, 'view', onSuccess);
+                                                }, 100);
+                                            } catch (e) {}
+                                        }}
+                                    />
                                 </Box>
                             )}
                         </Box>
