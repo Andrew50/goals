@@ -53,14 +53,10 @@ services:
     build:
       context: ./db
       dockerfile: Dockerfile.dev
-    # Only expose the Bolt protocol needed by the backend/test containers. They
-    # communicate with Neo4j over the internal Docker network using the service
-    # name `goals_db_test:7687`, so removing the HTTP UI mapping does not impact
-    # automated tests. We avoid publishing the HTTP UI port in the shared test
-    # environment to prevent random CI failures when 7474/17475 is already taken
-    # on the host.
-    ports:
-      - "${GOALS_DB_BOLT_PORT:-17688}:7687" # Bolt protocol on a different port
+    # Tests connect to Neo4j over the internal Docker network using the service
+    # name `goals_db_test:7687`, so there is no need to publish any ports to the
+    # host. Avoiding the port mapping prevents flaky CI runs caused by collisions
+    # with other processes that may already be bound to the chosen host port.
     volumes:
       - goal_db_test:/data # Separate volume for test data
       - ./db/seed_test_db.sh:/data/seed_test_db.sh # Mount the seed script
