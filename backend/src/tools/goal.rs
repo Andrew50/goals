@@ -129,12 +129,6 @@ pub enum GoalType {
     Task,
     Event, // NEW
 }
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum RelationshipType {
-    Child,
-    Queue,
-}
-
 impl GoalType {
     pub fn as_str(&self) -> &'static str {
         match self {

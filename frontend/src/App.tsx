@@ -28,7 +28,7 @@ import Stats from './pages/stats/Stats';
 import GoogleCallback from './pages/auth/GoogleCallback';
 
 const NavBar: React.FC = () => {
-  const { isAuthenticated, logout, username } = useAuth();
+  const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleSignOut = () => {

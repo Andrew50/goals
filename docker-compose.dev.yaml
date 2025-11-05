@@ -6,7 +6,7 @@ services:
     user: "${UID:-1000}:${GID:-1000}"
     restart: unless-stopped
     ports:
-      - "5059:5059"
+      - "${GOALS_BACKEND_PORT:-5059}:5059"
     volumes:
       - ./backend/:/usr/src/app
     env_file:
@@ -21,8 +21,6 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
       VAPID_SUBJECT: ${VAPID_SUBJECT}
-    networks:
-      - dev_network
       #    db:
       #build:
       #context: ./db
@@ -39,12 +37,10 @@ services:
       context: ./db
       dockerfile: Dockerfile.dev
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "${GOALS_DB_HTTP_PORT:-7474}:7474"
+      - "${GOALS_DB_BOLT_PORT:-7687}:7687"
     volumes:
       - goal_db:/data
-    networks:
-      - dev_network
 
   goals_frontend:
     build:
@@ -62,15 +58,8 @@ services:
     env_file:
       - .env
     ports:
-      - "3030:3030"
+      - "${GOALS_FRONTEND_PORT:-3030}:3030"
     restart: unless-stopped
-    networks:
-      - dev_network
 
 volumes:
   goal_db:
-
-
-networks:
-  dev_network:
-    driver: bridge

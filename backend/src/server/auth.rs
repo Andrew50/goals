@@ -1214,14 +1214,6 @@ async fn improved_create_or_get_google_user(
     }
 }
 
-// Additional response structs for new endpoints
-#[derive(Debug, Serialize)]
-pub struct AccountLinkResponse {
-    pub message: String,
-
-    pub success: bool,
-}
-
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct SetPasswordPayload {
