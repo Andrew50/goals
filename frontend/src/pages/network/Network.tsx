@@ -11,38 +11,19 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
 import { NetworkNode, NetworkEdge, Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import GoalMenu from '../../shared/components/GoalMenu';
-import { privateRequest, createRelationship } from '../../shared/utils/api';
+import { privateRequest, createRelationship, deleteRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import {
   buildHierarchy,
   saveNodePosition,
   calculateNewNodePosition
 } from './buildHierarchy';
-import { getGoalStyle } from '../../shared/styles/colors';
+import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
+import { SearchBar } from '../../shared/components/SearchBar';
+import { getGoalStyle } from '../../shared/styles/colors';
 
-// Expect ApiGoal from the backend, return NetworkNode (which extends Goal)
-const formatNetworkNode = (localGoal: Goal): NetworkNode => {
-  const { backgroundColor, border, textColor, borderColor } = getGoalStyle(localGoal);
-
-  // Extract border width from border string (e.g., '3px solid #d32f2f' -> 3)
-  const borderWidthMatch = border.match(/(\d+)px/);
-  const borderWidth = borderWidthMatch ? parseInt(borderWidthMatch[1], 10) : 0;
-
-  return {
-    ...localGoal,
-    label: localGoal.name,
-    title: `${localGoal.name} (${localGoal.goal_type})`,
-    color: {
-      background: backgroundColor,
-      border: borderColor,
-      highlight: { background: backgroundColor, border: borderColor },
-      hover: { background: backgroundColor, border: borderColor }
-    },
-    borderWidth,
-    font: { color: textColor }
-  };
-};
+// Node formatting moved to shared util
 
 type DialogMode = 'create' | 'edit' | 'view' | 'relationship' | null;
 
@@ -58,7 +39,108 @@ const NetworkView: React.FC = () => {
   const [addEdgeMode, setAddEdgeMode] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const deleteModeRef = useRef(deleteMode);
+  const addEdgeModeRef = useRef(addEdgeMode);
   const draggedNodeRef = useRef<number | null>(null);
+  const [searchItems, setSearchItems] = useState<Goal[]>([]);
+  const [searchResults, setSearchResults] = useState<Array<{ item: Goal; score: number }>>([]);
+  const lastFocusedIdRef = useRef<number | null>(null);
+  const shouldAutoFocusRef = useRef<boolean>(false);
+  const filteredSearchItems = useMemo(() => {
+    return (searchItems || []).filter(g => g && g.goal_type !== 'event');
+  }, [searchItems]);
+
+  // Debug logger for focused instrumentation
+  const debug = (...args: any[]) => console.log('[NetworkDebug]', ...args);
+
+  // Handle clicks (and context clicks) to open the GoalMenu or perform deletion
+  const handleClick = useCallback((params: any, goalDialogMode: "edit" | "view") => {
+    debug('handleClick invoked', {
+      goalDialogMode,
+      addEdgeMode: addEdgeModeRef.current,
+      deleteMode: deleteModeRef.current,
+      nodes: params?.nodes,
+      edges: params?.edges
+    });
+    if (!networkRef.current) return;
+    params.event.preventDefault();
+
+    if (addEdgeModeRef.current) {
+      debug('In addEdgeMode; ignoring click to avoid opening menus');
+      return; // Do not open menu in edge mode
+    }
+
+    if (deleteModeRef.current) {
+      if (params.nodes.length > 0) {
+        // We'll handle this after handleDeleteNode is defined
+        const nodeId = params.nodes[0];
+        if (networkRef.current && nodesDataSetRef.current && edgesDataSetRef.current) {
+          debug('Attempting to delete node', nodeId);
+          privateRequest('goals/' + nodeId, 'DELETE')
+            .then(() => {
+              debug('Node deleted on backend; removing locally', nodeId);
+              nodesDataSetRef.current?.remove(nodeId);
+              const currentEdges = edgesDataSetRef.current?.get();
+              currentEdges?.forEach(edge => {
+                if (edge.from === nodeId || edge.to === nodeId) {
+                  edgesDataSetRef.current?.remove(edge.id);
+                }
+              });
+            })
+            .catch(error => {
+              // console.error('Failed to delete node:', error);
+              debug('Failed to delete node', { nodeId, error });
+            });
+        }
+      } else if (params.edges.length > 0) {
+        // We'll handle this after handleDeleteEdge is defined
+        const edgeId = params.edges[0];
+        if (edgesDataSetRef.current) {
+          const [fromId, toId] = edgeId.split('-').map(Number);
+          const edgeData = edgesDataSetRef.current.get(edgeId as any);
+          const edgeObj = (Array.isArray(edgeData) ? edgeData[0] : edgeData) as Partial<NetworkEdge> | undefined;
+          const relationshipType = edgeObj?.relationship_type as RelationshipType | undefined;
+          debug('Attempting to delete edge', { edgeId, fromId, toId, relationshipType });
+          const runDelete = relationshipType
+            ? deleteRelationship(fromId, toId, relationshipType)
+            : privateRequest(`goals/relationship/${fromId}/${toId}`, 'DELETE');
+          Promise.resolve(runDelete)
+            .then(() => {
+              debug('Edge deleted on backend; removing locally', edgeId);
+              edgesDataSetRef.current?.remove(edgeId);
+            })
+            .catch(error => {
+              // console.error('Failed to delete edge:', error);
+              debug('Failed to delete edge', { edgeId, relationshipType, error });
+            });
+        }
+      }
+      return;
+    }
+
+    const nodeId = networkRef.current.getNodeAt(params.pointer.DOM);
+    if (nodeId && nodesDataSetRef.current) {
+      const nodeData = nodesDataSetRef.current?.get(nodeId);
+      if (nodeData) {
+        // GoalMenu expects a Goal object (with Dates)
+        // nodeData from DataSet might still be ApiGoal-like if not fully processed,
+        // Assuming nodeData here is effectively a Goal or NetworkNode.
+        GoalMenu.open(nodeData as Goal, goalDialogMode, async (updatedGoal: Goal) => {
+          // console.log('[Network] onSuccess priority:', updatedGoal.priority);
+
+          if (updatedGoal.id) {
+            const exists = await checkNodeExists(updatedGoal.id);
+            if (!exists) {
+              await refreshFullNetwork();
+              return;
+            }
+            await refreshNodeById(updatedGoal.id);
+          } else {
+            await refreshFullNetwork();
+          }
+        });
+      }
+    }
+  }, []);
 
   // vis‑network configuration options
   const options = useMemo(() => ({
@@ -97,18 +179,22 @@ const NetworkView: React.FC = () => {
       zoomView: true,
       hover: true,
       navigationButtons: false,
-      keyboard: { enabled: true, bindToWindow: false }
+      keyboard: { enabled: true, bindToWindow: true }
     },
     manipulation: {
       enabled: false,
       addNode: true,
       addEdge: async function (data: any, callback: Function) {
         try {
+          debug('manipulation.addEdge invoked', data);
           setPendingRelationship({ from: data.from, to: data.to });
           setDialogMode('relationship');
-          callback(data);
+          debug('Opened relationship dialog', { from: data.from, to: data.to });
+          // Prevent vis from adding a temporary edge; we'll add after confirmation
+          callback(null);
         } catch (err) {
-          console.error('Edge creation error:', err);
+          // console.error('Edge creation error:', err);
+          debug('Edge creation error', err);
           callback(null);
         }
       },
@@ -120,16 +206,16 @@ const NetworkView: React.FC = () => {
   }), []);
 
   // Helper: Given a node ID, find connected elements (for hover highlighting)
-  const findConnectedElements = (nodeId: number, edges: NetworkEdge[]): { nodes: Set<number>, edges: Set<string> } => {
+  const findConnectedElements = (nodeId: number, edges: NetworkEdge[]): { nodes: Set<number>, edges: Set<string | number> } => {
     const visited = new Set<number>();
-    const connectedEdges = new Set<string>();
+    const connectedEdges = new Set<string | number>();
 
     const traverseUpward = (currentId: number) => {
       if (visited.has(currentId)) return;
       visited.add(currentId);
       edges.forEach(edge => {
         if (edge.to === currentId) {
-          connectedEdges.add(`${edge.from}-${edge.to}`);
+          connectedEdges.add((edge as any).id ?? `${edge.from}-${edge.to}`);
           traverseUpward(edge.from);
         }
       });
@@ -140,7 +226,7 @@ const NetworkView: React.FC = () => {
       visited.add(currentId);
       edges.forEach(edge => {
         if (edge.from === currentId) {
-          connectedEdges.add(`${edge.from}-${edge.to}`);
+          connectedEdges.add((edge as any).id ?? `${edge.from}-${edge.to}`);
           traverseDownward(edge.to);
         }
       });
@@ -153,6 +239,61 @@ const NetworkView: React.FC = () => {
 
     return { nodes: visited, edges: connectedEdges };
   };
+
+  const focusNode = useCallback((id: number) => {
+    if (!networkRef.current) return;
+    try {
+      networkRef.current.selectNodes([id]);
+      networkRef.current.fit({
+        nodes: [id],
+        animation: { duration: 400, easingFunction: 'easeInOutQuad' }
+      });
+    } catch (e) {
+      // no-op
+    }
+  }, []);
+
+  const wireSearchItems = useCallback(() => {
+    if (!nodesDataSetRef.current) return undefined as unknown as () => void;
+    const ds: any = nodesDataSetRef.current as any;
+    const refresh = () => {
+      try {
+        setSearchItems((ds.get() || []) as Goal[]);
+      } catch {
+        setSearchItems([]);
+      }
+    };
+    refresh();
+    ds.on('add', refresh);
+    ds.on('update', refresh);
+    ds.on('remove', refresh);
+    return () => {
+      try {
+        ds.off('add', refresh);
+        ds.off('update', refresh);
+        ds.off('remove', refresh);
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
+  // Refresh a single node from the server, normalize, update dataset, refresh edges, and redraw
+  const refreshNodeById = useCallback(async (nodeId: number) => {
+    if (!nodesDataSetRef.current || !edgesDataSetRef.current) return;
+    try {
+      const apiGoal = await privateRequest<ApiGoal>(`goals/${nodeId}`);
+      const local = goalToLocal(apiGoal);
+      const formatted = formatNetworkNode(local);
+      const existing = nodesDataSetRef.current.get(nodeId);
+      nodesDataSetRef.current.update({ ...formatted, x: existing?.x, y: existing?.y });
+      await refreshEdgesForNode(nodeId);
+      networkRef.current?.redraw();
+    } catch (e) {
+      // If the node no longer exists or failed, fall back to a full refresh
+      await refreshFullNetwork();
+    }
+  }, []);
 
   // Full network refresh: re-fetch nodes+edges, preserve x/y when possible, and redraw
   const refreshFullNetwork = useCallback(async () => {
@@ -186,7 +327,8 @@ const NetworkView: React.FC = () => {
 
       networkRef.current?.redraw();
     } catch (e) {
-      console.error('Failed to refresh full network:', e);
+      // console.error('Failed to refresh full network:', e);
+      debug('Failed to refresh full network', e);
     }
   }, []);
 
@@ -272,6 +414,13 @@ const NetworkView: React.FC = () => {
 
   // Initialize the network once on mount
   useEffect(() => {
+    // keep ref in sync
+    addEdgeModeRef.current = addEdgeMode;
+  }, [addEdgeMode]);
+
+  // Initialize the network once on mount
+  useEffect(() => {
+    let cleanupSearchItems: (() => void) | undefined;
     const initializeNetwork = async () => {
       try {
         // Fetch initial data (nodes should be ApiGoal compatible)
@@ -286,6 +435,7 @@ const NetworkView: React.FC = () => {
         // Always create DataSets even if empty to ensure network functionality
         nodesDataSetRef.current = new DataSet(formattedData.nodes);
         edgesDataSetRef.current = new DataSet(formattedData.edges);
+        cleanupSearchItems = wireSearchItems();
 
         // Create the network instance - always create it even with empty data
         if (networkContainer.current) {
@@ -294,6 +444,13 @@ const NetworkView: React.FC = () => {
             { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
             options
           );
+          debug('Vis network instance created');
+
+          // Ensure container does not show focus outline or steal focus
+          try {
+            networkContainer.current.setAttribute('tabindex', '-1');
+            (networkContainer.current as HTMLElement).style.outline = 'none';
+          } catch {}
 
           // Drag events: record the node id on drag start...
           networkRef.current.on('dragStart', (params: any) => {
@@ -313,7 +470,8 @@ const NetworkView: React.FC = () => {
                     await saveNodePosition(draggedNodeId, position.x, position.y);
                     nodesDataSetRef.current?.update({ id: draggedNodeId, x: position.x, y: position.y });
                   } catch (error) {
-                    console.error('Failed to save node position:', error);
+                    // console.error('Failed to save node position:', error);
+                    debug('Failed to save node position', { draggedNodeId, error });
                   }
                 }
                 draggedNodeRef.current = null;
@@ -341,16 +499,25 @@ const NetworkView: React.FC = () => {
           });
         }
       } catch (error) {
-        console.error('Error initializing network:', error);
+        // console.error('Error initializing network:', error);
+        debug('Error initializing network', error);
         // Even if there's an error, try to create an empty network so buttons work
         if (networkContainer.current && !networkRef.current) {
           nodesDataSetRef.current = new DataSet([]);
           edgesDataSetRef.current = new DataSet([]);
+          cleanupSearchItems = wireSearchItems();
           networkRef.current = new VisNetwork(
             networkContainer.current,
             { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
             options
           );
+
+          // Ensure container does not show focus outline or steal focus
+          try {
+            networkContainer.current.setAttribute('tabindex', '-1');
+            (networkContainer.current as HTMLElement).style.outline = 'none';
+          } catch {}
+          debug('Fallback empty Vis network instance created');
         }
       }
     };
@@ -370,13 +537,20 @@ const NetworkView: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       networkRef.current?.destroy();
+      if (cleanupSearchItems) {
+        try { cleanupSearchItems(); } catch {}
+      }
     };
-  }, [handleClick, options]);
+  }, [options]);
 
   // Listen for relationship changes from other components (e.g., GoalMenu)
   useEffect(() => {
     const handler = () => {
-      refreshFullNetwork().catch((err) => console.error('Network full refresh failed:', err));
+      debug('Received network:relationships-changed event; triggering full refresh');
+      refreshFullNetwork().catch((err) => {
+        // console.error('Network full refresh failed:', err);
+        debug('Network full refresh failed (from event)', err);
+      });
     };
     window.addEventListener('network:relationships-changed', handler as EventListener);
     return () => window.removeEventListener('network:relationships-changed', handler as EventListener);
@@ -396,10 +570,13 @@ const NetworkView: React.FC = () => {
   // Toggle delete mode
   const handleDeleteMode = () => {
     if (networkRef.current) {
+      const next = !deleteMode;
+      debug('DeleteMode button clicked', { prev: deleteMode, next, refBefore: deleteModeRef.current });
       deleteModeRef.current = !deleteMode;
       setDeleteMode(!deleteMode);
       setAddNodeMode(false);
       setAddEdgeMode(false);
+      debug('DeleteMode state updated', { refAfter: deleteModeRef.current });
     } else {
       //console.log('No network');
     }
@@ -408,11 +585,19 @@ const NetworkView: React.FC = () => {
   // Toggle edge-add mode
   const handleAddEdgeMode = () => {
     if (networkRef.current) {
+      const next = !addEdgeMode;
+      debug('AddEdgeMode button clicked', { prev: addEdgeMode, next });
       setAddEdgeMode(!addEdgeMode);
       setAddNodeMode(false);
       setDeleteMode(false);
       deleteModeRef.current = false;
-      networkRef.current.addEdgeMode();
+      if (next) {
+        debug('Enabling Vis addEdgeMode');
+        networkRef.current.addEdgeMode();
+      } else {
+        debug('Disabling Vis edit mode');
+        networkRef.current.disableEditMode();
+      }
     } else {
       //console.log('No network');
     }
@@ -445,7 +630,8 @@ const NetworkView: React.FC = () => {
           try {
             await saveNodePosition(newGoal.id, position.x, position.y);
           } catch (error) {
-            console.error('Failed to save new node position:', error);
+            // console.error('Failed to save new node position:', error);
+            debug('Failed to save new node position', { nodeId: newGoal.id, error });
           }
 
           // Fit the view to show the new node
@@ -471,20 +657,36 @@ const NetworkView: React.FC = () => {
   // Create a relationship edge between two nodes
   const handleCreateRelationship = async (fromId: number, toId: number, relationshipType: RelationshipType) => {
     try {
+      debug('handleCreateRelationship called', { fromId, toId, relationshipType });
       const fromNode = nodesDataSetRef.current?.get(fromId);
       const toNode = nodesDataSetRef.current?.get(toId);
       if (!fromNode || !toNode) {
-        console.error('Could not find goals for relationship');
+        // console.error('Could not find goals for relationship');
+        debug('Could not find goals for relationship', { fromId, toId, fromNode: !!fromNode, toNode: !!toNode });
+        setTimeout(() => {
+          if (networkRef.current) {
+            networkRef.current.addEdgeMode();
+            debug('Re-enabled Vis addEdgeMode after missing node');
+          }
+        }, 100);
         return;
       }
       const error = validateRelationship(fromNode, toNode, relationshipType);
       if (error) {
         alert(error);
+        debug('Relationship validation error', { error, fromId, toId, relationshipType });
         setDialogMode(null);
         setPendingRelationship(null);
+        setTimeout(() => {
+          if (networkRef.current) {
+            networkRef.current.addEdgeMode();
+            debug('Re-enabled Vis addEdgeMode after validation error');
+          }
+        }, 100);
         return;
       }
       await createRelationship(fromId, toId, relationshipType);
+      debug('createRelationship API success', { fromId, toId, relationshipType });
       const newEdge: NetworkEdge = {
         from: fromId,
         to: toId,
@@ -492,18 +694,23 @@ const NetworkView: React.FC = () => {
         id: `${fromId}-${toId}`
       };
       edgesDataSetRef.current?.add(newEdge);
+      debug('Added new edge to DataSet', newEdge);
       // Escalate to full refresh to avoid stale edges across the graph
       try {
         window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { fromId, toId, relationshipType } }));
-      } catch (e) {}
+        debug('Dispatched relationships-changed event');
+      } catch (e) { /* no-op */ }
     } catch (err) {
-      console.error('Error creating relationship:', err);
+      // console.error('Error creating relationship:', err);
+      debug('Error creating relationship', err);
     }
     setDialogMode(null);
     setPendingRelationship(null);
+    debug('Relationship dialog closed and state cleared');
     setTimeout(() => {
       if (networkRef.current) {
         networkRef.current.addEdgeMode();
+        debug('Re-enabled Vis addEdgeMode after relationship flow');
       }
     }, 100);
   };
@@ -550,7 +757,8 @@ const NetworkView: React.FC = () => {
         edgesDataSetRef.current.remove(edgesToRemove);
       }
     } catch (error) {
-      console.error('Failed to refresh edges for node:', nodeId, error);
+      // console.error('Failed to refresh edges for node:', nodeId, error);
+      debug('Failed to refresh edges for node', { nodeId, error });
     }
   };
 
@@ -598,13 +806,112 @@ const NetworkView: React.FC = () => {
       // Optional: fit the view to show all nodes
       networkRef.current.fit();
     } catch (error) {
-      console.error('Error reorganizing network:', error);
+      // console.error('Error reorganizing network:', error);
+      debug('Error reorganizing network', error);
     }
   };
 
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
-      <div ref={networkContainer} style={{ height: '100%', width: '100%' }} />
+      <div ref={networkContainer} style={{ height: '100%', width: '100%', outline: 'none' }} tabIndex={-1} />
+
+      <div style={{ position: 'absolute', top: '1rem', right: '1rem', width: 'min(420px, 40vw)', zIndex: 2 }}>
+        <SearchBar
+          items={filteredSearchItems}
+          keys={['name', 'description']}
+          placeholder="Find a goal…"
+          debounceMs={200}
+          excludeGoalTypes={['event']}
+          onChange={(q) => {
+            // Only auto-focus when the user changes the input
+            shouldAutoFocusRef.current = true;
+          }}
+          onResults={(results, ids) => {
+            setSearchResults(results || []);
+            if (!ids || ids.length === 0) {
+              networkRef.current?.selectNodes([]);
+              lastFocusedIdRef.current = null;
+              shouldAutoFocusRef.current = false;
+              return;
+            }
+            if (shouldAutoFocusRef.current) {
+              const id = ids[0];
+              if (id !== lastFocusedIdRef.current && nodesDataSetRef.current?.get(id)) {
+                focusNode(id);
+                lastFocusedIdRef.current = id;
+              }
+              // Prevent re-focusing unless input changes again
+              shouldAutoFocusRef.current = false;
+            }
+          }}
+        />
+
+        {searchResults && searchResults.length > 0 && (
+          <div
+            style={{
+              marginTop: '0.5rem',
+              background: '#ffffff',
+              border: '1px solid #e0e0e0',
+              borderRadius: '10px',
+              boxShadow: '0 6px 18px rgba(0,0,0,0.08)',
+              overflow: 'hidden'
+            }}
+            role="listbox"
+            aria-label="Search results"
+          >
+            <div style={{ padding: '8px', display: 'grid', gridTemplateColumns: '1fr', gap: '8px', maxHeight: '40vh', overflowY: 'auto' }}>
+              {searchResults.map((r, idx) => {
+                const g = r.item;
+                const { backgroundColor, textColor, border, borderColor } = getGoalStyle(g);
+                return (
+                  <div
+                    key={`res-${g.id}-${idx}`}
+                    onClick={() => {
+                      if (g.id) {
+                        shouldAutoFocusRef.current = false;
+                        lastFocusedIdRef.current = g.id;
+                        focusNode(g.id);
+                      }
+                    }}
+                    role="option"
+                    aria-selected={lastFocusedIdRef.current === g.id}
+                    tabIndex={0}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: border || `2px solid ${borderColor}`,
+                      background: backgroundColor,
+                      color: textColor,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '10px',
+                        height: '10px',
+                        borderRadius: '50%',
+                        background: borderColor,
+                        flex: '0 0 auto'
+                      }}
+                    />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {g.name}
+                      </div>
+                      <div style={{ opacity: 0.9, fontSize: '12px', lineHeight: 1.2, marginTop: '2px' }}>
+                        {g.goal_type}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       <Button
         variant="contained"
@@ -730,12 +1037,20 @@ const NetworkView: React.FC = () => {
           <Button onClick={() => {
             setDialogMode(null);
             setPendingRelationship(null);
+          debug('Relationship dialog cancelled');
+            setTimeout(() => {
+              if (networkRef.current) {
+                networkRef.current.addEdgeMode();
+                debug('Re-enabled Vis addEdgeMode after cancel');
+              }
+            }, 100);
           }}>
             Cancel
           </Button>
           <Button
             onClick={() => {
               if (pendingRelationship) {
+              debug('Relationship dialog Create clicked', pendingRelationship);
                 handleCreateRelationship(
                   pendingRelationship.from,
                   pendingRelationship.to,

@@ -40,3 +40,7 @@ backups/
 node_modules
 .cargo/
 .target/
+
+.cargo/
+
+.target/

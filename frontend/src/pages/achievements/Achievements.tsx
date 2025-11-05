@@ -4,12 +4,15 @@ import { goalToLocal } from '../../shared/utils/time';
 import { Goal, ApiGoal } from '../../types/goals';
 import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
+import { SearchBar } from '../../shared/components/SearchBar';
 import './Achievements.css';
 
 const Achievements: React.FC = () => {
     const [achievements, setAchievements] = useState<Goal[]>([]);
     const [refreshTrigger, setRefreshTrigger] = useState(0);
     const [filterCompleted, setFilterCompleted] = useState<'all' | 'completed' | 'incomplete'>('all');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
 
     useEffect(() => {
         // Fetch achievements from the API
@@ -20,12 +23,17 @@ const Achievements: React.FC = () => {
     }, [refreshTrigger]);
 
     const filteredAchievements = useMemo(() => {
-        return achievements.filter(achievement => {
+        let list = achievements.filter(achievement => {
             if (filterCompleted === 'completed') return achievement.completed;
             if (filterCompleted === 'incomplete') return !achievement.completed;
             return true;
         });
-    }, [achievements, filterCompleted]);
+        const trimmed = (searchQuery || '').trim();
+        if (trimmed) {
+            list = list.filter(a => searchIds.has(a.id));
+        }
+        return list;
+    }, [achievements, filterCompleted, searchQuery, searchIds]);
 
     const handleAchievementClick = (achievement: Goal) => {
         GoalMenu.open(achievement, 'view', (updatedGoal) => {
@@ -91,6 +99,15 @@ const Achievements: React.FC = () => {
                 <div className="achievements-header">
                     <h1 className="achievements-title">Achievements</h1>
                     <div className="header-actions">
+                        <SearchBar
+                            items={achievements}
+                            value={searchQuery}
+                            onChange={setSearchQuery}
+                            onResults={(_, ids) => setSearchIds(new Set(ids))}
+                            placeholder="Search achievements…"
+                            size="md"
+                            fullWidth={false}
+                        />
                         <div className="filter-buttons">
                             <button
                                 className={`filter-button ${filterCompleted === 'all' ? 'active' : ''}`}

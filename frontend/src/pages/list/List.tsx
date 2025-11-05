@@ -6,7 +6,7 @@ import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
 import '../../shared/styles/badges.css';
-import Fuse from 'fuse.js';
+import { SearchBar } from '../../shared/components/SearchBar';
 import { formatFrequency } from '../../shared/utils/frequency';
 import { deleteGoal, duplicateGoal, updateGoal, completeGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
 
@@ -95,12 +95,7 @@ const List: React.FC = () => {
         } as const;
     }, [list]);
 
-    const fuse = useMemo(() => {
-        return new Fuse(list, {
-            keys: ['name', 'description'],
-            threshold: 0.3, // Adjust this value to control the fuzziness
-        });
-    }, [list]);
+    const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
 
     const updateFilter = <K extends keyof FiltersState>(key: K, value: FiltersState[K] | undefined) => {
         setFilters(prev => ({ ...prev, [key]: value }));
@@ -168,14 +163,11 @@ const List: React.FC = () => {
 
         // Apply search query to the filtered list
         if (searchQuery) {
-            const searchResults = fuse.search(searchQuery);
-            filtered = filtered.filter(item =>
-                searchResults.some(result => result.item.id === item.id)
-            );
+            filtered = filtered.filter(item => searchIds.has(item.id));
         }
 
         return filtered;
-    }, [list, filters, searchQuery, fuse]);
+    }, [list, filters, searchQuery, searchIds]);
 
     // Add sorted list computation (type-aware)
     const sortedList = useMemo(() => {
@@ -861,25 +853,16 @@ const List: React.FC = () => {
                             </div>
                         </div>
                     ) : (
-                        <div className="search-section">
-                            <input
-                                type="text"
-                                placeholder="Search goals..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="search-input"
-                                spellCheck="false"
-                                autoComplete="off"
-                            />
-                            <button
-                                onClick={() => setShowFilters(!showFilters)}
-                                className="filter-toggle-button"
-                            >
-                                <svg className="filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707l-5.414 5.414a1 1 0 00-.293.707v4.586a1 1 0 01-.293.707l-2 2A1 1 0 0112 20v-5.586a1 1 0 00-.293-.707L6.293 7.707A1 1 0 016 7V4z" />
-                                </svg>
-                            </button>
-                        </div>
+                        <SearchBar
+                            items={list}
+                            value={searchQuery}
+                            onChange={setSearchQuery}
+                            onResults={(_, ids) => setSearchIds(new Set(ids))}
+                            showFilterToggle
+                            filterActive={showFilters}
+                            onFilterToggle={() => setShowFilters(v => !v)}
+                            useLegacyListStyles
+                        />
                     )}
                 </div>
 
