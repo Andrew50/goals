@@ -54,8 +54,8 @@ services:
       context: ./db
       dockerfile: Dockerfile.dev
     ports:
-      - "7475:7474" # Web UI on a different port to avoid conflicts
-      - "7688:7687" # Bolt protocol on a different port
+      - "${GOALS_DB_HTTP_PORT:-17475}:7474" # Web UI on a different port to avoid conflicts
+      - "${GOALS_DB_BOLT_PORT:-17688}:7687" # Bolt protocol on a different port
     volumes:
       - goal_db_test:/data # Separate volume for test data
       - ./db/seed_test_db.sh:/data/seed_test_db.sh # Mount the seed script
