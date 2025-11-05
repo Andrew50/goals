@@ -867,9 +867,9 @@ async fn handle_delete_gcal_event(
 async fn handle_push_subscribe(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Json(payload): Json<serde_json::Value>,
+    Json(subscription): Json<push::PushSubscription>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    push::save_subscription(graph, user_id, payload).await
+    push::save_subscription(graph, user_id, subscription).await
 }
 
 async fn handle_push_unsubscribe(
