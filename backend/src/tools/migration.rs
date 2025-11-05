@@ -798,17 +798,26 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
     // Parse frequency and calculate next occurrence
     let ms_per_day = 24 * 60 * 60 * 1000;
 
-    let next_time = match frequency.to_lowercase().as_str() {
+    let lower = frequency.to_lowercase();
+    let next_time = match lower.as_str() {
         "daily" => current_time + ms_per_day,
         "weekly" => current_time + (7 * ms_per_day),
         "monthly" => {
-            // Simplified monthly calculation - add 30 days
-            current_time + (30 * ms_per_day)
+            // Calendar-aware month step
+            let dt = chrono::Utc
+                .timestamp_millis_opt(current_time)
+                .earliest()
+                .ok_or("Invalid timestamp")?;
+            let next_date = add_months_clamped(dt.date_naive(), 1)?;
+            next_date
+                .and_time(dt.time())
+                .and_utc()
+                .timestamp_millis()
         }
         _ => {
-            // Try to parse custom frequency like "every 2 days" or "1D", "2W", etc.
-            if frequency.starts_with("every ") {
-                let parts: Vec<&str> = frequency.split_whitespace().collect();
+            // Try to parse custom frequency like "every 2 days" or compact tokens like "1D", "2W", "1M", "1Y"
+            if lower.starts_with("every ") {
+                let parts: Vec<&str> = lower.split_whitespace().collect();
                 if parts.len() >= 3 {
                     let number = parts[1]
                         .parse::<i64>()
@@ -817,32 +826,77 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
                     match parts[2] {
                         "day" | "days" => current_time + (number * ms_per_day),
                         "week" | "weeks" => current_time + (number * 7 * ms_per_day),
+                        "month" | "months" => {
+                            let dt = chrono::Utc
+                                .timestamp_millis_opt(current_time)
+                                .earliest()
+                                .ok_or("Invalid timestamp")?;
+                            let next_date = add_months_clamped(dt.date_naive(), number)?;
+                            next_date
+                                .and_time(dt.time())
+                                .and_utc()
+                                .timestamp_millis()
+                        }
+                        "year" | "years" => {
+                            let dt = chrono::Utc
+                                .timestamp_millis_opt(current_time)
+                                .earliest()
+                                .ok_or("Invalid timestamp")?;
+                            let next_date = add_months_clamped(dt.date_naive(), number * 12)?;
+                            next_date
+                                .and_time(dt.time())
+                                .and_utc()
+                                .timestamp_millis()
+                        }
                         _ => return Err(format!("Unknown frequency unit: {}", parts[2])),
                     }
                 } else {
                     return Err(format!("Invalid frequency format: {}", frequency));
                 }
-            } else if frequency.ends_with('D') || frequency.ends_with('d') {
+            } else if lower.ends_with('d') {
                 // Handle formats like "1D", "2d", etc.
                 let number_str = &frequency[..frequency.len() - 1];
                 let number = number_str
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
                 current_time + (number * ms_per_day)
-            } else if frequency.ends_with('W') || frequency.ends_with('w') {
+            } else if lower.ends_with('w') {
                 // Handle formats like "1W", "2w", etc.
                 let number_str = &frequency[..frequency.len() - 1];
                 let number = number_str
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
                 current_time + (number * 7 * ms_per_day)
-            } else if frequency.ends_with('M') || frequency.ends_with('m') {
-                // Handle formats like "1M", "2m", etc.
+            } else if lower.ends_with('m') {
+                // Handle formats like "1M", "2m", etc. (calendar-aware)
                 let number_str = &frequency[..frequency.len() - 1];
                 let number = number_str
                     .parse::<i64>()
                     .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
-                current_time + (number * 30 * ms_per_day) // Simplified monthly calculation
+                let dt = chrono::Utc
+                    .timestamp_millis_opt(current_time)
+                    .earliest()
+                    .ok_or("Invalid timestamp")?;
+                let next_date = add_months_clamped(dt.date_naive(), number)?;
+                next_date
+                    .and_time(dt.time())
+                    .and_utc()
+                    .timestamp_millis()
+            } else if lower.ends_with('y') {
+                // Handle formats like "1Y", "2y", etc. (calendar-aware years)
+                let number_str = &frequency[..frequency.len() - 1];
+                let number = number_str
+                    .parse::<i64>()
+                    .map_err(|_| format!("Invalid frequency number: {}", number_str))?;
+                let dt = chrono::Utc
+                    .timestamp_millis_opt(current_time)
+                    .earliest()
+                    .ok_or("Invalid timestamp")?;
+                let next_date = add_months_clamped(dt.date_naive(), number * 12)?;
+                next_date
+                    .and_time(dt.time())
+                    .and_utc()
+                    .timestamp_millis()
             } else {
                 return Err(format!("Unknown frequency: {}", frequency));
             }
@@ -850,6 +904,29 @@ fn calculate_next_occurrence(current_time: i64, frequency: &str) -> Result<i64, 
     };
 
     Ok(next_time)
+}
+
+fn add_months_clamped(date: chrono::NaiveDate, months: i64) -> Result<chrono::NaiveDate, String> {
+    use chrono::NaiveDate;
+    let year = date.year();
+    let month0 = (date.month() - 1) as i64; // 0-based
+    let _total_months = year as i64 + (month0 + months) / 12; // We'll compute below for clarity
+    let total = year as i64 * 12 + month0 + months;
+    let new_year = (total.div_euclid(12)) as i32;
+    let new_month0 = (total.rem_euclid(12)) as u32;
+    let new_month = new_month0 + 1;
+    let last_dom = last_day_of_month(new_year, new_month);
+    let new_day = date.day().min(last_dom);
+    NaiveDate::from_ymd_opt(new_year, new_month, new_day)
+        .ok_or_else(|| "Invalid date after month addition".to_string())
+}
+
+fn last_day_of_month(year: i32, month: u32) -> u32 {
+    use chrono::NaiveDate;
+    let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).expect("valid next month");
+    let last = first_next - chrono::Duration::days(1);
+    last.day()
 }
 
 async fn update_relationships(graph: &Graph, _state: &mut MigrationState) -> Result<(), String> {

@@ -535,6 +535,16 @@ export const syncBidirectionalGoogleCalendar = async (request: GCalSyncRequest):
     return privateRequest<GCalSyncResult>('gcal/sync-bidirectional', 'POST', request);
 };
 
+// Routine recompute API – soft-delete future events and regenerate on the new schedule
+export const recomputeRoutineFuture = async (
+    routineId: number
+): Promise<{ deleted: number; created: number }> => {
+    return privateRequest<{ deleted: number; created: number }>(
+        `routine/${routineId}/recompute-future`,
+        'POST'
+    );
+};
+
 export interface CalendarListEntry {
     id: string;
     summary: string;

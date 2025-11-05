@@ -116,8 +116,9 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/verify", get(handle_verify_migration));
 
     // New route group for on-demand routine event generation
-    let routine_generation_routes =
-        Router::new().route("/:end_timestamp", post(handle_generate_routine_events));
+    let routine_generation_routes = Router::new()
+        .route("/:end_timestamp", post(handle_generate_routine_events))
+        .route("/:id/recompute-future", post(handle_recompute_routine_future));
 
     // Push notification routes
     let push_routes = Router::new()
@@ -358,9 +359,14 @@ async fn handle_create_relationship(
 
 async fn handle_delete_relationship(
     Extension(graph): Extension<Graph>,
-    Path((from_id, to_id)): Path<(i64, i64)>,
+    Json(relationship): Json<Relationship>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::tools::goal::delete_relationship_handler(graph, from_id, to_id).await
+    crate::tools::goal::delete_relationship_handler(
+        graph,
+        relationship.from_id,
+        relationship.to_id,
+    )
+    .await
 }
 
 async fn handle_complete_goal(
@@ -735,6 +741,23 @@ async fn handle_generate_routine_events(
 ) -> Result<StatusCode, (StatusCode, String)> {
     routine_generator::run_routine_generator(graph).await;
     Ok(StatusCode::OK)
+}
+
+#[derive(serde::Serialize)]
+struct RecomputeResult {
+    deleted: i64,
+    created: i64,
+}
+
+// Recompute handler – soft-delete future events for a routine and regenerate upcoming ones
+async fn handle_recompute_routine_future(
+    Extension(graph): Extension<Graph>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match routine_generator::recompute_future_for_routine(&graph, id).await {
+        Ok((deleted, created)) => Ok((StatusCode::OK, Json(RecomputeResult { deleted, created }))),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+    }
 }
 
 // Helper to build HttpOnly auth cookie string

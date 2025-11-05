@@ -1,1 +1,2 @@
-0 * * * * neo4j /scripts/backup.sh >> /var/log/cron/backup.log 2>&1
+CRON_TZ=America/New_York
+30 4 * * * neo4j nice -n 19 /scripts/backup.sh >> /var/log/cron/backup.log 2>&1

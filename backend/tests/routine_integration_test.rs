@@ -7,6 +7,7 @@ use std::env;
 // Import the modules we need for testing
 use backend::jobs::routine_generator::generate_future_routine_events;
 use backend::tools::goal::{Goal, GoalType};
+use backend::tools::event::delete_event_handler;
 
 /// Helper function to create a test database connection
 async fn create_test_graph() -> Result<Graph, neo4rs::Error> {
@@ -712,6 +713,95 @@ mod tests {
         } else {
             panic!("No relationship query result returned");
         }
+    }
+
+    #[tokio::test]
+    async fn test_delete_future_sets_routine_end_timestamp() {
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Create a daily routine with 5 days horizon
+        let now = Utc::now().timestamp_millis();
+        let start_of_today = (now / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let duration = 60;
+        let routine_time = Some(9 * 60 * 60 * 1000); // 9 AM
+        let end_horizon = start_of_today + (5 * 24 * 60 * 60 * 1000);
+
+        let routine_id = create_test_routine(
+            &graph,
+            "Delete-Future Routine",
+            "1D",
+            start_of_today,
+            Some(end_horizon),
+            routine_time,
+            duration,
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        // Generate events for 5 days
+        generate_events_for_test_routine(&graph, routine_id, start_of_today, end_horizon)
+            .await
+            .expect("Failed to generate routine events");
+
+        // Fetch events and pick the 3rd one as cutoff
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+        assert!(events.len() >= 4, "Expected at least 4 events");
+        let cutoff_event = &events[2]; // third event (index 2)
+        let cutoff_ts = cutoff_event.scheduled_timestamp.unwrap();
+        let cutoff_id = cutoff_event.id.unwrap();
+
+        // Delete this and future occurrences
+        delete_event_handler(graph.clone(), cutoff_id, true)
+            .await
+            .expect("delete_event_handler failed");
+
+        // Routine end_timestamp should be set to the last remaining event before cutoff (2nd event)
+        let mut routine_q = graph
+            .execute(query("MATCH (r:Goal) WHERE id(r) = $id RETURN r.end_timestamp as end_ts").param("id", routine_id))
+            .await
+            .expect("Failed to query routine");
+        let row = routine_q.next().await.expect("Routine row fetch").expect("Routine not found");
+        let end_ts: Option<i64> = row.get("end_ts").unwrap_or(None);
+        let expected_last_before = events[1].scheduled_timestamp.unwrap(); // second event
+        assert_eq!(end_ts, Some(expected_last_before), "Routine end_timestamp not set to last remaining event before cutoff");
+
+        // All events at or after cutoff should be soft-deleted
+        let mut check_q = graph
+            .execute(
+                query(
+                    "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal) WHERE id(r) = $rid RETURN e.scheduled_timestamp as ts, coalesce(e.is_deleted,false) as del"
+                )
+                .param("rid", routine_id),
+            )
+            .await
+            .expect("Failed to check events");
+
+        while let Some(r) = check_q.next().await.expect("Row") {
+            let ts: i64 = r.get("ts").unwrap_or(0);
+            let del: bool = r.get("del").unwrap_or(false);
+            if ts >= cutoff_ts { assert!(del, "Event at or after cutoff should be deleted"); } else { assert!(!del, "Event before cutoff should not be deleted"); }
+        }
+
+        // Ensure generator will not recreate beyond new end
+        generate_future_routine_events(&graph)
+            .await
+            .expect("Generator run failed");
+        // After generator run, no non-deleted events should exist after end_ts
+        let mut post_gen = graph
+            .execute(query("MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal) WHERE id(r) = $rid AND coalesce(e.is_deleted,false) <> true AND e.scheduled_timestamp > $end RETURN count(e) as cnt").param("rid", routine_id).param("end", end_ts.unwrap()))
+            .await
+            .expect("Post-gen check failed");
+        let row = post_gen.next().await.expect("Row fetch").expect("Missing row");
+        let cnt: i64 = row.get("cnt").unwrap_or(0);
+        assert_eq!(cnt, 0, "Generator should not create events after new end_timestamp");
     }
 
     #[tokio::test]
@@ -1920,5 +2010,82 @@ mod tests {
         }
 
         println!("✅ Edge case test passed: No events on creation day when start is in future");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_monthly_routine_event_generation() {
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Create a routine starting today, monthly at 10 AM, duration 60
+        let now = Utc::now().timestamp_millis();
+        let start_of_today = (now / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+        let end = start_of_today + (200 * 24 * 60 * 60 * 1000); // ~6.5 months
+        let routine_time = Some(10 * 60 * 60 * 1000);
+        let routine_id = create_test_routine(
+            &graph,
+            "Monthly Routine",
+            "1M",
+            start_of_today,
+            Some(end),
+            routine_time,
+            60,
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        generate_events_for_test_routine(&graph, routine_id, start_of_today, end)
+            .await
+            .expect("Failed to generate routine events");
+
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+        // Expect around 6-7 events in the 200 day window
+        assert!(events.len() >= 6 && events.len() <= 7);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_yearly_routine_event_generation_case_insensitive() {
+        let graph = create_test_graph()
+            .await
+            .expect("Failed to create test database connection");
+
+        clear_test_data(&graph)
+            .await
+            .expect("Failed to clear test data");
+
+        // Use lowercase 'y' to verify case-insensitive handling
+        let now = Utc::now().timestamp_millis();
+        let start = now;
+        let end = start + (400 * 24 * 60 * 60 * 1000); // ~13 months
+        let routine_id = create_test_routine(
+            &graph,
+            "Yearly Routine",
+            "1y",
+            start,
+            Some(end),
+            Some(9 * 60 * 60 * 1000),
+            30,
+        )
+        .await
+        .expect("Failed to create test routine");
+
+        generate_events_for_test_routine(&graph, routine_id, start, end)
+            .await
+            .expect("Failed to generate routine events");
+
+        let events = get_routine_events(&graph, routine_id)
+            .await
+            .expect("Failed to retrieve routine events");
+        // Expect exactly 1 event in ~13 months horizon
+        assert!(events.len() >= 1 && events.len() <= 2);
     }
 }

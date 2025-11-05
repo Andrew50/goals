@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useDrop } from 'react-dnd';
 import { CalendarTask, CalendarEvent, Goal } from '../../types/goals';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
+import { SearchBar } from '../../shared/components/SearchBar';
 
 interface TaskListProps {
   tasks: CalendarTask[];
@@ -165,6 +166,8 @@ const DraggableTask: React.FC<{
  */
 const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
   ({ tasks, events, onAddTask, onTaskUpdate }, ref) => {
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
     /**
      * React DnD drop hook:
      * Accepts drops of type 'calendar-event' or 'task'—depending on how you label them.
@@ -203,9 +206,15 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       }
     });
 
+    const filteredTasks = useMemo(() => {
+      const q = searchQuery.trim();
+      if (!q) return tasks;
+      return tasks.filter(t => t.goal && searchIds.has(t.goal.id));
+    }, [tasks, searchQuery, searchIds]);
+
     // Calculate task event info
     const tasksWithInfo: TaskWithEventInfo[] = useMemo(() => {
-      return tasks.map(task => {
+      return filteredTasks.map(task => {
         const taskEvents = events.filter(e =>
           e.goal.parent_id === task.goal.id &&
           !e.goal.is_deleted
@@ -223,7 +232,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           nextEventDate: futureEvents[0]?.start
         };
       });
-    }, [tasks, events]);
+    }, [filteredTasks, events]);
 
     // Sort tasks by priority/status
     const sortedTasks = useMemo(() => {
@@ -302,6 +311,18 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           Active Tasks
         </h3>
 
+        <div style={{ marginBottom: '12px' }}>
+          <SearchBar
+            items={tasks.map(t => t.goal).filter(Boolean) as Goal[]}
+            value={searchQuery}
+            onChange={setSearchQuery}
+            onResults={(_, ids) => setSearchIds(new Set(ids))}
+            placeholder="Search tasks…"
+            size="md"
+            fullWidth
+          />
+        </div>
+
         <button
           onClick={onAddTask}
           style={{
@@ -335,7 +356,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
                 fontSize: '14px'
               }}
             >
-              No tasks yet
+              {searchQuery.trim() ? 'No matching tasks' : 'No tasks yet'}
             </div>
           ) : (
             sortedTasks.map((task) => (

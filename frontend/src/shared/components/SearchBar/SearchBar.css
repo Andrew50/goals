@@ -1,0 +1,185 @@
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.searchbar.full {
+  width: 100%;
+}
+
+.searchbar-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid #d1d5db; /* gray-300 */
+  border-radius: 0.375rem; /* rounded-md */
+  padding: 0.5rem 0.75rem; /* py-2 px-3 */
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  outline: none;
+}
+
+.searchbar-input:focus {
+  border-color: #3b82f6; /* blue-500 */
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.25);
+}
+
+.searchbar.size-sm .searchbar-input {
+  padding: 0.375rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.searchbar.size-md .searchbar-input {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.95rem;
+}
+
+.searchbar.size-lg .searchbar-input {
+  padding: 0.625rem 0.875rem;
+  font-size: 1rem;
+}
+
+.searchbar-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c1c1c1;
+  background: #f3f3f3;
+  border-radius: 0.375rem;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.searchbar.size-sm .searchbar-filter-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.searchbar.size-lg .searchbar-filter-btn {
+  width: 40px;
+  height: 40px;
+}
+
+.searchbar-filter-btn .searchbar-filter-icon {
+  width: 18px;
+  height: 18px;
+  color: #4b5563; /* gray-600 */
+}
+
+.searchbar-filter-btn.active {
+  background: #e5f0ff;
+  border-color: #93c5fd;
+}
+
+
+/* Inline clear (X) button for the modern SearchBar */
+.searchbar-input-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.searchbar-input-wrap .searchbar-input {
+  padding-right: 2.25rem; /* space for clear button */
+}
+
+.searchbar.size-sm .searchbar-input-wrap .searchbar-input {
+  padding-right: 2rem;
+}
+
+.searchbar.size-lg .searchbar-input-wrap .searchbar-input {
+  padding-right: 2.5rem;
+}
+
+.searchbar-clear-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.04);
+  border: none;
+  border-radius: 9999px;
+  color: #6b7280; /* gray-500 */
+  cursor: pointer;
+  transition: background 0.15s ease-in-out, color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.searchbar-clear-btn:hover {
+  background: rgba(0,0,0,0.08);
+  color: #374151; /* gray-700 */
+}
+
+.searchbar-clear-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.35);
+}
+
+.searchbar.size-sm .searchbar-clear-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.searchbar.size-lg .searchbar-clear-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.searchbar-clear-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.searchbar.size-lg .searchbar-clear-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Legacy List.tsx aesthetics */
+.search-section .search-input-wrapper {
+  position: relative;
+}
+
+.search-section .search-input-wrapper .search-input {
+  padding-right: 2.75rem; /* ensure room for the clear button */
+}
+
+.search-section .search-clear-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.04);
+  border: none;
+  border-radius: 9999px;
+  color: #4a5568; /* gray-700ish to match List */
+  cursor: pointer;
+  transition: background 0.15s ease-in-out, color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.search-section .search-clear-btn:hover {
+  background: rgba(0,0,0,0.08);
+}
+
+.search-section .search-clear-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(66,153,225,0.25);
+}
+
+.search-section .search-clear-icon {
+  width: 16px;
+  height: 16px;
+}
+
+

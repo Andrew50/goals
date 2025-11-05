@@ -24,6 +24,7 @@ import {
     Tooltip,
     Skeleton,
     InputAdornment,
+    Alert,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -32,7 +33,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -43,6 +44,7 @@ import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
 import SmartScheduleDialog from "./SmartScheduleDialog";
+import MiniNetworkGraph from './MiniNetworkGraph';
 import { getGoalStyle } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
@@ -104,6 +106,14 @@ interface RoutineUpdateDialogState {
     updatedGoal: Goal | null;
     selectedScope: 'single' | 'all' | 'future';
     onConfirm: (scope: 'single' | 'all' | 'future') => Promise<void>;
+}
+
+// Recompute confirmation dialog state
+interface RoutineRecomputeDialogState {
+    isOpen: boolean;
+    originalGoal: Goal | null;
+    updatedGoal: Goal | null;
+    onConfirm: () => Promise<void>;
 }
 
 const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType }) => {
@@ -223,7 +233,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 goalType: state.goal.goal_type
             });
         } else {
-            console.log('[GoalMenu][Stats] container not mounted:', { time: now, statsLoading, hasGoalStats: !!goalStats });
+            //console.log('[GoalMenu][Stats] container not mounted:', { time: now, statsLoading, hasGoalStats: !!goalStats });
         }
     }, [statsLoading, goalStats, state.mode, state.goal.goal_type]);
     useEffect(() => {
@@ -234,12 +244,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 const h = entry.contentRect.height;
                 const prev = prevStatsHeightRef.current;
                 prevStatsHeightRef.current = h;
-                console.log('[GoalMenu][Stats] resize observer:', {
-                    height: h,
-                    heightDelta: prev == null ? null : h - prev,
-                    statsLoading,
-                    hasGoalStats: !!goalStats
-                });
+                //console.log('[GoalMenu][Stats] resize observer:', {
+                //    height: h,
+                //    heightDelta: prev == null ? null : h - prev,
+                //    statsLoading,
+                //    hasGoalStats: !!goalStats
+                //});
             }
         });
         ro.observe(el);
@@ -260,6 +270,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         originalGoal: null,
         updatedGoal: null,
         selectedScope: 'single',
+        onConfirm: async () => { }
+    });
+
+    // Routine recompute dialog
+    const [routineRecomputeDialog, setRoutineRecomputeDialog] = useState<RoutineRecomputeDialogState>({
+        isOpen: false,
+        originalGoal: null,
+        updatedGoal: null,
         onConfirm: async () => { }
     });
 
@@ -336,7 +354,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         if (!goal.id || state.mode !== 'view') return;
 
         statsLoadStartRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        console.log('[GoalMenu][Stats] fetch start:', { goalId: goal.id, goalType: goal.goal_type, mode: state.mode });
+        //console.log('[GoalMenu][Stats] fetch start:', { goalId: goal.id, goalType: goal.goal_type, mode: state.mode });
         setStatsLoading(true);
         try {
             let stats: BasicGoalStats = {
@@ -530,7 +548,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
             const start = statsLoadStartRef.current || end;
             const durationMs = Math.max(0, end - start);
-            console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
+            //console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
             setStatsLoading(false);
         }
     }, [state.mode, taskEvents, parentGoals]);
@@ -627,7 +645,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const children = hierarchyResponse
                 .filter(g => childIds.includes(g.id!))
                 .map(goalToLocal);
-            // console.log('[GoalMenu] fetchChildGoals children:', children);
 
             // Sort by hierarchy level (immediate children first)
             setChildGoals(children);
@@ -641,8 +658,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //create copy, might need to be date.
         const goalCopy = { ...goal }
 
-        // console.log('[GoalMenu] open() called with goal:', goalCopy);
-        // console.log('[GoalMenu] goal.id:', goalCopy.id, 'goal.goal_type:', goalCopy.goal_type);
 
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
@@ -684,10 +699,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }[actualMode]);
         setIsOpen(true);
 
-        // console.log('[GoalMenu] About to check goal.id:', goalCopy.id, 'typeof:', typeof goalCopy.id);
         // Fetch parent and child goals if we have a goal ID
         if (goal.id) {
-            // console.log('[GoalMenu] Goal has ID:', goal.id, 'and goal_type:', goal.goal_type);
             // Skip fetchParentGoals for events - they use their own parent logic
             if (goal.goal_type !== 'event') {
                 fetchParentGoals(goal.id, actualMode);
@@ -696,13 +709,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
             // Fetch task events if this is a task
             if (goal.goal_type === 'task') {
-                // console.log('[GoalMenu] Fetching task events for task ID:', goal.id);
                 fetchTaskEvents(goal.id);
             } else {
-                // console.log('[GoalMenu] Not a task, goal_type is:', goal.goal_type);
             }
         } else {
-            // console.log('[GoalMenu] Goal has no ID, skipping fetchTaskEvents');
             // Don't clear parentGoals for events as they have their own parent management
             if (goalCopy.goal_type !== 'event') {
                 setParentGoals([]);
@@ -802,11 +812,22 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Additional high-level state logs for diagnosing layout shifts
     useEffect(() => {
-        console.log('[GoalMenu] mode changed:', { mode: state.mode, isViewOnly });
+        //console.log('[GoalMenu] mode changed:', { mode: state.mode, isViewOnly });
     }, [state.mode, isViewOnly]);
     useEffect(() => {
-        console.log('[GoalMenu] dialog open state changed:', { isOpen });
+        //console.log('[GoalMenu] dialog open state changed:', { isOpen });
     }, [isOpen]);
+
+    // Debug visibility of the mini network panel
+    useEffect(() => {
+        const showMini = isViewOnly && !!state.goal.id && state.goal.goal_type !== 'event';
+        console.log('[GoalMenu][MiniNetwork] visibility:', {
+            show: showMini,
+            goalId: state.goal.id,
+            goalType: state.goal.goal_type,
+            isViewOnly
+        });
+    }, [isViewOnly, state.goal.id, state.goal.goal_type]);
 
     // Set title based on initial mode when component mounts
     useEffect(() => {
@@ -1017,6 +1038,43 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 setState({ ...state, error: error instanceof Error ? error.message : 'Failed to submit changes' });
             }
             return;
+        }
+
+        // If editing a routine and schedule fields changed, prompt to recompute future occurrences
+        if (state.mode === 'edit' && state.goal.goal_type === 'routine') {
+            const og = initialGoal;
+            const ng = state.goal;
+            const t = (v: any) => (v instanceof Date ? v.getTime() : v ?? null);
+            const scheduleChanged = (
+                og.frequency !== ng.frequency ||
+                t(og.start_timestamp) !== t(ng.start_timestamp) ||
+                t(og.end_timestamp) !== t(ng.end_timestamp)
+            );
+
+            if (scheduleChanged && ng.id) {
+                setRoutineRecomputeDialog({
+                    isOpen: true,
+                    originalGoal: og,
+                    updatedGoal: ng,
+                    onConfirm: async () => {
+                        // 1) Save routine changes
+                        const saved = await updateGoal(ng.id!, ng);
+                        // 2) Recompute future occurrences (deletes all future, including completed, then regenerates)
+                        try {
+                            await recomputeRoutineFuture(ng.id!);
+                        } catch (e) {
+                            // Still proceed; surface error in UI
+                            console.error('Failed to recompute routine future:', e);
+                        }
+                        // 3) Refresh near-term routines in UI
+                        try { await updateRoutines(); } catch {}
+                        setState({ ...state, goal: saved });
+                        if (onSuccess) onSuccess(saved);
+                        close();
+                    }
+                });
+                return; // wait for user confirmation
+            }
         }
 
         // Check if this is a routine event being modified
@@ -1286,10 +1344,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 }
 
+                // Refresh near-term routine instances so UI reflects inherited changes
+                if (scope === 'all' || scope === 'future') {
+                    try { await updateRoutines(); } catch (e) {}
+                }
+
                 setState({ ...state, goal: updatedEvents[0] || updatedGoal });
             } else if ((updateType === 'duration' || updateType === 'other') && (scope === 'all' || scope === 'future')) {
                 // For duration or other property changes, update multiple events
                 await updateMultipleRoutineEvents(updatedGoal, updateType === 'duration' ? 'duration' : 'other', scope);
+                // Refresh near-term routine instances so UI reflects inherited changes
+                try { await updateRoutines(); } catch (e) {}
             } else {
                 // For single updates or other changes, use regular update
                 const result = await updateGoal(updatedGoal.id!, updatedGoal);
@@ -2413,13 +2478,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Keep existing tiles visible during background refreshes
         const shouldShowSkeleton = !goalStats;
         if (lastSkeletonStateRef.current !== shouldShowSkeleton) {
-            console.log('[GoalMenu][Stats] render decision:', {
-                shouldShowSkeleton,
-                statsLoading,
-                hasGoalStats: !!goalStats,
-                mode: state.mode,
-                goalType: state.goal.goal_type
-            });
+            //console.log('[GoalMenu][Stats] render decision:', {
+                //shouldShowSkeleton,
+                //statsLoading,
+                //hasGoalStats: !!goalStats,
+                //mode: state.mode,
+                //goalType: state.goal.goal_type
+            //});
             lastSkeletonStateRef.current = shouldShowSkeleton;
         }
 
@@ -3003,6 +3068,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     </Box>
                                 </Box>
                             )}
+                            {state.goal.id && state.goal.goal_type !== 'event' && (
+                                <Box sx={{ mb: 3 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                                        Network
+                                    </Typography>
+                                    <MiniNetworkGraph
+                                        centerId={state.goal.id}
+                                        height={220}
+                                        onNodeClick={(node) => {
+                                            try {
+                                                if (!node?.id || node.id === state.goal.id) {
+                                                    return;
+                                                }
+                                                close();
+                                                setTimeout(() => {
+                                                    GoalMenuWithStatic.open(node, 'view', onSuccess);
+                                                }, 100);
+                                            } catch (e) {}
+                                        }}
+                                    />
+                                </Box>
+                            )}
                         </Box>
                     )}
                 </Box>
@@ -3109,6 +3196,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     </Button>
                 </DialogActions>
             </Dialog>
+            {/* Routine Recompute Confirmation Dialog */}
+            <Dialog
+                open={routineRecomputeDialog.isOpen}
+                onClose={() => setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false })}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Apply schedule changes to future occurrences?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body1" sx={{ mb: 2 }}>
+                        You changed this routine's schedule (frequency and/or start/end dates).
+                    </Typography>
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                        This will delete all future events for this routine starting now, including events that are already marked as completed, and regenerate them on the new schedule. Any edits you made to future events will be lost. Past events will remain unchanged.
+                    </Alert>
+                    <Typography variant="body2" color="text.secondary">
+                        You can cancel to keep existing future events as they are.
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false })}>Cancel</Button>
+                    <Button onClick={() => routineRecomputeDialog.onConfirm()} color="primary" variant="contained">
+                        Apply & Recompute
+                    </Button>
+                </DialogActions>
+            </Dialog>
             {/* Routine Delete Dialog */}
             <Dialog open={routineDeleteDialog.isOpen} onClose={handleRoutineDeleteCancel} maxWidth="sm" fullWidth>
                 <DialogTitle>Delete Routine Event</DialogTitle>
@@ -3119,6 +3232,21 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <Typography variant="body1" sx={{ mb: 2 }}>
                         What would you like to delete?
                     </Typography>
+                    {routineDeleteDialog.selectedScope === 'single' && (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            Only this occurrence will be deleted. The routine stays active and otherwise unaffected.
+                        </Alert>
+                    )}
+                    {routineDeleteDialog.selectedScope === 'future' && (
+                        <Alert severity="warning" sx={{ mb: 2 }}>
+                            This and all future occurrences will be deleted. The routine’s end date will be set so no new occurrences are created.
+                        </Alert>
+                    )}
+                    {routineDeleteDialog.selectedScope === 'all' && (
+                        <Alert severity="error" sx={{ mb: 2 }}>
+                            All occurrences will be deleted and the routine itself will be permanently removed.
+                        </Alert>
+                    )}
                     <FormControl component="fieldset">
                         <RadioGroup
                             value={routineDeleteDialog.selectedScope}
@@ -3132,7 +3260,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleRoutineDeleteCancel}>Cancel</Button>
-                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">Delete</Button>
+                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">
+                        {routineDeleteDialog.selectedScope === 'single'
+                            ? 'Delete occurrence'
+                            : routineDeleteDialog.selectedScope === 'future'
+                                ? 'Delete future and end routine'
+                                : 'Delete all and remove routine'}
+                    </Button>
                 </DialogActions>
             </Dialog>
         </Dialog>

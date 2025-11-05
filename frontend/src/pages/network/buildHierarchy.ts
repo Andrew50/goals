@@ -91,7 +91,8 @@ function initializePositions(
     nodes: NetworkNode[],
     levels: { [id: number]: number },
     degrees: { [id: number]: number },
-    maxDegree: number
+    maxDegree: number,
+    spacing: number
 ): { [id: number]: { x: number; y: number } } {
     const positions: { [id: number]: { x: number; y: number } } = {};
 
@@ -105,7 +106,7 @@ function initializePositions(
             const degree = degrees[node.id] || 0;
             // Pull nodes with high degree inward:
             const degreeFactor = 1 - 0.3 * (degree / maxDegree); // will be in roughly [0.7, 1.0]
-            const idealRadius = level * BASE_SPACING * degreeFactor;
+            const idealRadius = level * spacing * degreeFactor;
             const angle = Math.random() * 2 * Math.PI;
             positions[node.id] = {
                 x: Math.cos(angle) * idealRadius,
@@ -120,10 +121,10 @@ function initializePositions(
 // Main function: buildHierarchy
 // Runs the simulation and formats nodes/edges for the vis‑network.
 // =====================================================
-export async function buildHierarchy(networkData: {
-    nodes: NetworkNode[];
-    edges: NetworkEdge[];
-}) {
+export async function buildHierarchy(
+    networkData: { nodes: NetworkNode[]; edges: NetworkEdge[] },
+    opts?: { savePositions?: boolean; baseSpacing?: number }
+) {
     //console.log('Initial nodes:', networkData.nodes);
 
     // Handle empty data case
@@ -132,6 +133,7 @@ export async function buildHierarchy(networkData: {
     }
 
     // 1. Determine the root and compute initial data.
+    const spacing = opts?.baseSpacing ?? BASE_SPACING;
     const rootId = findRootNode(networkData.nodes, networkData.edges);
     if (rootId === null) {
         return { nodes: [], edges: [] };
@@ -144,7 +146,7 @@ export async function buildHierarchy(networkData: {
     const maxDegree = degreeValues.length > 0 ? Math.max(1, ...degreeValues) : 1;
 
     // 2. Initialize positions and velocities.
-    let positions = initializePositions(networkData.nodes, levels, degrees, maxDegree);
+    let positions = initializePositions(networkData.nodes, levels, degrees, maxDegree, spacing);
     const velocities: { [id: number]: { x: number; y: number } } = {};
     networkData.nodes.forEach(node => {
         velocities[node.id] = { x: 0, y: 0 };
@@ -200,8 +202,8 @@ export async function buildHierarchy(networkData: {
             if (distance < 0.1) {
                 distance = 0.1;
             }
-            // Here the ideal distance is simply BASE_SPACING.
-            const idealDistance = BASE_SPACING;
+            // Ideal distance configurable via spacing option
+            const idealDistance = spacing;
             const displacement = distance - idealDistance;
             const forceMagnitude = ATTRACTION_CONSTANT * displacement;
             const fx = (dx / distance) * forceMagnitude;
@@ -233,14 +235,18 @@ export async function buildHierarchy(networkData: {
         });
     }
 
-    // 5. Update node positions and save to the backend.
+    // 5. Update node positions and (optionally) save to the backend.
     const savePromises: Promise<any>[] = [];
     networkData.nodes.forEach(node => {
         node.position_x = positions[node.id].x;
         node.position_y = positions[node.id].y;
-        savePromises.push(saveNodePosition(node.id, positions[node.id].x, positions[node.id].y));
+        if (opts?.savePositions !== false) {
+            savePromises.push(saveNodePosition(node.id, positions[node.id].x, positions[node.id].y));
+        }
     });
-    await Promise.all(savePromises);
+    if (savePromises.length) {
+        await Promise.all(savePromises);
+    }
 
     // 6. Format nodes for vis‑network (with size, font, and color based on node degree).
     const formattedNodes = networkData.nodes.map(node => {
