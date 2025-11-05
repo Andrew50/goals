@@ -20,8 +20,7 @@ import {
 } from './buildHierarchy';
 import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
-import { SearchBar } from '../../shared/components/SearchBar/SearchBar';
-import { getGoalStyle } from '../../shared/styles/colors';
+import { SearchBar } from '../../shared/components/SearchBar';
 import { getGoalStyle } from '../../shared/styles/colors';
 
 // Node formatting moved to shared util
@@ -432,9 +431,6 @@ const NetworkView: React.FC = () => {
             { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
             options
           );
-          );
-
-          );
 
           // Ensure container does not show focus outline or steal focus
           try {
@@ -442,6 +438,14 @@ const NetworkView: React.FC = () => {
             (networkContainer.current as HTMLElement).style.outline = 'none';
           } catch {}
           debug('Fallback empty Vis network instance created');
+        }
+      }
+    };
+
+    initializeNetwork();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
         networkRef.current?.disableEditMode();
         setAddNodeMode(false);
         setAddEdgeMode(false);
