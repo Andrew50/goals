@@ -20,6 +20,9 @@ import {
 } from './buildHierarchy';
 import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
+import { SearchBar } from '../../shared/components/SearchBar/SearchBar';
+import { getGoalStyle } from '../../shared/styles/colors';
+import { getGoalStyle } from '../../shared/styles/colors';
 
 // Node formatting moved to shared util
 
@@ -39,6 +42,13 @@ const NetworkView: React.FC = () => {
   const deleteModeRef = useRef(deleteMode);
   const addEdgeModeRef = useRef(addEdgeMode);
   const draggedNodeRef = useRef<number | null>(null);
+  const [searchItems, setSearchItems] = useState<Goal[]>([]);
+  const [searchResults, setSearchResults] = useState<Array<{ item: Goal; score: number }>>([]);
+  const lastFocusedIdRef = useRef<number | null>(null);
+  const shouldAutoFocusRef = useRef<boolean>(false);
+  const filteredSearchItems = useMemo(() => {
+    return (searchItems || []).filter(g => g && g.goal_type !== 'event');
+  }, [searchItems]);
 
   // Debug logger for focused instrumentation
   const debug = (...args: any[]) => console.log('[NetworkDebug]', ...args);
@@ -170,7 +180,7 @@ const NetworkView: React.FC = () => {
       zoomView: true,
       hover: true,
       navigationButtons: false,
-      keyboard: { enabled: true, bindToWindow: false }
+      keyboard: { enabled: true, bindToWindow: true }
     },
     manipulation: {
       enabled: false,
@@ -230,6 +240,44 @@ const NetworkView: React.FC = () => {
 
     return { nodes: visited, edges: connectedEdges };
   };
+
+  const focusNode = useCallback((id: number) => {
+    if (!networkRef.current) return;
+    try {
+      networkRef.current.selectNodes([id]);
+      networkRef.current.fit({
+        nodes: [id],
+        animation: { duration: 400, easingFunction: 'easeInOutQuad' }
+      });
+    } catch (e) {
+      // no-op
+    }
+  }, []);
+
+  const wireSearchItems = useCallback(() => {
+    if (!nodesDataSetRef.current) return undefined as unknown as () => void;
+    const ds: any = nodesDataSetRef.current as any;
+    const refresh = () => {
+      try {
+        setSearchItems((ds.get() || []) as Goal[]);
+      } catch {
+        setSearchItems([]);
+      }
+    };
+    refresh();
+    ds.on('add', refresh);
+    ds.on('update', refresh);
+    ds.on('remove', refresh);
+    return () => {
+      try {
+        ds.off('add', refresh);
+        ds.off('update', refresh);
+        ds.off('remove', refresh);
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
 
   // Refresh a single node from the server, normalize, update dataset, refresh edges, and redraw
   const refreshNodeById = useCallback(async (nodeId: number) => {
@@ -293,6 +341,7 @@ const NetworkView: React.FC = () => {
 
   // Initialize the network once on mount
   useEffect(() => {
+    let cleanupSearchItems: (() => void) | undefined;
     const initializeNetwork = async () => {
       try {
         // Fetch initial data (nodes should be ApiGoal compatible)
@@ -307,6 +356,7 @@ const NetworkView: React.FC = () => {
         // Always create DataSets even if empty to ensure network functionality
         nodesDataSetRef.current = new DataSet(formattedData.nodes);
         edgesDataSetRef.current = new DataSet(formattedData.edges);
+        cleanupSearchItems = wireSearchItems();
 
         // Create the network instance - always create it even with empty data
         if (networkContainer.current) {
@@ -316,6 +366,12 @@ const NetworkView: React.FC = () => {
             options
           );
           debug('Vis network instance created');
+
+          // Ensure container does not show focus outline or steal focus
+          try {
+            networkContainer.current.setAttribute('tabindex', '-1');
+            (networkContainer.current as HTMLElement).style.outline = 'none';
+          } catch {}
 
           // Drag events: record the node id on drag start...
           networkRef.current.on('dragStart', (params: any) => {
@@ -370,20 +426,22 @@ const NetworkView: React.FC = () => {
         if (networkContainer.current && !networkRef.current) {
           nodesDataSetRef.current = new DataSet([]);
           edgesDataSetRef.current = new DataSet([]);
+          cleanupSearchItems = wireSearchItems();
           networkRef.current = new VisNetwork(
             networkContainer.current,
             { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
             options
           );
+          );
+
+          );
+
+          // Ensure container does not show focus outline or steal focus
+          try {
+            networkContainer.current.setAttribute('tabindex', '-1');
+            (networkContainer.current as HTMLElement).style.outline = 'none';
+          } catch {}
           debug('Fallback empty Vis network instance created');
-        }
-      }
-    };
-
-    initializeNetwork();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
         networkRef.current?.disableEditMode();
         setAddNodeMode(false);
         setAddEdgeMode(false);
@@ -395,6 +453,9 @@ const NetworkView: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       networkRef.current?.destroy();
+      if (cleanupSearchItems) {
+        try { cleanupSearchItems(); } catch {}
+      }
     };
   }, [options]);
 
@@ -686,7 +747,105 @@ const NetworkView: React.FC = () => {
 
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
-      <div ref={networkContainer} style={{ height: '100%', width: '100%' }} />
+      <div ref={networkContainer} style={{ height: '100%', width: '100%', outline: 'none' }} tabIndex={-1} />
+
+      <div style={{ position: 'absolute', top: '1rem', right: '1rem', width: 'min(420px, 40vw)', zIndex: 2 }}>
+        <SearchBar
+          items={filteredSearchItems}
+          keys={['name', 'description']}
+          placeholder="Find a goal…"
+          debounceMs={200}
+          excludeGoalTypes={['event']}
+          onChange={(q) => {
+            // Only auto-focus when the user changes the input
+            shouldAutoFocusRef.current = true;
+          }}
+          onResults={(results, ids) => {
+            setSearchResults(results || []);
+            if (!ids || ids.length === 0) {
+              networkRef.current?.selectNodes([]);
+              lastFocusedIdRef.current = null;
+              shouldAutoFocusRef.current = false;
+              return;
+            }
+            if (shouldAutoFocusRef.current) {
+              const id = ids[0];
+              if (id !== lastFocusedIdRef.current && nodesDataSetRef.current?.get(id)) {
+                focusNode(id);
+                lastFocusedIdRef.current = id;
+              }
+              // Prevent re-focusing unless input changes again
+              shouldAutoFocusRef.current = false;
+            }
+          }}
+        />
+
+        {searchResults && searchResults.length > 0 && (
+          <div
+            style={{
+              marginTop: '0.5rem',
+              background: '#ffffff',
+              border: '1px solid #e0e0e0',
+              borderRadius: '10px',
+              boxShadow: '0 6px 18px rgba(0,0,0,0.08)',
+              overflow: 'hidden'
+            }}
+            role="listbox"
+            aria-label="Search results"
+          >
+            <div style={{ padding: '8px', display: 'grid', gridTemplateColumns: '1fr', gap: '8px', maxHeight: '40vh', overflowY: 'auto' }}>
+              {searchResults.map((r, idx) => {
+                const g = r.item;
+                const { backgroundColor, textColor, border, borderColor } = getGoalStyle(g);
+                return (
+                  <div
+                    key={`res-${g.id}-${idx}`}
+                    onClick={() => {
+                      if (g.id) {
+                        shouldAutoFocusRef.current = false;
+                        lastFocusedIdRef.current = g.id;
+                        focusNode(g.id);
+                      }
+                    }}
+                    role="option"
+                    aria-selected={lastFocusedIdRef.current === g.id}
+                    tabIndex={0}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: border || `2px solid ${borderColor}`,
+                      background: backgroundColor,
+                      color: textColor,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '10px',
+                        height: '10px',
+                        borderRadius: '50%',
+                        background: borderColor,
+                        flex: '0 0 auto'
+                      }}
+                    />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {g.name}
+                      </div>
+                      <div style={{ opacity: 0.9, fontSize: '12px', lineHeight: 1.2, marginTop: '2px' }}>
+                        {g.goal_type}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       <Button
         variant="contained"
