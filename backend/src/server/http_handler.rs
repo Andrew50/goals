@@ -358,9 +358,14 @@ async fn handle_create_relationship(
 
 async fn handle_delete_relationship(
     Extension(graph): Extension<Graph>,
-    Path((from_id, to_id)): Path<(i64, i64)>,
+    Json(relationship): Json<Relationship>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::tools::goal::delete_relationship_handler(graph, from_id, to_id).await
+    crate::tools::goal::delete_relationship_handler(
+        graph,
+        relationship.from_id,
+        relationship.to_id,
+    )
+    .await
 }
 
 async fn handle_complete_goal(
