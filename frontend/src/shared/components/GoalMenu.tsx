@@ -23,6 +23,7 @@ import {
     LinearProgress,
     Tooltip,
     Skeleton,
+    InputAdornment,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -30,7 +31,8 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
-import { createGoal, updateGoal, deleteGoal, createRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal } from '../utils/api';
+import GpsFixedIcon from '@mui/icons-material/GpsFixed';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -41,10 +43,12 @@ import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
 import SmartScheduleDialog from "./SmartScheduleDialog";
+import MiniNetworkGraph from './MiniNetworkGraph';
 import { getGoalStyle } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
 import Fuse from 'fuse.js';
+import '../styles/badges.css';
 
 type Mode = 'create' | 'edit' | 'view';
 
@@ -185,6 +189,63 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Stats management
     const [goalStats, setGoalStats] = useState<BasicGoalStats | null>(null);
     const [statsLoading, setStatsLoading] = useState<boolean>(false);
+    const statsContainerRef = useRef<HTMLDivElement | null>(null);
+    const prevStatsHeightRef = useRef<number | null>(null);
+    const lastSkeletonStateRef = useRef<boolean | null>(null);
+    const statsLoadStartRef = useRef<number | null>(null);
+
+    // Log stats-related state transitions that may impact layout
+    useEffect(() => {
+        console.log('[GoalMenu][Stats] statsLoading changed:', { statsLoading });
+    }, [statsLoading]);
+    useEffect(() => {
+        console.log('[GoalMenu][Stats] goalStats updated:', { hasGoalStats: !!goalStats, goalStats });
+    }, [goalStats]);
+    useEffect(() => {
+        const el = statsContainerRef.current;
+        const now = new Date().toISOString();
+        if (el) {
+            const rect = el.getBoundingClientRect();
+            const prev = prevStatsHeightRef.current;
+            prevStatsHeightRef.current = rect.height;
+            let gridCols: string | undefined;
+            try {
+                gridCols = (getComputedStyle(el).gridTemplateColumns || undefined) as unknown as string | undefined;
+            } catch (_) {}
+            console.log('[GoalMenu][Stats] container measure:', {
+                time: now,
+                height: rect.height,
+                heightDelta: prev == null ? null : rect.height - prev,
+                width: rect.width,
+                gridCols,
+                statsLoading,
+                hasGoalStats: !!goalStats,
+                mode: state.mode,
+                goalType: state.goal.goal_type
+            });
+        } else {
+            //console.log('[GoalMenu][Stats] container not mounted:', { time: now, statsLoading, hasGoalStats: !!goalStats });
+        }
+    }, [statsLoading, goalStats, state.mode, state.goal.goal_type]);
+    useEffect(() => {
+        const el = statsContainerRef.current;
+        if (!el || typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const h = entry.contentRect.height;
+                const prev = prevStatsHeightRef.current;
+                prevStatsHeightRef.current = h;
+                //console.log('[GoalMenu][Stats] resize observer:', {
+                //    height: h,
+                //    heightDelta: prev == null ? null : h - prev,
+                //    statsLoading,
+                //    hasGoalStats: !!goalStats
+                //});
+            }
+        });
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [isOpen]);
 
     // Local string states for duration inputs to allow temporary empty values and smooth editing
     const [durationHoursInput, setDurationHoursInput] = useState<string>('');
@@ -257,15 +318,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Fetch task events
     const fetchTaskEvents = useCallback(async (taskId: number) => {
-        console.log('[GoalMenu] fetchTaskEvents called with taskId:', taskId);
+        // console.log('[GoalMenu] fetchTaskEvents called with taskId:', taskId);
         try {
             const taskEventsData = await getTaskEvents(taskId);
-            console.log('[GoalMenu] fetchTaskEvents response:', taskEventsData);
+            // console.log('[GoalMenu] fetchTaskEvents response:', taskEventsData);
             setTaskEvents(taskEventsData.events);
             setTotalDuration(taskEventsData.total_duration);
-            console.log('[GoalMenu] Set taskEvents to:', taskEventsData.events.length, 'events');
+            // console.log('[GoalMenu] Set taskEvents to:', taskEventsData.events.length, 'events');
         } catch (error) {
-            console.error('Failed to fetch task events:', error);
+            // console.error('Failed to fetch task events:', error);
             setTaskEvents([]);
             setTotalDuration(0);
         }
@@ -275,6 +336,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const fetchGoalStats = useCallback(async (goal: Goal) => {
         if (!goal.id || state.mode !== 'view') return;
 
+        statsLoadStartRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        //console.log('[GoalMenu][Stats] fetch start:', { goalId: goal.id, goalType: goal.goal_type, mode: state.mode });
         setStatsLoading(true);
         try {
             let stats: BasicGoalStats = {
@@ -308,12 +371,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     completed_events: completedEvents
                 };
             } else if (goal.goal_type === 'event') {
-                console.log('[GoalMenu] Processing event stats. Parent ID:', goal.parent_id, 'Parent goals:', parentGoals);
+                // console.log('[GoalMenu] Processing event stats. Parent ID:', goal.parent_id, 'Parent goals:', parentGoals);
 
                 // For events, show completion statistics for all sibling events
                 if (goal.parent_id && parentGoals.length > 0) {
                     const parent = parentGoals[0];
-                    console.log('[GoalMenu] Found parent:', parent.name, 'type:', parent.goal_type, 'id:', parent.id);
+                    // console.log('[GoalMenu] Found parent:', parent.name, 'type:', parent.goal_type, 'id:', parent.id);
 
                     let siblingEvents: any[] = [];
 
@@ -321,12 +384,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         try {
                             // Get all routine events (sibling events)
                             try {
-                                console.log('[GoalMenu] Trying task events API for routine parent:', parent.id);
+                                // console.log('[GoalMenu] Trying task events API for routine parent:', parent.id);
                                 const taskEventsData = await getTaskEvents(parent.id!);
                                 siblingEvents = taskEventsData.events;
-                                console.log('[GoalMenu] Task events API worked for routine:', siblingEvents);
+                                // console.log('[GoalMenu] Task events API worked for routine:', siblingEvents);
                             } catch (taskError) {
-                                console.log('[GoalMenu] Task events API failed for routine, trying calendar data');
+                                // console.log('[GoalMenu] Task events API failed for routine, trying calendar data');
                                 // Fallback: get calendar data and filter for this routine's events
                                 try {
                                     const calendarData = await privateRequest<any>('calendar');
@@ -339,32 +402,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         completed: e.completed,
                                         ...e
                                     })) || [];
-                                    console.log('[GoalMenu] Calendar data filtered events:', siblingEvents);
+                                    // console.log('[GoalMenu] Calendar data filtered events:', siblingEvents);
                                 } catch (calendarError) {
-                                    console.log('[GoalMenu] Calendar fallback also failed:', calendarError);
+                                    // console.log('[GoalMenu] Calendar fallback also failed:', calendarError);
                                     siblingEvents = [];
                                 }
                             }
                         } catch (error) {
-                            console.error('[GoalMenu] Could not fetch routine events:', error);
+                            // console.error('[GoalMenu] Could not fetch routine events:', error);
                         }
                     } else if (parent.goal_type === 'task') {
                         try {
                             const taskEventsData = await getTaskEvents(parent.id!);
                             siblingEvents = taskEventsData.events;
                         } catch (error) {
-                            console.log('Could not fetch task events:', error);
+                            // console.log('Could not fetch task events:', error);
                         }
                     }
 
                     if (siblingEvents.length > 0) {
-                        console.log('[GoalMenu] Found sibling events:', siblingEvents.length);
-                        console.log('[GoalMenu] Sample sibling events:', siblingEvents.slice(0, 3).map(e => ({
-                            id: e.id,
-                            scheduled_timestamp: e.scheduled_timestamp,
-                            completed: e.completed,
-                            name: e.name
-                        })));
+                        // console.log('[GoalMenu] Found sibling events:', siblingEvents.length);
+                        // console.log('[GoalMenu] Sample sibling events:', siblingEvents.slice(0, 3).map(e => ({
+                        //     id: e.id,
+                        //     scheduled_timestamp: e.scheduled_timestamp,
+                        //     completed: e.completed,
+                        //     name: e.name
+                        // })));
 
                         // Calculate completion statistics for sibling events
                         const now = new Date();
@@ -384,13 +447,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             return eventDate <= now;
                         });
 
-                        console.log('[GoalMenu] Filtered events:', {
-                            total_siblings: siblingEvents.length,
-                            recent_events: recentEvents.length,
-                            all_events: allEvents.length,
-                            recent_sample: recentEvents.slice(0, 2),
-                            all_sample: allEvents.slice(0, 2)
-                        });
+                        // console.log('[GoalMenu] Filtered events:', {
+                        //     total_siblings: siblingEvents.length,
+                        //     recent_events: recentEvents.length,
+                        //     all_events: allEvents.length,
+                        //     recent_sample: recentEvents.slice(0, 2),
+                        //     all_sample: allEvents.slice(0, 2)
+                        // });
 
                         // Calculate completion rates - handle boolean and undefined values
                         const recentCompletedEvents = recentEvents.filter(e => e.completed === true).length;
@@ -399,14 +462,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         const recentCompletionRate = recentEvents.length > 0 ? recentCompletedEvents / recentEvents.length : 0;
                         const allTimeCompletionRate = allEvents.length > 0 ? allCompletedEvents / allEvents.length : 0;
 
-                        console.log('[GoalMenu] Completion calculations:', {
-                            recent_completed: recentCompletedEvents,
-                            recent_total: recentEvents.length,
-                            recent_rate: recentCompletionRate,
-                            all_completed: allCompletedEvents,
-                            all_total: allEvents.length,
-                            all_rate: allTimeCompletionRate
-                        });
+                        // console.log('[GoalMenu] Completion calculations:', {
+                        //     recent_completed: recentCompletedEvents,
+                        //     recent_total: recentEvents.length,
+                        //     recent_rate: recentCompletionRate,
+                        //     all_completed: allCompletedEvents,
+                        //     all_total: allEvents.length,
+                        //     all_rate: allTimeCompletionRate
+                        // });
 
                         // Calculate standard error of completion rate (accounts for sample size)
                         let completionStdErr = 0;
@@ -425,7 +488,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             avg_reschedule_distance_hours: completionStdErr * 100 // Reusing this field for stderr %
                         };
 
-                        console.log('[GoalMenu] Final calculated stats:', stats);
+                        // console.log('[GoalMenu] Final calculated stats:', stats);
                     } else {
                         // No sibling events found
                         stats = {
@@ -443,7 +506,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     };
                 }
 
-                console.log('[GoalMenu] Final event stats:', stats);
+                // console.log('[GoalMenu] Final event stats:', stats);
             }
 
             // Fetch rescheduling stats for tasks and routines with events
@@ -456,15 +519,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     stats.reschedule_count = reschedulingResponse.total_reschedules || 0;
                     stats.avg_reschedule_distance_hours = reschedulingResponse.avg_reschedule_distance_hours || 0;
                 } catch (error) {
-                    console.log('Could not fetch rescheduling stats:', error);
+                    // console.log('Could not fetch rescheduling stats:', error);
                 }
             }
 
             setGoalStats(stats);
         } catch (error) {
-            console.error('Failed to fetch goal stats:', error);
+            // console.error('Failed to fetch goal stats:', error);
             setGoalStats(null);
         } finally {
+            const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
+            const start = statsLoadStartRef.current || end;
+            const durationMs = Math.max(0, end - start);
+            //console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
             setStatsLoading(false);
         }
     }, [state.mode, taskEvents, parentGoals]);
@@ -502,40 +569,40 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Fetch parent goals using traversal API
     const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
-        console.log('[GoalMenu] fetchParentGoals called with goalId:', goalId);
+        // console.log('[GoalMenu] fetchParentGoals called with goalId:', goalId);
 
         // Skip fetching for events - they get their parent from the event-specific helper
         if (state.goal.goal_type === 'event') {
-            console.log('[GoalMenu] Skipping fetchParentGoals for event type');
+            // console.log('[GoalMenu] Skipping fetchParentGoals for event type');
             return;
         }
 
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
-            console.log('[GoalMenu] fetchParentGoals hierarchyResponse:', hierarchyResponse);
+            // console.log('[GoalMenu] fetchParentGoals hierarchyResponse:', hierarchyResponse);
             // Filter to only get parent goals (those that have a child relationship to current goal)
             const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
-            console.log('[GoalMenu] fetchParentGoals networkData edges:', networkData.edges);
+            // console.log('[GoalMenu] fetchParentGoals networkData edges:', networkData.edges);
             const parentIds = networkData.edges
                 .filter(e => e.relationship_type === 'child' && e.to === goalId)
                 .map(e => e.from);
-            console.log('[GoalMenu] fetchParentGoals parentIds:', parentIds);
+            // console.log('[GoalMenu] fetchParentGoals parentIds:', parentIds);
 
             const parents = hierarchyResponse
                 .filter(g => parentIds.includes(g.id!))
                 .map(goalToLocal);
-            console.log('[GoalMenu] fetchParentGoals parents:', parents);
+            // console.log('[GoalMenu] fetchParentGoals parents:', parents);
 
             // Always update parentGoals, even if empty to clear stale data
             setParentGoals(parents);
-            console.log('✅ [GoalMenu] Updated parentGoals to:', parents.length, 'items');
+            // console.log('✅ [GoalMenu] Updated parentGoals to:', parents.length, 'items');
 
             // In edit mode, also populate selectedParents so they show in the selector
             if (mode === 'edit') {
                 setSelectedParents(parents);
             }
         } catch (error) {
-            console.error('Failed to fetch parent goals:', error);
+            // console.error('Failed to fetch parent goals:', error);
             // Since we return early for events, this will only run for non-events
             setParentGoals([]);
             if (mode === 'edit') {
@@ -546,27 +613,26 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Fetch child goals using traversal API
     const fetchChildGoals = useCallback(async (goalId: number, mode: Mode) => {
-        console.log('[GoalMenu] fetchChildGoals called with goalId:', goalId);
+        // console.log('[GoalMenu] fetchChildGoals called with goalId:', goalId);
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
-            console.log('[GoalMenu] fetchChildGoals hierarchyResponse:', hierarchyResponse);
+            // console.log('[GoalMenu] fetchChildGoals hierarchyResponse:', hierarchyResponse);
             // Filter to only get child goals (those that have a child relationship from current goal)
             const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
-            console.log('[GoalMenu] fetchChildGoals networkData edges:', networkData.edges);
+            // console.log('[GoalMenu] fetchChildGoals networkData edges:', networkData.edges);
             const childIds = networkData.edges
                 .filter(e => e.relationship_type === 'child' && e.from === goalId)
                 .map(e => e.to);
-            console.log('[GoalMenu] fetchChildGoals childIds:', childIds);
+            // console.log('[GoalMenu] fetchChildGoals childIds:', childIds);
 
             const children = hierarchyResponse
                 .filter(g => childIds.includes(g.id!))
                 .map(goalToLocal);
-            console.log('[GoalMenu] fetchChildGoals children:', children);
 
             // Sort by hierarchy level (immediate children first)
             setChildGoals(children);
         } catch (error) {
-            console.error('Failed to fetch child goals:', error);
+            // console.error('Failed to fetch child goals:', error);
             setChildGoals([]);
         }
     }, []);
@@ -575,8 +641,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //create copy, might need to be date.
         const goalCopy = { ...goal }
 
-        console.log('[GoalMenu] open() called with goal:', goalCopy);
-        console.log('[GoalMenu] goal.id:', goalCopy.id, 'goal.goal_type:', goalCopy.goal_type);
 
         if (goalCopy._tz === undefined) {
             goalCopy._tz = 'user';
@@ -618,10 +682,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }[actualMode]);
         setIsOpen(true);
 
-        console.log('[GoalMenu] About to check goal.id:', goalCopy.id, 'typeof:', typeof goalCopy.id);
         // Fetch parent and child goals if we have a goal ID
         if (goal.id) {
-            console.log('[GoalMenu] Goal has ID:', goal.id, 'and goal_type:', goal.goal_type);
             // Skip fetchParentGoals for events - they use their own parent logic
             if (goal.goal_type !== 'event') {
                 fetchParentGoals(goal.id, actualMode);
@@ -630,13 +692,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
             // Fetch task events if this is a task
             if (goal.goal_type === 'task') {
-                console.log('[GoalMenu] Fetching task events for task ID:', goal.id);
                 fetchTaskEvents(goal.id);
             } else {
-                console.log('[GoalMenu] Not a task, goal_type is:', goal.goal_type);
             }
         } else {
-            console.log('[GoalMenu] Goal has no ID, skipping fetchTaskEvents');
             // Don't clear parentGoals for events as they have their own parent management
             if (goalCopy.goal_type !== 'event') {
                 setParentGoals([]);
@@ -659,30 +718,30 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Debug taskEvents changes
     useEffect(() => {
-        console.log('[GoalMenu] taskEvents updated:', { length: taskEvents.length, events: taskEvents });
+        // console.log('[GoalMenu] taskEvents updated:', { length: taskEvents.length, events: taskEvents });
     }, [taskEvents]);
 
     // Debug childGoals changes
     useEffect(() => {
-        console.log('[GoalMenu] childGoals updated:', { length: childGoals.length, children: childGoals });
+        // console.log('[GoalMenu] childGoals updated:', { length: childGoals.length, children: childGoals });
     }, [childGoals]);
 
     // Debug parentGoals changes
     useEffect(() => {
-        console.log('[GoalMenu] parentGoals updated:', { length: parentGoals.length, parents: parentGoals });
+        // console.log('[GoalMenu] parentGoals updated:', { length: parentGoals.length, parents: parentGoals });
     }, [parentGoals]);
 
     // Fetch parent and child goals when component mounts or goal changes
     useEffect(() => {
         if (state.goal.id && isOpen) {
-            console.log('[GoalMenu] useEffect: Fetching relationships for goal ID:', state.goal.id);
+            // console.log('[GoalMenu] useEffect: Fetching relationships for goal ID:', state.goal.id);
             // Skip fetchParentGoals for events - they use their own parent logic
             if (state.goal.goal_type !== 'event') {
                 fetchParentGoals(state.goal.id, state.mode);
             }
             fetchChildGoals(state.goal.id, state.mode);
         } else {
-            console.log('[GoalMenu] useEffect: No goal ID or dialog closed, clearing relationships');
+            // console.log('[GoalMenu] useEffect: No goal ID or dialog closed, clearing relationships');
             // Don't clear parentGoals for events as they have their own parent management
             if (state.goal.goal_type !== 'event') {
                 setParentGoals([]);
@@ -694,7 +753,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Fetch task events when component mounts or goal changes (for tasks opened directly via props)
     useEffect(() => {
         if (state.goal.id && state.goal.goal_type === 'task' && isOpen) {
-            console.log('[GoalMenu] useEffect: Fetching task events for task ID:', state.goal.id);
+            // console.log('[GoalMenu] useEffect: Fetching task events for task ID:', state.goal.id);
             fetchTaskEvents(state.goal.id);
         } else if (state.goal.goal_type !== 'task') {
             // Clear task events if not a task
@@ -733,6 +792,25 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             onClose();
         }
     }, [isOpen, onClose]);
+
+    // Additional high-level state logs for diagnosing layout shifts
+    useEffect(() => {
+        //console.log('[GoalMenu] mode changed:', { mode: state.mode, isViewOnly });
+    }, [state.mode, isViewOnly]);
+    useEffect(() => {
+        //console.log('[GoalMenu] dialog open state changed:', { isOpen });
+    }, [isOpen]);
+
+    // Debug visibility of the mini network panel
+    useEffect(() => {
+        const showMini = isViewOnly && !!state.goal.id && state.goal.goal_type !== 'event';
+        console.log('[GoalMenu][MiniNetwork] visibility:', {
+            show: showMini,
+            goalId: state.goal.id,
+            goalType: state.goal.goal_type,
+            isViewOnly
+        });
+    }, [isViewOnly, state.goal.id, state.goal.goal_type]);
 
     // Set title based on initial mode when component mounts
     useEffect(() => {
@@ -1105,12 +1183,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             relationshipType
                         );
                     }
+                    // Notify network to refresh relationships
+                    try {
+                        window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: updatedGoal.id } }));
+                    } catch (e) {}
                 }
             } else if (state.mode === 'edit' && state.goal.id) {
                 updatedGoal = await updateGoal(state.goal.id, state.goal);
                 // Merge local changes in case API omits some fields (e.g., priority)
                 updatedGoal = { ...state.goal, ...updatedGoal };
-                console.log('[GoalMenu] updateGoal response priority:', updatedGoal.priority);
+                // console.log('[GoalMenu] updateGoal response priority:', updatedGoal.priority);
 
                 // Handle parent relationships in edit mode (for non-events)
                 if (state.goal.goal_type !== 'event') {
@@ -1133,13 +1215,21 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         );
                     }
 
-                    // Remove old relationships
+                    // Remove old relationships (use API helper matching backend route)
                     for (const parent of parentsToRemove) {
-                        console.log('➖ [GoalMenu] Removing relationship:', parent.id, '->', state.goal.id);
-                        await privateRequest(
-                            `goals/relationship/${parent.id!}/${state.goal.id!}`,
-                            'DELETE'
+                        // console.log('➖ [GoalMenu] Removing relationship:', parent.id, '->', state.goal.id);
+                        await deleteRelationship(
+                            parent.id!,
+                            state.goal.id!,
+                            relationshipType
                         );
+                    }
+                    // If any changes occurred, notify network to refresh relationships
+                    const changed = parentsToAdd.length > 0 || parentsToRemove.length > 0;
+                    if (changed) {
+                        try {
+                            window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: updatedGoal.id } }));
+                        } catch (e) {}
                     }
                 }
             } else {
@@ -1317,16 +1407,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             });
             return;
         }
-        console.log('[GoalMenu] handleDelete called', {
-            goalId: state.goal.id,
-            goalType: state.goal.goal_type,
-            parentType: state.goal.parent_type
-        });
+        // console.log('[GoalMenu] handleDelete called', {
+        //     goalId: state.goal.id,
+        //     goalType: state.goal.goal_type,
+        //     parentType: state.goal.parent_type
+        // });
 
         try {
             if (state.goal.goal_type === 'event') {
                 if (isRoutineParentEvent) {
-                    console.log('[GoalMenu] Deleting routine event – opening scope dialog');
+                    // console.log('[GoalMenu] Deleting routine event – opening scope dialog');
                     // Open routine delete dialog instead of immediate confirm
                     setRoutineDeleteDialog({
                         isOpen: true,
@@ -1336,12 +1426,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     });
                     return; // Wait for dialog confirmation
                 } else {
-                    console.log('[GoalMenu] Deleting single non-routine event', { eventId: state.goal.id });
+                    // console.log('[GoalMenu] Deleting single non-routine event', { eventId: state.goal.id });
                     // Regular (non-routine) event – delete single occurrence
                     await deleteEvent(state.goal.id, false);
                 }
             } else {
-                console.log('[GoalMenu] Deleting non-event goal', { goalId: state.goal.id });
+                // console.log('[GoalMenu] Deleting non-event goal', { goalId: state.goal.id });
                 // Non-event goals
                 await deleteGoal(state.goal.id);
             }
@@ -1351,12 +1441,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
             close();
         } catch (error) {
-            console.error('Failed to delete goal:', error);
+            // console.error('Failed to delete goal:', error);
             setState({
                 ...state,
                 error: error instanceof Error ? error.message : 'Failed to delete goal'
             });
         }
+        // Notify network in all delete flows
+        try {
+            window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: state.goal.id } }));
+        } catch (e) {}
     };
 
     const handleCreateChild = () => {
@@ -1515,6 +1609,49 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             )}
         </Box>
     );
+    const handleMoveToNow = useCallback(async () => {
+        const fiveMinutesMs = 5 * 60 * 1000;
+        const nowRounded = new Date(Math.ceil(Date.now() / fiveMinutesMs) * fiveMinutesMs);
+
+        // Create mode or missing ID: just update local state
+        if (state.mode !== 'edit' || !state.goal.id) {
+            handleChange({ ...state.goal, scheduled_timestamp: nowRounded });
+            return;
+        }
+
+        // Routine event: open scope dialog and delegate to existing flow
+        if (isRoutineParentEvent) {
+            const originalGoal = state.goal;
+            const updatedGoal = { ...state.goal, scheduled_timestamp: nowRounded } as Goal;
+            setRoutineUpdateDialog({
+                isOpen: true,
+                updateType: 'scheduled_time',
+                originalGoal,
+                updatedGoal,
+                selectedScope: 'single',
+                onConfirm: async (scope: 'single' | 'all' | 'future') => {
+                    await handleRoutineEventUpdate(originalGoal, updatedGoal, 'scheduled_time', scope);
+                }
+            });
+            return;
+        }
+
+        // Regular event: update immediately
+        try {
+            const updated = await updateEvent(state.goal.id, {
+                scheduled_timestamp: nowRounded,
+                move_reason: 'Move to now'
+            });
+            setState({ ...state, goal: updated });
+            if (onSuccess) onSuccess(updated);
+        } catch (error) {
+            if (isTaskDateValidationError(error)) {
+                showTaskDateWarning(error, state.goal.name || 'Event', handleMoveToNow);
+                return;
+            }
+            setState({ ...state, error: 'Failed to move event to now' });
+        }
+    }, [state, isRoutineParentEvent, onSuccess]);
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
@@ -1525,9 +1662,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             type="datetime-local"
             value={(() => {
                 const rawTimestamp = state.goal.scheduled_timestamp;
-                console.log(`[GoalMenu.tsx] scheduleField render: Raw timestamp=${rawTimestamp}, _tz=${state.goal._tz}`);
+                // console.log(`[GoalMenu.tsx] scheduleField render: Raw timestamp=${rawTimestamp}, _tz=${state.goal._tz}`);
                 const converted = timestampToInputString(rawTimestamp, 'datetime');
-                console.log(`[GoalMenu.tsx] scheduleField render: Converted to input string=${converted}`);
+                // console.log(`[GoalMenu.tsx] scheduleField render: Converted to input string=${converted}`);
                 return converted;
             })()}
             onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -1544,6 +1681,23 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             fullWidth
             margin="dense"
             InputLabelProps={{ shrink: true }}
+            InputProps={{
+                endAdornment: (
+                    <InputAdornment position="end">
+                        <Tooltip title="Move to now">
+                            <span>
+                                <IconButton
+                                    size="small"
+                                    onClick={handleMoveToNow}
+                                    aria-label="Move to now"
+                                >
+                                    <GpsFixedIcon fontSize="small" />
+                                </IconButton>
+                            </span>
+                        </Tooltip>
+                    </InputAdornment>
+                )
+            }}
             disabled={isViewOnly}
         />
     );
@@ -1744,16 +1898,36 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     const commonFields = isViewOnly ? (
         <>
-            <Box sx={{ mb: 2 }}>
+            <Box sx={{ mb: 1 }}>
                 <strong>Name:</strong> {state.goal.name || 'Not set'}
             </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Goal Type:</strong> {state.goal.goal_type ? state.goal.goal_type.charAt(0).toUpperCase() + state.goal.goal_type.slice(1) : 'Not set'}
+            <Box sx={{ mb: 1.5, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                {state.goal.goal_type && (() => {
+                    const style = getGoalStyle(state.goal);
+                    return (
+                        <span
+                            className="goal-type-badge"
+                            style={{
+                                backgroundColor: `${style.backgroundColor}20`,
+                                color: style.backgroundColor
+                            }}
+                        >
+                            {state.goal.goal_type}
+                        </span>
+                    );
+                })()}
+                {state.goal.priority && (
+                    <span className="priority-badge" data-priority={state.goal.priority}>
+                        {state.goal.priority}
+                    </span>
+                )}
+                <span className={`status-badge ${state.goal.completed ? 'completed' : 'in-progress'}`}>
+                    {state.goal.completed ? 'Completed' : 'In Progress'}
+                </span>
             </Box>
             <Box sx={{ mb: 2 }}>
                 <strong>Description:</strong> {state.goal.description || 'Not set'}
             </Box>
-            {priorityField}
         </>
     ) : (
         <>
@@ -2160,16 +2334,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 return (
                     <>
                         {scheduleField}
-                        <Box sx={{ mt: 1, mb: 2, display: 'flex', gap: 1 }}>
-                            <Button
-                                onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
-                                variant="outlined"
-                                color="secondary"
-                                size="small"
-                            >
-                                Smart Schedule
-                            </Button>
-                        </Box>
+                        {!isViewOnly && (
+                            <Box sx={{ mt: 1, mb: 2, display: 'flex', gap: 1 }}>
+                                <Button
+                                    onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
+                                    variant="outlined"
+                                    color="secondary"
+                                    size="small"
+                                >
+                                    Smart Schedule
+                                </Button>
+                            </Box>
+                        )}
                         {durationField}
                         {completedField}
 
@@ -2237,13 +2413,27 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         if (state.mode !== 'view') return null;
         if (!(state.goal.goal_type === 'routine' || state.goal.goal_type === 'task' || state.goal.goal_type === 'event')) return null;
 
-        if (statsLoading) {
+        // Avoid layout shift: show skeleton only before first data load
+        // Keep existing tiles visible during background refreshes
+        const shouldShowSkeleton = !goalStats;
+        if (lastSkeletonStateRef.current !== shouldShowSkeleton) {
+            //console.log('[GoalMenu][Stats] render decision:', {
+                //shouldShowSkeleton,
+                //statsLoading,
+                //hasGoalStats: !!goalStats,
+                //mode: state.mode,
+                //goalType: state.goal.goal_type
+            //});
+            lastSkeletonStateRef.current = shouldShowSkeleton;
+        }
+
+        if (shouldShowSkeleton) {
             return (
-                <Box sx={{ mt: 2 }}>
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 1 }}>
+                <Box ref={statsContainerRef} sx={{ mt: 2 }} aria-busy={true}>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 1 }}>
                         {[0, 1, 2, 3].map((idx) => (
-                            <Box key={idx} sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover' }}>
-                                <Skeleton variant="rectangular" height={64} />
+                            <Box key={idx} sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', minHeight: 56 }}>
+                                <Skeleton variant="rectangular" height={56} />
                             </Box>
                         ))}
                     </Box>
@@ -2350,7 +2540,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         );
 
         return (
-            <Box sx={{ mt: 2 }}>
+            <Box ref={statsContainerRef} sx={{ mt: 2 }} aria-busy={false}>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 1 }}>
                     <RateTile label={isEvent ? '10d' : 'Completion'} tooltip={isEvent ? '10-day completion rate' : 'Completion rate'} value={completionRate} icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />} />
                     {isEvent ? (
@@ -2435,7 +2625,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         };
 
         executeScheduleUpdate().catch((error: any) => {
-            console.error('Failed to smart schedule event:', error);
+            // console.error('Failed to smart schedule event:', error);
 
             // Check if it's a task date validation error
             if (isTaskDateValidationError(error)) {
@@ -2460,11 +2650,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const handleCompletionToggle = async (completed: boolean) => {
         try {
             if (state.goal.goal_type === 'event') {
-                console.log('[GoalMenu] Event completion toggle - Initial state:', {
-                    id: state.goal.id,
-                    completed: state.goal.completed,
-                    newCompleted: completed
-                });
+                // console.log('[GoalMenu] Event completion toggle - Initial state:', {
+                //     id: state.goal.id,
+                //     completed: state.goal.completed,
+                //     newCompleted: completed
+                // });
 
                 // Ensure we have a valid ID before proceeding
                 if (!state.goal.id) {
@@ -2505,15 +2695,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 } else {
                     // Uncompleting an event - use the event update API
-                    console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
+                    // console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
                     const updatedEvent = await updateEvent(state.goal.id, {
                         completed: false
                     });
 
-                    console.log('[GoalMenu] updateEvent response:', {
-                        id: updatedEvent.id,
-                        completed: updatedEvent.completed
-                    });
+                    // console.log('[GoalMenu] updateEvent response:', {
+                    //     id: updatedEvent.id,
+                    //     completed: updatedEvent.completed
+                    // });
 
                     // Ensure the ID is preserved from the original goal
                     const safeUpdatedEvent = {
@@ -2521,10 +2711,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
                     };
 
-                    console.log('[GoalMenu] Safe updated event:', {
-                        id: safeUpdatedEvent.id,
-                        completed: safeUpdatedEvent.completed
-                    });
+                    // console.log('[GoalMenu] Safe updated event:', {
+                    //     id: safeUpdatedEvent.id,
+                    //     completed: safeUpdatedEvent.completed
+                    // });
 
                     setState({
                         ...state,
@@ -2556,7 +2746,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
             }
         } catch (error) {
-            console.error('Failed to update completion status:', error);
+            // console.error('Failed to update completion status:', error);
             setState({
                 ...state,
                 error: 'Failed to update completion status'
@@ -2645,38 +2835,38 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Add handlers for routine delete dialog
     const handleRoutineDeleteConfirm = async () => {
-        console.log('[GoalMenu] handleRoutineDeleteConfirm', routineDeleteDialog);
+        // console.log('[GoalMenu] handleRoutineDeleteConfirm', routineDeleteDialog);
         if (!routineDeleteDialog.eventId) return;
 
         try {
             if (routineDeleteDialog.selectedScope === 'all') {
-                console.log('[GoalMenu] Delete scope = ALL');
+                // console.log('[GoalMenu] Delete scope = ALL');
 
                 // Delete the parent routine - backend will cascade delete all events
                 const parentRoutineId = state.goal.parent_id;
                 if (!parentRoutineId) {
-                    console.warn('[GoalMenu] No parentRoutineId found, cannot delete all events');
+                    // console.warn('[GoalMenu] No parentRoutineId found, cannot delete all events');
                     throw new Error('Cannot find parent routine to delete all events');
                 }
 
-                console.log('[GoalMenu] Deleting parent routine goal (will cascade to all events)', { parentRoutineId });
+                // console.log('[GoalMenu] Deleting parent routine goal (will cascade to all events)', { parentRoutineId });
                 await deleteGoal(parentRoutineId);
 
                 // Force refresh of routines to clean up any cached state
-                console.log('[GoalMenu] Calling updateRoutines() after routine deletion');
+                // console.log('[GoalMenu] Calling updateRoutines() after routine deletion');
                 await updateRoutines();
             } else {
                 const deleteFuture = routineDeleteDialog.selectedScope === 'future';
-                console.log('[GoalMenu] Delete scope =', routineDeleteDialog.selectedScope, { deleteFuture });
+                // console.log('[GoalMenu] Delete scope =', routineDeleteDialog.selectedScope, { deleteFuture });
                 await deleteEvent(routineDeleteDialog.eventId, deleteFuture);
 
                 // Refresh routines so calendar updates when deleting future occurrences
                 if (deleteFuture) {
-                    console.log('[GoalMenu] Calling updateRoutines() after deletion');
+                    // console.log('[GoalMenu] Calling updateRoutines() after deletion');
                     try {
                         await updateRoutines();
                     } catch (e) {
-                        console.warn('Routine update after delete failed', e);
+                        // console.warn('Routine update after delete failed', e);
                     }
                 }
             }
@@ -2693,7 +2883,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
             close();
         } catch (error) {
-            console.error('Failed to delete routine event:', error);
+            // console.error('Failed to delete routine event:', error);
             setState({
                 ...state,
                 error: error instanceof Error ? error.message : 'Failed to delete routine event'
@@ -2730,81 +2920,118 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             <DialogTitle>{title}</DialogTitle>
             {/* ---- Dialog Content ---- */}
             <DialogContent ref={contentRef}>
-                {state.error && (
-                    <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
-                )}
-                {/* Parent display (view mode only) */}
-                {state.mode === 'view' && parentGoals.length > 0 && (
-                    <Box sx={{ mb: 3 }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
-                            Parent
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                            {parentGoals.map((parent) => (
-                                <Box
-                                    key={parent.id}
-                                    sx={{
-                                        ...getGoalStyle(parent),
-                                        color: 'white',
-                                        px: 1.5,
-                                        py: 0.75,
-                                        borderRadius: '16px',
-                                        fontSize: '0.875rem',
-                                        fontWeight: 500,
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s',
-                                        '&:hover': {
-                                            transform: 'translateY(-2px)',
-                                            boxShadow: 2
-                                        }
-                                    }}
-                                    onClick={() => open(parent, 'view')}
-                                >
-                                    {parent.name}
-                                </Box>
-                            ))}
-                        </Box>
+                <Box
+                    sx={{
+                        display: 'grid',
+                        gridTemplateColumns: { xs: '1fr', sm: isViewOnly ? '1fr 260px' : '1fr' },
+                        columnGap: 2,
+                        alignItems: 'start'
+                    }}
+                >
+                    {/* Main column */}
+                    <Box sx={{ minWidth: 0 }}>
+                        {state.error && (
+                            <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
+                        )}
+                        {commonFields}
+                        {parentSelectorField}
+                        {renderTypeSpecificFields()}
+                        {renderStatsTiles()}
                     </Box>
-                )}
 
-                {/* Child display (view mode only) */}
-                {state.mode === 'view' && childGoals.length > 0 && (
-                    <Box sx={{ mb: 3 }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
-                            Children
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                            {childGoals.map((child) => (
-                                <Box
-                                    key={child.id}
-                                    sx={{
-                                        ...getGoalStyle(child),
-                                        color: 'white',
-                                        px: 1.5,
-                                        py: 0.75,
-                                        borderRadius: '16px',
-                                        fontSize: '0.875rem',
-                                        fontWeight: 500,
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s',
-                                        '&:hover': {
-                                            transform: 'translateY(-2px)',
-                                            boxShadow: 2
-                                        }
-                                    }}
-                                    onClick={() => open(child, 'view')}
-                                >
-                                    {child.name}
+                    {/* Sidebar (view mode only, fixed width on sm+) */}
+                    {isViewOnly && (
+                        <Box sx={{ width: { xs: '100%', sm: 260 }, flexShrink: 0 }}>
+                            {parentGoals.length > 0 && (
+                                <Box sx={{ mb: 3 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                                        Parent
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                        {parentGoals.map((parent) => (
+                                            <Box
+                                                key={parent.id}
+                                                sx={{
+                                                    ...getGoalStyle(parent),
+                                                    color: 'white',
+                                                    px: 1.5,
+                                                    py: 0.75,
+                                                    borderRadius: '16px',
+                                                    fontSize: '0.875rem',
+                                                    fontWeight: 500,
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    '&:hover': {
+                                                        transform: 'translateY(-2px)',
+                                                        boxShadow: 2
+                                                    }
+                                                }}
+                                                onClick={() => open(parent, 'view')}
+                                            >
+                                                {parent.name}
+                                            </Box>
+                                        ))}
+                                    </Box>
                                 </Box>
-                            ))}
-                        </Box>
-                    </Box>
-                )}
+                            )}
 
-                {commonFields}
-                {parentSelectorField}
-                {renderTypeSpecificFields()}
-                {renderStatsTiles()}
+                            {childGoals.length > 0 && (
+                                <Box sx={{ mb: 3 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                                        Children
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                        {childGoals.map((child) => (
+                                            <Box
+                                                key={child.id}
+                                                sx={{
+                                                    ...getGoalStyle(child),
+                                                    color: 'white',
+                                                    px: 1.5,
+                                                    py: 0.75,
+                                                    borderRadius: '16px',
+                                                    fontSize: '0.875rem',
+                                                    fontWeight: 500,
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    '&:hover': {
+                                                        transform: 'translateY(-2px)',
+                                                        boxShadow: 2
+                                                    }
+                                                }}
+                                                onClick={() => open(child, 'view')}
+                                            >
+                                                {child.name}
+                                            </Box>
+                                        ))}
+                                    </Box>
+                                </Box>
+                            )}
+                            {state.goal.id && state.goal.goal_type !== 'event' && (
+                                <Box sx={{ mb: 3 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                                        Network
+                                    </Typography>
+                                    <MiniNetworkGraph
+                                        centerId={state.goal.id}
+                                        height={220}
+                                        onNodeClick={(node) => {
+                                            try {
+                                                if (!node?.id || node.id === state.goal.id) {
+                                                    return;
+                                                }
+                                                close();
+                                                setTimeout(() => {
+                                                    GoalMenuWithStatic.open(node, 'view', onSuccess);
+                                                }, 100);
+                                            } catch (e) {}
+                                        }}
+                                    />
+                                </Box>
+                            )}
+                        </Box>
+                    )}
+                </Box>
             </DialogContent>
             {/* ---- Dialog Actions ---- */}
             <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>

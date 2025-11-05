@@ -18,11 +18,11 @@ import './App.css';
 import Calendar from './pages/calendar/Calendar';
 import Signup from './pages/signup/Signup';
 import Signin from './pages/signin/Signin';
-import Root from './pages/root/Root';
+// import Root from './pages/root/Root';
 import Network from './pages/network/Network';
 import List from './pages/list/List';
 import Day from './pages/day/Day';
-import Query from './pages/query/Query';
+// import Query from './pages/query/Query';
 import Achievements from './pages/achievements/Achievements';
 import Stats from './pages/stats/Stats';
 import GoogleCallback from './pages/auth/GoogleCallback';
@@ -38,22 +38,21 @@ const NavBar: React.FC = () => {
 
   return (
     <AppBar position="static">
-      <Toolbar>
-        <Box sx={{ flexGrow: 1, display: 'flex', gap: 2 }}>
-          <Button color="inherit" component={Link} to="/">Home</Button>
-          <Button color="inherit" component={Link} to="/network">Network</Button>
-          <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
-          <Button color="inherit" component={Link} to="/list">List</Button>
+      <Toolbar sx={{ flexWrap: 'nowrap' }}>
+        <Box sx={{ flexGrow: 1, display: 'flex', gap: 2, minWidth: 0 }}>
           <Button color="inherit" component={Link} to="/day">Day</Button>
+          <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
+          <Button color="inherit" component={Link} to="/network">Network</Button>
           <Button color="inherit" component={Link} to="/achievements">Achievements</Button>
           <Button color="inherit" component={Link} to="/stats">Stats</Button>
-          <Button color="inherit" component={Link} to="/query">Query</Button>
+          <Button color="inherit" component={Link} to="/list">List</Button>
+          {/* <Button color="inherit" component={Link} to="/query">Query</Button> */}
         </Box>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0 }}>
           {isAuthenticated ? (
             <>
-              <Box sx={{ typography: 'body1', color: 'inherit' }}>{username}</Box>
-              <Button color="inherit" onClick={handleSignOut}>Sign Out</Button>
+              {/* <Box sx={{ typography: 'body1', color: 'inherit' }}>{username}</Box> */}
+              <Button color="inherit" onClick={handleSignOut} sx={{ whiteSpace: 'nowrap' }}>Sign Out</Button>
             </>
           ) : (
             <>
@@ -93,7 +92,12 @@ const App: React.FC = () => {
                         <Route path="/signup" element={<Signup />} />
                         <Route path="/signin" element={<Signin />} />
                         <Route path="/auth/callback" element={<GoogleCallback />} />
-                        <Route path="/" element={<Root />} />
+                        {/* <Route path="/" element={<Root />} /> */}
+                        <Route path="/" element={
+                          <ProtectedRoute>
+                            <Calendar />
+                          </ProtectedRoute>
+                        } />
 
                         {/* Protected Routes */}
                         <Route path="/calendar" element={
@@ -126,11 +130,11 @@ const App: React.FC = () => {
                             <Stats />
                           </ProtectedRoute>
                         } />
-                        <Route path="/query" element={
+                        {/* <Route path="/query" element={
                           <ProtectedRoute>
                             <Query />
                           </ProtectedRoute>
-                        } />
+                        } /> */}
                       </Routes>
                     </Box>
                   </Box>

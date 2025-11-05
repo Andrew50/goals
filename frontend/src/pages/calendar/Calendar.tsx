@@ -20,6 +20,7 @@ import {
   FormControlLabel,
   FormControl,
   Select,
+  SelectChangeEvent,
   MenuItem,
   InputLabel,
   CircularProgress
@@ -482,20 +483,6 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDidMount = (info: any) => {
-    // Apply priority border styling that FullCalendar can't handle inline
-    const computedBorder = info.event.extendedProps?.computedBorder;
-    if (computedBorder && computedBorder !== 'none') {
-      info.el.style.border = computedBorder;
-    }
-
-    // Add a class for micro events so we can tweak padding in CSS
-    const start = info.event.start as Date;
-    const end = (info.event.end as Date) ?? start;
-    const minutes = (end.getTime() - start.getTime()) / 60000;
-    if (!info.event.allDay && minutes <= 10) {
-      info.el.classList.add('fc-micro-event');
-    }
-
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
@@ -733,24 +720,16 @@ const Calendar: React.FC = () => {
         return;
       }
 
-      if (selectedResizeScope === 'single') {
-        // For single updates, use regular updateGoal
-        const existingEvent = state.events.find((e) => e.goal?.id === routineResizeDialog.eventId!);
-        if (existingEvent?.goal) {
-          const updates = {
-            ...existingEvent.goal,
-            duration: routineResizeDialog.newDuration
-          };
-          await updateGoal(existingEvent.goal.id, updates);
-        }
-      } else {
-        // For all/future updates, use the routine event properties API
-        await updateRoutineEventProperties(
-          routineResizeDialog.eventId,
-          { duration: routineResizeDialog.newDuration },
-          selectedResizeScope
-        );
-      }
+      // Build routine-aware updates; include start if available (start can shift when resizing from start)
+      const scheduledStart: Date | undefined = routineResizeDialog.eventInfo?.event?.start ?? undefined;
+      await updateRoutineEventProperties(
+        routineResizeDialog.eventId,
+        {
+          duration: routineResizeDialog.newDuration,
+          ...(scheduledStart ? { scheduled_timestamp: scheduledStart } : {})
+        },
+        selectedResizeScope
+      );
 
       // Close dialog and reload data
       setRoutineResizeDialog({
@@ -873,7 +852,7 @@ const Calendar: React.FC = () => {
 
     // Use centralized styling that handles parent types and priority borders
     // Pass parent goal so priority borders fall back to parent if event has no priority
-    const { backgroundColor, border, textColor, borderColor } = getGoalStyle(goal, parent);
+    const { backgroundColor, textColor, borderColor } = getGoalStyle(goal, parent);
 
     return {
       id: evt.id,
@@ -888,8 +867,7 @@ const Calendar: React.FC = () => {
       extendedProps: {
         ...evt,
         goal,
-        parent,
-        computedBorder: border // Store border style for potential use in eventDidMount
+        parent
       }
     };
   });
@@ -1016,33 +994,13 @@ const Calendar: React.FC = () => {
     return `${sign}${minutes} minute${minutes !== 1 ? 's' : ''}`;
   };
 
-  // Custom event content renderer for micro events
+  
+
+  // Title-only event content; time is available via tooltip
   const renderEventContent = (info: EventContentArg) => {
-    const { event, timeText } = info;
-
-    // Compute duration in minutes
-    const start = event.start!;
-    const end = event.end ?? start;
-    const minutes = (end.getTime() - start.getTime()) / 60000;
-
-    const isMicro = !event.allDay && minutes <= 10;
-
-    // For micro events, show only the title with time in tooltip
-    if (isMicro) {
-      return (
-        <div className="fc-event-title" title={timeText}>
-          {event.title}
-        </div>
-      );
-    }
-
-    // Default rendering: time first, then title
-    return (
-      <>
-        <div className="fc-event-time">{timeText}</div>
-        <div className="fc-event-title">{event.title}</div>
-      </>
-    );
+    const title = info.event.title || '';
+    const tooltip = info.timeText ? `${info.timeText} — ${title}` : title;
+    return <div className="fc-event-title" title={tooltip}>{title}</div>;
   };
 
   // Google Calendar sync handlers
@@ -1174,8 +1132,10 @@ const Calendar: React.FC = () => {
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView={initialCalendarView}
             eventDisplay="block" //supposed to add full background color but doesnt ?
-            eventMinHeight={18}
+            eventMinHeight={12}
+            displayEventTime={false}
             eventContent={renderEventContent}
+            eventClassNames={() => 'event-compact'}
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',
@@ -1211,11 +1171,6 @@ const Calendar: React.FC = () => {
             slotLabelInterval="01:00"
             scrollTime="08:00:00"
             snapDuration="00:05:00"
-            eventTimeFormat={{
-              hour: 'numeric',
-              minute: '2-digit',
-              meridiem: 'short'
-            }}
           />
         </div>
       </div>
@@ -1254,7 +1209,9 @@ const Calendar: React.FC = () => {
           <FormControl component="fieldset">
             <RadioGroup
               value={selectedUpdateScope}
-              onChange={(e) => setSelectedUpdateScope(e.target.value as 'single' | 'all' | 'future')}
+              onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                setSelectedUpdateScope(event.target.value as 'single' | 'all' | 'future')
+              }
             >
               <FormControlLabel
                 value="single"
@@ -1318,7 +1275,9 @@ const Calendar: React.FC = () => {
           <FormControl component="fieldset">
             <RadioGroup
               value={selectedResizeScope}
-              onChange={(e) => setSelectedResizeScope(e.target.value as 'single' | 'all' | 'future')}
+              onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                setSelectedResizeScope(event.target.value as 'single' | 'all' | 'future')
+              }
             >
               <FormControlLabel
                 value="single"
@@ -1391,10 +1350,12 @@ const Calendar: React.FC = () => {
                       labelId="calendar-select-label"
                       value={gcalSyncDialog.calendarId}
                       label="Calendar"
-                      onChange={(e) => setGcalSyncDialog({
-                        ...gcalSyncDialog,
-                        calendarId: e.target.value as string
-                      })}
+                      onChange={(event: SelectChangeEvent<string>) =>
+                        setGcalSyncDialog({
+                          ...gcalSyncDialog,
+                          calendarId: event.target.value as string
+                        })
+                      }
                     >
                       {gcalSyncDialog.calendars.map((calendar) => (
                         <MenuItem key={calendar.id} value={calendar.id}>
@@ -1417,10 +1378,12 @@ const Calendar: React.FC = () => {
                   </Typography>
                   <RadioGroup
                     value={gcalSyncDialog.syncDirection}
-                    onChange={(e) => setGcalSyncDialog({
-                      ...gcalSyncDialog,
-                      syncDirection: e.target.value as 'bidirectional' | 'to_gcal' | 'from_gcal'
-                    })}
+                    onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                      setGcalSyncDialog({
+                        ...gcalSyncDialog,
+                        syncDirection: event.target.value as 'bidirectional' | 'to_gcal' | 'from_gcal'
+                      })
+                    }
                   >
                     <FormControlLabel
                       value="bidirectional"
