@@ -41,7 +41,7 @@ services:
           - prod_network
         restart: unless-stopped
         healthcheck:
-            test: ["CMD-SHELL", "bash -lc 'find /backups -maxdepth 1 -name neo4j_dump_*.dump -mmin -90 | grep -q .' "]
+            test: ["CMD-SHELL", "bash -lc 'find /backups -maxdepth 1 -name neo4j_dump_*.dump -mmin -1440 | grep -q .' "]
             interval: 5m
             timeout: 10s
             retries: 3
@@ -77,7 +77,7 @@ services:
 
     goals_cloudflared:
         container_name: goals_cloudflared
-        image: cloudflare/cloudflared:latest
+        image: cloudflare/cloudflared:2025.7.0
         command: tunnel run --token ${GOALS_CLOUDFLARED_TOKEN}
         restart: unless-stopped
         networks:
