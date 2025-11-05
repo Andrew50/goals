@@ -63,6 +63,13 @@ jobs:
         with:
           clean: false
 
+      - name: Stop residual test stacks (post-checkout)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Stopping any existing dev/test compose stacks after checkout..."
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+
       - name: Fix workspace permissions and stale node_modules
         shell: bash
         run: |
@@ -253,5 +260,5 @@ jobs:
       - name: Stop test stack
         if: always()
         run: |
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
 
