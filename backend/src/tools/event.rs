@@ -574,18 +574,31 @@ pub async fn delete_event_handler(
     delete_future: bool,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if delete_future {
-        // For routine events, delete this and all future
+        // Delete this and all future occurrences for the parent routine,
+        // and set the routine's end_timestamp so no new events are generated.
+        // Note: Scope by parent_id (entire routine), not by routine_instance_id.
         let delete_query = query(
             "MATCH (e:Goal)
-             WHERE id(e) = $event_id
-             WITH e, e.routine_instance_id as instance_id, e.scheduled_timestamp as cutoff
-             MATCH (r:Goal)-[:HAS_EVENT]->(events:Goal)
-             WHERE events.routine_instance_id = instance_id
-             AND events.scheduled_timestamp >= cutoff
-             SET events.is_deleted = true
-             WITH r, max(events.scheduled_timestamp) as last_timestamp
-             WHERE last_timestamp IS NOT NULL
-             SET r.end_date = last_timestamp",
+             WHERE id(e) = $event_id AND e.goal_type = 'event'
+             WITH e, e.scheduled_timestamp AS cutoff, e.parent_id AS parent_id
+             // Soft-delete all future events for this routine
+             MATCH (r:Goal)
+             WHERE id(r) = parent_id AND r.goal_type = 'routine'
+             WITH r, cutoff
+             OPTIONAL MATCH (r)-[:HAS_EVENT]->(f:Goal)
+             WHERE f.goal_type = 'event'
+               AND (f.is_deleted IS NULL OR f.is_deleted = false)
+               AND f.scheduled_timestamp >= cutoff
+             SET f.is_deleted = true
+             WITH r, cutoff
+             // Find latest remaining non-deleted event before cutoff
+             OPTIONAL MATCH (r)-[:HAS_EVENT]->(keep:Goal)
+             WHERE keep.goal_type = 'event'
+               AND (keep.is_deleted IS NULL OR keep.is_deleted = false)
+               AND keep.scheduled_timestamp < cutoff
+             WITH r, cutoff, max(keep.scheduled_timestamp) AS last_kept
+             // If none remain, set end just before cutoff to prevent regeneration
+             SET r.end_timestamp = coalesce(last_kept, cutoff - 1)"
         )
         .param("event_id", event_id);
 
@@ -940,6 +953,20 @@ pub async fn update_routine_event_handler(
                 new_time_of_day
             );
 
+            // Also update the parent routine so future generated events inherit this time-of-day
+            let update_parent_time_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $parent_id AND r.goal_type = 'routine'
+                 SET r.routine_time = $new_timestamp",
+            )
+            .param("parent_id", parent_id)
+            .param("new_timestamp", request.new_timestamp);
+
+            graph
+                .run(update_parent_time_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
             // For "all" scope, update ALL events for this routine to the new time-of-day
             let check_query = query(
                 "MATCH (e:Goal)
@@ -1017,6 +1044,20 @@ pub async fn update_routine_event_handler(
                 "🕐 [ROUTINE_UPDATE] New time of day: {} ms",
                 new_time_of_day
             );
+
+            // Also update the parent routine so future generated events inherit this time-of-day
+            let update_parent_time_query = query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $parent_id AND r.goal_type = 'routine'
+                 SET r.routine_time = $new_timestamp",
+            )
+            .param("parent_id", parent_id)
+            .param("new_timestamp", request.new_timestamp);
+
+            graph
+                .run(update_parent_time_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
             // For "future" scope, update ALL future events for this routine to the new time-of-day
             let check_query = query(
@@ -1964,6 +2005,59 @@ pub async fn update_routine_event_properties_handler(
                     StatusCode::BAD_REQUEST,
                     "No properties to update".to_string(),
                 ));
+            }
+
+            // Update parent routine so future generated events inherit these properties
+            let mut routine_set_clauses: Vec<&str> = Vec::new();
+            let mut routine_params = vec![
+                (
+                    "parent_id".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(parent_id)),
+                ),
+            ];
+
+            if request.duration.is_some() {
+                routine_set_clauses.push("r.duration = $r_duration");
+                routine_params.push((
+                    "r_duration".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(request.duration.unwrap() as i64)),
+                ));
+            }
+            if let Some(name) = &request.name {
+                routine_set_clauses.push("r.name = $r_name");
+                routine_params.push((
+                    "r_name".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(name)),
+                ));
+            }
+            if let Some(description) = &request.description {
+                routine_set_clauses.push("r.description = $r_description");
+                routine_params.push((
+                    "r_description".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(description)),
+                ));
+            }
+            if let Some(priority) = &request.priority {
+                routine_set_clauses.push("r.priority = $r_priority");
+                routine_params.push((
+                    "r_priority".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(priority)),
+                ));
+            }
+
+            if !routine_set_clauses.is_empty() {
+                let routine_query_str = format!(
+                    "MATCH (r:Goal) WHERE id(r) = $parent_id AND r.goal_type = 'routine' SET {} RETURN id(r) as id",
+                    routine_set_clauses.join(", ")
+                );
+                let mut routine_update_query = query(&routine_query_str);
+                for (key, value) in routine_params {
+                    routine_update_query = routine_update_query.param(&key, value);
+                }
+                graph
+                    .run(routine_update_query)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             }
 
             // Build the query based on scope

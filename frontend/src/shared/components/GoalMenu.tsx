@@ -24,6 +24,7 @@ import {
     Tooltip,
     Skeleton,
     InputAdornment,
+    Alert,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -32,7 +33,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
@@ -105,6 +106,14 @@ interface RoutineUpdateDialogState {
     updatedGoal: Goal | null;
     selectedScope: 'single' | 'all' | 'future';
     onConfirm: (scope: 'single' | 'all' | 'future') => Promise<void>;
+}
+
+// Recompute confirmation dialog state
+interface RoutineRecomputeDialogState {
+    isOpen: boolean;
+    originalGoal: Goal | null;
+    updatedGoal: Goal | null;
+    onConfirm: () => Promise<void>;
 }
 
 const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType }) => {
@@ -261,6 +270,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         originalGoal: null,
         updatedGoal: null,
         selectedScope: 'single',
+        onConfirm: async () => { }
+    });
+
+    // Routine recompute dialog
+    const [routineRecomputeDialog, setRoutineRecomputeDialog] = useState<RoutineRecomputeDialogState>({
+        isOpen: false,
+        originalGoal: null,
+        updatedGoal: null,
         onConfirm: async () => { }
     });
 
@@ -1023,6 +1040,43 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             return;
         }
 
+        // If editing a routine and schedule fields changed, prompt to recompute future occurrences
+        if (state.mode === 'edit' && state.goal.goal_type === 'routine') {
+            const og = initialGoal;
+            const ng = state.goal;
+            const t = (v: any) => (v instanceof Date ? v.getTime() : v ?? null);
+            const scheduleChanged = (
+                og.frequency !== ng.frequency ||
+                t(og.start_timestamp) !== t(ng.start_timestamp) ||
+                t(og.end_timestamp) !== t(ng.end_timestamp)
+            );
+
+            if (scheduleChanged && ng.id) {
+                setRoutineRecomputeDialog({
+                    isOpen: true,
+                    originalGoal: og,
+                    updatedGoal: ng,
+                    onConfirm: async () => {
+                        // 1) Save routine changes
+                        const saved = await updateGoal(ng.id!, ng);
+                        // 2) Recompute future occurrences (deletes all future, including completed, then regenerates)
+                        try {
+                            await recomputeRoutineFuture(ng.id!);
+                        } catch (e) {
+                            // Still proceed; surface error in UI
+                            console.error('Failed to recompute routine future:', e);
+                        }
+                        // 3) Refresh near-term routines in UI
+                        try { await updateRoutines(); } catch {}
+                        setState({ ...state, goal: saved });
+                        if (onSuccess) onSuccess(saved);
+                        close();
+                    }
+                });
+                return; // wait for user confirmation
+            }
+        }
+
         // Check if this is a routine event being modified
         if (state.mode === 'edit' && state.goal.goal_type === 'event' && isRoutineParentEvent) {
             // Determine what type of change this is
@@ -1290,10 +1344,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 }
 
+                // Refresh near-term routine instances so UI reflects inherited changes
+                if (scope === 'all' || scope === 'future') {
+                    try { await updateRoutines(); } catch (e) {}
+                }
+
                 setState({ ...state, goal: updatedEvents[0] || updatedGoal });
             } else if ((updateType === 'duration' || updateType === 'other') && (scope === 'all' || scope === 'future')) {
                 // For duration or other property changes, update multiple events
                 await updateMultipleRoutineEvents(updatedGoal, updateType === 'duration' ? 'duration' : 'other', scope);
+                // Refresh near-term routine instances so UI reflects inherited changes
+                try { await updateRoutines(); } catch (e) {}
             } else {
                 // For single updates or other changes, use regular update
                 const result = await updateGoal(updatedGoal.id!, updatedGoal);
@@ -3135,6 +3196,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     </Button>
                 </DialogActions>
             </Dialog>
+            {/* Routine Recompute Confirmation Dialog */}
+            <Dialog
+                open={routineRecomputeDialog.isOpen}
+                onClose={() => setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false })}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Apply schedule changes to future occurrences?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body1" sx={{ mb: 2 }}>
+                        You changed this routine's schedule (frequency and/or start/end dates).
+                    </Typography>
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                        This will delete all future events for this routine starting now, including events that are already marked as completed, and regenerate them on the new schedule. Any edits you made to future events will be lost. Past events will remain unchanged.
+                    </Alert>
+                    <Typography variant="body2" color="text.secondary">
+                        You can cancel to keep existing future events as they are.
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false })}>Cancel</Button>
+                    <Button onClick={() => routineRecomputeDialog.onConfirm()} color="primary" variant="contained">
+                        Apply & Recompute
+                    </Button>
+                </DialogActions>
+            </Dialog>
             {/* Routine Delete Dialog */}
             <Dialog open={routineDeleteDialog.isOpen} onClose={handleRoutineDeleteCancel} maxWidth="sm" fullWidth>
                 <DialogTitle>Delete Routine Event</DialogTitle>
@@ -3145,6 +3232,21 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <Typography variant="body1" sx={{ mb: 2 }}>
                         What would you like to delete?
                     </Typography>
+                    {routineDeleteDialog.selectedScope === 'single' && (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            Only this occurrence will be deleted. The routine stays active and otherwise unaffected.
+                        </Alert>
+                    )}
+                    {routineDeleteDialog.selectedScope === 'future' && (
+                        <Alert severity="warning" sx={{ mb: 2 }}>
+                            This and all future occurrences will be deleted. The routine’s end date will be set so no new occurrences are created.
+                        </Alert>
+                    )}
+                    {routineDeleteDialog.selectedScope === 'all' && (
+                        <Alert severity="error" sx={{ mb: 2 }}>
+                            All occurrences will be deleted and the routine itself will be permanently removed.
+                        </Alert>
+                    )}
                     <FormControl component="fieldset">
                         <RadioGroup
                             value={routineDeleteDialog.selectedScope}
@@ -3158,7 +3260,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleRoutineDeleteCancel}>Cancel</Button>
-                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">Delete</Button>
+                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">
+                        {routineDeleteDialog.selectedScope === 'single'
+                            ? 'Delete occurrence'
+                            : routineDeleteDialog.selectedScope === 'future'
+                                ? 'Delete future and end routine'
+                                : 'Delete all and remove routine'}
+                    </Button>
                 </DialogActions>
             </Dialog>
         </Dialog>
