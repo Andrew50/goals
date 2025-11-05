@@ -18,31 +18,10 @@ import {
   saveNodePosition,
   calculateNewNodePosition
 } from './buildHierarchy';
-import { getGoalStyle } from '../../shared/styles/colors';
+import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 
-// Expect ApiGoal from the backend, return NetworkNode (which extends Goal)
-const formatNetworkNode = (localGoal: Goal): NetworkNode => {
-  const { backgroundColor, border, textColor, borderColor } = getGoalStyle(localGoal);
-
-  // Extract border width from border string (e.g., '3px solid #d32f2f' -> 3)
-  const borderWidthMatch = border.match(/(\d+)px/);
-  const borderWidth = borderWidthMatch ? parseInt(borderWidthMatch[1], 10) : 0;
-
-  return {
-    ...localGoal,
-    label: localGoal.name,
-    title: `${localGoal.name} (${localGoal.goal_type})`,
-    color: {
-      background: backgroundColor,
-      border: borderColor,
-      highlight: { background: backgroundColor, border: borderColor },
-      hover: { background: backgroundColor, border: borderColor }
-    },
-    borderWidth,
-    font: { color: textColor }
-  };
-};
+// Node formatting moved to shared util
 
 type DialogMode = 'create' | 'edit' | 'view' | 'relationship' | null;
 
