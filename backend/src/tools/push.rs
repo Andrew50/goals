@@ -48,26 +48,28 @@ pub struct NotificationAction {
     pub icon: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct EventReminderDetails<'a> {
+    pub event_id: i64,
+    pub event_name: &'a str,
+    pub scheduled_timestamp: i64,
+    pub reminder_text: &'a str,
+    pub reminder_tag: &'a str,
+    pub event_description: Option<&'a str>,
+    pub require_interaction: bool,
+    pub sent_timestamp: i64,
+}
+
 // Save a push subscription for a user
 pub async fn save_subscription(
     graph: Graph,
     user_id: i64,
-    subscription: serde_json::Value,
+    subscription: PushSubscription,
 ) -> Result<StatusCode, (StatusCode, String)> {
     println!("🔔 [PUSH] Saving subscription for user {}", user_id);
 
-    // Extract subscription data
-    let endpoint = subscription["endpoint"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "Missing endpoint".to_string()))?;
-
-    let p256dh = subscription["keys"]["p256dh"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "Missing p256dh key".to_string()))?;
-
-    let auth = subscription["keys"]["auth"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "Missing auth key".to_string()))?;
+    let PushSubscription { endpoint, keys } = subscription;
+    let PushKeys { p256dh, auth } = keys;
 
     // Save or update subscription in database
     let query = Query::new(
@@ -81,9 +83,9 @@ pub async fn save_subscription(
             .to_string(),
     )
     .param("user_id", user_id)
-    .param("endpoint", endpoint.to_string())
-    .param("p256dh", p256dh.to_string())
-    .param("auth", auth.to_string())
+    .param("endpoint", endpoint.clone())
+    .param("p256dh", p256dh.clone())
+    .param("auth", auth.clone())
     .param("updated_at", Utc::now().timestamp_millis())
     .param("created_at", Utc::now().timestamp_millis());
 
@@ -404,21 +406,38 @@ async fn remove_subscription_by_endpoint(
 pub async fn send_event_reminder(
     graph: &Graph,
     user_id: i64,
-    event_name: &str,
-    event_time: i64,
-    event_id: i64,
+    details: EventReminderDetails<'_>,
 ) -> Result<(), String> {
+    let EventReminderDetails {
+        event_id,
+        event_name,
+        scheduled_timestamp,
+        reminder_text,
+        reminder_tag,
+        event_description,
+        require_interaction,
+        sent_timestamp,
+    } = details;
+
+    let reminder_body = if let Some(description) = event_description {
+        format!("'{}' is coming up\n{}", event_name, description)
+    } else {
+        format!("'{}' is coming up", event_name)
+    };
+
     let payload = PushPayload {
-        title: "Event Reminder".to_string(),
-        body: format!("'{}'  starts in 15 minutes", event_name),
+        title: format!("⏰ Reminder: {}", reminder_text),
+        body: reminder_body,
         icon: Some("/logo192.png".to_string()),
         badge: Some("/logo192.png".to_string()),
-        tag: Some(format!("event-{}", event_id)),
+        tag: Some(reminder_tag.to_string()),
         data: Some(serde_json::json!({
             "url": format!("/calendar?event={}", event_id),
             "event_id": event_id,
-            "event_time": event_time,
-            "type": "event_reminder"
+            "event_time": scheduled_timestamp,
+            "event_description": event_description,
+            "type": "event_reminder",
+            "reminder_type": reminder_text
         })),
         actions: Some(vec![
             NotificationAction {
@@ -432,51 +451,10 @@ pub async fn send_event_reminder(
                 icon: None,
             },
         ]),
-        require_interaction: Some(true),
-        renotify: Some(true),
-        silent: Some(false),
-        timestamp: Some(event_time),
-    };
-
-    send_notification_to_user(graph, user_id, &payload).await
-}
-
-// Public function to send notifications for task deadlines
-pub async fn send_task_deadline_reminder(
-    graph: &Graph,
-    user_id: i64,
-    task_name: &str,
-    deadline: i64,
-    task_id: i64,
-) -> Result<(), String> {
-    let payload = PushPayload {
-        title: "Task Deadline".to_string(),
-        body: format!("Task '{}' is due soon", task_name),
-        icon: Some("/logo192.png".to_string()),
-        badge: Some("/logo192.png".to_string()),
-        tag: Some(format!("task-{}", task_id)),
-        data: Some(serde_json::json!({
-            "url": format!("/list?task={}", task_id),
-            "task_id": task_id,
-            "deadline": deadline,
-            "type": "task_deadline"
-        })),
-        actions: Some(vec![
-            NotificationAction {
-                action: "complete".to_string(),
-                title: "Mark Complete".to_string(),
-                icon: None,
-            },
-            NotificationAction {
-                action: "snooze".to_string(),
-                title: "Remind Later".to_string(),
-                icon: None,
-            },
-        ]),
-        require_interaction: Some(true),
+        require_interaction: Some(require_interaction),
         renotify: Some(false),
         silent: Some(false),
-        timestamp: Some(deadline),
+        timestamp: Some(sent_timestamp),
     };
 
     send_notification_to_user(graph, user_id, &payload).await

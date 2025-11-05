@@ -223,41 +223,25 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                 .unwrap_or(now);
 
             // Send reminder notification
-            let reminder_body = event_description
-                .as_ref()
-                .map(|description| format!("'{}' is coming up\n{}", event_name, description))
-                .unwrap_or_else(|| format!("'{}' is coming up", event_name));
+            let reminder_tag = format!("reminder-{}-{}", event_id, reminder_offset);
+            let require_interaction = priority.as_deref() == Some("high");
 
-            let payload = push::PushPayload {
-                title: format!("⏰ Reminder: {}", reminder_text),
-                body: reminder_body,
-                icon: Some("/logo192.png".to_string()),
-                badge: Some("/logo192.png".to_string()),
-                tag: Some(format!("reminder-{}-{}", event_id, reminder_offset)),
-                data: Some(serde_json::json!({
-                    "url": format!("/calendar?event={}", event_id),
-                    "event_id": event_id,
-                    "event_time": scheduled_timestamp,
-                    "event_description": event_description,
-                    "type": "event_reminder",
-                    "reminder_type": reminder_text
-                })),
-                actions: Some(vec![
-                    push::NotificationAction {
-                        action: "view".to_string(),
-                        title: "View Event".to_string(),
-                        icon: None,
-                    },
-                ]),
-                require_interaction: Some(priority == Some("high".to_string())),
-                renotify: Some(false),
-                silent: Some(false),
-                timestamp: Some(now),
-            };
-            
-            if push::send_notification_to_user(graph, user_id, &payload)
-                .await
-                .is_ok()
+            if push::send_event_reminder(
+                graph,
+                user_id,
+                push::EventReminderDetails {
+                    event_id,
+                    event_name: &event_name,
+                    scheduled_timestamp,
+                    reminder_text,
+                    reminder_tag: &reminder_tag,
+                    event_description: event_description.as_deref(),
+                    require_interaction,
+                    sent_timestamp: now,
+                },
+            )
+            .await
+            .is_ok()
             {
                 // Mark this reminder as sent
                 let mark_query = query(
@@ -278,7 +262,7 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
             }
         }
     }
-    
+
     Ok(())
 }
 

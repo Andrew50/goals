@@ -963,7 +963,92 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         return options.slice(0, 11); // Limit to 11 results (10 + create option)
     }, [allGoals, state.goal, parentSearchQuery, fuse, relationshipType]);
 
-    const handleChange = (newGoal: Goal) => {
+    const handleCompletionToggle = useCallback(
+        async (completed: boolean) => {
+            try {
+                if (state.goal.goal_type === 'event') {
+                    if (!state.goal.id) {
+                        setState({
+                            ...state,
+                            error: 'Cannot update event: missing event ID'
+                        });
+                        return;
+                    }
+
+                    if (completed) {
+                        const response = await completeEvent(state.goal.id);
+
+                        setState({
+                            ...state,
+                            goal: {
+                                ...state.goal,
+                                completed: true
+                            }
+                        });
+
+                        if (response.should_prompt_task_completion && response.parent_task_id) {
+                            if (
+                                window.confirm(
+                                    `You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`
+                                )
+                            ) {
+                                await completeGoal(response.parent_task_id, true);
+                            }
+                        }
+
+                        if (onSuccess) {
+                            onSuccess({
+                                ...state.goal,
+                                completed: true
+                            });
+                        }
+                    } else {
+                        const updatedEvent = await updateEvent(state.goal.id, {
+                            completed: false
+                        });
+
+                        const safeUpdatedEvent = {
+                            ...updatedEvent,
+                            id: updatedEvent.id || state.goal.id
+                        };
+
+                        setState({
+                            ...state,
+                            goal: safeUpdatedEvent
+                        });
+
+                        if (onSuccess) {
+                            onSuccess(safeUpdatedEvent);
+                        }
+                    }
+                } else {
+                    const completion = await completeGoal(state.goal.id!, completed);
+
+                    const updatedGoal = {
+                        ...state.goal,
+                        completed: completion
+                    };
+
+                    setState({
+                        ...state,
+                        goal: updatedGoal
+                    });
+
+                    if (onSuccess) {
+                        onSuccess(updatedGoal);
+                    }
+                }
+            } catch (error) {
+                setState({
+                    ...state,
+                    error: 'Failed to update completion status'
+                });
+            }
+        },
+        [onSuccess, setState, state]
+    );
+
+    const handleChange = useCallback((newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server
         if (state.mode === 'view' && newGoal.completed !== state.goal.completed) {
             handleCompletionToggle(newGoal.completed || false);
@@ -990,7 +1075,79 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             ...state,
             goal: newGoal
         });
-    };
+    }, [handleCompletionToggle, setState, state]);
+
+    const updateMultipleRoutineEvents = useCallback(
+        async (
+            updatedGoal: Goal,
+            changeType: 'duration' | 'other',
+            scope: 'single' | 'all' | 'future'
+        ) => {
+            if (!updatedGoal.id) {
+                throw new Error('Goal ID is required for updating routine events');
+            }
+
+            const updates: {
+                duration?: number;
+                name?: string;
+                description?: string;
+                priority?: string;
+                scheduled_timestamp?: Date;
+            } = {};
+
+            if (changeType === 'duration') {
+                if (updatedGoal.duration !== undefined) {
+                    updates.duration = updatedGoal.duration;
+                }
+            } else {
+                if (updatedGoal.name) updates.name = updatedGoal.name;
+                if (updatedGoal.description) updates.description = updatedGoal.description;
+                if (updatedGoal.priority) updates.priority = updatedGoal.priority;
+            }
+
+            const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
+
+            if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
+                const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
+                if (parentRoutine) {
+                    const routineUpdates: Partial<Goal> = {};
+
+                    if (changeType === 'duration' && updates.duration !== undefined) {
+                        routineUpdates.duration = updates.duration;
+                    } else if (changeType === 'other') {
+                        if (updates.name) routineUpdates.name = updates.name;
+                        if (updates.description) routineUpdates.description = updates.description;
+                        if (
+                            updates.priority &&
+                            ['high', 'medium', 'low'].includes(updates.priority)
+                        ) {
+                            routineUpdates.priority = updates.priority as 'high' | 'medium' | 'low';
+                        }
+                    }
+
+                    if (Object.keys(routineUpdates).length > 0) {
+                        try {
+                            await updateGoal(parentRoutine.id!, {
+                                ...parentRoutine,
+                                ...routineUpdates
+                            });
+                            console.log('Updated parent routine with changes:', routineUpdates);
+                        } catch (error) {
+                            console.warn('Failed to update parent routine:', error);
+                        }
+                    }
+                }
+            }
+
+            const currentEvent = updatedEvents.find(event => event.id === updatedGoal.id);
+            if (currentEvent) {
+                setState({ ...state, goal: currentEvent });
+            }
+
+            return updatedEvents;
+        },
+        [allGoals, setState, state]
+    );
 
     const handleSubmit = async (another: boolean = false) => {
         if (another && state.mode !== 'create') {
@@ -1260,7 +1417,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     };
 
-    const handleRoutineEventUpdate = async (
+    const handleRoutineEventUpdate = useCallback(async (
         originalGoal: Goal,
         updatedGoal: Goal,
         updateType: 'scheduled_time' | 'duration' | 'other',
@@ -1317,83 +1474,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 error: error instanceof Error ? error.message : 'Failed to update routine event'
             });
         }
-    };
-
-    const updateMultipleRoutineEvents = async (
-        updatedGoal: Goal,
-        changeType: 'duration' | 'other',
-        scope: 'single' | 'all' | 'future'
-    ) => {
-        if (!updatedGoal.id) {
-            throw new Error('Goal ID is required for updating routine events');
-        }
-
-        // Extract the updates from the goal based on change type
-        const updates: {
-            duration?: number;
-            name?: string;
-            description?: string;
-            priority?: string;
-            scheduled_timestamp?: Date;
-        } = {};
-
-        if (changeType === 'duration') {
-            // For duration changes, only update the duration
-            if (updatedGoal.duration !== undefined) {
-                updates.duration = updatedGoal.duration;
-            }
-        } else {
-            // For other changes, include all relevant properties except scheduled_timestamp
-            // (scheduled_timestamp should be handled by the separate updateRoutineEvent API)
-            if (updatedGoal.name) updates.name = updatedGoal.name;
-            if (updatedGoal.description) updates.description = updatedGoal.description;
-            if (updatedGoal.priority) updates.priority = updatedGoal.priority;
-        }
-
-        // Use the dedicated API for updating routine event properties
-        const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
-
-        // For 'all' or 'future' scope, also update the parent routine with the same changes
-        if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
-            const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
-            if (parentRoutine) {
-                const routineUpdates: Partial<Goal> = {};
-
-                // Apply the same changes to the parent routine
-                if (changeType === 'duration' && updates.duration !== undefined) {
-                    routineUpdates.duration = updates.duration;
-                } else if (changeType === 'other') {
-                    if (updates.name) routineUpdates.name = updates.name;
-                    if (updates.description) routineUpdates.description = updates.description;
-                    if (updates.priority && ['high', 'medium', 'low'].includes(updates.priority)) {
-                        routineUpdates.priority = updates.priority as 'high' | 'medium' | 'low';
-                    }
-                }
-
-                // Only update if we have changes to apply
-                if (Object.keys(routineUpdates).length > 0) {
-                    try {
-                        await updateGoal(parentRoutine.id!, {
-                            ...parentRoutine,
-                            ...routineUpdates
-                        });
-                        console.log('Updated parent routine with changes:', routineUpdates);
-                    } catch (error) {
-                        console.warn('Failed to update parent routine:', error);
-                        // Don't fail the entire operation if routine update fails
-                    }
-                }
-            }
-        }
-
-        // Update the current goal state with the first updated event (the one being edited)
-        const currentEvent = updatedEvents.find(event => event.id === updatedGoal.id);
-        if (currentEvent) {
-            setState({ ...state, goal: currentEvent });
-        }
-
-        return updatedEvents;
-    };
+    }, [
+        allGoals,
+        close,
+        onSuccess,
+        setRoutineUpdateDialog,
+        setState,
+        state,
+        updateMultipleRoutineEvents
+    ]);
 
     const handleDelete = async () => {
         if (!state.goal.id) {
@@ -2648,113 +2737,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const handleSmartScheduleClose = () => {
         setSmartScheduleOpen(false);
         setSmartScheduleContext(null);
-    };
-
-    const handleCompletionToggle = async (completed: boolean) => {
-        try {
-            if (state.goal.goal_type === 'event') {
-                // console.log('[GoalMenu] Event completion toggle - Initial state:', {
-                //     id: state.goal.id,
-                //     completed: state.goal.completed,
-                //     newCompleted: completed
-                // });
-
-                // Ensure we have a valid ID before proceeding
-                if (!state.goal.id) {
-                    setState({
-                        ...state,
-                        error: 'Cannot update event: missing event ID'
-                    });
-                    return;
-                }
-
-                // For all event completion/uncompletion, use event-specific APIs
-                if (completed) {
-                    // Completing an event - use the event completion API
-                    const response = await completeEvent(state.goal.id);
-
-                    // Update the completion status while preserving the ID
-                    setState({
-                        ...state,
-                        goal: {
-                            ...state.goal,
-                            completed: true
-                        }
-                    });
-
-                    // Check if we should prompt for task completion
-                    if (response.should_prompt_task_completion && response.parent_task_id) {
-                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
-                            // Complete the parent task
-                            await completeGoal(response.parent_task_id, true);
-                        }
-                    }
-
-                    if (onSuccess) {
-                        onSuccess({
-                            ...state.goal,
-                            completed: true
-                        });
-                    }
-                } else {
-                    // Uncompleting an event - use the event update API
-                    // console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
-                    const updatedEvent = await updateEvent(state.goal.id, {
-                        completed: false
-                    });
-
-                    // console.log('[GoalMenu] updateEvent response:', {
-                    //     id: updatedEvent.id,
-                    //     completed: updatedEvent.completed
-                    // });
-
-                    // Ensure the ID is preserved from the original goal
-                    const safeUpdatedEvent = {
-                        ...updatedEvent,
-                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
-                    };
-
-                    // console.log('[GoalMenu] Safe updated event:', {
-                    //     id: safeUpdatedEvent.id,
-                    //     completed: safeUpdatedEvent.completed
-                    // });
-
-                    setState({
-                        ...state,
-                        goal: safeUpdatedEvent
-                    });
-
-                    if (onSuccess) {
-                        onSuccess(safeUpdatedEvent);
-                    }
-                }
-            } else {
-                // For all non-events, use regular completion
-                const completion = await completeGoal(state.goal.id!, completed);
-
-                // Create updated goal object with new completion status
-                const updatedGoal = {
-                    ...state.goal,
-                    completed: completion
-                };
-
-                // Update the completion status
-                setState({
-                    ...state,
-                    goal: updatedGoal
-                });
-
-                if (onSuccess) {
-                    onSuccess(updatedGoal);
-                }
-            }
-        } catch (error) {
-            // console.error('Failed to update completion status:', error);
-            setState({
-                ...state,
-                error: 'Failed to update completion status'
-            });
-        }
     };
 
     // This logic should now be handled in the parent component
