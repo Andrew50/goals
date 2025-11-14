@@ -71,7 +71,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
       ignoreLocation: true,
       useExtendedSearch: false
     });
-  }, [effectiveItems, keysSignature]);
+  }, [effectiveItems, keysSignature, keys]);
 
   useEffect(() => {
     const trimmed = (query || '').trim();

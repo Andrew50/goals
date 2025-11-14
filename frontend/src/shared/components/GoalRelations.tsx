@@ -55,8 +55,8 @@ const GoalRelations: React.FC<GoalRelationsProps> = ({ goal, onClose, onUpdate }
     const nodesDS = new DataSet(networkData.nodes);
     const edgesDS = new DataSet(networkData.edges.map(e => ({
       ...e,
-      dashes: e.relationship_type === 'queue',
-      color: { color: e.relationship_type === 'queue' ? '#ff9800' : '#2196f3' },
+      dashes: false,
+      color: { color: '#2196f3' },
       arrows: { to: { enabled: true, scaleFactor: 0.5 } }
     })));
     networkRef.current = new VisNetwork(containerRef.current, { nodes: nodesDS, edges: edgesDS }, { physics: false, layout: { hierarchical: false } });

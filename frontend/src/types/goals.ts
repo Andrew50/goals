@@ -1,5 +1,5 @@
 export type GoalType = 'directive' | 'project' | 'achievement' | 'routine' | 'task' | 'event';
-export type RelationshipType = 'child' | 'queue';
+export type RelationshipType = 'child';
 
 // dates, time, timestamps as Date, durations as timestamp (number) as decided by whether you want timezone conversions or not.
 export interface Goal {

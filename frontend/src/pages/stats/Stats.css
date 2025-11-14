@@ -746,3 +746,68 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* Effort table */
+.table-container {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.effort-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.effort-table th,
+.effort-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+    white-space: nowrap;
+}
+
+.effort-table th.sticky {
+    background-color: #fafafa;
+}
+
+.effort-table th.sortable {
+    cursor: pointer;
+    color: #666;
+    user-select: none;
+}
+
+.effort-table th.sortable:hover {
+    color: #333;
+}
+
+.goal-cell {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+
+.goal-name {
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.goal-type {
+    color: #666;
+    font-size: 0.875rem;
+}
+
+.effort-controls {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.effort-select {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    background-color: #fff;
+}

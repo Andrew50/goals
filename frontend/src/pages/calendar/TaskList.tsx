@@ -18,6 +18,10 @@ interface TaskWithEventInfo extends CalendarTask {
   eventCount: number;
   completedEventCount: number;
   nextEventDate?: Date;
+  isOverdue?: boolean;
+  isFutureStart?: boolean;
+  pastUncompletedCount: number;
+  futureUncompletedCount: number;
 }
 
 /**
@@ -98,34 +102,50 @@ const DraggableTask: React.FC<{
       </div>
 
       {/* Event Progress */}
-      {task.eventCount > 0 && (
-        <div style={{
-          fontSize: '0.85em',
-          opacity: 0.9,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px'
-        }}>
-          <span>
-            {task.completedEventCount}/{task.eventCount} events complete
-          </span>
-          {task.completedEventCount > 0 && task.eventCount > 0 && (
-            <div style={{
-              flex: 1,
-              height: '4px',
-              backgroundColor: 'rgba(255, 255, 255, 0.3)',
-              borderRadius: '2px',
-              overflow: 'hidden'
-            }}>
+      <div style={{
+        fontSize: '0.85em',
+        opacity: 0.9,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+      }}>
+        <span>
+          {task.completedEventCount}/{task.eventCount} events complete
+        </span>
+        <div
+          style={{
+            flex: 1,
+            height: '4px',
+            backgroundColor: 'rgba(255, 255, 255, 0.3)',
+            borderRadius: '2px',
+            overflow: 'hidden',
+            display: 'flex'
+          }}
+          aria-label={`Progress: ${task.completedEventCount} completed, ${Math.max(0, task.eventCount - task.completedEventCount - task.futureUncompletedCount)} past uncompleted, ${task.futureUncompletedCount} future uncompleted out of ${task.eventCount}`}
+        >
+          {task.eventCount === 0 ? (
+            <div style={{ width: '100%', height: '100%', backgroundColor: '#ff4d4f' }} />
+          ) : (
+            <>
               <div style={{
                 width: `${(task.completedEventCount / task.eventCount) * 100}%`,
                 height: '100%',
                 backgroundColor: 'rgba(255, 255, 255, 0.8)'
               }} />
-            </div>
+              <div style={{
+                width: `${(task.pastUncompletedCount / task.eventCount) * 100}%`,
+                height: '100%',
+                backgroundColor: 'transparent'
+              }} />
+              <div style={{
+                width: `${(task.futureUncompletedCount / task.eventCount) * 100}%`,
+                height: '100%',
+                backgroundColor: '#ffeb3b'
+              }} />
+            </>
           )}
         </div>
-      )}
+      </div>
 
       {/* Task dates and next event */}
       <div style={{
@@ -135,22 +155,18 @@ const DraggableTask: React.FC<{
         flexDirection: 'column',
         gap: '2px'
       }}>
-        {task.eventCount === 0 && (
-          <span style={{
-            color: '#ffeb3b',
-            fontWeight: 500
-          }}>
-            ⚠️ No events scheduled
-          </span>
-        )}
         {task.nextEventDate && (
           <span>Next: {formatDate(task.nextEventDate)}</span>
         )}
         {goal?.start_timestamp && (
-          <span>Start: {formatDate(goal.start_timestamp)}</span>
+          <span style={task.isFutureStart ? { color: 'rgba(255, 255, 255, 0.6)' } : undefined}>
+            Start: {formatDate(goal.start_timestamp)}
+          </span>
         )}
         {goal?.end_timestamp && (
-          <span>Due: {formatDate(goal.end_timestamp)}</span>
+          <span style={task.isOverdue ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>
+            Due: {formatDate(goal.end_timestamp)}
+          </span>
         )}
       </div>
     </div>
@@ -214,22 +230,46 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
 
     // Calculate task event info
     const tasksWithInfo: TaskWithEventInfo[] = useMemo(() => {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const now = new Date();
       return filteredTasks.map(task => {
         const taskEvents = events.filter(e =>
-          e.goal.parent_id === task.goal.id &&
+          e.goal.parent_id === task.goal?.id &&
           !e.goal.is_deleted
         );
 
         const completedEvents = taskEvents.filter(e => e.goal.completed);
         const futureEvents = taskEvents
-          .filter(e => !e.goal.completed && e.start > new Date())
+          .filter(e => !e.goal.completed && e.start > now)
           .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        const endTs = task.goal?.end_timestamp
+          ? new Date(task.goal.end_timestamp)
+          : undefined;
+        const startTs = task.goal?.start_timestamp
+          ? new Date(task.goal.start_timestamp)
+          : undefined;
+        const isCompleted = task.goal?.completed ?? false;
+        const isOverdue =
+          !!endTs && !isCompleted && endTs.getTime() < startOfToday.getTime();
+        const isFutureStart =
+          !!startTs && startTs.getTime() > now.getTime();
+
+        const eventCount = taskEvents.length;
+        const completedEventCount = completedEvents.length;
+        const futureUncompletedCount = futureEvents.length;
+        const pastUncompletedCount = Math.max(0, eventCount - completedEventCount - futureUncompletedCount);
 
         return {
           ...task,
-          eventCount: taskEvents.length,
-          completedEventCount: completedEvents.length,
-          nextEventDate: futureEvents[0]?.start
+          eventCount,
+          completedEventCount,
+          nextEventDate: futureEvents[0]?.start,
+          isOverdue,
+          isFutureStart,
+          pastUncompletedCount,
+          futureUncompletedCount
         };
       });
     }, [filteredTasks, events]);
@@ -246,7 +286,17 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       };
 
       return [...tasksWithInfo].sort((a, b) => {
-        // Tasks with no events first
+        // Future-start tasks should be placed at the end, regardless of priority
+        if ((a.isFutureStart ?? false) !== (b.isFutureStart ?? false)) {
+          return a.isFutureStart ? 1 : -1;
+        }
+
+        // Overdue tasks first
+        if (a.isOverdue !== b.isOverdue) {
+          return a.isOverdue ? -1 : 1;
+        }
+
+        // Tasks with no events next
         if (a.eventCount === 0 && b.eventCount > 0) return -1;
         if (b.eventCount === 0 && a.eventCount > 0) return 1;
 

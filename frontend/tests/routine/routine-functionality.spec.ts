@@ -466,4 +466,104 @@ test.describe('Routine Functionality', () => {
 
         console.log('✅ Routine functionality verification completed successfully!');
     });
+
+    test('convert scheduled task to routine preserves time-of-day', async ({ request }) => {
+        const testToken = generateTestToken(1);
+        await waitForApiReady(request, testToken);
+
+        // 1) Create a scheduled task
+        const baseName = `Task→Routine ${Date.now()}`;
+        const target = new Date();
+        target.setDate(target.getDate() + 1); // tomorrow to avoid past
+        target.setSeconds(0, 0);
+        target.setHours(14, 30); // 14:30
+
+        const createTaskResponse = await postWithRetry(request, `${API_URL}/goals/create`, {
+            headers: {
+                'Authorization': `Bearer ${testToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: {
+                name: baseName,
+                goal_type: 'task',
+                description: 'Scheduled task before conversion',
+                priority: 'medium',
+                scheduled_timestamp: target.getTime(),
+                // duration not required for tasks
+                user_id: 1
+            }
+        });
+        expect(createTaskResponse.ok()).toBeTruthy();
+        const createdTask = await createTaskResponse.json();
+        expect(createdTask.goal_type).toBe('task');
+
+        // 2) Convert to routine via update, omitting routine_time to trigger backend derivation
+        const convertResponse = await request.put(`${API_URL}/goals/${createdTask.id}`, {
+            headers: {
+                'Authorization': `Bearer ${testToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: {
+                ...createdTask,
+                goal_type: 'routine',
+                frequency: '1D',
+                duration: 60,
+                // keep priority, keep scheduled_timestamp to derive routine_time
+            }
+        });
+        expect(convertResponse.ok()).toBeTruthy();
+        const converted = await convertResponse.json();
+        expect(converted.goal_type).toBe('routine');
+        // Backend should clear scheduled_timestamp on routine
+        // and set routine_time derived from previous schedule
+        expect(typeof converted.routine_time === 'number' || converted.routine_time === null).toBeTruthy();
+
+        // 3) Trigger routine generation
+        const toTs = new Date(target);
+        toTs.setDate(toTs.getDate() + 7);
+        const genResponse = await postWithRetry(request, `${API_URL}/routine/${toTs.getTime()}`, {
+            headers: {
+                'Authorization': `Bearer ${testToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        expect(genResponse.ok()).toBeTruthy();
+
+        // 4) Fetch calendar and verify events for this routine use 14:30 time-of-day
+        const calendarResponse = await request.get(`${API_URL}/calendar`, {
+            headers: {
+                'Authorization': `Bearer ${testToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        expect(calendarResponse.ok()).toBeTruthy();
+        const cal = await calendarResponse.json();
+
+        // Find the routine by name
+        const routine = cal.routines.find((r: any) => r.name === baseName);
+        expect(routine).toBeTruthy();
+
+        // Check start date aligns to midnight of target date
+        const startDate = new Date(routine.start_timestamp);
+        expect(startDate.getFullYear()).toBe(target.getFullYear());
+        expect(startDate.getMonth()).toBe(target.getMonth());
+        expect(startDate.getDate()).toBe(target.getDate());
+        expect(startDate.getHours()).toBe(0);
+        expect(startDate.getMinutes()).toBe(0);
+
+        // Gather events for this routine
+        const events = cal.events.filter((e: any) => e.parent_type === 'routine' && e.name === baseName);
+        expect(events.length).toBeGreaterThan(0);
+
+        // Verify at least one event on target date has 14:30
+        const match = events.find((e: any) => {
+            const d = new Date(e.scheduled_timestamp);
+            return d.getFullYear() === target.getFullYear()
+                && d.getMonth() === target.getMonth()
+                && d.getDate() === target.getDate()
+                && d.getHours() === 14
+                && d.getMinutes() === 30;
+        });
+        expect(match).toBeTruthy();
+    });
 }); 

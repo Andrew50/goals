@@ -129,11 +129,6 @@ pub enum GoalType {
     Task,
     Event, // NEW
 }
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum RelationshipType {
-    Child,
-    Queue,
-}
 
 impl GoalType {
     pub fn as_str(&self) -> &'static str {
@@ -517,6 +512,38 @@ pub async fn update_goal_handler(
         set_clauses.push("g.is_gcal_imported = $is_gcal_imported");
         params.push(("is_gcal_imported", is_gcal_imported.into()));
     }
+    // Derivation: when converting to routine and routine_time is not provided,
+    // but scheduled_timestamp is provided (common in Task → Routine conversion),
+    // derive routine_time from scheduled_timestamp and align start_timestamp to that date's midnight.
+    if goal.goal_type == GoalType::Routine
+        && goal.routine_time.is_none()
+        && goal.scheduled_timestamp.is_some()
+    {
+        let ts = goal.scheduled_timestamp.unwrap();
+        // Set routine_time to the provided scheduled_timestamp (time-of-day preserved)
+        set_clauses.push("g.routine_time = $derived_routine_time");
+        params.push(("derived_routine_time", ts.into()));
+
+        // If start_timestamp is not provided, derive the start of day in UTC based on `ts`.
+        //
+        // IMPORTANT: This intentionally uses the UTC day boundary (not the user's local midnight).
+        // The routine event generator combines `start_timestamp` with the minutes-since-midnight
+        // extracted from `routine_time` (see set_time_of_day in jobs/routine_generator.rs).
+        // Using the same UTC basis for both preserves the invariant:
+        //   set_time_of_day(start_of_day_utc, routine_time=ts) == ts
+        //
+        // If local-midnight semantics are desired, the client must explicitly send a
+        // `start_timestamp` computed for the user's local zone.
+        if goal.start_timestamp.is_none() {
+            // 86_400_000 ms per day
+            let start_of_day_utc = ts - (ts % 86_400_000);
+            set_clauses.push("g.start_timestamp = $derived_start_timestamp");
+            params.push(("derived_start_timestamp", start_of_day_utc.into()));
+        }
+
+        // Clear scheduled_timestamp on the routine to avoid ambiguity
+        set_clauses.push("g.scheduled_timestamp = NULL");
+    }
     // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
         use chrono::{TimeZone, Utc};
@@ -657,108 +684,8 @@ pub async fn toggle_completion(
             )
         })?;
 
-        if goal_type == "achievement" {
-            if update.completed {
-                // Verify this is the highest uncompleted achievement in the queue
-                let queue_check = query(
-                    "MATCH (g:Goal)
-                     WHERE id(g) = $id
-                     OPTIONAL MATCH (prev:Goal)-[:QUEUE*]->(g)
-                     WHERE prev.completed = false
-                     RETURN count(prev) as count",
-                )
-                .param("id", update.id);
-
-                let mut check_result = graph.execute(queue_check).await.map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Database error: {}", e),
-                    )
-                })?;
-
-                if let Some(check_row) = check_result.next().await.map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Error checking queue: {}", e),
-                    )
-                })? {
-                    let count: i64 = check_row.get("count").unwrap_or(0);
-                    if count > 0 {
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            "Cannot complete this achievement as there are uncompleted achievements before it in the queue"
-                                .to_string(),
-                        ));
-                    }
-                }
-
-                // Complete this achievement and transfer relationships to next in queue
-                let transfer_query = query(
-                    "MATCH (current:Goal) WHERE id(current) = $id
-                     OPTIONAL MATCH (current)-[:QUEUE]->(next:Goal)
-                     WHERE next.completed = false
-                     OPTIONAL MATCH (parent:Goal)-[r:CHILD]->(current)
-                     WITH current, next, collect(parent) as parents
-                     SET current.completed = true
-                     WITH current, next, parents
-                     WHERE next IS NOT NULL
-                     UNWIND parents as parent
-                     MERGE (parent)-[:CHILD]->(next)
-                     WITH current, next, parent
-                     MATCH (parent)-[r:CHILD]->(current)
-                     DELETE r
-                     WITH current, next
-                     OPTIONAL MATCH (current)-[r:CHILD]->(child:Goal)
-                     WHERE NOT child = next
-                     WITH current, next, child, r
-                     WHERE child IS NOT NULL
-                     MERGE (next)-[:CHILD]->(child)
-                     DELETE r",
-                )
-                .param("id", update.id);
-
-                graph.run(transfer_query).await.map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Error updating relationships: {}", e),
-                    )
-                })?;
-            } else {
-                // Uncomplete this achievement and all following in queue
-                let uncomplete_query = query(
-                    "MATCH (current:Goal) WHERE id(current) = $id
-                     OPTIONAL MATCH (current)-[:QUEUE*]->(following:Goal)
-                     WITH current, collect(following) as following_goals
-                     SET current.completed = false
-                     FOREACH (goal IN following_goals | SET goal.completed = false)
-                     WITH current, following_goals
-                     UNWIND following_goals as following
-                     OPTIONAL MATCH (parent:Goal)-[r:CHILD]->(following)
-                     WITH current, following, following_goals, collect(parent) as parents
-                     UNWIND parents as parent
-                     MERGE (parent)-[:CHILD]->(current)
-                     WITH current, following, following_goals, parent
-                     MATCH (parent)-[r:CHILD]->(following)
-                     DELETE r
-                     WITH current, following_goals
-                     UNWIND following_goals as following
-                     OPTIONAL MATCH (following)-[r:CHILD]->(child:Goal)
-                     WHERE child IS NOT NULL
-                     WITH current, child, r
-                     MERGE (current)-[:CHILD]->(child)
-                     DELETE r",
-                )
-                .param("id", update.id);
-
-                graph.run(uncomplete_query).await.map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Error updating relationships: {}", e),
-                    )
-                })?;
-            }
-        } else if goal_type == "task" || goal_type == "project" {
-            // For non-achievement goals, just toggle completion
+        if goal_type == "achievement" || goal_type == "task" || goal_type == "project" {
+            // Toggle completion directly for supported goal types
             let toggle_query = query(
                 "MATCH (g:Goal) 
                  WHERE id(g) = $id 
@@ -960,19 +887,6 @@ pub async fn duplicate_goal_handler(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        // QUEUE relationships (for achievements)
-        let copy_queue_parents = query(
-            "MATCH (p:Goal)-[:QUEUE]->(o:Goal) WHERE id(o) = $old_id
-             WITH p
-             MATCH (n:Goal) WHERE id(n) = $new_id
-             MERGE (p)-[:QUEUE]->(n)",
-        )
-        .param("old_id", goal_id)
-        .param("new_id", created.id.unwrap());
-        graph
-            .run(copy_queue_parents)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     // 5) For events: ensure HAS_EVENT relationship to parent exists
@@ -1176,6 +1090,12 @@ impl Goal {
         graph: &Graph,
         relationship: &Relationship,
     ) -> Result<(), neo4rs::Error> {
+        // Only CHILD relationships are supported
+        if relationship.relationship_type.to_uppercase() != "CHILD" {
+            return Err(neo4rs::Error::UnexpectedMessage(
+                "Only CHILD relationships are supported".to_string(),
+            ));
+        }
         let type_query = neo4rs::query(
             "MATCH (from:Goal), (to:Goal) 
              WHERE id(from) = $from_id AND id(to) = $to_id 
@@ -1221,11 +1141,6 @@ impl Goal {
                 (_, GoalType::Event, _) => {
                     return Err(neo4rs::Error::UnexpectedMessage(
                         "Events cannot be targets of relationships".to_string(),
-                    ))
-                }
-                (_, _, "QUEUE") if from_type != GoalType::Achievement => {
-                    return Err(neo4rs::Error::UnexpectedMessage(
-                        "Queue relationships can only be created on achievements".to_string(),
                     ))
                 }
                 _ => {}

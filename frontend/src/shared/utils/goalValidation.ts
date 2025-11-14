@@ -33,15 +33,6 @@ export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipT
         }
     }
 
-    if (relationshipType === 'queue') {
-        if (fromGoal.goal_type !== 'achievement') {
-            return 'Queue relationships can only start from an Achievement.';
-        }
-        if (toGoal.goal_type !== 'achievement') {
-            // Corrected the confusing message here, queue is between achievements
-            return 'Queue relationships can only connect to another Achievement.';
-        }
-    }
     return null; // Return null if validation passes
 }
 
