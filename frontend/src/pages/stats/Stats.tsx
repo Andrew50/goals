@@ -1,6 +1,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { privateRequest } from '../../shared/utils/api';
 import './Stats.css';
+import '../../shared/styles/badges.css';
+import { useNavigate } from 'react-router-dom';
+import { Goal } from '../../types/goals';
+import { getGoalStyle } from '../../shared/styles/colors';
 
 interface DailyStats {
     date: string;
@@ -114,7 +118,19 @@ interface SourceBreakdown {
     avg_priority_weight: number;
 }
 
+// Effort stats (all-time, per non-event goal)
+interface EffortStat {
+    goal_id: number;
+    goal_name: string;
+    goal_type: string;
+    total_events: number;
+    completed_events: number;
+    total_duration_minutes: number;
+    weighted_completion_rate: number;
+}
+
 const Stats: React.FC = () => {
+    const navigate = useNavigate();
     const [yearStats, setYearStats] = useState<YearStats | null>(null);
     const [extendedStats, setExtendedStats] = useState<ExtendedStats | null>(null);
     const [eventAnalytics, setEventAnalytics] = useState<EventAnalytics | null>(null);
@@ -122,7 +138,7 @@ const Stats: React.FC = () => {
     const [hoveredDay, setHoveredDay] = useState<DailyStats | null>(null);
     const [loading, setLoading] = useState(true);
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-    const [activeTab, setActiveTab] = useState<'overview' | 'periods' | 'routines' | 'rescheduling' | 'analytics'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'effort' | 'periods' | 'routines' | 'rescheduling' | 'analytics'>('overview');
 
     // Routine-specific state
     const [routineSearchTerm, setRoutineSearchTerm] = useState('');
@@ -130,6 +146,10 @@ const Stats: React.FC = () => {
     const [selectedRoutineIds, setSelectedRoutineIds] = useState<number[]>([]);
     const [routineStats, setRoutineStats] = useState<RoutineStats[]>([]);
     const [reschedulingStats, setReschedulingStats] = useState<EventReschedulingStats | null>(null);
+    const [effortStats, setEffortStats] = useState<EffortStat[] | null>(null);
+    const [effortRange, setEffortRange] = useState<'all' | '5y' | '1y' | '6m' | '3m' | '1m' | '2w'>('all');
+    const [effortSortKey, setEffortSortKey] = useState<'total_duration_minutes' | 'total_events' | 'weighted_completion_rate'>('total_duration_minutes');
+    const [effortSortDir, setEffortSortDir] = useState<'asc' | 'desc'>('desc');
 
     const fetchStats = async () => {
         setLoading(true);
@@ -166,6 +186,15 @@ const Stats: React.FC = () => {
     useEffect(() => {
         fetchRoutineStats();
     }, [selectedRoutineIds, selectedYear]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (activeTab === 'effort') {
+            setEffortStats(null);
+            privateRequest<EffortStat[]>(`stats/effort?range=${effortRange}`)
+                .then(setEffortStats)
+                .catch((err) => console.error('Failed to fetch effort stats:', err));
+        }
+    }, [activeTab, effortRange]);
 
     const getColorForScore = (score: number, hasTasks: boolean): string => {
         if (!hasTasks) return 'transparent'; // No tasks - transparent
@@ -271,6 +300,47 @@ const Stats: React.FC = () => {
         });
     };
 
+    const formatMinutes = (minutes: number): string => {
+        const h = Math.floor(minutes / 60);
+        const m = Math.round(minutes % 60);
+        return `${h}h ${m}m`;
+    };
+
+    const sortedEffortStats = useMemo(() => {
+        if (!effortStats) return null;
+        const arr = [...effortStats];
+        arr.sort((a, b) => {
+            const dir = effortSortDir === 'asc' ? 1 : -1;
+            let av: number;
+            let bv: number;
+            if (effortSortKey === 'total_duration_minutes') {
+                av = a.total_duration_minutes;
+                bv = b.total_duration_minutes;
+            } else if (effortSortKey === 'total_events') {
+                av = a.total_events;
+                bv = b.total_events;
+            } else {
+                av = a.weighted_completion_rate;
+                bv = b.weighted_completion_rate;
+            }
+            if (av === bv) {
+                // Tie-break by goal name
+                return a.goal_name.localeCompare(b.goal_name);
+            }
+            return av > bv ? dir : -dir;
+        });
+        return arr;
+    }, [effortStats, effortSortKey, effortSortDir]);
+
+    const handleEffortSort = (key: 'total_duration_minutes' | 'total_events' | 'weighted_completion_rate') => {
+        if (effortSortKey === key) {
+            setEffortSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
+        } else {
+            setEffortSortKey(key);
+            setEffortSortDir('desc');
+        }
+    };
+
     const months = useMemo(() => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], []);
 
     const monthPositions = useMemo(() => {
@@ -298,6 +368,14 @@ const Stats: React.FC = () => {
 
     const handleDayHover = (day: DailyStats | null) => {
         setHoveredDay(day);
+    };
+
+    const handleDayClick = (day: DailyStats) => {
+        if (!day.date) return;
+        // Prevent navigating to future dates
+        const isFuture = new Date(day.date + 'T00:00:00') > new Date(today + 'T00:00:00');
+        if (isFuture) return;
+        navigate(`/day?date=${day.date}`);
     };
 
     // Get today's date in YYYY-MM-DD format using user's local timezone
@@ -383,29 +461,17 @@ const Stats: React.FC = () => {
                         Overview
                     </button>
                     <button
-                        className={`tab-button ${activeTab === 'periods' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('periods')}
+                        className={`tab-button ${activeTab === 'effort' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('effort')}
                     >
-                        Period Analysis
+                        Effort
                     </button>
-                    <button
-                        className={`tab-button ${activeTab === 'routines' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('routines')}
-                    >
-                        Routine Stats
-                    </button>
-                    <button
-                        className={`tab-button ${activeTab === 'rescheduling' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('rescheduling')}
-                    >
-                        Rescheduling
-                    </button>
-                    <button
-                        className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('analytics')}
-                    >
-                        Analytics
-                    </button>
+                    {/*
+                    <button className={`tab-button ${activeTab === 'periods' ? 'active' : ''}`} onClick={() => setActiveTab('periods')}>Period Analysis</button>
+                    <button className={`tab-button ${activeTab === 'routines' ? 'active' : ''}`} onClick={() => setActiveTab('routines')}>Routine Stats</button>
+                    <button className={`tab-button ${activeTab === 'rescheduling' ? 'active' : ''}`} onClick={() => setActiveTab('rescheduling')}>Rescheduling</button>
+                    <button className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>Analytics</button>
+                    */}
                 </div>
 
                 {loading ? (
@@ -457,6 +523,7 @@ const Stats: React.FC = () => {
                                                                     onMouseEnter={() => day.date && !isFutureDay && handleDayHover(day)}
                                                                     onMouseLeave={() => handleDayHover(null)}
                                                                     onMouseMove={handleMouseMove}
+                                                                onClick={() => day.date && !isFutureDay && handleDayClick(day)}
                                                                     data-date={day.date}
                                                                 />
                                                             );
@@ -570,425 +637,108 @@ const Stats: React.FC = () => {
                             </>
                         )}
 
-                        {activeTab === 'periods' && extendedStats && (
+                        {activeTab === 'effort' && (
                             <div className="period-stats">
-                                <div className="stats-summary">
-                                    <div className="summary-card">
-                                        <h3>Yearly Summary</h3>
-                                        <div className="summary-metrics">
-                                            <div className="metric">
-                                                <span className="metric-label">Completion Rate:</span>
-                                                <span className="metric-value">{(extendedStats.yearly_stats.completion_rate * 100).toFixed(1)}%</span>
-                                            </div>
-                                            <div className="metric">
-                                                <span className="metric-label">Total Events:</span>
-                                                <span className="metric-value">{extendedStats.yearly_stats.total_events}</span>
-                                            </div>
-                                            <div className="metric">
-                                                <span className="metric-label">Days with Tasks:</span>
-                                                <span className="metric-value">{extendedStats.yearly_stats.days_with_tasks}</span>
-                                            </div>
-                                            <div className="metric">
-                                                <span className="metric-label">Days with No Tasks Complete:</span>
-                                                <span className="metric-value">{extendedStats.yearly_stats.days_with_no_tasks_complete}</span>
-                                            </div>
-                                        </div>
+                                <div className="summary-card">
+                                    <h3>Effort by Goal (All Time)</h3>
+                                    <div className="effort-controls">
+                                        <label htmlFor="effort-range" style={{ color: '#666', fontSize: '0.9rem' }}>
+                                            Range:
+                                        </label>
+                                        <select
+                                            id="effort-range"
+                                            className="effort-select"
+                                            value={effortRange}
+                                            onChange={(e) => setEffortRange(e.target.value as typeof effortRange)}
+                                        >
+                                            <option value="all">All time</option>
+                                            <option value="5y">5 years</option>
+                                            <option value="1y">1 year</option>
+                                            <option value="6m">6 months</option>
+                                            <option value="3m">3 months</option>
+                                            <option value="1m">1 month</option>
+                                            <option value="2w">2 weeks</option>
+                                        </select>
                                     </div>
-                                </div>
-
-                                <div className="period-charts">
-                                    <div className="period-chart">
-                                        <h3>Weekly Completion Rates</h3>
-                                        <div className="chart-container">
-                                            <svg viewBox="0 0 1000 300" className="bar-chart">
-                                                {/* Grid lines */}
-                                                {[0, 25, 50, 75, 100].map(percent => (
-                                                    <g key={percent}>
-                                                        <line
-                                                            x1="50"
-                                                            y1={250 - (percent * 2)}
-                                                            x2="950"
-                                                            y2={250 - (percent * 2)}
-                                                            stroke="#e0e0e0"
-                                                            strokeWidth="1"
-                                                        />
-                                                        <text
-                                                            x="35"
-                                                            y={255 - (percent * 2)}
-                                                            fill="#666"
-                                                            fontSize="12"
-                                                            textAnchor="end"
-                                                        >
-                                                            {percent}%
-                                                        </text>
-                                                    </g>
-                                                ))}
-
-                                                {/* Weekly bars */}
-                                                {extendedStats.weekly_stats.map((week, index) => {
-                                                    const barWidth = 900 / extendedStats.weekly_stats.length;
-                                                    const x = 50 + index * barWidth;
-                                                    const height = week.completion_rate * 200;
-                                                    const y = 250 - height;
-
-                                                    return (
-                                                        <g key={week.period}>
-                                                            <rect
-                                                                x={x + 2}
-                                                                y={y}
-                                                                width={barWidth - 4}
-                                                                height={height}
-                                                                fill="#2563eb"
-                                                                opacity={0.7}
-                                                            />
-                                                            {index % 4 === 0 && (
-                                                                <text
-                                                                    x={x + barWidth / 2}
-                                                                    y={280}
-                                                                    fill="#666"
-                                                                    fontSize="10"
-                                                                    textAnchor="middle"
-                                                                >
-                                                                    {week.period.split('-W')[1]}
-                                                                </text>
-                                                            )}
-                                                        </g>
-                                                    );
-                                                })}
-                                            </svg>
-                                        </div>
-                                    </div>
-
-                                    <div className="period-chart">
-                                        <h3>Monthly Completion Rates</h3>
-                                        <div className="chart-container">
-                                            <svg viewBox="0 0 1000 300" className="bar-chart">
-                                                {/* Grid lines */}
-                                                {[0, 25, 50, 75, 100].map(percent => (
-                                                    <g key={percent}>
-                                                        <line
-                                                            x1="50"
-                                                            y1={250 - (percent * 2)}
-                                                            x2="950"
-                                                            y2={250 - (percent * 2)}
-                                                            stroke="#e0e0e0"
-                                                            strokeWidth="1"
-                                                        />
-                                                        <text
-                                                            x="35"
-                                                            y={255 - (percent * 2)}
-                                                            fill="#666"
-                                                            fontSize="12"
-                                                            textAnchor="end"
-                                                        >
-                                                            {percent}%
-                                                        </text>
-                                                    </g>
-                                                ))}
-
-                                                {/* Monthly bars */}
-                                                {extendedStats.monthly_stats.map((month, index) => {
-                                                    const barWidth = 900 / extendedStats.monthly_stats.length;
-                                                    const x = 50 + index * barWidth;
-                                                    const height = month.completion_rate * 200;
-                                                    const y = 250 - height;
-
-                                                    return (
-                                                        <g key={month.period}>
-                                                            <rect
-                                                                x={x + 2}
-                                                                y={y}
-                                                                width={barWidth - 4}
-                                                                height={height}
-                                                                fill="#16a34a"
-                                                                opacity={0.7}
-                                                            />
-                                                            <text
-                                                                x={x + barWidth / 2}
-                                                                y={280}
-                                                                fill="#666"
-                                                                fontSize="10"
-                                                                textAnchor="middle"
-                                                            >
-                                                                {month.period.split('-')[1]}
-                                                            </text>
-                                                        </g>
-                                                    );
-                                                })}
-                                            </svg>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {activeTab === 'routines' && (
-                            <div className="routine-stats">
-                                <div className="routine-search">
-                                    <h3>Search Routines</h3>
-                                    <input
-                                        type="text"
-                                        placeholder="Search routines..."
-                                        value={routineSearchTerm}
-                                        onChange={(e) => setRoutineSearchTerm(e.target.value)}
-                                        className="search-input"
-                                    />
-
-                                    {routineSearchResults.length > 0 && (
-                                        <div className="search-results">
-                                            {routineSearchResults.map(routine => (
-                                                <div
-                                                    key={routine.id}
-                                                    className={`search-result ${selectedRoutineIds.includes(routine.id) ? 'selected' : ''}`}
-                                                    onClick={() => {
-                                                        setSelectedRoutineIds(prev =>
-                                                            prev.includes(routine.id)
-                                                                ? prev.filter(id => id !== routine.id)
-                                                                : [...prev, routine.id]
+                                    <div className="table-container">
+                                        <table className="effort-table">
+                                            <thead>
+                                                <tr>
+                                                    <th className="sticky">Goal</th>
+                                                    <th
+                                                        className="sortable sticky"
+                                                        onClick={() => handleEffortSort('total_duration_minutes')}
+                                                        title="Sort by time spent"
+                                                    >
+                                                        Time Spent {effortSortKey === 'total_duration_minutes' ? (effortSortDir === 'asc' ? '▲' : '▼') : ''}
+                                                    </th>
+                                                    <th
+                                                        className="sortable sticky"
+                                                        onClick={() => handleEffortSort('total_events')}
+                                                        title="Sort by completed events"
+                                                    >
+                                                        Completed Events {effortSortKey === 'total_events' ? (effortSortDir === 'asc' ? '▲' : '▼') : ''}
+                                                    </th>
+                                                    <th
+                                                        className="sortable sticky"
+                                                        onClick={() => handleEffortSort('weighted_completion_rate')}
+                                                        title="Sort by weighted completion"
+                                                    >
+                                                        Weighted Completion {effortSortKey === 'weighted_completion_rate' ? (effortSortDir === 'asc' ? '▲' : '▼') : ''}
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {sortedEffortStats && sortedEffortStats.length > 0 ? (
+                                                    sortedEffortStats.map((g) => {
+                                                        const pseudoGoal: Goal = {
+                                                            id: g.goal_id,
+                                                            name: g.goal_name,
+                                                            goal_type: g.goal_type as any,
+                                                        } as Goal;
+                                                        const goalStyle = getGoalStyle(pseudoGoal);
+                                                        return (
+                                                            <tr key={g.goal_id}>
+                                                                <td>
+                                                                    <div className="goal-cell">
+                                                                        <span
+                                                                            className="goal-type-badge"
+                                                                            style={{
+                                                                                backgroundColor: `${goalStyle.backgroundColor}20`,
+                                                                                color: goalStyle.backgroundColor
+                                                                            }}
+                                                                        >
+                                                                            {g.goal_name}
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                                <td>{formatMinutes(g.total_duration_minutes)}</td>
+                                                                <td>{g.total_events}</td>
+                                                                <td>{(g.weighted_completion_rate * 100).toFixed(1)}%</td>
+                                                            </tr>
                                                         );
-                                                    }}
-                                                >
-                                                    <div className="routine-name">{routine.name}</div>
-                                                    {routine.description && (
-                                                        <div className="routine-description">{routine.description}</div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {routineStats.length > 0 && (
-                                    <div className="routine-stats-display">
-                                        {routineStats.map(routine => (
-                                            <div key={routine.routine_id} className="routine-stat-card">
-                                                <div className="routine-header">
-                                                    <h4>{routine.routine_name}</h4>
-                                                    <div className="routine-metrics">
-                                                        <span>Completion Rate: {(routine.completion_rate * 100).toFixed(1)}%</span>
-                                                        <span>Events: {routine.completed_events}/{routine.total_events}</span>
-                                                    </div>
-                                                </div>
-
-                                                <div className="routine-chart">
-                                                    <svg viewBox="0 0 800 200" className="line-chart">
-                                                        {/* Grid lines */}
-                                                        {[0, 25, 50, 75, 100].map(percent => (
-                                                            <g key={percent}>
-                                                                <line
-                                                                    x1="50"
-                                                                    y1={150 - (percent * 1.2)}
-                                                                    x2="750"
-                                                                    y2={150 - (percent * 1.2)}
-                                                                    stroke="#e0e0e0"
-                                                                    strokeWidth="1"
-                                                                />
-                                                                <text
-                                                                    x="35"
-                                                                    y={155 - (percent * 1.2)}
-                                                                    fill="#666"
-                                                                    fontSize="10"
-                                                                    textAnchor="end"
-                                                                >
-                                                                    {percent}%
-                                                                </text>
-                                                            </g>
-                                                        ))}
-
-                                                        {/* Smoothed line */}
-                                                        {routine.smoothed_completion.length > 0 && (
-                                                            <path
-                                                                d={routine.smoothed_completion.map((point, index) => {
-                                                                    const x = 50 + (index / routine.smoothed_completion.length) * 700;
-                                                                    const y = 150 - (point.completion_rate * 120);
-                                                                    return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
-                                                                }).join(' ')}
-                                                                fill="none"
-                                                                stroke="#dc2626"
-                                                                strokeWidth="2"
-                                                            />
-                                                        )}
-                                                    </svg>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {activeTab === 'rescheduling' && reschedulingStats && (
-                            <div className="rescheduling-stats">
-                                <div className="rescheduling-summary">
-                                    <div className="summary-cards">
-                                        <div className="summary-card">
-                                            <h3>Total Reschedules</h3>
-                                            <div className="big-number">{reschedulingStats.total_reschedules}</div>
-                                        </div>
-                                        <div className="summary-card">
-                                            <h3>Average Move Distance</h3>
-                                            <div className="big-number">{reschedulingStats.avg_reschedule_distance_hours.toFixed(1)}h</div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="rescheduling-charts">
-                                    <div className="monthly-reschedules">
-                                        <h3>Monthly Reschedule Frequency</h3>
-                                        <div className="chart-container">
-                                            <svg viewBox="0 0 1000 300" className="bar-chart">
-                                                {/* Grid lines */}
-                                                {[0, 5, 10, 15, 20].map(count => (
-                                                    <g key={count}>
-                                                        <line
-                                                            x1="50"
-                                                            y1={250 - (count * 10)}
-                                                            x2="950"
-                                                            y2={250 - (count * 10)}
-                                                            stroke="#e0e0e0"
-                                                            strokeWidth="1"
-                                                        />
-                                                        <text
-                                                            x="35"
-                                                            y={255 - (count * 10)}
-                                                            fill="#666"
-                                                            fontSize="12"
-                                                            textAnchor="end"
-                                                        >
-                                                            {count}
-                                                        </text>
-                                                    </g>
-                                                ))}
-
-                                                {/* Monthly bars */}
-                                                {reschedulingStats.reschedule_frequency_by_month.map((month, index) => {
-                                                    const barWidth = 900 / reschedulingStats.reschedule_frequency_by_month.length;
-                                                    const x = 50 + index * barWidth;
-                                                    const height = month.reschedule_count * 10;
-                                                    const y = 250 - height;
-
-                                                    return (
-                                                        <g key={month.month}>
-                                                            <rect
-                                                                x={x + 2}
-                                                                y={y}
-                                                                width={barWidth - 4}
-                                                                height={height}
-                                                                fill="#dc2626"
-                                                                opacity={0.7}
-                                                            />
-                                                            <text
-                                                                x={x + barWidth / 2}
-                                                                y={280}
-                                                                fill="#666"
-                                                                fontSize="10"
-                                                                textAnchor="middle"
-                                                            >
-                                                                {month.month.split('-')[1]}
-                                                            </text>
-                                                        </g>
-                                                    );
-                                                })}
-                                            </svg>
-                                        </div>
-                                    </div>
-
-                                    <div className="most-rescheduled">
-                                        <h3>Most Rescheduled Events</h3>
-                                        <div className="rescheduled-list">
-                                            {reschedulingStats.most_rescheduled_events.map((event, index) => (
-                                                <div key={index} className="rescheduled-item">
-                                                    <span className="event-name">{event.event_name}</span>
-                                                    <span className="event-type">({event.parent_type})</span>
-                                                    <span className="reschedule-count">{event.reschedule_count} times</span>
-                                                </div>
-                                            ))}
-                                        </div>
+                                                    })
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan={4} style={{ color: '#666' }}>
+                                                            {effortStats === null ? 'Loading...' : 'No data'}
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {activeTab === 'analytics' && eventAnalytics && (
-                            <div className="analytics-stats">
-                                <div className="analytics-summary">
-                                    <div className="summary-cards">
-                                        <div className="summary-card">
-                                            <h3>Duration Stats</h3>
-                                            <div className="summary-metrics">
-                                                {eventAnalytics.duration_stats.map((stat, index) => (
-                                                    <div key={index} className="metric">
-                                                        <span className="metric-label">{stat.duration_range}:</span>
-                                                        <span className="metric-value">{(stat.completion_rate * 100).toFixed(1)}%</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="summary-card">
-                                            <h3>Priority Stats</h3>
-                                            <div className="summary-metrics">
-                                                {eventAnalytics.priority_stats.map((stat, index) => (
-                                                    <div key={index} className="metric">
-                                                        <span className="metric-label">{stat.priority}:</span>
-                                                        <span className="metric-value">{(stat.completion_rate * 100).toFixed(1)}%</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                        {false && activeTab === 'periods' && (null)}
 
-                                <div className="analytics-charts">
-                                    <div className="source-stats">
-                                        <h3>Source Breakdown</h3>
-                                        <div className="source-cards">
-                                            <div className="source-card">
-                                                <h4>Routine Events</h4>
-                                                <div className="source-metrics">
-                                                    <div className="metric">
-                                                        <span className="metric-label">Completion Rate:</span>
-                                                        <span className="metric-value">{(eventAnalytics.source_stats.routine_events.completion_rate * 100).toFixed(1)}%</span>
-                                                    </div>
-                                                    <div className="metric">
-                                                        <span className="metric-label">Total Events:</span>
-                                                        <span className="metric-value">{eventAnalytics.source_stats.routine_events.total_events}</span>
-                                                    </div>
-                                                    <div className="metric">
-                                                        <span className="metric-label">Completed Events:</span>
-                                                        <span className="metric-value">{eventAnalytics.source_stats.routine_events.completed_events}</span>
-                                                    </div>
-                                                    <div className="metric">
-                                                        <span className="metric-label">Average Priority Weight:</span>
-                                                        <span className="metric-value">{eventAnalytics.source_stats.routine_events.avg_priority_weight.toFixed(2)}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="source-card">
-                                                <h4>Task Events</h4>
-                                                <div className="source-metrics">
-                                                    <div className="metric">
-                                                        <span className="metric-label">Completion Rate:</span>
-                                                        <span className="metric-value">{(eventAnalytics.source_stats.task_events.completion_rate * 100).toFixed(1)}%</span>
-                                                    </div>
-                                                    <div className="metric">
-                                                        <span className="metric-label">Total Events:</span>
-                                                        <span className="metric-value">{eventAnalytics.source_stats.task_events.total_events}</span>
-                                                    </div>
-                                                    <div className="metric">
-                                                        <span className="metric-label">Completed Events:</span>
-                                                        <span className="metric-value">{eventAnalytics.source_stats.task_events.completed_events}</span>
-                                                    </div>
-                                                    <div className="metric">
-                                                        <span className="metric-label">Average Priority Weight:</span>
-                                                        <span className="metric-value">{eventAnalytics.source_stats.task_events.avg_priority_weight.toFixed(2)}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        {false && activeTab === 'routines' && (null)}
+
+                        {false && activeTab === 'rescheduling' && (null)}
+
+                        {false && activeTab === 'analytics' && (null)}
                     </>
                 )}
 

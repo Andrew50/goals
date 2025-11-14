@@ -104,6 +104,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/", get(handle_get_stats_data))
         .route("/extended", get(handle_get_extended_stats))
         .route("/analytics", get(handle_get_event_analytics))
+        .route("/effort", get(handle_get_effort_stats))
         .route("/routines/search", get(handle_search_routines))
         .route("/routines/stats", post(handle_get_routine_stats))
         .route("/rescheduling", get(handle_get_rescheduling_stats))
@@ -626,6 +627,15 @@ async fn handle_get_event_analytics(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").copied();
     stats::get_event_analytics(graph, user_id, year).await
+}
+
+async fn handle_get_effort_stats(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let range = params.get("range").cloned();
+    stats::get_effort_stats(graph, user_id, range).await
 }
 
 async fn handle_search_routines(
