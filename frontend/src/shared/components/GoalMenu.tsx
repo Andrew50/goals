@@ -1241,6 +1241,22 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             return;
         }
 
+        // 0) Date range validation: start date must not be after end date
+        try {
+            const startTs = state.goal.start_timestamp ? new Date(state.goal.start_timestamp).getTime() : null;
+            const endTs = state.goal.end_timestamp ? new Date(state.goal.end_timestamp).getTime() : null;
+            if (startTs !== null && endTs !== null && startTs > endTs) {
+                setState({
+                    ...state,
+                    error: 'Start date must be before or on the end date'
+                });
+                endAction();
+                return;
+            }
+        } catch (_) {
+            // If timestamps are malformed, other validations will surface errors.
+        }
+
         // New validations: priority and parent requirements
         // 1) Priority must be selected for all goal types
         if (!state.goal.priority) {
