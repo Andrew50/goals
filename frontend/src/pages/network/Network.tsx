@@ -1010,7 +1010,7 @@ const NetworkView: React.FC = () => {
     insights.roots.forEach((id) => ensure(id).add('root'));
     insights.leaves.forEach((id) => {
       const goalType = insights.idToGoal.get(id)?.goal_type;
-      if (goalType !== 'routine' && goalType !== 'event') {
+      if (goalType !== 'routine' && goalType !== 'event' && goalType !== 'task') {
         ensure(id).add('leaf');
       }
     });
