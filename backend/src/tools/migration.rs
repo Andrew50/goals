@@ -1269,3 +1269,18 @@ pub async fn verify_migration_integrity(graph: &Graph) -> Result<serde_json::Val
 
     Ok(serde_json::Value::Object(results))
 }
+
+// Remove all QUEUE relationships (no backwards compatibility)
+pub async fn remove_queue_relationships(graph: &Graph) -> Result<(), String> {
+    println!("Removing all QUEUE relationships...");
+    let q = "
+        MATCH ()-[r:QUEUE]->()
+        DELETE r
+    ";
+    graph
+        .run(query(q))
+        .await
+        .map_err(|e| format!("Failed to remove QUEUE relationships: {}", e))?;
+    println!("All QUEUE relationships removed.");
+    Ok(())
+}
