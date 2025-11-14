@@ -32,7 +32,7 @@ hyper-rustls = "0.25"
 # Temporarily comment out web-push due to dependency issues
 # web-push = "0.9"
 base64_013 = { package = "base64", version = "0.13" }
-base64ct = "1.7"
+base64ct = "1.6"
 web-push = "0.9"
 
 [[bin]]
