@@ -460,7 +460,6 @@ const Calendar: React.FC = () => {
       name: '',
       goal_type: 'task',
       description: '',
-      priority: 'medium',
       scheduled_timestamp: clickedDate,
       routine_time: clickedDate,
       duration: 60
@@ -832,8 +831,7 @@ const Calendar: React.FC = () => {
       ...({} as Goal),
       name: '',
       goal_type: 'task',
-      description: '',
-      priority: 'medium'
+      description: ''
     };
 
     openGoalMenu(tempGoal, 'create', () => {
