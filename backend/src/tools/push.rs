@@ -3,6 +3,10 @@ use chrono::Utc;
 use neo4rs::{Graph, Query};
 use serde::{Deserialize, Serialize};
 use std::env;
+use web_push::{
+    ContentEncoding, SubscriptionInfo as WpSubscriptionInfo, VapidSignatureBuilder, WebPushClient,
+    WebPushMessageBuilder,
+};
 /*
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PushSubscription {
@@ -288,16 +292,16 @@ pub async fn send_notification_to_user(
 #[derive(Debug)]
 struct SubscriptionInfo {
     endpoint: String,
-    _p256dh: String,
-    _auth: String,
+    p256dh: String,
+    auth: String,
 }
 
 impl SubscriptionInfo {
     fn new(endpoint: String, p256dh: String, auth: String) -> Self {
         Self {
             endpoint,
-            _p256dh: p256dh,
-            _auth: auth,
+            p256dh,
+            auth,
         }
     }
 }
@@ -339,34 +343,56 @@ async fn get_user_subscriptions(
 }
 
 // Helper function to send push notification
-// Note: This is a simplified implementation. In production, you should use the web-push crate
-// once the dependency issues are resolved. For now, we'll store subscriptions but won't
-// actually send push notifications.
 async fn send_push_notification(
     subscription: &SubscriptionInfo,
     payload: &[u8],
 ) -> Result<(), String> {
-    // For now, we'll just log the notification attempt
-    // In production, this should use the web-push crate to actually send notifications
+    // Ensure we have VAPID keys configured
+    let public_key =
+        env::var("VAPID_PUBLIC_KEY").map_err(|_| "VAPID_PUBLIC_KEY not configured".to_string())?;
+    let private_key = env::var("VAPID_PRIVATE_KEY")
+        .map_err(|_| "VAPID_PRIVATE_KEY not configured".to_string())?;
+    let subject = env::var("VAPID_SUBJECT").unwrap_or_else(|_| "mailto:admin@yourdomain.com".into());
 
-    println!(
-        "📤 [PUSH] Would send notification to endpoint: {}",
-        subscription.endpoint
-    );
-    println!("📦 [PUSH] Payload size: {} bytes", payload.len());
+    // Map to web-push subscription type
+    let wp_sub = WpSubscriptionInfo {
+        endpoint: subscription.endpoint.clone(),
+        keys: web_push::SubscriptionKeys {
+            p256dh: subscription.p256dh.clone(),
+            auth: subscription.auth.clone(),
+        },
+    };
 
-    // Check if we have VAPID keys configured
-    let has_vapid = env::var("VAPID_PRIVATE_KEY").is_ok() && env::var("VAPID_PUBLIC_KEY").is_ok();
+    // Build message
+    let client = WebPushClient::new().map_err(|e| format!("Client error: {e}"))?;
+    let mut msg_builder =
+        WebPushMessageBuilder::new(&wp_sub).map_err(|e| format!("Message build error: {e}"))?;
+    msg_builder.set_ttl(60);
+    msg_builder.set_payload(ContentEncoding::Aes128Gcm, payload);
 
-    if !has_vapid {
-        println!("⚠️ [PUSH] VAPID keys not configured - notifications disabled");
-        return Err("VAPID keys not configured".to_string());
-    }
+    // VAPID signature
+    let mut vapid_builder = VapidSignatureBuilder::from_base64(
+        &private_key,
+        base64_013::URL_SAFE_NO_PAD,
+        &wp_sub,
+    )
+        .map_err(|e| format!("VAPID init error: {e}"))?;
+    vapid_builder.add_claim("sub", subject);
+    let signature = vapid_builder
+        .build()
+        .map_err(|e| format!("VAPID build error: {e}"))?;
+    msg_builder.set_vapid_signature(signature);
 
-    // TODO: Implement actual push sending once web-push dependency is fixed
-    // For now, we simulate success to allow the rest of the system to work
+    // Send
+    client
+        .send(
+            msg_builder
+                .build()
+                .map_err(|e| format!("Build send message error: {e}"))?,
+        )
+        .await
+        .map_err(|e| format!("Send error: {e}"))?;
 
-    println!("✅ [PUSH] Notification queued (simulation mode)");
     Ok(())
 }
 

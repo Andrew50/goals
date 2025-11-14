@@ -52,6 +52,9 @@ services:
         build:
             context: ./frontend
             dockerfile: Dockerfile.prod
+            args:
+              REACT_APP_API_URL: ${REACT_APP_API_URL}
+              REACT_APP_VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
         expose:
           - "3030"
         restart: unless-stopped
