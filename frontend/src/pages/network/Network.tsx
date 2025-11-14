@@ -1,12 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DataSet, Network as VisNetwork } from 'vis-network/standalone';
 import {
-  Button
+  Button,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Typography,
+  List,
+  ListItem,
+  ListItemText
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
 import { NetworkEdge, Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
 import GoalMenu from '../../shared/components/GoalMenu';
@@ -44,6 +52,7 @@ const NetworkView: React.FC = () => {
   const [searchResults, setSearchResults] = useState<Array<{ item: Goal; score: number }>>([]);
   const lastFocusedIdRef = useRef<number | null>(null);
   const shouldAutoFocusRef = useRef<boolean>(false);
+  const [edgeItems, setEdgeItems] = useState<NetworkEdge[]>([]);
   const filteredSearchItems = useMemo(() => {
     return (searchItems || []).filter(g => g && g.goal_type !== 'event');
   }, [searchItems]);
@@ -148,6 +157,211 @@ const NetworkView: React.FC = () => {
     return { nodes: visited, edges: connectedEdges };
   };
 
+  // ---- Insights: compute structural issues and highlight sets ----
+  const findSccs = useCallback((nodeIdsArr: number[], childrenById: Map<number, Set<number>>) => {
+    const indexMap = new Map<number, number>();
+    const lowLinkMap = new Map<number, number>();
+    const onStack = new Set<number>();
+    const stack: number[] = [];
+    let index = 0;
+    const sccs: number[][] = [];
+    const nodeSet = new Set(nodeIdsArr);
+
+    const strongConnect = (v: number) => {
+      indexMap.set(v, index);
+      lowLinkMap.set(v, index);
+      index += 1;
+      stack.push(v);
+      onStack.add(v);
+
+      const neighbors = childrenById.get(v) || new Set<number>();
+      neighbors.forEach((w) => {
+        if (!nodeSet.has(w)) return;
+        if (!indexMap.has(w)) {
+          strongConnect(w);
+          lowLinkMap.set(v, Math.min(lowLinkMap.get(v)!, lowLinkMap.get(w)!));
+        } else if (onStack.has(w)) {
+          lowLinkMap.set(v, Math.min(lowLinkMap.get(v)!, indexMap.get(w)!));
+        }
+      });
+
+      if (lowLinkMap.get(v) === indexMap.get(v)) {
+        const component: number[] = [];
+        while (true) {
+          const w = stack.pop()!;
+          onStack.delete(w);
+          component.push(w);
+          if (w === v) break;
+        }
+        sccs.push(component);
+      }
+    };
+
+    nodeIdsArr.forEach((v) => {
+      if (!indexMap.has(v)) strongConnect(v);
+    });
+    return sccs;
+  }, []);
+
+  const findTriangles = useCallback((nodeSet: Set<number>, childrenById: Map<number, Set<number>>) => {
+    const triangles: Array<[number, number, number]> = [];
+    const seen = new Set<string>();
+    nodeSet.forEach((a) => {
+      const aChildren = childrenById.get(a);
+      if (!aChildren || aChildren.size === 0) return;
+      aChildren.forEach((b) => {
+        if (!nodeSet.has(b)) return;
+        const bChildren = childrenById.get(b);
+        if (!bChildren || bChildren.size === 0) return;
+        bChildren.forEach((c) => {
+          if (!nodeSet.has(c)) return;
+          if (aChildren.has(c)) {
+            const key = `${a}-${b}-${c}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              triangles.push([a, b, c]);
+            }
+          }
+        });
+      });
+    });
+    return triangles;
+  }, []);
+
+  const insights = useMemo(() => {
+    const idToGoal = new Map<number, Goal>();
+    const nodeIds: number[] = [];
+    (searchItems || []).forEach((g) => {
+      if (g && typeof g.id === 'number') {
+        idToGoal.set(g.id, g);
+        nodeIds.push(g.id);
+      }
+    });
+    const nodeSet = new Set(nodeIds);
+
+    const childrenById = new Map<number, Set<number>>();
+    const parentsById = new Map<number, Set<number>>();
+    nodeIds.forEach((id) => {
+      childrenById.set(id, new Set<number>());
+      parentsById.set(id, new Set<number>());
+    });
+    (edgeItems || []).forEach((e) => {
+      const from = (e as any).from as number;
+      const to = (e as any).to as number;
+      if (!nodeSet.has(from) || !nodeSet.has(to)) return;
+      childrenById.get(from)!.add(to);
+      parentsById.get(to)!.add(from);
+    });
+
+    const roots: number[] = nodeIds.filter((id) => (parentsById.get(id)?.size || 0) === 0);
+    const leaves: number[] = nodeIds.filter((id) => {
+      const g = idToGoal.get(id);
+      if (!g) return false;
+      if (g.goal_type === 'event') return false;
+      return (childrenById.get(id)?.size || 0) === 0;
+    });
+
+    const mutualPairs: Array<[number, number]> = [];
+    const seenPair = new Set<string>();
+    nodeIds.forEach((u) => {
+      const uChildren = childrenById.get(u);
+      if (!uChildren) return;
+      uChildren.forEach((v) => {
+        if (u === v) return;
+        const vChildren = childrenById.get(v);
+        if (vChildren && vChildren.has(u)) {
+          const a = Math.min(u, v);
+          const b = Math.max(u, v);
+          const key = `${a}-${b}`;
+          if (!seenPair.has(key)) {
+            seenPair.add(key);
+            mutualPairs.push([a, b]);
+          }
+        }
+      });
+    });
+
+    const sccs = findSccs(nodeIds, childrenById).filter((comp) => comp.length >= 3);
+    const triangles = findTriangles(nodeSet, childrenById);
+
+    const edgeId = (from: number, to: number) => `${from}-${to}`;
+    const withinEdges = (ids: number[]) => {
+      const s = new Set(ids);
+      const res = new Set<string>();
+      s.forEach((u) => {
+        const ch = childrenById.get(u);
+        if (!ch) return;
+        ch.forEach((v) => {
+          if (s.has(v)) res.add(edgeId(u, v));
+        });
+      });
+      return res;
+    };
+
+    const rootsNodes = new Set<number>(roots);
+    const rootsEdges = new Set<string>();
+
+    const leavesNodes = new Set<number>(leaves);
+    const leavesEdges = new Set<string>();
+
+    const mutualNodes = new Set<number>();
+    const mutualEdges = new Set<string>();
+    mutualPairs.forEach(([a, b]) => {
+      mutualNodes.add(a); mutualNodes.add(b);
+      mutualEdges.add(edgeId(a, b));
+      mutualEdges.add(edgeId(b, a));
+    });
+
+    const cycleNodes = new Set<number>();
+    const cycleEdges = new Set<string>();
+    sccs.forEach((comp) => {
+      comp.forEach((id) => cycleNodes.add(id));
+      withinEdges(comp).forEach((eid) => cycleEdges.add(eid));
+    });
+
+    const triangleNodes = new Set<number>();
+    const triangleEdges = new Set<string>();
+    triangles.forEach(([a, b, c]) => {
+      triangleNodes.add(a); triangleNodes.add(b); triangleNodes.add(c);
+      triangleEdges.add(edgeId(a, b));
+      triangleEdges.add(edgeId(b, c));
+      triangleEdges.add(edgeId(a, c));
+    });
+
+    return {
+      idToGoal,
+      roots,
+      leaves,
+      mutualPairs,
+      sccs,
+      triangles,
+      highlightSets: {
+        roots: { nodes: rootsNodes, edges: rootsEdges },
+        leaves: { nodes: leavesNodes, edges: leavesEdges },
+        mutual: { nodes: mutualNodes, edges: mutualEdges },
+        cycles: { nodes: cycleNodes, edges: cycleEdges },
+        triangles: { nodes: triangleNodes, edges: triangleEdges }
+      }
+    };
+  }, [searchItems, edgeItems, findSccs, findTriangles]);
+
+  // Apply highlights for all issue types (always active)
+  useEffect(() => {
+    const network: any = networkRef.current as any;
+    if (!network || !network.body) return;
+    const nodes = new Set<number>();
+    const edges = new Set<string>();
+    try {
+      Object.values(insights.highlightSets).forEach((s) => {
+        s.nodes.forEach((n) => nodes.add(n));
+        s.edges.forEach((e) => edges.add(e));
+      });
+      network.setSelection({ nodes: Array.from(nodes), edges: Array.from(edges) });
+    } catch (e) {
+      debug('applyHighlights selection failed', e);
+    }
+  }, [insights]);
+
   // Helper function to refresh edges for a specific node
   const refreshEdgesForNode = useCallback(async (nodeId: number) => {
     if (!edgesDataSetRef.current) return;
@@ -193,6 +407,31 @@ const NetworkView: React.FC = () => {
       // console.error('Failed to refresh edges for node:', nodeId, error);
       debug('Failed to refresh edges for node', { nodeId, error });
     }
+  }, []);
+
+  const wireEdgeItems = useCallback(() => {
+    if (!edgesDataSetRef.current) return undefined as unknown as () => void;
+    const ds: any = edgesDataSetRef.current as any;
+    const refresh = () => {
+      try {
+        setEdgeItems((ds.get() || []) as NetworkEdge[]);
+      } catch {
+        setEdgeItems([]);
+      }
+    };
+    refresh();
+    ds.on('add', refresh);
+    ds.on('update', refresh);
+    ds.on('remove', refresh);
+    return () => {
+      try {
+        ds.off('add', refresh);
+        ds.off('update', refresh);
+        ds.off('remove', refresh);
+      } catch {
+        // ignore
+      }
+    };
   }, []);
 
   // (handleClick moved below refreshFullNetwork)
@@ -390,6 +629,7 @@ const NetworkView: React.FC = () => {
   // Initialize the network once on mount
   useEffect(() => {
     let cleanupSearchItems: (() => void) | undefined;
+    let cleanupEdgeItems: (() => void) | undefined;
     const initializeNetwork = async () => {
       try {
         // Fetch initial data (nodes should be ApiGoal compatible)
@@ -405,6 +645,7 @@ const NetworkView: React.FC = () => {
         nodesDataSetRef.current = new DataSet(formattedData.nodes);
         edgesDataSetRef.current = new DataSet(formattedData.edges);
         cleanupSearchItems = wireSearchItems();
+        cleanupEdgeItems = wireEdgeItems();
 
         // Create the network instance - always create it even with empty data
         if (networkContainer.current) {
@@ -475,6 +716,7 @@ const NetworkView: React.FC = () => {
           nodesDataSetRef.current = new DataSet([]);
           edgesDataSetRef.current = new DataSet([]);
           cleanupSearchItems = wireSearchItems();
+          cleanupEdgeItems = wireEdgeItems();
           networkRef.current = new VisNetwork(
             networkContainer.current,
             { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
@@ -509,8 +751,11 @@ const NetworkView: React.FC = () => {
       if (cleanupSearchItems) {
         try { cleanupSearchItems(); } catch {}
       }
+      if (cleanupEdgeItems) {
+        try { cleanupEdgeItems(); } catch {}
+      }
     };
-  }, [options, handleClick, wireSearchItems]);
+  }, [options, handleClick, wireSearchItems, wireEdgeItems]);
 
   // Listen for relationship changes from other components (e.g., GoalMenu)
   useEffect(() => {
@@ -737,6 +982,64 @@ const NetworkView: React.FC = () => {
     }
   };
 
+  const collectEdgesForNodes = useCallback((ids: number[]) => {
+    const s = new Set(ids);
+    const result = new Set<string>();
+    (edgeItems || []).forEach((e) => {
+      const from = (e as any).from as number;
+      const to = (e as any).to as number;
+      if (s.has(from) && s.has(to)) {
+        result.add(`${from}-${to}`);
+      }
+    });
+    return Array.from(result);
+  }, [edgeItems]);
+
+  const issueRows = useMemo(() => {
+    type IssueType = 'root' | 'leaf' | 'pair' | 'cycle' | 'triangle';
+    const typeOrder: IssueType[] = ['root', 'leaf', 'pair', 'cycle', 'triangle'];
+    const nodeToTypes = new Map<number, Set<IssueType>>();
+
+    const ensure = (id: number) => {
+      if (!nodeToTypes.has(id)) nodeToTypes.set(id, new Set<IssueType>());
+      return nodeToTypes.get(id)!;
+    };
+
+    // Roots and leaves
+    insights.roots.forEach((id) => ensure(id).add('root'));
+    insights.leaves.forEach((id) => ensure(id).add('leaf'));
+
+    // Mutual pairs
+    insights.mutualPairs.forEach(([a, b]) => {
+      ensure(a).add('pair');
+      ensure(b).add('pair');
+    });
+
+    // Cycles (SCCs ≥ 3)
+    insights.sccs.forEach((comp) => {
+      comp.forEach((id) => ensure(id).add('cycle'));
+    });
+
+    // Triangles
+    insights.triangles.forEach(([a, b, c]) => {
+      ensure(a).add('triangle');
+      ensure(b).add('triangle');
+      ensure(c).add('triangle');
+    });
+
+    // Build sorted rows
+    const rows = Array.from(nodeToTypes.entries())
+      .map(([id, types]) => ({
+        key: `issue-node-${id}`,
+        id,
+        name: insights.idToGoal.get(id)?.name || `Goal ${id}`,
+        types: typeOrder.filter((t) => types.has(t))
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return rows;
+  }, [insights]);
+
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
       <div ref={networkContainer} style={{ height: '100%', width: '100%', outline: 'none' }} tabIndex={-1} />
@@ -837,6 +1140,79 @@ const NetworkView: React.FC = () => {
             </div>
           </div>
         )}
+
+        <div style={{ marginTop: '0.5rem' }}>
+          <Accordion disableGutters>
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              sx={{
+                minHeight: 'auto',
+                px: '0.75rem',
+                py: '0.5rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                background: '#ffffff',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                '& .MuiAccordionSummary-content': {
+                  margin: 0,
+                  alignItems: 'center'
+                }
+              }}
+            >
+              <Typography variant="body2" style={{ fontSize: '0.95rem' }}>Suggestions</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <div style={{ display: 'grid', gap: '8px' }}>
+                <List dense style={{ maxHeight: 288, overflowY: 'auto' }}>
+                  {issueRows.map((row) => (
+                    <ListItem
+                      key={row.key}
+                      button
+                      onClick={() => {
+                        const network: any = networkRef.current as any;
+                        if (!network || !network.body) { focusNode(row.id); return; }
+                        try { network.setSelection({ nodes: [row.id], edges: [] }); network.fit({ nodes: [row.id], animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); } catch (e) { debug('issue focus failed', e); }
+                      }}
+                    >
+                      <ListItemText primary={row.name} />
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {row.types.map((t) => (
+                          <div
+                            key={`${row.key}-${t}`}
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              fontSize: '11px',
+                              lineHeight: 1.5,
+                              background: t === 'root' ? '#e3f2fd'
+                                : t === 'leaf' ? '#e8f5e9'
+                                : t === 'pair' ? '#fff3e0'
+                                : t === 'cycle' ? '#ffebee'
+                                : '#ede7f6',
+                              color: t === 'root' ? '#0d47a1'
+                                : t === 'leaf' ? '#1b5e20'
+                                : t === 'pair' ? '#e65100'
+                                : t === 'cycle' ? '#b71c1c'
+                                : '#4a148c',
+                              flex: '0 0 auto'
+                            }}
+                            aria-label={`${t} tag`}
+                          >
+                            {t === 'root' ? 'No Parents'
+                              : t === 'leaf' ? 'No Children'
+                              : t === 'pair' ? 'Mutual'
+                              : t === 'cycle' ? 'Cycle'
+                              : 'Triangle'}
+                          </div>
+                        ))}
+                      </div>
+                    </ListItem>
+                  ))}
+                </List>
+              </div>
+            </AccordionDetails>
+          </Accordion>
+        </div>
       </div>
 
       <Button
