@@ -297,23 +297,21 @@ export async function buildHierarchy(
             ...edge,
             id: `${edge.from}-${edge.to}`,
             width,
-            color: edge.relationship_type === 'queue'
-                ? { color: '#ff9800', opacity: Math.min(0.4 + importance * 0.1, 0.9) }
-                : (parentColor
-                    ? { color: parentColor, opacity: Math.min(0.4 + importance * 0.1, 0.9) }
-                    : undefined),
+            color: (parentColor
+                ? { color: parentColor, opacity: Math.min(0.4 + importance * 0.1, 0.9) }
+                : undefined),
             arrows: {
                 to: {
                     enabled: true,
                     scaleFactor: arrowScale,
-                    type: edge.relationship_type === 'queue' ? 'vee' : 'arrow',
+                    type: 'arrow',
                 },
             },
-            dashes: edge.relationship_type === 'queue',
+            dashes: false,
             smooth: {
                 enabled: true,
                 type: 'curvedCW',
-                roundness: edge.relationship_type === 'queue' ? 0.3 : 0.2,
+                roundness: 0.2,
                 forceDirection: 'radial',
             },
         } as any;

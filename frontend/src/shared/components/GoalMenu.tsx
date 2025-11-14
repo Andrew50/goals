@@ -76,7 +76,7 @@ interface GoalMenuProps {
     onSuccess: (goal: Goal) => void;
     submitOverride?: (updatedGoal: Goal, originalGoal: Goal, mode: Mode) => Promise<void>;
     defaultSelectedParents?: Goal[];
-    defaultRelationshipType?: 'child' | 'queue';
+    defaultRelationshipType?: 'child';
     autoCreateEventTimestamp?: Date | null;
 }
 
@@ -189,7 +189,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [allGoals, setAllGoals] = useState<Goal[]>([]);
     const [selectedParents, setSelectedParents] = useState<Goal[]>(defaultSelectedParents || []);
     const [parentSearchQuery, setParentSearchQuery] = useState('');
-    const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>(defaultRelationshipType || 'child');
+    const [relationshipType, setRelationshipType] = useState<'child'>(defaultRelationshipType || 'child');
     const [selectedChildren, setSelectedChildren] = useState<Goal[]>([]);
     const [childSearchQuery, setChildSearchQuery] = useState('');
 
@@ -702,10 +702,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             goalCopy.start_timestamp = goalCopy.scheduled_timestamp || new Date();
         }
 
-        //queue relationships can only between achievements, default to achievement and force achievemnt in ui
-        if (selectedParents.length > 0 && relationshipType === 'queue') {
-            goalCopy.goal_type = 'achievement';
-        }
+        // Removed queue-specific defaults
 
         // Set default routine_type if goal type is 'routine' and routine_type is undefined
         if (goalCopy.goal_type === 'routine' && goalCopy.routine_type === undefined) {
@@ -961,8 +958,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     }, [allGoals]);
 
     // Helper function to infer default goal type for new parent goals
-    const inferParentType = useCallback((child: Goal, relationshipType: 'child' | 'queue'): GoalType => {
-        if (relationshipType === 'queue') return 'achievement';
+    const inferParentType = useCallback((child: Goal, relationshipType: 'child'): GoalType => {
         if (child.goal_type === 'event') return 'task';     // routine also allowed—user can change later
         return 'project';                                    // sensible general default
     }, []);
@@ -992,11 +988,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             // Special handling for events - only tasks and routines can be parents
             if (state.goal.goal_type === 'event') {
                 return g.goal_type === 'task' || g.goal_type === 'routine';
-            }
-
-            // Special handling for queue relationships - only achievements can be in queues
-            if (relationshipType === 'queue') {
-                return g.goal_type === 'achievement';
             }
 
             // For non-events, validate the relationship
@@ -1404,26 +1395,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // Validate parent relationship if selected
         if (selectedParents.length > 0 && (state.mode === 'create' || state.mode === 'edit') && state.goal.goal_type !== 'event') {
-            // Special validation for queue relationships
-            if (relationshipType === 'queue') {
-                if (selectedParents.some(parent => parent.goal_type !== 'achievement')) {
-                    setState({
-                        ...state,
-                        error: 'Queue relationships can only be created from achievements'
-                    });
-                    endAction();
-                    return;
-                }
-                if (state.goal.goal_type !== 'achievement') {
-                    setState({
-                        ...state,
-                        error: 'Queue relationships can only be created to achievements'
-                    });
-                    endAction();
-                    return;
-                }
-            }
-
             // Check each parent for validation errors
             for (const parent of selectedParents) {
                 const relationshipError = validateRelationship(parent, state.goal, relationshipType);
@@ -1852,18 +1823,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }, 100);
     };
 
-    const handleCreateQueue = () => {
-        const previousGoal = state.goal;
-        const newGoal: Goal = { goal_type: 'achievement' } as Goal;
-
-        close();
-        setTimeout(() => {
-            GoalMenuWithStatic.open(newGoal, 'create', onSuccess, {
-                defaultSelectedParents: [previousGoal],
-                defaultRelationshipType: 'queue'
-            });
-        }, 100);
-    };
+    // Removed queue creation flow
 
     const handleDuplicate = async () => {
         if (!state.goal.id) return;
@@ -2512,22 +2472,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         label={
                             state.goal.goal_type === 'event'
                                 ? "Parent Goal (Required)"
-                                : relationshipType === 'queue'
-                                    ? "Previous Goals in Queue (Required)"
-                                    : (state.goal.goal_type !== 'directive'
-                                        ? "Parent Goals (Required)"
-                                        : "Parent Goals (Optional)")
+                                : (state.goal.goal_type !== 'directive'
+                                    ? "Parent Goals (Required)"
+                                    : "Parent Goals (Optional)")
                         }
                         placeholder="Search for parent goals..."
                         helperText={
                             state.goal.goal_type === 'event'
                                 ? "Events must be associated with one task or routine"
-                                : relationshipType === 'queue'
-                                    ? "Select the achievements that should come before these ones"
-                                    : "Select parent goals to create relationships"
+                                : "Select parent goals to create relationships"
                         }
-                        required={state.goal.goal_type === 'event' || relationshipType === 'queue' || state.goal.goal_type !== 'directive'}
-                        error={(state.goal.goal_type === 'event' || relationshipType === 'queue' || state.goal.goal_type !== 'directive') && selectedParents.length === 0}
+                        required={state.goal.goal_type === 'event' || state.goal.goal_type !== 'directive'}
+                        error={(state.goal.goal_type === 'event' || state.goal.goal_type !== 'directive') && selectedParents.length === 0}
                     />
                 )}
                 fullWidth
@@ -3467,9 +3423,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             {state.goal.goal_type !== 'event' && (
                                 <>
                                     <Button onClick={handleCreateChild} color="secondary" disabled={isBusy}>Create Child</Button>
-                                    {state.goal.goal_type === 'achievement' && (
-                                        <Button onClick={handleCreateQueue} color="secondary" disabled={isBusy}>Create Queue</Button>
-                                    )}
                                     <Button onClick={handleEdit} color="primary" disabled={isBusy}>Edit</Button>
                                     <Button onClick={handleDuplicate} color="secondary" disabled={isBusy}>
                                         {pendingAction === 'duplicate' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
@@ -3679,7 +3632,7 @@ interface GoalMenuComponent extends React.FC<GoalMenuProps> {
         goal: Goal,
         initialMode: Mode,
         onSuccess?: (goal: Goal) => void,
-        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child'; autoCreateEventTimestamp?: Date | null }
     ) => void;
     close: () => void;
     openWithSubmitOverride: (
@@ -3687,14 +3640,14 @@ interface GoalMenuComponent extends React.FC<GoalMenuProps> {
         initialMode: Mode,
         submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>,
         onSuccess?: (goal: Goal) => void,
-        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child'; autoCreateEventTimestamp?: Date | null }
     ) => void;
 }
 
 const GoalMenuBase = GoalMenu;
 const GoalMenuWithStatic = GoalMenuBase as GoalMenuComponent;
 
-GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }) => {
+GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child'; autoCreateEventTimestamp?: Date | null }) => {
     console.log('[GoalMenu.open] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -3738,7 +3691,7 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
     console.log('[GoalMenu.open] Goal menu rendered');
 };
 
-GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }) => {
+GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child'; autoCreateEventTimestamp?: Date | null }) => {
     console.log('[GoalMenu.openWithSubmitOverride] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');

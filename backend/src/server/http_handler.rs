@@ -112,6 +112,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     // Add migration route (should be protected or removed after migration)
     let migration_routes = Router::new()
         .route("/migrate-to-events", post(handle_migrate_to_events))
+        .route("/remove-queues", post(handle_remove_queues))
         .route("/run", post(handle_run_migration))
         .route("/verify", get(handle_verify_migration));
 
@@ -682,6 +683,15 @@ async fn handle_migrate_to_events(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     match migration::migrate_to_events(&graph).await {
         Ok(_) => Ok((StatusCode::OK, "Migration completed successfully")),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+    }
+}
+
+async fn handle_remove_queues(
+    Extension(graph): Extension<Graph>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match migration::remove_queue_relationships(&graph).await {
+        Ok(_) => Ok((StatusCode::OK, "Removed all QUEUE relationships")),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DataSet, Network as VisNetwork } from 'vis-network/standalone';
 import {
-  Button, Dialog, DialogTitle, DialogContent, DialogActions,
-  Select, MenuItem, FormControl, InputLabel
+  Button
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
@@ -97,10 +96,9 @@ const NetworkView: React.FC = () => {
       addEdge: async function (data: any, callback: Function) {
         try {
           debug('manipulation.addEdge invoked', data);
-          setPendingRelationship({ from: data.from, to: data.to });
-          setDialogMode('relationship');
-          debug('Opened relationship dialog', { from: data.from, to: data.to });
-          // Prevent vis from adding a temporary edge; we'll add after confirmation
+          // Immediately create a child relationship and skip the menu
+          await handleCreateRelationship(data.from, data.to, 'child');
+          // Prevent vis from adding a temporary edge; we'll manage via dataset updates
           callback(null);
         } catch (err) {
           // console.error('Edge creation error:', err);
@@ -661,7 +659,7 @@ const NetworkView: React.FC = () => {
       const newEdge: NetworkEdge = {
         from: fromId,
         to: toId,
-        relationship_type: relationshipType as 'child' | 'queue',
+        relationship_type: relationshipType,
         id: `${fromId}-${toId}`
       };
       edgesDataSetRef.current?.add(newEdge);
@@ -926,72 +924,6 @@ const NetworkView: React.FC = () => {
         <RefreshIcon style={{ fontSize: '20px', color: '#666666' }} />
       </Button>
 
-      <Dialog
-        open={dialogMode === 'relationship'}
-        onClose={() => {
-          setDialogMode(null);
-          setPendingRelationship(null);
-        }}
-      >
-        <DialogTitle>Select Relationship Type</DialogTitle>
-        <DialogContent>
-          <FormControl fullWidth margin="dense">
-            <InputLabel>Relationship Type</InputLabel>
-            <Select
-              value={'child'} // You can bind this to local state if you wish to support changes
-              onChange={(e) => {
-                // Update relationship type if needed
-              }}
-            >
-              <MenuItem value="child">Child</MenuItem>
-              <MenuItem
-                value="queue"
-                disabled={
-                  pendingRelationship && nodesDataSetRef.current
-                    ? (() => {
-                      const fromNode = nodesDataSetRef.current.get(pendingRelationship.from);
-                      const toNode = nodesDataSetRef.current.get(pendingRelationship.to);
-                      return fromNode?.goal_type !== 'achievement' || toNode?.goal_type !== 'task';
-                    })()
-                    : false
-                }
-              >
-                Queue
-              </MenuItem>
-            </Select>
-          </FormControl>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setDialogMode(null);
-            setPendingRelationship(null);
-          debug('Relationship dialog cancelled');
-            setTimeout(() => {
-              if (networkRef.current) {
-                networkRef.current.addEdgeMode();
-                debug('Re-enabled Vis addEdgeMode after cancel');
-              }
-            }, 100);
-          }}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              if (pendingRelationship) {
-              debug('Relationship dialog Create clicked', pendingRelationship);
-                handleCreateRelationship(
-                  pendingRelationship.from,
-                  pendingRelationship.to,
-                  'child' // or use a dynamic value if desired
-                );
-              }
-            }}
-            color="primary"
-          >
-            Create
-          </Button>
-        </DialogActions>
-      </Dialog>
     </div>
   );
 };
