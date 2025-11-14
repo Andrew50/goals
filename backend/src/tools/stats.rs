@@ -332,9 +332,20 @@ pub async fn get_effort_stats(
              // duration only for completed past events
              [p IN epairs WHERE COALESCE(p.e.completed,false) |
                 CASE
-                  WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
-                      THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
-                  ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                  WHEN (
+                    CASE
+                      WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
+                        THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
+                      ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                    END
+                  ) >= 1440.0
+                    THEN 0.0
+                  ELSE
+                    CASE
+                      WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
+                        THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
+                      ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                    END
                 END
              ] AS durations_completed,
              // flags for counting completed past events
@@ -379,9 +390,20 @@ pub async fn get_effort_stats(
              END] AS completed_weights,
              [p IN epairs WHERE COALESCE(p.e.completed,false) |
                 CASE
-                  WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
-                      THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
-                  ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                  WHEN (
+                    CASE
+                      WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
+                        THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
+                      ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                    END
+                  ) >= 1440.0
+                    THEN 0.0
+                  ELSE
+                    CASE
+                      WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
+                        THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
+                      ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                    END
                 END
              ] AS durations_completed,
              [p IN epairs WHERE COALESCE(p.e.completed,false) | 1] AS completed_flags

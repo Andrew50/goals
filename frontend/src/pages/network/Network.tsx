@@ -29,6 +29,7 @@ import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 import { SearchBar } from '../../shared/components/SearchBar';
 import { getGoalStyle } from '../../shared/styles/colors';
+import '../../shared/styles/badges.css';
 
 // Node formatting moved to shared util
 
@@ -1007,7 +1008,12 @@ const NetworkView: React.FC = () => {
 
     // Roots and leaves
     insights.roots.forEach((id) => ensure(id).add('root'));
-    insights.leaves.forEach((id) => ensure(id).add('leaf'));
+    insights.leaves.forEach((id) => {
+      const goalType = insights.idToGoal.get(id)?.goal_type;
+      if (goalType !== 'routine' && goalType !== 'event') {
+        ensure(id).add('leaf');
+      }
+    });
 
     // Mutual pairs
     insights.mutualPairs.forEach(([a, b]) => {
@@ -1127,9 +1133,20 @@ const NetworkView: React.FC = () => {
                       }}
                     />
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span
+                        className="goal-type-badge"
+                        style={{
+                          backgroundColor: `${backgroundColor}20`,
+                          color: backgroundColor,
+                          display: 'inline-block',
+                          maxWidth: '100%',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
                         {g.name}
-                      </div>
+                      </span>
                       <div style={{ opacity: 0.9, fontSize: '12px', lineHeight: 1.2, marginTop: '2px' }}>
                         {g.goal_type}
                       </div>
@@ -1174,37 +1191,58 @@ const NetworkView: React.FC = () => {
                         try { network.setSelection({ nodes: [row.id], edges: [] }); network.fit({ nodes: [row.id], animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); } catch (e) { debug('issue focus failed', e); }
                       }}
                     >
-                      <ListItemText primary={row.name} />
-                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                        {row.types.map((t) => (
-                          <div
-                            key={`${row.key}-${t}`}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                          <span
+                            className="goal-type-badge"
                             style={{
+                              display: 'inline-block',
                               padding: '2px 8px',
                               borderRadius: '999px',
-                              fontSize: '11px',
-                              lineHeight: 1.5,
-                              background: t === 'root' ? '#e3f2fd'
-                                : t === 'leaf' ? '#e8f5e9'
-                                : t === 'pair' ? '#fff3e0'
-                                : t === 'cycle' ? '#ffebee'
-                                : '#ede7f6',
-                              color: t === 'root' ? '#0d47a1'
-                                : t === 'leaf' ? '#1b5e20'
-                                : t === 'pair' ? '#e65100'
-                                : t === 'cycle' ? '#b71c1c'
-                                : '#4a148c',
-                              flex: '0 0 auto'
+                              backgroundColor: `${((insights.idToGoal.get(row.id) && getGoalStyle(insights.idToGoal.get(row.id) as Goal).backgroundColor) || '#666666')}20`,
+                              color: (insights.idToGoal.get(row.id) && getGoalStyle(insights.idToGoal.get(row.id) as Goal).backgroundColor) || '#666666',
+                              fontWeight: 600,
+                              maxWidth: '100%',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
                             }}
-                            aria-label={`${t} tag`}
+                            title={row.name}
                           >
-                            {t === 'root' ? 'No Parents'
-                              : t === 'leaf' ? 'No Children'
-                              : t === 'pair' ? 'Mutual'
-                              : t === 'cycle' ? 'Cycle'
-                              : 'Triangle'}
-                          </div>
-                        ))}
+                            {row.name}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                          {row.types.map((t) => (
+                            <div
+                              key={`${row.key}-${t}`}
+                              style={{
+                                padding: '2px 8px',
+                                borderRadius: '999px',
+                                fontSize: '11px',
+                                lineHeight: 1.5,
+                                background: t === 'root' ? '#e3f2fd'
+                                  : t === 'leaf' ? '#e8f5e9'
+                                  : t === 'pair' ? '#fff3e0'
+                                  : t === 'cycle' ? '#ffebee'
+                                  : '#ede7f6',
+                                color: t === 'root' ? '#0d47a1'
+                                  : t === 'leaf' ? '#1b5e20'
+                                  : t === 'pair' ? '#e65100'
+                                  : t === 'cycle' ? '#b71c1c'
+                                  : '#4a148c',
+                                flex: '0 0 auto'
+                              }}
+                              aria-label={`${t} tag`}
+                            >
+                              {t === 'root' ? 'No Parents'
+                                : t === 'leaf' ? 'No Children'
+                                : t === 'pair' ? 'Mutual'
+                                : t === 'cycle' ? 'Cycle'
+                                : 'Triangle'}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </ListItem>
                   ))}
