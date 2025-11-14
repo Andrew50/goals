@@ -21,15 +21,25 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
         let name = row
             .get::<String>("name")
             .map_err(|_| neo4rs::Error::ConversionError)?;
-        let _goal_type = row
+        let goal_type_str = row
             .get::<String>("goal_type")
             .map_err(|_| neo4rs::Error::ConversionError)?;
+
+        let goal_type = match goal_type_str.as_str() {
+            "directive" => GoalType::Directive,
+            "project" => GoalType::Project,
+            "achievement" => GoalType::Achievement,
+            "routine" => GoalType::Routine,
+            "task" => GoalType::Task,
+            "event" => GoalType::Event,
+            _ => GoalType::Directive,
+        };
 
         hierarchy.push(Goal {
             id: Some(id),
             name,
             description: None,
-            goal_type: GoalType::Directive,
+            goal_type,
             user_id: None,
             priority: None,
             start_timestamp: None,

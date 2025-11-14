@@ -38,7 +38,8 @@ import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
-    timestampToDisplayString
+    timestampToDisplayString,
+    deriveRoutineFieldsFromTaskSchedule
 } from '../utils/time';
 import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
@@ -55,6 +56,9 @@ type Mode = 'create' | 'edit' | 'view';
 
 // Constants for create-new functionality
 const CREATE_NEW_SENTINEL_ID = -1;
+
+// Pending action types for in-flight UI lock
+type PendingAction = 'save' | 'create' | 'delete' | 'duplicate';
 
 interface CreateNewPlaceholder {
     id: number;
@@ -73,6 +77,7 @@ interface GoalMenuProps {
     submitOverride?: (updatedGoal: Goal, originalGoal: Goal, mode: Mode) => Promise<void>;
     defaultSelectedParents?: Goal[];
     defaultRelationshipType?: 'child' | 'queue';
+    autoCreateEventTimestamp?: Date | null;
 }
 
 // Stats interfaces
@@ -116,7 +121,7 @@ interface RoutineRecomputeDialogState {
     onConfirm: () => Promise<void>;
 }
 
-const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType }) => {
+const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType, autoCreateEventTimestamp }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
@@ -151,6 +156,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             goalCopy.routine_time = goalCopy.scheduled_timestamp || new Date();
         }
 
+        // Default frequency for new routines
+        if (initialMode === 'create' && goalCopy.goal_type === 'routine' && !goalCopy.frequency) {
+            goalCopy.frequency = '1D';
+        }
+
         // Provide a reasonable default duration for time-based items
         if (
             initialMode === 'create' &&
@@ -180,6 +190,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [selectedParents, setSelectedParents] = useState<Goal[]>(defaultSelectedParents || []);
     const [parentSearchQuery, setParentSearchQuery] = useState('');
     const [relationshipType, setRelationshipType] = useState<'child' | 'queue'>(defaultRelationshipType || 'child');
+    const [selectedChildren, setSelectedChildren] = useState<Goal[]>([]);
+    const [childSearchQuery, setChildSearchQuery] = useState('');
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -242,7 +254,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         const ro = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const h = entry.contentRect.height;
-                const prev = prevStatsHeightRef.current;
                 prevStatsHeightRef.current = h;
                 //console.log('[GoalMenu][Stats] resize observer:', {
                 //    height: h,
@@ -259,6 +270,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Local string states for duration inputs to allow temporary empty values and smooth editing
     const [durationHoursInput, setDurationHoursInput] = useState<string>('');
     const [durationMinutesInput, setDurationMinutesInput] = useState<string>('');
+    const [hoursTouched, setHoursTouched] = useState<boolean>(false);
+    const [minutesTouched, setMinutesTouched] = useState<boolean>(false);
 
     // Local string states for each task event's hours/minutes
     const [taskEventInputs, setTaskEventInputs] = useState<Array<{ hours: string; minutes: string }>>([]);
@@ -293,6 +306,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         eventName: '',
         selectedScope: 'single'
     });
+
+    // In-flight action lock to prevent duplicate submissions
+    const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+    const pendingRef = useRef<PendingAction | null>(null);
+    useEffect(() => { pendingRef.current = pendingAction; }, [pendingAction]);
+    const beginAction = useCallback((name: PendingAction): boolean => {
+        if (pendingRef.current) return false;
+        setPendingAction(name);
+        return true;
+    }, []);
+    const endAction = useCallback(() => setPendingAction(null), []);
+    const isBusy = pendingAction !== null;
 
     // Robust detection: is the current goal an event that belongs to a routine?
     const isRoutineParentEvent = useMemo(() => {
@@ -547,42 +572,41 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         } finally {
             const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
             const start = statsLoadStartRef.current || end;
-            const durationMs = Math.max(0, end - start);
             //console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
             setStatsLoading(false);
         }
     }, [state.mode, taskEvents, parentGoals]);
 
-    // Auto-add event for new tasks created from calendar clicks
+    // Auto-add event for new tasks only when caller provides an explicit timestamp
     useEffect(() => {
         if (!autoEventAdded &&
             state.mode === 'create' &&
             state.goal.goal_type === 'task' &&
-            state.goal.scheduled_timestamp &&
+            autoCreateEventTimestamp &&
             !state.goal.id &&
             taskEvents.length === 0) {
-            // This is a new task created from a calendar click - auto-add an event
-            const tempEvent = makeTempEvent(state.goal.scheduled_timestamp, 60);
+            // Caller (Day/Calendar) requested auto-add with a specific timestamp
+            const tempEvent = makeTempEvent(autoCreateEventTimestamp, 60);
             setTaskEvents([tempEvent]);
             setTotalDuration(60);
             setAutoEventAdded(true);
         }
-    }, [autoEventAdded, state.mode, state.goal.goal_type, state.goal.scheduled_timestamp, state.goal.id, taskEvents.length]);
+    }, [autoEventAdded, state.mode, state.goal.goal_type, autoCreateEventTimestamp, state.goal.id, taskEvents.length]);
 
-    // Auto-add event when user changes goal type to 'task' in create mode
+    // Auto-add when user switches to 'task' type in create mode only if caller provided timestamp
     useEffect(() => {
         if (!autoEventAdded &&
             state.mode === 'create' &&
             state.goal.goal_type === 'task' &&
-            state.goal.scheduled_timestamp &&
+            autoCreateEventTimestamp &&
             taskEvents.length === 0) {
-            // User selected task type, add event with the scheduled timestamp
-            const tempEvent = makeTempEvent(state.goal.scheduled_timestamp, 60);
+            // Respect the explicit timestamp provided by caller
+            const tempEvent = makeTempEvent(autoCreateEventTimestamp, 60);
             setTaskEvents([tempEvent]);
             setTotalDuration(60);
             setAutoEventAdded(true);
         }
-    }, [autoEventAdded, state.goal.goal_type, state.mode, state.goal.scheduled_timestamp, taskEvents.length]);
+    }, [autoEventAdded, state.goal.goal_type, state.mode, autoCreateEventTimestamp, taskEvents.length]);
 
     // Fetch parent goals using traversal API
     const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
@@ -648,6 +672,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
             // Sort by hierarchy level (immediate children first)
             setChildGoals(children);
+            if (mode === 'edit') {
+                setSelectedChildren(children);
+            }
         } catch (error) {
             // console.error('Failed to fetch child goals:', error);
             setChildGoals([]);
@@ -657,6 +684,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         //create copy, might need to be date.
         const goalCopy = { ...goal }
+
+        // Clear any previous pending action when opening
+        endAction();
 
 
         if (goalCopy._tz === undefined) {
@@ -685,6 +715,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Auto-fill routine_time with the clicked calendar time (stored in scheduled_timestamp)
         if (goalCopy.goal_type === 'routine' && goalCopy.routine_time === undefined) {
             goalCopy.routine_time = goalCopy.scheduled_timestamp || new Date();
+        }
+
+        // Default frequency when opening a routine
+        if (goalCopy.goal_type === 'routine' && !goalCopy.frequency) {
+            goalCopy.frequency = '1D';
         }
 
         setState({
@@ -718,13 +753,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 setParentGoals([]);
             }
             setChildGoals([]);
+            setSelectedChildren([]);
+            setChildSearchQuery('');
             setTaskEvents([]);
             setTotalDuration(0);
         }
 
         // Reset stats when goal changes
         setGoalStats(null);
-    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals, fetchChildGoals]);
+    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals, fetchChildGoals, endAction]);
 
     // Fetch stats when in view mode and goal is loaded
     useEffect(() => {
@@ -780,6 +817,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     }, [state.goal.id, state.goal.goal_type, isOpen, fetchTaskEvents]);
 
     const close = useCallback(() => {
+        // Ensure pending lock is cleared on close
+        endAction();
         setIsOpen(false);
         setTimeout(() => {
             setState({
@@ -791,6 +830,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setSelectedParents([]);
             setParentSearchQuery('');
             setRelationshipType('child');
+            setSelectedChildren([]);
+            setChildSearchQuery('');
             setTaskEvents([]);
             setTotalDuration(0);
             setAutoEventAdded(false);
@@ -800,7 +841,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setStatsLoading(false);
             setChildGoals([]);
         }, 100);
-    }, [setState]);
+    }, [setState, endAction]);
 
     const isViewOnly = state.mode === 'view';
 
@@ -875,7 +916,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setDurationHoursInput('');
             setDurationMinutesInput('');
         }
-    }, [state.goal.id, isOpen, state.goal.duration]);
+    }, [state.goal.id, state.goal.duration, isOpen]);
 
     // Initialize per-event input strings when taskEvents list changes size (e.g., fetched or item added/removed)
     useEffect(() => {
@@ -984,7 +1025,154 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         return options.slice(0, 11); // Limit to 11 results (10 + create option)
     }, [allGoals, state.goal, parentSearchQuery, fuse, relationshipType]);
 
-    const handleChange = (newGoal: Goal) => {
+    // Infer reasonable default child type based on current goal (parent)
+    const inferChildType = useCallback((parent: Goal): GoalType => {
+        let inferred: GoalType = (parent.goal_type === 'routine') ? 'routine' : 'task';
+        const tempChild = { id: -1, name: '', goal_type: inferred } as Goal;
+        const err = validateRelationship(parent, tempChild, 'child');
+        if (err) {
+            inferred = 'project';
+        }
+        return inferred;
+    }, []);
+
+    // Open nested create dialog for new child goal
+    const openNestedCreateChildDialog = useCallback((name: string, goalType: GoalType) => {
+        GoalMenuWithStatic.open(
+            { name, goal_type: goalType } as Goal,
+            'create',
+            (created) => {
+                setAllGoals(prev => [...prev, created]);
+                setSelectedChildren(prev => [...prev, created]);
+            }
+        );
+    }, []);
+
+    // Get filtered child options based on search and validation
+    const getChildOptions = useCallback(() => {
+        if (!state.goal.goal_type) return [];
+
+        // Filter out invalid child options based on relationship validation
+        let validGoals = allGoals.filter(g => {
+            // Can't select itself
+            if (g.id === state.goal.id) return false;
+            // Relationship must be valid child
+            const error = validateRelationship(state.goal, g, 'child');
+            return !error;
+        });
+
+        // Apply fuzzy search if there's a query
+        if (childSearchQuery) {
+            const results = fuse.search(childSearchQuery);
+            const resultIds = new Set(results.map(r => r.item.id));
+            validGoals = validGoals.filter(g => resultIds.has(g.id));
+        }
+
+        // Add "Create new goal" option if there's a search query
+        let options: (Goal | CreateNewPlaceholder)[] = validGoals;
+        if (childSearchQuery.trim()) {
+            const placeholder: CreateNewPlaceholder = {
+                id: CREATE_NEW_SENTINEL_ID,
+                name: `Create new goal "${childSearchQuery.trim()}"`,
+                goal_type: '__create__'
+            };
+            options = [placeholder, ...options];
+        }
+
+        return options.slice(0, 11);
+    }, [allGoals, state.goal, childSearchQuery, fuse]);
+
+    const handleCompletionToggle = async (completed: boolean) => {
+        try {
+            if (state.goal.goal_type === 'event') {
+                // Ensure we have a valid ID before proceeding
+                if (!state.goal.id) {
+                    setState({
+                        ...state,
+                        error: 'Cannot update event: missing event ID'
+                    });
+                    return;
+                }
+
+                // For all event completion/uncompletion, use event-specific APIs
+                if (completed) {
+                    // Completing an event - use the event completion API
+                    const response = await completeEvent(state.goal.id);
+
+                    // Update the completion status while preserving the ID
+                    setState({
+                        ...state,
+                        goal: {
+                            ...state.goal,
+                            completed: true
+                        }
+                    });
+
+                    // Check if we should prompt for task completion
+                    if (response.should_prompt_task_completion && response.parent_task_id) {
+                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
+                            // Complete the parent task
+                            await completeGoal(response.parent_task_id, true);
+                        }
+                    }
+
+                    if (onSuccess) {
+                        onSuccess({
+                            ...state.goal,
+                            completed: true
+                        });
+                    }
+                } else {
+                    // Uncompleting an event - use the event update API
+                    const updatedEvent = await updateEvent(state.goal.id, {
+                        completed: false
+                    });
+
+                    // Ensure the ID is preserved from the original goal
+                    const safeUpdatedEvent = {
+                        ...updatedEvent,
+                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
+                    };
+
+                    setState({
+                        ...state,
+                        goal: safeUpdatedEvent
+                    });
+
+                    if (onSuccess) {
+                        onSuccess(safeUpdatedEvent);
+                    }
+                }
+            } else {
+                // For all non-events, use regular completion
+                const completion = await completeGoal(state.goal.id!, completed);
+
+                // Create updated goal object with new completion status
+                const updatedGoal = {
+                    ...state.goal,
+                    completed: completion
+                };
+
+                // Update the completion status
+                setState({
+                    ...state,
+                    goal: updatedGoal
+                });
+
+                if (onSuccess) {
+                    onSuccess(updatedGoal);
+                }
+            }
+        } catch (error) {
+            // console.error('Failed to update completion status:', error);
+            setState({
+                ...state,
+                error: 'Failed to update completion status'
+            });
+        }
+    };
+
+    const handleChange = useCallback((newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server
         if (state.mode === 'view' && newGoal.completed !== state.goal.completed) {
             handleCompletionToggle(newGoal.completed || false);
@@ -992,7 +1180,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Set default frequency if goal type is 'routine' and frequency is undefined
-        if (newGoal.goal_type === 'routine' && newGoal.frequency === undefined) {
+        if (newGoal.goal_type === 'routine' && !newGoal.frequency) {
             newGoal.frequency = '1D';
         }
 
@@ -1011,12 +1199,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             ...state,
             goal: newGoal
         });
-    };
+    }, [state.mode, state.goal.completed, setState, handleCompletionToggle]);
+
+    const commitDuration = useCallback((): boolean => {
+        const hoursStr = durationHoursInput;
+        const minutesStr = durationMinutesInput;
+        if (hoursStr === '' || minutesStr === '') return false;
+        const hours = parseInt(hoursStr, 10) || 0;
+        const parsedMinutes = parseInt(minutesStr, 10);
+        const minutesClamped = Math.min(59, Math.max(0, isNaN(parsedMinutes) ? 0 : parsedMinutes));
+        if (String(minutesClamped) !== minutesStr) {
+            setDurationMinutesInput(String(minutesClamped));
+        }
+        handleChange({
+            ...state.goal,
+            duration: hours * 60 + minutesClamped
+        });
+        return true;
+    }, [durationHoursInput, durationMinutesInput, state.goal, handleChange]);
 
     const handleSubmit = async (another: boolean = false) => {
         if (another && state.mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
         }
+
+        const actionName: PendingAction = state.mode === 'create' ? 'create' : 'save';
+        if (!beginAction(actionName)) return;
 
         // Delegate to external submit if provided (bulk-edit use case)
         if (submitOverride) {
@@ -1036,8 +1244,67 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             } catch (error) {
                 console.error('Failed external submit:', error);
                 setState({ ...state, error: error instanceof Error ? error.message : 'Failed to submit changes' });
+            } finally {
+                endAction();
             }
             return;
+        }
+
+        // New validations: priority and parent requirements
+        // 1) Priority must be selected for all goal types
+        if (!state.goal.priority) {
+            setState({
+                ...state,
+                error: 'Priority is required'
+            });
+            endAction();
+            return;
+        }
+
+        // 2) Parent requirements for non-directive goals
+        if (state.goal.goal_type !== 'directive') {
+            // Event in edit mode: must have exactly one parent (task or routine)
+            if (state.goal.goal_type === 'event' && state.mode === 'edit') {
+                const effectiveParents = selectedParents.length > 0
+                    ? selectedParents
+                    : (parentGoals.length > 0
+                        ? parentGoals
+                        : (state.goal.parent_id
+                            ? (() => {
+                                const found = allGoals.find(g => g.id === state.goal.parent_id);
+                                return found ? [found] : [];
+                            })()
+                            : []));
+                if (effectiveParents.length !== 1) {
+                    setState({
+                        ...state,
+                        error: 'Events must have exactly one parent task or routine'
+                    });
+                    endAction();
+                    return;
+                }
+                const p = effectiveParents[0];
+                if (p.goal_type !== 'task' && p.goal_type !== 'routine') {
+                    setState({
+                        ...state,
+                        error: 'Events can only be associated with a task or routine'
+                    });
+                    endAction();
+                    return;
+                }
+            } else {
+                // Non-event (create or edit): require at least one parent
+                const hasSelected = selectedParents.length > 0;
+                const hasExisting = state.mode === 'edit' && (parentGoals.length > 0 || !!state.goal.parent_id);
+                if (!hasSelected && !hasExisting) {
+                    setState({
+                        ...state,
+                        error: 'Select at least one parent goal'
+                    });
+                    endAction();
+                    return;
+                }
+            }
         }
 
         // If editing a routine and schedule fields changed, prompt to recompute future occurrences
@@ -1070,6 +1337,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         try { await updateRoutines(); } catch {}
                         setState({ ...state, goal: saved });
                         if (onSuccess) onSuccess(saved);
+                        endAction();
                         close();
                     }
                 });
@@ -1130,6 +1398,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 ...state,
                 error: validationErrors.join('\n')
             });
+            endAction();
             return;
         }
 
@@ -1142,6 +1411,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         ...state,
                         error: 'Queue relationships can only be created from achievements'
                     });
+                    endAction();
                     return;
                 }
                 if (state.goal.goal_type !== 'achievement') {
@@ -1149,6 +1419,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         ...state,
                         error: 'Queue relationships can only be created to achievements'
                     });
+                    endAction();
                     return;
                 }
             }
@@ -1161,6 +1432,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         ...state,
                         error: relationshipError
                     });
+                    endAction();
                     return;
                 }
             }
@@ -1173,6 +1445,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     ...state,
                     error: 'Events must have at least one parent task or routine'
                 });
+                endAction();
                 return;
             }
             if (selectedParents.length > 1) {
@@ -1180,6 +1453,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     ...state,
                     error: 'Events can only have one parent task or routine'
                 });
+                endAction();
                 return;
             }
             if (selectedParents.some(parent => parent.goal_type !== 'task' && parent.goal_type !== 'routine')) {
@@ -1187,6 +1461,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     ...state,
                     error: 'Events can only be created for tasks or routines'
                 });
+                endAction();
                 return;
             }
         }
@@ -1237,6 +1512,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             relationshipType
                         );
                     }
+                    // Create child relationships if selected
+                    for (const child of selectedChildren) {
+                        await createRelationship(
+                            updatedGoal.id!,
+                            child.id!,
+                            'child'
+                        );
+                    }
                     // Notify network to refresh relationships
                     try {
                         window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: updatedGoal.id } }));
@@ -1279,7 +1562,31 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         );
                     }
                     // If any changes occurred, notify network to refresh relationships
-                    const changed = parentsToAdd.length > 0 || parentsToRemove.length > 0;
+                    let changed = parentsToAdd.length > 0 || parentsToRemove.length > 0;
+
+                    // Handle child relationships (diff current vs selected)
+                    const currentChildIds = new Set(childGoals.map(c => c.id!));
+                    const selectedChildIds = new Set(selectedChildren.map(c => c.id!));
+                    const childrenToAdd = selectedChildren.filter(c => !currentChildIds.has(c.id!));
+                    const childrenToRemove = childGoals.filter(c => !selectedChildIds.has(c.id!));
+
+                    // Add new child relationships
+                    for (const child of childrenToAdd) {
+                        await createRelationship(
+                            state.goal.id!,
+                            child.id!,
+                            'child'
+                        );
+                    }
+                    // Remove child relationships
+                    for (const child of childrenToRemove) {
+                        await deleteRelationship(
+                            state.goal.id!,
+                            child.id!,
+                            'child'
+                        );
+                    }
+                    changed = changed || childrenToAdd.length > 0 || childrenToRemove.length > 0;
                     if (changed) {
                         try {
                             window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: updatedGoal.id } }));
@@ -1302,11 +1609,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (another) {
                 const { id, ...restGoal } = updatedGoal;
                 const newGoal: Goal = { ...restGoal, name: '', description: '' } as Goal;
+                endAction();
                 close();
                 setTimeout(() => {
                     GoalMenuWithStatic.open(newGoal, 'create', onSuccess);
                 }, 300);
             } else {
+                endAction();
                 close();
             }
         } catch (error) {
@@ -1315,6 +1624,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 ...state,
                 error: error instanceof Error ? error.message : 'Failed to submit goal'
             });
+        } finally {
+            // If we early-returned to show a routine dialog, we never reached this block.
+            // For all non-dialog flows, ensure the lock is cleared.
+            endAction();
         }
     };
 
@@ -1374,6 +1687,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (onSuccess) {
                 onSuccess(updatedGoal);
             }
+            endAction();
             close();
         } catch (error) {
             console.error('Failed to update routine event:', error);
@@ -1381,6 +1695,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 ...state,
                 error: error instanceof Error ? error.message : 'Failed to update routine event'
             });
+        } finally {
+            // In case of error, ensure the action lock is released
+            endAction();
         }
     };
 
@@ -1474,6 +1791,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //     parentType: state.goal.parent_type
         // });
 
+        const needsImmediateLock = !(state.goal.goal_type === 'event' && isRoutineParentEvent);
+        if (needsImmediateLock) {
+            if (!beginAction('delete')) return;
+        }
+
         try {
             if (state.goal.goal_type === 'event') {
                 if (isRoutineParentEvent) {
@@ -1500,6 +1822,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (onSuccess) {
                 onSuccess(state.goal);
             }
+            if (needsImmediateLock) endAction();
             close();
         } catch (error) {
             // console.error('Failed to delete goal:', error);
@@ -1507,6 +1830,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 ...state,
                 error: error instanceof Error ? error.message : 'Failed to delete goal'
             });
+        } finally {
+            if (needsImmediateLock) endAction();
         }
         // Notify network in all delete flows
         try {
@@ -1542,6 +1867,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     const handleDuplicate = async () => {
         if (!state.goal.id) return;
+        if (!beginAction('duplicate')) return;
         try {
             const duplicated = await duplicateGoal(state.goal.id);
             if (onSuccess) onSuccess(duplicated);
@@ -1553,6 +1879,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         } catch (error) {
             console.error('Failed to duplicate goal:', error);
             setState({ ...state, error: 'Failed to duplicate goal' });
+        } finally {
+            endAction();
         }
     };
 
@@ -1597,10 +1925,26 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <Checkbox
                         checked={state.goal.duration === 1440}
                         onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                            handleChange({
-                                ...state.goal,
-                                duration: e.target.checked ? 1440 : 60 // Default to 1 hour when unchecking
-                            });
+                            const isAllDay = e.target.checked;
+                            if (isAllDay) {
+                                setDurationHoursInput('');
+                                setDurationMinutesInput('');
+                                setHoursTouched(false);
+                                setMinutesTouched(false);
+                                handleChange({
+                                    ...state.goal,
+                                    duration: 1440
+                                });
+                            } else {
+                                setDurationHoursInput('1');
+                                setDurationMinutesInput('0');
+                                setHoursTouched(false);
+                                setMinutesTouched(false);
+                                handleChange({
+                                    ...state.goal,
+                                    duration: 60 // Default to 1 hour when unchecking
+                                });
+                            }
                         }}
                     />
                 }
@@ -1615,20 +1959,22 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                             const raw = (e.target.value || '').replace(/\D/g, '');
                             setDurationHoursInput(raw);
-                            const hours = raw === '' ? 0 : parseInt(raw, 10);
-                            const minutesStr = durationMinutesInput;
-                            const minutes = minutesStr === '' ? (state.goal.duration ? state.goal.duration % 60 : 0) : Math.min(59, parseInt(minutesStr, 10) || 0);
-                            const newDuration = hours * 60 + minutes;
-                            handleChange({
-                                ...state.goal,
-                                duration: newDuration
-                            });
                         }}
                         onBlur={() => {
-                            if (durationHoursInput === '') setDurationHoursInput('0');
+                            setHoursTouched(true);
+                            commitDuration();
+                        }}
+                        onKeyDown={(e) => {
+                            if ((e as any).key === 'Enter') {
+                                setHoursTouched(true);
+                                setMinutesTouched(true);
+                                commitDuration();
+                            }
                         }}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
+                        error={hoursTouched && durationHoursInput === ''}
+                        helperText={hoursTouched && durationHoursInput === '' ? 'Required' : ''}
                         inputProps={{
                             inputMode: 'numeric',
                             pattern: '[0-9]*'
@@ -1642,23 +1988,23 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         value={durationMinutesInput}
                         onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                             const raw = (e.target.value || '').replace(/\D/g, '');
-                            // clamp to 0-59
-                            const clamped = raw === '' ? '' : String(Math.min(59, parseInt(raw, 10) || 0));
-                            setDurationMinutesInput(clamped);
-                            const minutes = clamped === '' ? 0 : parseInt(clamped, 10);
-                            const hoursStr = durationHoursInput;
-                            const hours = hoursStr === '' ? (state.goal.duration ? Math.floor(state.goal.duration / 60) : 0) : parseInt(hoursStr, 10) || 0;
-                            const newDuration = hours * 60 + minutes;
-                            handleChange({
-                                ...state.goal,
-                                duration: newDuration
-                            });
+                            setDurationMinutesInput(raw);
                         }}
                         onBlur={() => {
-                            if (durationMinutesInput === '') setDurationMinutesInput('0');
+                            setMinutesTouched(true);
+                            commitDuration();
+                        }}
+                        onKeyDown={(e) => {
+                            if ((e as any).key === 'Enter') {
+                                setHoursTouched(true);
+                                setMinutesTouched(true);
+                                commitDuration();
+                            }
                         }}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
+                        error={minutesTouched && durationMinutesInput === ''}
+                        helperText={minutesTouched && durationMinutesInput === '' ? 'Required' : ''}
                         inputProps={{
                             inputMode: 'numeric',
                             pattern: '[0-9]*'
@@ -1712,7 +2058,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
             setState({ ...state, error: 'Failed to move event to now' });
         }
-    }, [state, isRoutineParentEvent, onSuccess]);
+    }, [state, isRoutineParentEvent, onSuccess, setState, handleRoutineEventUpdate, handleChange]);
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
@@ -1845,7 +2191,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     })()}
                     onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                         const value = e.target.value;
-                        const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
+                        const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D';
                         const days = state.goal.frequency?.split(':')?.[1] || '';
                         const newFreq = `${value}${unit}${days ? ':' + days : ''}`;
                         //console.log(newFreq);
@@ -2028,9 +2374,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         updates.routine_type = 'task';
                         if (!state.goal.duration) updates.duration = 60;
                         if (!state.goal.frequency) updates.frequency = '1D';
-                        // If start_timestamp is not set and we have a scheduled_timestamp (from calendar click), use it
-                        if (!state.goal.start_timestamp && state.goal.scheduled_timestamp) {
-                            updates.start_timestamp = state.goal.scheduled_timestamp;
+                        // Derive routine_time and start_timestamp from scheduled_timestamp if present
+                        if (state.goal.scheduled_timestamp) {
+                            const derived = deriveRoutineFieldsFromTaskSchedule(state.goal.scheduled_timestamp);
+                            updates.routine_time = derived.routine_time;
+                            if (!state.goal.start_timestamp) {
+                                updates.start_timestamp = derived.start_timestamp;
+                            }
+                            // Clear scheduled_timestamp to avoid ambiguity on routines
+                            updates.scheduled_timestamp = undefined;
+                        } else if (state.goal.routine_time === undefined) {
+                            // Fall back to current time-of-day if no scheduled time exists
+                            updates.routine_time = new Date();
                         }
                     }
 
@@ -2159,7 +2514,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 ? "Parent Goal (Required)"
                                 : relationshipType === 'queue'
                                     ? "Previous Goals in Queue (Required)"
-                                    : "Parent Goals (Optional)"
+                                    : (state.goal.goal_type !== 'directive'
+                                        ? "Parent Goals (Required)"
+                                        : "Parent Goals (Optional)")
                         }
                         placeholder="Search for parent goals..."
                         helperText={
@@ -2169,8 +2526,106 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     ? "Select the achievements that should come before these ones"
                                     : "Select parent goals to create relationships"
                         }
-                        required={state.goal.goal_type === 'event' || relationshipType === 'queue'}
-                        error={(state.goal.goal_type === 'event' || relationshipType === 'queue') && selectedParents.length === 0}
+                        required={state.goal.goal_type === 'event' || relationshipType === 'queue' || state.goal.goal_type !== 'directive'}
+                        error={(state.goal.goal_type === 'event' || relationshipType === 'queue' || state.goal.goal_type !== 'directive') && selectedParents.length === 0}
+                    />
+                )}
+                fullWidth
+                clearOnBlur={false}
+                selectOnFocus
+                handleHomeEndKeys
+                freeSolo={false}
+            />
+        </Box>
+    ) : null;
+
+    // Child selector field (available in create and edit modes; tasks/events cannot be parents)
+    const childSelectorField = ((state.mode === 'create' || state.mode === 'edit') && state.goal.goal_type !== 'task' && state.goal.goal_type !== 'event') ? (
+        <Box sx={{ mt: 2, mb: 2 }}>
+            <Autocomplete
+                multiple
+                value={selectedChildren}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                onChange={(event, newValue) => {
+                    // Did user click the create-new item?
+                    const createIdx = newValue.findIndex(isCreatePlaceholder);
+                    if (createIdx !== -1) {
+                        const query = childSearchQuery.trim();
+                        const inferred = inferChildType(state.goal);
+                        // Remove placeholder before we open nested dialog
+                        const filteredValue = newValue.filter(v => !isCreatePlaceholder(v)) as Goal[];
+                        setSelectedChildren(filteredValue);
+                        openNestedCreateChildDialog(query, inferred);
+                        return; // don't set state yet
+                    }
+                    setSelectedChildren(newValue.filter(v => !isCreatePlaceholder(v)) as Goal[]);
+                }}
+                inputValue={childSearchQuery}
+                onInputChange={(event, newInputValue) => {
+                    setChildSearchQuery(newInputValue);
+                }}
+                options={getChildOptions()}
+                getOptionLabel={(option) => option.name}
+                renderOption={(props, option) => {
+                    if (isCreatePlaceholder(option)) {
+                        return (
+                            <Box component="li" {...props} sx={{ color: 'primary.main', fontWeight: 500 }}>
+                                <AddIcon sx={{ mr: 1, fontSize: 18 }} />
+                                {option.name}
+                            </Box>
+                        );
+                    }
+                    return (
+                        <Box component="li" {...props}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                                {(() => {
+                                    const style = getGoalStyle(option);
+                                    return (
+                                        <Chip
+                                            label={option.goal_type}
+                                            size="small"
+                                            sx={{
+                                                ...style,
+                                                color: style.textColor,
+                                                fontSize: '0.75rem'
+                                            }}
+                                        />
+                                    );
+                                })()}
+                                <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                                    {option.name}
+                                </Typography>
+                            </Box>
+                        </Box>
+                    );
+                }}
+                renderTags={(value, getTagProps) =>
+                    value.filter((option): option is Goal => !isCreatePlaceholder(option)).map((option, index) => {
+                        const { key, ...tagProps } = getTagProps({ index });
+                        const style = getGoalStyle(option);
+                        return (
+                            <Chip
+                                key={key}
+                                label={option.name}
+                                size="small"
+                                sx={{
+                                    ...style,
+                                    color: style.textColor,
+                                    '& .MuiChip-deleteIcon': {
+                                        color: style.textColor
+                                    }
+                                }}
+                                {...tagProps}
+                            />
+                        );
+                    })
+                }
+                renderInput={(params) => (
+                    <TextField
+                        {...params}
+                        label="Child Goals (Optional)"
+                        placeholder="Search for child goals..."
+                        helperText="Select child goals to create relationships"
                     />
                 )}
                 fullWidth
@@ -2708,112 +3163,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         setSmartScheduleContext(null);
     };
 
-    const handleCompletionToggle = async (completed: boolean) => {
-        try {
-            if (state.goal.goal_type === 'event') {
-                // console.log('[GoalMenu] Event completion toggle - Initial state:', {
-                //     id: state.goal.id,
-                //     completed: state.goal.completed,
-                //     newCompleted: completed
-                // });
-
-                // Ensure we have a valid ID before proceeding
-                if (!state.goal.id) {
-                    setState({
-                        ...state,
-                        error: 'Cannot update event: missing event ID'
-                    });
-                    return;
-                }
-
-                // For all event completion/uncompletion, use event-specific APIs
-                if (completed) {
-                    // Completing an event - use the event completion API
-                    const response = await completeEvent(state.goal.id);
-
-                    // Update the completion status while preserving the ID
-                    setState({
-                        ...state,
-                        goal: {
-                            ...state.goal,
-                            completed: true
-                        }
-                    });
-
-                    // Check if we should prompt for task completion
-                    if (response.should_prompt_task_completion && response.parent_task_id) {
-                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
-                            // Complete the parent task
-                            await completeGoal(response.parent_task_id, true);
-                        }
-                    }
-
-                    if (onSuccess) {
-                        onSuccess({
-                            ...state.goal,
-                            completed: true
-                        });
-                    }
-                } else {
-                    // Uncompleting an event - use the event update API
-                    // console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
-                    const updatedEvent = await updateEvent(state.goal.id, {
-                        completed: false
-                    });
-
-                    // console.log('[GoalMenu] updateEvent response:', {
-                    //     id: updatedEvent.id,
-                    //     completed: updatedEvent.completed
-                    // });
-
-                    // Ensure the ID is preserved from the original goal
-                    const safeUpdatedEvent = {
-                        ...updatedEvent,
-                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
-                    };
-
-                    // console.log('[GoalMenu] Safe updated event:', {
-                    //     id: safeUpdatedEvent.id,
-                    //     completed: safeUpdatedEvent.completed
-                    // });
-
-                    setState({
-                        ...state,
-                        goal: safeUpdatedEvent
-                    });
-
-                    if (onSuccess) {
-                        onSuccess(safeUpdatedEvent);
-                    }
-                }
-            } else {
-                // For all non-events, use regular completion
-                const completion = await completeGoal(state.goal.id!, completed);
-
-                // Create updated goal object with new completion status
-                const updatedGoal = {
-                    ...state.goal,
-                    completed: completion
-                };
-
-                // Update the completion status
-                setState({
-                    ...state,
-                    goal: updatedGoal
-                });
-
-                if (onSuccess) {
-                    onSuccess(updatedGoal);
-                }
-            }
-        } catch (error) {
-            // console.error('Failed to update completion status:', error);
-            setState({
-                ...state,
-                error: 'Failed to update completion status'
-            });
-        }
-    };
+    // (handleCompletionToggle moved above handleChange)
 
     // This logic should now be handled in the parent component
     // by passing appropriate callbacks to the GoalMenu.
@@ -2899,6 +3249,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // console.log('[GoalMenu] handleRoutineDeleteConfirm', routineDeleteDialog);
         if (!routineDeleteDialog.eventId) return;
 
+        if (!beginAction('delete')) return;
+
         try {
             if (routineDeleteDialog.selectedScope === 'all') {
                 // console.log('[GoalMenu] Delete scope = ALL');
@@ -2942,6 +3294,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (onSuccess) {
                 onSuccess(state.goal);
             }
+            endAction();
             close();
         } catch (error) {
             // console.error('Failed to delete routine event:', error);
@@ -2949,6 +3302,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 ...state,
                 error: error instanceof Error ? error.message : 'Failed to delete routine event'
             });
+        } finally {
+            endAction();
         }
     };
 
@@ -2967,13 +3322,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     return (
         <Dialog
             open={isOpen}
-            onClose={close}
+            disableEscapeKeyDown={isBusy}
+            onClose={(event, reason) => {
+                if (isBusy) return;
+                close();
+            }}
             maxWidth="sm"
             fullWidth
             onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>) => {
                 if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
                     event.preventDefault();
-                    handleSubmit();
+                    if (!isBusy) handleSubmit();
                 }
             }}
         >
@@ -2996,6 +3355,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         )}
                         {commonFields}
                         {parentSelectorField}
+                        {childSelectorField}
                         {renderTypeSpecificFields()}
                         {renderStatsTiles()}
                     </Box>
@@ -3003,11 +3363,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     {/* Sidebar (view mode only, fixed width on sm+) */}
                     {isViewOnly && (
                         <Box sx={{ width: { xs: '100%', sm: 260 }, flexShrink: 0 }}>
-                            {parentGoals.length > 0 && (
-                                <Box sx={{ mb: 3 }}>
-                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
-                                        Parent
-                                    </Typography>
+                            <Box sx={{ mb: 3 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
+                                    Parents
+                                </Typography>
+                                {parentGoals.length > 0 ? (
                                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                                         {parentGoals.map((parent) => (
                                             <Box
@@ -3033,8 +3393,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                             </Box>
                                         ))}
                                     </Box>
-                                </Box>
-                            )}
+                                ) : (
+                                    <Typography variant="caption" color="text.secondary">
+                                        None
+                                    </Typography>
+                                )}
+                            </Box>
 
                             {childGoals.length > 0 && (
                                 <Box sx={{ mb: 3 }}>
@@ -3068,17 +3432,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     </Box>
                                 </Box>
                             )}
-                            {state.goal.id && state.goal.goal_type !== 'event' && (
+                            {(state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id) && (
                                 <Box sx={{ mb: 3 }}>
                                     <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
                                         Network
                                     </Typography>
                                     <MiniNetworkGraph
-                                        centerId={state.goal.id}
+                                        centerId={state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id}
                                         height={220}
                                         onNodeClick={(node) => {
                                             try {
-                                                if (!node?.id || node.id === state.goal.id) {
+                                                const centerId = state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id;
+                                                if (!node?.id || node.id === centerId) {
                                                     return;
                                                 }
                                                 close();
@@ -3101,36 +3466,54 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         <>
                             {state.goal.goal_type !== 'event' && (
                                 <>
-                                    <Button onClick={handleCreateChild} color="secondary">Create Child</Button>
+                                    <Button onClick={handleCreateChild} color="secondary" disabled={isBusy}>Create Child</Button>
                                     {state.goal.goal_type === 'achievement' && (
-                                        <Button onClick={handleCreateQueue} color="secondary">Create Queue</Button>
+                                        <Button onClick={handleCreateQueue} color="secondary" disabled={isBusy}>Create Queue</Button>
                                     )}
-                                    <Button onClick={handleEdit} color="primary">Edit</Button>
-                                    <Button onClick={handleDuplicate} color="secondary">Duplicate</Button>
-                                    <Button onClick={handleDelete} color="error">Delete</Button>
+                                    <Button onClick={handleEdit} color="primary" disabled={isBusy}>Edit</Button>
+                                    <Button onClick={handleDuplicate} color="secondary" disabled={isBusy}>
+                                        {pendingAction === 'duplicate' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                        Duplicate
+                                    </Button>
+                                    <Button onClick={handleDelete} color="error" disabled={isBusy}>
+                                        {pendingAction === 'delete' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                        Delete
+                                    </Button>
                                     {/* <Button onClick={handleRelations} color="secondary">Relationships</Button> */}
                                 </>
                             )}
                             {state.goal.goal_type === 'event' && (
                                 <>
-                                    <Button onClick={handleEdit} color="primary">Edit</Button>
-                                    <Button onClick={handleDuplicate} color="secondary">Duplicate</Button>
-                                    <Button onClick={handleDelete} color="error">Delete</Button>
+                                    <Button onClick={handleEdit} color="primary" disabled={isBusy}>Edit</Button>
+                                    <Button onClick={handleDuplicate} color="secondary" disabled={isBusy}>
+                                        {pendingAction === 'duplicate' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                        Duplicate
+                                    </Button>
+                                    <Button onClick={handleDelete} color="error" disabled={isBusy}>
+                                        {pendingAction === 'delete' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                        Delete
+                                    </Button>
                                 </>
                             )}
                         </>
                     )}
                     {state.mode === 'edit' && (
-                        <Button onClick={handleDelete} color="error">Delete</Button>
+                        <Button onClick={handleDelete} color="error" disabled={isBusy}>
+                            {pendingAction === 'delete' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                            Delete
+                        </Button>
                     )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button onClick={close}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
+                    <Button onClick={close} disabled={isBusy}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary">{state.mode === 'create' ? 'Create' : 'Save'}</Button>
+                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy}>
+                            {(pendingAction === 'save' || pendingAction === 'create') ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                            {state.mode === 'create' ? 'Create' : 'Save'}
+                        </Button>
                     )}
                     {state.mode === 'create' && (
-                        <Button onClick={() => handleSubmit(true)} color="primary">Create Another</Button>
+                        <Button onClick={() => handleSubmit(true)} color="primary" disabled={isBusy}>Create Another</Button>
                     )}
                 </Box>
             </DialogActions>
@@ -3150,7 +3533,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             {/* Routine Update Scope Dialog */}
             <Dialog
                 open={routineUpdateDialog.isOpen}
-                onClose={() => setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false })}
+                onClose={() => {
+                    setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false });
+                    endAction();
+                }}
                 maxWidth="sm"
                 fullWidth
             >
@@ -3186,7 +3572,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     </FormControl>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false })}>Cancel</Button>
+                    <Button onClick={() => {
+                        setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false });
+                        endAction();
+                    }}>Cancel</Button>
                     <Button
                         onClick={() => routineUpdateDialog.onConfirm(routineUpdateDialog.selectedScope)}
                         color="primary"
@@ -3199,7 +3588,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             {/* Routine Recompute Confirmation Dialog */}
             <Dialog
                 open={routineRecomputeDialog.isOpen}
-                onClose={() => setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false })}
+                onClose={() => {
+                    setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false });
+                    endAction();
+                }}
                 maxWidth="sm"
                 fullWidth
             >
@@ -3216,7 +3608,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     </Typography>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false })}>Cancel</Button>
+                    <Button onClick={() => {
+                        setRoutineRecomputeDialog({ ...routineRecomputeDialog, isOpen: false });
+                        endAction();
+                    }}>Cancel</Button>
                     <Button onClick={() => routineRecomputeDialog.onConfirm()} color="primary" variant="contained">
                         Apply & Recompute
                     </Button>
@@ -3260,7 +3655,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleRoutineDeleteCancel}>Cancel</Button>
-                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained">
+                    <Button onClick={handleRoutineDeleteConfirm} color="error" variant="contained" disabled={isBusy}>
                         {routineDeleteDialog.selectedScope === 'single'
                             ? 'Delete occurrence'
                             : routineDeleteDialog.selectedScope === 'future'
@@ -3284,7 +3679,7 @@ interface GoalMenuComponent extends React.FC<GoalMenuProps> {
         goal: Goal,
         initialMode: Mode,
         onSuccess?: (goal: Goal) => void,
-        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }
     ) => void;
     close: () => void;
     openWithSubmitOverride: (
@@ -3292,14 +3687,14 @@ interface GoalMenuComponent extends React.FC<GoalMenuProps> {
         initialMode: Mode,
         submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>,
         onSuccess?: (goal: Goal) => void,
-        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }
     ) => void;
 }
 
 const GoalMenuBase = GoalMenu;
 const GoalMenuWithStatic = GoalMenuBase as GoalMenuComponent;
 
-GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }) => {
+GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }) => {
     console.log('[GoalMenu.open] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -3336,13 +3731,14 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
             }}
             defaultSelectedParents={options?.defaultSelectedParents}
             defaultRelationshipType={options?.defaultRelationshipType}
+            autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
         />
     );
 
     console.log('[GoalMenu.open] Goal menu rendered');
 };
 
-GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }) => {
+GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }) => {
     console.log('[GoalMenu.openWithSubmitOverride] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -3376,6 +3772,7 @@ GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, subm
             submitOverride={submit}
             defaultSelectedParents={options?.defaultSelectedParents}
             defaultRelationshipType={options?.defaultRelationshipType}
+            autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
         />
     );
 };

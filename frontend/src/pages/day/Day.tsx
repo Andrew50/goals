@@ -287,7 +287,8 @@ const Day: React.FC = () => {
             'create',
             (newGoal) => {
                 fetchEventsForDate(currentDate);
-            }
+            },
+            { autoCreateEventTimestamp: scheduled }
         );
     };
 
