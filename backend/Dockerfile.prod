@@ -9,7 +9,9 @@ RUN apt-get update && \
 
 WORKDIR /usr/src/app
 COPY . .
-RUN cargo build --release
+# Ensure we avoid base64ct v1.8.0 (requires edition2024) and lock deps
+RUN cargo update -p base64ct --precise 1.7.0 && \
+    cargo build --release --locked
 FROM debian:bookworm-slim
 WORKDIR /usr/src/app
 COPY --from=builder /usr/src/app/target/release/backend /usr/local/bin/backend
