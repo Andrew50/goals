@@ -1,0 +1,8 @@
+public/**
+build/**
+dist/**
+coverage/**
+playwright-report/**
+node_modules/**
+
+

@@ -1,1 +1,1 @@
-{"extends":"react-app","overrides":[{"files":["**/*.test.ts","**/*.test.tsx"],"rules":{"no-extend-native":"off"}}]}
+{"extends":"react-app","ignorePatterns":["public/**","build/**","dist/**","coverage/**","playwright-report/**","node_modules/**"],"overrides":[{"files":["**/*.test.ts","**/*.test.tsx"],"rules":{"no-extend-native":"off"}}]}
