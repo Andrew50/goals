@@ -3,7 +3,7 @@ use chrono::Utc;
 use neo4rs::{Graph, Query};
 use serde::{Deserialize, Serialize};
 use std::env;
-
+/*
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PushSubscription {
     pub endpoint: String,
@@ -15,6 +15,7 @@ pub struct PushKeys {
     pub p256dh: String,
     pub auth: String,
 }
+*/
 
 #[derive(Debug, Serialize)]
 pub struct PushPayload {
@@ -394,7 +395,7 @@ async fn remove_subscription_by_endpoint(
     println!("✅ [PUSH] Invalid subscription removed");
     Ok(())
 }
-
+/*
 // Public function to send notifications for events
 pub async fn send_event_reminder(
     graph: &Graph,
@@ -476,3 +477,4 @@ pub async fn send_task_deadline_reminder(
 
     send_notification_to_user(graph, user_id, &payload).await
 }
+*/

@@ -181,6 +181,8 @@ jobs:
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
     timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
     steps:
       - name: Pre-fix workspace ownership
         shell: bash
@@ -233,10 +235,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            backend/target
+            ${{ env.CARGO_TARGET_DIR }}
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-
+
+      - name: Remove legacy backend/target (optional)
+        run: rm -rf backend/target || true
 
       - name: Lint with clippy
         working-directory: ./backend

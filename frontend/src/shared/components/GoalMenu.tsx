@@ -254,7 +254,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         const ro = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const h = entry.contentRect.height;
-                const prev = prevStatsHeightRef.current;
                 prevStatsHeightRef.current = h;
                 //console.log('[GoalMenu][Stats] resize observer:', {
                 //    height: h,
@@ -573,7 +572,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         } finally {
             const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
             const start = statsLoadStartRef.current || end;
-            const durationMs = Math.max(0, end - start);
             //console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
             setStatsLoading(false);
         }
@@ -763,7 +761,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // Reset stats when goal changes
         setGoalStats(null);
-    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals, fetchChildGoals]);
+    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals, fetchChildGoals, endAction]);
 
     // Fetch stats when in view mode and goal is loaded
     useEffect(() => {
@@ -918,7 +916,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setDurationHoursInput('');
             setDurationMinutesInput('');
         }
-    }, [state.goal.id, isOpen]);
+    }, [state.goal.id, state.goal.duration, isOpen]);
 
     // Initialize per-event input strings when taskEvents list changes size (e.g., fetched or item added/removed)
     useEffect(() => {
@@ -1084,7 +1082,97 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         return options.slice(0, 11);
     }, [allGoals, state.goal, childSearchQuery, fuse]);
 
-    const handleChange = (newGoal: Goal) => {
+    const handleCompletionToggle = async (completed: boolean) => {
+        try {
+            if (state.goal.goal_type === 'event') {
+                // Ensure we have a valid ID before proceeding
+                if (!state.goal.id) {
+                    setState({
+                        ...state,
+                        error: 'Cannot update event: missing event ID'
+                    });
+                    return;
+                }
+
+                // For all event completion/uncompletion, use event-specific APIs
+                if (completed) {
+                    // Completing an event - use the event completion API
+                    const response = await completeEvent(state.goal.id);
+
+                    // Update the completion status while preserving the ID
+                    setState({
+                        ...state,
+                        goal: {
+                            ...state.goal,
+                            completed: true
+                        }
+                    });
+
+                    // Check if we should prompt for task completion
+                    if (response.should_prompt_task_completion && response.parent_task_id) {
+                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
+                            // Complete the parent task
+                            await completeGoal(response.parent_task_id, true);
+                        }
+                    }
+
+                    if (onSuccess) {
+                        onSuccess({
+                            ...state.goal,
+                            completed: true
+                        });
+                    }
+                } else {
+                    // Uncompleting an event - use the event update API
+                    const updatedEvent = await updateEvent(state.goal.id, {
+                        completed: false
+                    });
+
+                    // Ensure the ID is preserved from the original goal
+                    const safeUpdatedEvent = {
+                        ...updatedEvent,
+                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
+                    };
+
+                    setState({
+                        ...state,
+                        goal: safeUpdatedEvent
+                    });
+
+                    if (onSuccess) {
+                        onSuccess(safeUpdatedEvent);
+                    }
+                }
+            } else {
+                // For all non-events, use regular completion
+                const completion = await completeGoal(state.goal.id!, completed);
+
+                // Create updated goal object with new completion status
+                const updatedGoal = {
+                    ...state.goal,
+                    completed: completion
+                };
+
+                // Update the completion status
+                setState({
+                    ...state,
+                    goal: updatedGoal
+                });
+
+                if (onSuccess) {
+                    onSuccess(updatedGoal);
+                }
+            }
+        } catch (error) {
+            // console.error('Failed to update completion status:', error);
+            setState({
+                ...state,
+                error: 'Failed to update completion status'
+            });
+        }
+    };
+
+    const handleChange = useCallback((newGoal: Goal) => {
         // If in view mode and completion status changed, update it on the server
         if (state.mode === 'view' && newGoal.completed !== state.goal.completed) {
             handleCompletionToggle(newGoal.completed || false);
@@ -1111,7 +1199,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             ...state,
             goal: newGoal
         });
-    };
+    }, [state.mode, state.goal.completed, setState, handleCompletionToggle]);
 
     const commitDuration = useCallback((): boolean => {
         const hoursStr = durationHoursInput;
@@ -1970,7 +2058,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
             setState({ ...state, error: 'Failed to move event to now' });
         }
-    }, [state, isRoutineParentEvent, onSuccess]);
+    }, [state, isRoutineParentEvent, onSuccess, setState, handleRoutineEventUpdate, handleChange]);
     const scheduleField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
             <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
@@ -3075,112 +3163,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         setSmartScheduleContext(null);
     };
 
-    const handleCompletionToggle = async (completed: boolean) => {
-        try {
-            if (state.goal.goal_type === 'event') {
-                // console.log('[GoalMenu] Event completion toggle - Initial state:', {
-                //     id: state.goal.id,
-                //     completed: state.goal.completed,
-                //     newCompleted: completed
-                // });
-
-                // Ensure we have a valid ID before proceeding
-                if (!state.goal.id) {
-                    setState({
-                        ...state,
-                        error: 'Cannot update event: missing event ID'
-                    });
-                    return;
-                }
-
-                // For all event completion/uncompletion, use event-specific APIs
-                if (completed) {
-                    // Completing an event - use the event completion API
-                    const response = await completeEvent(state.goal.id);
-
-                    // Update the completion status while preserving the ID
-                    setState({
-                        ...state,
-                        goal: {
-                            ...state.goal,
-                            completed: true
-                        }
-                    });
-
-                    // Check if we should prompt for task completion
-                    if (response.should_prompt_task_completion && response.parent_task_id) {
-                        if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
-                            // Complete the parent task
-                            await completeGoal(response.parent_task_id, true);
-                        }
-                    }
-
-                    if (onSuccess) {
-                        onSuccess({
-                            ...state.goal,
-                            completed: true
-                        });
-                    }
-                } else {
-                    // Uncompleting an event - use the event update API
-                    // console.log('[GoalMenu] Uncompleting event with ID:', state.goal.id);
-                    const updatedEvent = await updateEvent(state.goal.id, {
-                        completed: false
-                    });
-
-                    // console.log('[GoalMenu] updateEvent response:', {
-                    //     id: updatedEvent.id,
-                    //     completed: updatedEvent.completed
-                    // });
-
-                    // Ensure the ID is preserved from the original goal
-                    const safeUpdatedEvent = {
-                        ...updatedEvent,
-                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
-                    };
-
-                    // console.log('[GoalMenu] Safe updated event:', {
-                    //     id: safeUpdatedEvent.id,
-                    //     completed: safeUpdatedEvent.completed
-                    // });
-
-                    setState({
-                        ...state,
-                        goal: safeUpdatedEvent
-                    });
-
-                    if (onSuccess) {
-                        onSuccess(safeUpdatedEvent);
-                    }
-                }
-            } else {
-                // For all non-events, use regular completion
-                const completion = await completeGoal(state.goal.id!, completed);
-
-                // Create updated goal object with new completion status
-                const updatedGoal = {
-                    ...state.goal,
-                    completed: completion
-                };
-
-                // Update the completion status
-                setState({
-                    ...state,
-                    goal: updatedGoal
-                });
-
-                if (onSuccess) {
-                    onSuccess(updatedGoal);
-                }
-            }
-        } catch (error) {
-            // console.error('Failed to update completion status:', error);
-            setState({
-                ...state,
-                error: 'Failed to update completion status'
-            });
-        }
-    };
+    // (handleCompletionToggle moved above handleChange)
 
     // This logic should now be handled in the parent component
     // by passing appropriate callbacks to the GoalMenu.
