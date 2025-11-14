@@ -157,6 +157,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.13.1",
+ "base64ct",
  "bcrypt",
  "chrono",
  "chrono-tz 0.10.4",
