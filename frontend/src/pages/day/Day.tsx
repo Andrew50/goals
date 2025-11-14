@@ -9,6 +9,7 @@ import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import TodayIcon from '@mui/icons-material/Today';
 import './Day.css';
+import { useSearchParams } from 'react-router-dom';
 
 // Event type returned from the day endpoint
 interface DayEvent {
@@ -28,6 +29,7 @@ interface DayEvent {
 
 const Day: React.FC = () => {
     const { openGoalMenu } = useGoalMenu();
+    const [searchParams] = useSearchParams();
     const [events, setEvents] = useState<DayEvent[]>([]);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
     const [currentTime, setCurrentTime] = useState<Date>(new Date());
@@ -110,6 +112,17 @@ const Day: React.FC = () => {
 
         return () => clearInterval(interval);
     }, []);
+
+    // Handle ?date=YYYY-MM-DD navigation
+    useEffect(() => {
+        const dateParam = searchParams.get('date');
+        if (dateParam) {
+            const parsed = new Date(`${dateParam}T00:00:00`);
+            if (!isNaN(parsed.getTime())) {
+                setCurrentDate(parsed);
+            }
+        }
+    }, [searchParams]);
 
     // Navigation functions
     const goToPreviousDay = useCallback(() => {

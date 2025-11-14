@@ -138,6 +138,17 @@ pub struct SourceBreakdown {
     pub avg_priority_weight: f64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EffortStat {
+    pub goal_id: i64,
+    pub goal_name: String,
+    pub goal_type: String,
+    pub total_events: i32,
+    pub completed_events: i32,
+    pub total_duration_minutes: f64,
+    pub weighted_completion_rate: f64,
+}
+
 pub async fn get_year_stats(
     graph: Graph,
     user_id: i64,
@@ -267,6 +278,170 @@ pub async fn get_year_stats(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to fetch year stats: {}", e),
+            ))
+        }
+    }
+}
+
+pub async fn get_effort_stats(
+    graph: Graph,
+    user_id: i64,
+    range: Option<String>,
+) -> Result<Json<Vec<EffortStat>>, (StatusCode, String)> {
+    // Determine lower bound start timestamp from range (approximate months/years using days)
+    let start_timestamp_opt: Option<i64> = match range.as_deref() {
+        Some("5y") => Some((Utc::now() - Duration::days(5 * 365)).timestamp_millis()),
+        Some("1y") => Some((Utc::now() - Duration::days(365)).timestamp_millis()),
+        Some("6m") => Some((Utc::now() - Duration::days(182)).timestamp_millis()),
+        Some("3m") => Some((Utc::now() - Duration::days(91)).timestamp_millis()),
+        Some("1m") => Some((Utc::now() - Duration::days(30)).timestamp_millis()),
+        Some("2w") => Some((Utc::now() - Duration::days(14)).timestamp_millis()),
+        Some("all") | None | Some("") => None,
+        Some(_) => None,
+    };
+
+    // All-time effort per non-event goal, aggregating descendant events
+    let query_str_with_range = r#"
+        MATCH (g:Goal)
+        WHERE g.user_id = $user_id AND g.goal_type <> 'event'
+        OPTIONAL MATCH (g)-[:CHILD*0..]->(desc:Goal)
+        WHERE desc.user_id = $user_id
+        OPTIONAL MATCH (desc)-[:HAS_EVENT]->(e:Goal)
+        WHERE e.goal_type = 'event'
+          AND (e.is_deleted IS NULL OR e.is_deleted = false)
+          AND e.scheduled_timestamp < timestamp()
+          AND e.scheduled_timestamp >= $start_timestamp
+        WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs
+        WITH g, epairs,
+             // weights across all past events (completed or not) for denominator
+             [p IN epairs | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+                  WHEN 'none' THEN 0.0
+                  WHEN 'low' THEN 1.0
+                  WHEN 'medium' THEN 2.0
+                  WHEN 'high' THEN 3.0
+                  ELSE 2.0
+             END] AS weights_all,
+             // weights across completed past events for numerator
+             [p IN epairs WHERE COALESCE(p.e.completed,false) | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+                  WHEN 'none' THEN 0.0
+                  WHEN 'low' THEN 1.0
+                  WHEN 'medium' THEN 2.0
+                  WHEN 'high' THEN 3.0
+                  ELSE 2.0
+             END] AS completed_weights,
+             // duration only for completed past events
+             [p IN epairs WHERE COALESCE(p.e.completed,false) |
+                CASE
+                  WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
+                      THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
+                  ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                END
+             ] AS durations_completed,
+             // flags for counting completed past events
+             [p IN epairs WHERE COALESCE(p.e.completed,false) | 1] AS completed_flags
+        RETURN id(g) AS goal_id,
+               g.name AS goal_name,
+               g.goal_type AS goal_type,
+               size(completed_flags) AS total_events,
+               reduce(s=0.0, d IN durations_completed | s + d) AS total_duration_minutes,
+               size(completed_flags) AS completed_events,
+               CASE reduce(s=0.0, w IN weights_all | s + w)
+                    WHEN 0.0 THEN 0.0
+                    ELSE reduce(c=0.0, w IN completed_weights | c + w) / reduce(s=0.0, w IN weights_all | s + w)
+               END AS weighted_completion_rate
+        ORDER BY total_duration_minutes DESC
+    "#;
+
+    let query_str_no_range = r#"
+        MATCH (g:Goal)
+        WHERE g.user_id = $user_id AND g.goal_type <> 'event'
+        OPTIONAL MATCH (g)-[:CHILD*0..]->(desc:Goal)
+        WHERE desc.user_id = $user_id
+        OPTIONAL MATCH (desc)-[:HAS_EVENT]->(e:Goal)
+        WHERE e.goal_type = 'event'
+          AND (e.is_deleted IS NULL OR e.is_deleted = false)
+          AND e.scheduled_timestamp < timestamp()
+        WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs
+        WITH g, epairs,
+             [p IN epairs | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+                  WHEN 'none' THEN 0.0
+                  WHEN 'low' THEN 1.0
+                  WHEN 'medium' THEN 2.0
+                  WHEN 'high' THEN 3.0
+                  ELSE 2.0
+             END] AS weights_all,
+             [p IN epairs WHERE COALESCE(p.e.completed,false) | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+                  WHEN 'none' THEN 0.0
+                  WHEN 'low' THEN 1.0
+                  WHEN 'medium' THEN 2.0
+                  WHEN 'high' THEN 3.0
+                  ELSE 2.0
+             END] AS completed_weights,
+             [p IN epairs WHERE COALESCE(p.e.completed,false) |
+                CASE
+                  WHEN p.e.end_timestamp IS NOT NULL AND p.e.end_timestamp > p.e.scheduled_timestamp
+                      THEN toFloat(p.e.end_timestamp - p.e.scheduled_timestamp) / (1000.0*60.0)
+                  ELSE toFloat(COALESCE(p.e.duration_minutes, p.e.duration, 60))
+                END
+             ] AS durations_completed,
+             [p IN epairs WHERE COALESCE(p.e.completed,false) | 1] AS completed_flags
+        RETURN id(g) AS goal_id,
+               g.name AS goal_name,
+               g.goal_type AS goal_type,
+               size(completed_flags) AS total_events,
+               reduce(s=0.0, d IN durations_completed | s + d) AS total_duration_minutes,
+               size(completed_flags) AS completed_events,
+               CASE reduce(s=0.0, w IN weights_all | s + w)
+                    WHEN 0.0 THEN 0.0
+                    ELSE reduce(c=0.0, w IN completed_weights | c + w) / reduce(s=0.0, w IN weights_all | s + w)
+               END AS weighted_completion_rate
+        ORDER BY total_duration_minutes DESC
+    "#;
+
+    let mut query = if let Some(_start) = start_timestamp_opt {
+        query(query_str_with_range).param("user_id", user_id)
+    } else {
+        query(query_str_no_range).param("user_id", user_id)
+    };
+    if let Some(start) = start_timestamp_opt {
+        query = query.param("start_timestamp", start);
+    }
+
+    match graph.execute(query).await {
+        Ok(mut result) => {
+            let mut stats = Vec::new();
+
+            while let Ok(Some(row)) = result.next().await {
+                let goal_id = row.get::<i64>("goal_id").unwrap_or(0);
+                let goal_name = row.get::<String>("goal_name").unwrap_or_default();
+                let goal_type = row.get::<String>("goal_type").unwrap_or_default();
+                let total_events = row.get::<i64>("total_events").unwrap_or(0) as i32;
+                let completed_events = row.get::<i64>("completed_events").unwrap_or(0) as i32;
+                let total_duration_minutes = row
+                    .get::<f64>("total_duration_minutes")
+                    .unwrap_or(0.0);
+                let weighted_completion_rate = row
+                    .get::<f64>("weighted_completion_rate")
+                    .unwrap_or(0.0);
+
+                stats.push(EffortStat {
+                    goal_id,
+                    goal_name,
+                    goal_type,
+                    total_events,
+                    completed_events,
+                    total_duration_minutes,
+                    weighted_completion_rate,
+                });
+            }
+
+            Ok(Json(stats))
+        }
+        Err(e) => {
+            eprintln!("Error fetching effort stats: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch effort stats: {}", e),
             ))
         }
     }
