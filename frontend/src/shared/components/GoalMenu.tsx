@@ -3449,17 +3449,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     </Box>
                                 </Box>
                             )}
-                            {state.goal.id && state.goal.goal_type !== 'event' && (
+                            {(state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id) && (
                                 <Box sx={{ mb: 3 }}>
                                     <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
                                         Network
                                     </Typography>
                                     <MiniNetworkGraph
-                                        centerId={state.goal.id}
+                                        centerId={state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id}
                                         height={220}
                                         onNodeClick={(node) => {
                                             try {
-                                                if (!node?.id || node.id === state.goal.id) {
+                                                const centerId = state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id;
+                                                if (!node?.id || node.id === centerId) {
                                                     return;
                                                 }
                                                 close();
