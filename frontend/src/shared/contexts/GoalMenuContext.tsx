@@ -5,7 +5,7 @@ import { Goal } from '../../types/goals';
 type Mode = 'create' | 'edit' | 'view';
 
 interface GoalMenuContextType {
-    openGoalMenu: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => void;
+    openGoalMenu: (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { autoCreateEventTimestamp?: Date | null }) => void;
     closeGoalMenu: () => void;
 }
 
@@ -29,18 +29,20 @@ export const GoalMenuProvider: React.FC<GoalMenuProviderProps> = ({ children }) 
         goal: Goal | null;
         mode: Mode;
         onSuccess?: (goal: Goal) => void;
+        options?: { autoCreateEventTimestamp?: Date | null };
     }>({
         isOpen: false,
         goal: null,
         mode: 'view',
     });
 
-    const openGoalMenu = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
+    const openGoalMenu = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { autoCreateEventTimestamp?: Date | null }) => {
         setGoalMenuState({
             isOpen: true,
             goal,
             mode: initialMode,
             onSuccess,
+            options,
         });
     }, []);
 
@@ -56,6 +58,7 @@ export const GoalMenuProvider: React.FC<GoalMenuProviderProps> = ({ children }) 
                     goal={goalMenuState.goal}
                     mode={goalMenuState.mode}
                     onClose={closeGoalMenu}
+                    autoCreateEventTimestamp={goalMenuState.options?.autoCreateEventTimestamp}
                     onSuccess={(updatedGoal: Goal) => {
                         if (goalMenuState.onSuccess) {
                             goalMenuState.onSuccess(updatedGoal);

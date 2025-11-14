@@ -469,7 +469,7 @@ const Calendar: React.FC = () => {
     openGoalMenu(newGoal, 'create', () => {
       console.log('[Calendar] Goal menu success callback called');
       loadCalendarData();
-    });
+    }, { autoCreateEventTimestamp: clickedDate });
   };
 
   const handleEventClick = (info: any) => {

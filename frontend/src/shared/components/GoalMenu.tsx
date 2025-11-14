@@ -76,6 +76,7 @@ interface GoalMenuProps {
     submitOverride?: (updatedGoal: Goal, originalGoal: Goal, mode: Mode) => Promise<void>;
     defaultSelectedParents?: Goal[];
     defaultRelationshipType?: 'child' | 'queue';
+    autoCreateEventTimestamp?: Date | null;
 }
 
 // Stats interfaces
@@ -119,7 +120,7 @@ interface RoutineRecomputeDialogState {
     onConfirm: () => Promise<void>;
 }
 
-const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType }) => {
+const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType, autoCreateEventTimestamp }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
@@ -572,36 +573,36 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [state.mode, taskEvents, parentGoals]);
 
-    // Auto-add event for new tasks created from calendar clicks
+    // Auto-add event for new tasks only when caller provides an explicit timestamp
     useEffect(() => {
         if (!autoEventAdded &&
             state.mode === 'create' &&
             state.goal.goal_type === 'task' &&
-            state.goal.scheduled_timestamp &&
+            autoCreateEventTimestamp &&
             !state.goal.id &&
             taskEvents.length === 0) {
-            // This is a new task created from a calendar click - auto-add an event
-            const tempEvent = makeTempEvent(state.goal.scheduled_timestamp, 60);
+            // Caller (Day/Calendar) requested auto-add with a specific timestamp
+            const tempEvent = makeTempEvent(autoCreateEventTimestamp, 60);
             setTaskEvents([tempEvent]);
             setTotalDuration(60);
             setAutoEventAdded(true);
         }
-    }, [autoEventAdded, state.mode, state.goal.goal_type, state.goal.scheduled_timestamp, state.goal.id, taskEvents.length]);
+    }, [autoEventAdded, state.mode, state.goal.goal_type, autoCreateEventTimestamp, state.goal.id, taskEvents.length]);
 
-    // Auto-add event when user changes goal type to 'task' in create mode
+    // Auto-add when user switches to 'task' type in create mode only if caller provided timestamp
     useEffect(() => {
         if (!autoEventAdded &&
             state.mode === 'create' &&
             state.goal.goal_type === 'task' &&
-            state.goal.scheduled_timestamp &&
+            autoCreateEventTimestamp &&
             taskEvents.length === 0) {
-            // User selected task type, add event with the scheduled timestamp
-            const tempEvent = makeTempEvent(state.goal.scheduled_timestamp, 60);
+            // Respect the explicit timestamp provided by caller
+            const tempEvent = makeTempEvent(autoCreateEventTimestamp, 60);
             setTaskEvents([tempEvent]);
             setTotalDuration(60);
             setAutoEventAdded(true);
         }
-    }, [autoEventAdded, state.goal.goal_type, state.mode, state.goal.scheduled_timestamp, taskEvents.length]);
+    }, [autoEventAdded, state.goal.goal_type, state.mode, autoCreateEventTimestamp, taskEvents.length]);
 
     // Fetch parent goals using traversal API
     const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
@@ -3674,7 +3675,7 @@ interface GoalMenuComponent extends React.FC<GoalMenuProps> {
         goal: Goal,
         initialMode: Mode,
         onSuccess?: (goal: Goal) => void,
-        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }
     ) => void;
     close: () => void;
     openWithSubmitOverride: (
@@ -3682,14 +3683,14 @@ interface GoalMenuComponent extends React.FC<GoalMenuProps> {
         initialMode: Mode,
         submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>,
         onSuccess?: (goal: Goal) => void,
-        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }
+        options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }
     ) => void;
 }
 
 const GoalMenuBase = GoalMenu;
 const GoalMenuWithStatic = GoalMenuBase as GoalMenuComponent;
 
-GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }) => {
+GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }) => {
     console.log('[GoalMenu.open] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -3726,13 +3727,14 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
             }}
             defaultSelectedParents={options?.defaultSelectedParents}
             defaultRelationshipType={options?.defaultRelationshipType}
+            autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
         />
     );
 
     console.log('[GoalMenu.open] Goal menu rendered');
 };
 
-GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue' }) => {
+GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, submit: (updated: Goal, original: Goal, mode: Mode) => Promise<void>, onSuccess?: (goal: Goal) => void, options?: { defaultSelectedParents?: Goal[]; defaultRelationshipType?: 'child' | 'queue'; autoCreateEventTimestamp?: Date | null }) => {
     console.log('[GoalMenu.openWithSubmitOverride] Opening goal menu:', { goalId: goal.id, goalName: goal.name, mode: initialMode });
 
     const container = document.createElement('div');
@@ -3766,6 +3768,7 @@ GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, subm
             submitOverride={submit}
             defaultSelectedParents={options?.defaultSelectedParents}
             defaultRelationshipType={options?.defaultRelationshipType}
+            autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
         />
     );
 };
