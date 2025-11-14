@@ -287,16 +287,16 @@ pub async fn send_notification_to_user(
 #[derive(Debug)]
 struct SubscriptionInfo {
     endpoint: String,
-    p256dh: String,
-    auth: String,
+    _p256dh: String,
+    _auth: String,
 }
 
 impl SubscriptionInfo {
     fn new(endpoint: String, p256dh: String, auth: String) -> Self {
         Self {
             endpoint,
-            p256dh,
-            auth,
+            _p256dh: p256dh,
+            _auth: auth,
         }
     }
 }

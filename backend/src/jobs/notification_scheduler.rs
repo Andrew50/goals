@@ -50,7 +50,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
             .and_then(|node| node.get::<String>("name").ok())
             .unwrap_or_else(|| "Event".to_string());
             
-        let event_description: Option<String> = row.get::<neo4rs::Node>("g")
+        let _event_description: Option<String> = row.get::<neo4rs::Node>("g")
             .ok()
             .and_then(|node| node.get::<String>("description").ok());
             
@@ -229,7 +229,7 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                 timestamp: Some(now),
             };
             
-            if let Ok(_) = push::send_notification_to_user(graph, user_id, &payload).await {
+            if push::send_notification_to_user(graph, user_id, &payload).await.is_ok() {
                 // Mark this reminder as sent
                 let mark_query = query(
                     "MATCH (g:Goal)
