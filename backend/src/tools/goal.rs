@@ -524,12 +524,21 @@ pub async fn update_goal_handler(
         set_clauses.push("g.routine_time = $derived_routine_time");
         params.push(("derived_routine_time", ts.into()));
 
-        // If start_timestamp is not provided, set to midnight of the same UTC date
+        // If start_timestamp is not provided, derive the start of day in UTC based on `ts`.
+        //
+        // IMPORTANT: This intentionally uses the UTC day boundary (not the user's local midnight).
+        // The routine event generator combines `start_timestamp` with the minutes-since-midnight
+        // extracted from `routine_time` (see set_time_of_day in jobs/routine_generator.rs).
+        // Using the same UTC basis for both preserves the invariant:
+        //   set_time_of_day(start_of_day_utc, routine_time=ts) == ts
+        //
+        // If local-midnight semantics are desired, the client must explicitly send a
+        // `start_timestamp` computed for the user's local zone.
         if goal.start_timestamp.is_none() {
             // 86_400_000 ms per day
-            let start_midnight = ts - (ts % 86_400_000);
+            let start_of_day_utc = ts - (ts % 86_400_000);
             set_clauses.push("g.start_timestamp = $derived_start_timestamp");
-            params.push(("derived_start_timestamp", start_midnight.into()));
+            params.push(("derived_start_timestamp", start_of_day_utc.into()));
         }
 
         // Clear scheduled_timestamp on the routine to avoid ambiguity

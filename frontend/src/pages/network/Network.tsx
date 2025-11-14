@@ -869,7 +869,7 @@ const NetworkView: React.FC = () => {
   };
 
   // Create a relationship edge between two nodes
-  const handleCreateRelationship = async (fromId: number, toId: number, relationshipType: RelationshipType) => {
+  async function handleCreateRelationship(fromId: number, toId: number, relationshipType: RelationshipType) {
     try {
       debug('handleCreateRelationship called', { fromId, toId, relationshipType });
       const fromNode = nodesDataSetRef.current?.get(fromId);
@@ -927,7 +927,7 @@ const NetworkView: React.FC = () => {
         debug('Re-enabled Vis addEdgeMode after relationship flow');
       }
     }, 100);
-  };
+  }
 
   // (moved refreshEdgesForNode earlier)
 
