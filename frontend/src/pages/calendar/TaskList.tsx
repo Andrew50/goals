@@ -18,6 +18,8 @@ interface TaskWithEventInfo extends CalendarTask {
   eventCount: number;
   completedEventCount: number;
   nextEventDate?: Date;
+  isOverdue?: boolean;
+  isFutureStart?: boolean;
 }
 
 /**
@@ -147,10 +149,14 @@ const DraggableTask: React.FC<{
           <span>Next: {formatDate(task.nextEventDate)}</span>
         )}
         {goal?.start_timestamp && (
-          <span>Start: {formatDate(goal.start_timestamp)}</span>
+          <span style={task.isFutureStart ? { color: 'rgba(255, 255, 255, 0.6)' } : undefined}>
+            Start: {formatDate(goal.start_timestamp)}
+          </span>
         )}
         {goal?.end_timestamp && (
-          <span>Due: {formatDate(goal.end_timestamp)}</span>
+          <span style={task.isOverdue ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>
+            Due: {formatDate(goal.end_timestamp)}
+          </span>
         )}
       </div>
     </div>
@@ -214,9 +220,12 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
 
     // Calculate task event info
     const tasksWithInfo: TaskWithEventInfo[] = useMemo(() => {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const now = new Date();
       return filteredTasks.map(task => {
         const taskEvents = events.filter(e =>
-          e.goal.parent_id === task.goal.id &&
+          e.goal.parent_id === task.goal?.id &&
           !e.goal.is_deleted
         );
 
@@ -225,11 +234,25 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           .filter(e => !e.goal.completed && e.start > new Date())
           .sort((a, b) => a.start.getTime() - b.start.getTime());
 
+        const endTs = task.goal?.end_timestamp
+          ? new Date(task.goal.end_timestamp)
+          : undefined;
+        const startTs = task.goal?.start_timestamp
+          ? new Date(task.goal.start_timestamp)
+          : undefined;
+        const isCompleted = task.goal?.completed ?? false;
+        const isOverdue =
+          !!endTs && !isCompleted && endTs.getTime() < startOfToday.getTime();
+        const isFutureStart =
+          !!startTs && startTs.getTime() > now.getTime();
+
         return {
           ...task,
           eventCount: taskEvents.length,
           completedEventCount: completedEvents.length,
-          nextEventDate: futureEvents[0]?.start
+          nextEventDate: futureEvents[0]?.start,
+          isOverdue,
+          isFutureStart
         };
       });
     }, [filteredTasks, events]);
@@ -246,7 +269,17 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       };
 
       return [...tasksWithInfo].sort((a, b) => {
-        // Tasks with no events first
+        // Future-start tasks should be placed at the end, regardless of priority
+        if ((a.isFutureStart ?? false) !== (b.isFutureStart ?? false)) {
+          return a.isFutureStart ? 1 : -1;
+        }
+
+        // Overdue tasks first
+        if (a.isOverdue !== b.isOverdue) {
+          return a.isOverdue ? -1 : 1;
+        }
+
+        // Tasks with no events next
         if (a.eventCount === 0 && b.eventCount > 0) return -1;
         if (b.eventCount === 0 && a.eventCount > 0) return 1;
 
