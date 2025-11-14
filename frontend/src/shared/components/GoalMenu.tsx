@@ -38,7 +38,8 @@ import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
-    timestampToDisplayString
+    timestampToDisplayString,
+    deriveRoutineFieldsFromTaskSchedule
 } from '../utils/time';
 import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
@@ -153,6 +154,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // For routines, ensure routine_time defaults sensibly
         if (initialMode === 'create' && goalCopy.goal_type === 'routine' && !goalCopy.routine_time) {
             goalCopy.routine_time = goalCopy.scheduled_timestamp || new Date();
+        }
+
+        // Default frequency for new routines
+        if (initialMode === 'create' && goalCopy.goal_type === 'routine' && !goalCopy.frequency) {
+            goalCopy.frequency = '1D';
         }
 
         // Provide a reasonable default duration for time-based items
@@ -713,6 +719,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             goalCopy.routine_time = goalCopy.scheduled_timestamp || new Date();
         }
 
+        // Default frequency when opening a routine
+        if (goalCopy.goal_type === 'routine' && !goalCopy.frequency) {
+            goalCopy.frequency = '1D';
+        }
+
         setState({
             goal: goalCopy,
             mode: actualMode,
@@ -1081,7 +1092,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Set default frequency if goal type is 'routine' and frequency is undefined
-        if (newGoal.goal_type === 'routine' && newGoal.frequency === undefined) {
+        if (newGoal.goal_type === 'routine' && !newGoal.frequency) {
             newGoal.frequency = '1D';
         }
 
@@ -2092,7 +2103,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     })()}
                     onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                         const value = e.target.value;
-                        const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'W';
+                        const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D';
                         const days = state.goal.frequency?.split(':')?.[1] || '';
                         const newFreq = `${value}${unit}${days ? ':' + days : ''}`;
                         //console.log(newFreq);
@@ -2275,9 +2286,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         updates.routine_type = 'task';
                         if (!state.goal.duration) updates.duration = 60;
                         if (!state.goal.frequency) updates.frequency = '1D';
-                        // If start_timestamp is not set and we have a scheduled_timestamp (from calendar click), use it
-                        if (!state.goal.start_timestamp && state.goal.scheduled_timestamp) {
-                            updates.start_timestamp = state.goal.scheduled_timestamp;
+                        // Derive routine_time and start_timestamp from scheduled_timestamp if present
+                        if (state.goal.scheduled_timestamp) {
+                            const derived = deriveRoutineFieldsFromTaskSchedule(state.goal.scheduled_timestamp);
+                            updates.routine_time = derived.routine_time;
+                            if (!state.goal.start_timestamp) {
+                                updates.start_timestamp = derived.start_timestamp;
+                            }
+                            // Clear scheduled_timestamp to avoid ambiguity on routines
+                            updates.scheduled_timestamp = undefined;
+                        } else if (state.goal.routine_time === undefined) {
+                            // Fall back to current time-of-day if no scheduled time exists
+                            updates.routine_time = new Date();
                         }
                     }
 

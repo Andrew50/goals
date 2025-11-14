@@ -517,6 +517,29 @@ pub async fn update_goal_handler(
         set_clauses.push("g.is_gcal_imported = $is_gcal_imported");
         params.push(("is_gcal_imported", is_gcal_imported.into()));
     }
+    // Derivation: when converting to routine and routine_time is not provided,
+    // but scheduled_timestamp is provided (common in Task → Routine conversion),
+    // derive routine_time from scheduled_timestamp and align start_timestamp to that date's midnight.
+    if goal.goal_type == GoalType::Routine
+        && goal.routine_time.is_none()
+        && goal.scheduled_timestamp.is_some()
+    {
+        let ts = goal.scheduled_timestamp.unwrap();
+        // Set routine_time to the provided scheduled_timestamp (time-of-day preserved)
+        set_clauses.push("g.routine_time = $derived_routine_time");
+        params.push(("derived_routine_time", ts.into()));
+
+        // If start_timestamp is not provided, set to midnight of the same UTC date
+        if goal.start_timestamp.is_none() {
+            // 86_400_000 ms per day
+            let start_midnight = ts - (ts % 86_400_000);
+            set_clauses.push("g.start_timestamp = $derived_start_timestamp");
+            params.push(("derived_start_timestamp", start_midnight.into()));
+        }
+
+        // Clear scheduled_timestamp on the routine to avoid ambiguity
+        set_clauses.push("g.scheduled_timestamp = NULL");
+    }
     // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
         use chrono::{TimeZone, Utc};

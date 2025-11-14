@@ -7,7 +7,8 @@ import {
     inputStringToTimestamp,
     dateToTimestamp,
     timestampToDate,
-    timestampToDisplayString
+    timestampToDisplayString,
+    deriveRoutineFieldsFromTaskSchedule
 } from './time';
 import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
 
@@ -464,6 +465,45 @@ describe('Time conversion utilities', () => {
         test('should handle undefined or null timestamp', () => {
             expect(timestampToDisplayString(undefined)).toBe('');
             expect(timestampToDisplayString(null)).toBe('');
+        });
+    });
+
+    describe('deriveRoutineFieldsFromTaskSchedule', () => {
+        test('should derive start at midnight and preserve time-of-day', () => {
+            const scheduled = new Date(2025, 6, 10, 14, 45, 0, 0); // Jul 10, 2025 14:45 local
+            const { routine_time, start_timestamp } = deriveRoutineFieldsFromTaskSchedule(scheduled);
+
+            // Start should be midnight of the same local date
+            expect(start_timestamp.getFullYear()).toBe(2025);
+            expect(start_timestamp.getMonth()).toBe(6);
+            expect(start_timestamp.getDate()).toBe(10);
+            expect(start_timestamp.getHours()).toBe(0);
+            expect(start_timestamp.getMinutes()).toBe(0);
+
+            // Routine time should preserve hh:mm on that same date
+            expect(routine_time.getFullYear()).toBe(2025);
+            expect(routine_time.getMonth()).toBe(6);
+            expect(routine_time.getDate()).toBe(10);
+            expect(routine_time.getHours()).toBe(14);
+            expect(routine_time.getMinutes()).toBe(45);
+        });
+
+        test('should be robust around DST boundaries', () => {
+            // Choose a date often near DST change; invariants should still hold locally
+            const scheduled = new Date(2025, 2, 9, 2, 30, 0, 0); // Mar 9, 2025 02:30 local (DST change in many locales)
+            const { routine_time, start_timestamp } = deriveRoutineFieldsFromTaskSchedule(scheduled);
+
+            // Start should always be midnight local
+            expect(start_timestamp.getHours()).toBe(0);
+            expect(start_timestamp.getMinutes()).toBe(0);
+
+            // Routine time should preserve time-of-day components
+            expect(routine_time.getHours()).toBe(scheduled.getHours());
+            expect(routine_time.getMinutes()).toBe(scheduled.getMinutes());
+            // Same local date components
+            expect(routine_time.getFullYear()).toBe(scheduled.getFullYear());
+            expect(routine_time.getMonth()).toBe(scheduled.getMonth());
+            expect(routine_time.getDate()).toBe(scheduled.getDate());
         });
     });
 }); 

@@ -97,6 +97,28 @@ export const dateToTimestamp = (date: Date): number => date.getTime();
 export const timestampToDate = (ts: number | Date): Date =>
   ts instanceof Date ? ts : new Date(ts);
 
+/**
+ * Given a scheduled Date (typically from a task's scheduled_timestamp),
+ * derive the routine fields:
+ * - start_timestamp: midnight at the same local date
+ * - routine_time: that same date with the original time-of-day (hh:mm)
+ */
+export function deriveRoutineFieldsFromTaskSchedule(scheduled: Date): {
+  routine_time: Date;
+  start_timestamp: Date;
+} {
+  const year = scheduled.getFullYear();
+  const month = scheduled.getMonth();
+  const day = scheduled.getDate();
+  const hours = scheduled.getHours();
+  const minutes = scheduled.getMinutes();
+
+  const start = new Date(year, month, day, 0, 0, 0, 0);
+  const time = new Date(year, month, day, hours, minutes, 0, 0);
+
+  return { routine_time: time, start_timestamp: start };
+}
+
 /** Format for HTML inputs – accepts Date or ms. */
 export const timestampToInputString = (
   value: number | Date | null | undefined,
