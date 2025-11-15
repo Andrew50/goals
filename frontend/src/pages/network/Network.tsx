@@ -54,6 +54,8 @@ const NetworkView: React.FC = () => {
   const lastFocusedIdRef = useRef<number | null>(null);
   const shouldAutoFocusRef = useRef<boolean>(false);
   const [edgeItems, setEdgeItems] = useState<NetworkEdge[]>([]);
+  const isHoveringRef = useRef<boolean>(false);
+  const prevHoverGreenEdgeIdsRef = useRef<Set<string | number>>(new Set());
   const filteredSearchItems = useMemo(() => {
     return (searchItems || []).filter(g => g && g.goal_type !== 'event');
   }, [searchItems]);
@@ -123,39 +125,42 @@ const NetworkView: React.FC = () => {
     }
   }), []);
 
-  // Helper: Given a node ID, find connected elements (for hover highlighting)
-  const findConnectedElements = (nodeId: number, edges: NetworkEdge[]): { nodes: Set<number>, edges: Set<string | number> } => {
-    const visited = new Set<number>();
-    const connectedEdges = new Set<string | number>();
+  // Helper: Given a node ID, find connected elements split by direction (for hover highlighting)
+  const findConnectedElements = (nodeId: number, edges: NetworkEdge[]): {
+    edgesUp: Set<string | number>,
+    edgesDown: Set<string | number>
+  } => {
+    const visitedUp = new Set<number>();
+    const visitedDown = new Set<number>();
+    const edgesUp = new Set<string | number>();
+    const edgesDown = new Set<string | number>();
 
     const traverseUpward = (currentId: number) => {
-      if (visited.has(currentId)) return;
-      visited.add(currentId);
+      if (visitedUp.has(currentId)) return;
+      visitedUp.add(currentId);
       edges.forEach(edge => {
         if (edge.to === currentId) {
-          connectedEdges.add((edge as any).id ?? `${edge.from}-${edge.to}`);
-          traverseUpward(edge.from);
+          edgesUp.add((edge as any).id ?? `${(edge as any).from}-${(edge as any).to}`);
+          traverseUpward((edge as any).from as number);
         }
       });
     };
 
     const traverseDownward = (currentId: number) => {
-      if (visited.has(currentId)) return;
-      visited.add(currentId);
+      if (visitedDown.has(currentId)) return;
+      visitedDown.add(currentId);
       edges.forEach(edge => {
         if (edge.from === currentId) {
-          connectedEdges.add((edge as any).id ?? `${edge.from}-${edge.to}`);
-          traverseDownward(edge.to);
+          edgesDown.add((edge as any).id ?? `${(edge as any).from}-${(edge as any).to}`);
+          traverseDownward((edge as any).to as number);
         }
       });
     };
 
-    visited.clear();
     traverseUpward(nodeId);
-    visited.clear();
     traverseDownward(nodeId);
 
-    return { nodes: visited, edges: connectedEdges };
+    return { edgesUp, edgesDown };
   };
 
   // ---- Insights: compute structural issues and highlight sets ----
@@ -216,6 +221,8 @@ const NetworkView: React.FC = () => {
         if (!bChildren || bChildren.size === 0) return;
         bChildren.forEach((c) => {
           if (!nodeSet.has(c)) return;
+          // Require distinct nodes to avoid treating self-loops or degenerate cases as cycles
+          if (a === b || b === c || a === c) return;
           if (aChildren.has(c)) {
             const key = `${a}-${b}-${c}`;
             if (!seen.has(key)) {
@@ -242,6 +249,7 @@ const NetworkView: React.FC = () => {
 
     const childrenById = new Map<number, Set<number>>();
     const parentsById = new Map<number, Set<number>>();
+    const selfLoopNodes = new Set<number>();
     nodeIds.forEach((id) => {
       childrenById.set(id, new Set<number>());
       parentsById.set(id, new Set<number>());
@@ -252,6 +260,9 @@ const NetworkView: React.FC = () => {
       if (!nodeSet.has(from) || !nodeSet.has(to)) return;
       childrenById.get(from)!.add(to);
       parentsById.get(to)!.add(from);
+      if (from === to) {
+        selfLoopNodes.add(from);
+      }
     });
 
     const roots: number[] = nodeIds.filter((id) => (parentsById.get(id)?.size || 0) === 0);
@@ -336,6 +347,7 @@ const NetworkView: React.FC = () => {
       mutualPairs,
       sccs,
       triangles,
+      selfLoopNodes,
       highlightSets: {
         roots: { nodes: rootsNodes, edges: rootsEdges },
         leaves: { nodes: leavesNodes, edges: leavesEdges },
@@ -350,6 +362,7 @@ const NetworkView: React.FC = () => {
   useEffect(() => {
     const network: any = networkRef.current as any;
     if (!network || !network.body) return;
+    if (isHoveringRef.current) return; // don't override hover-time selection
     const nodes = new Set<number>();
     const edges = new Set<string>();
     try {
@@ -691,15 +704,47 @@ const NetworkView: React.FC = () => {
           });
 
           networkRef.current.on('hoverNode', (params) => {
-            if (edgesDataSetRef.current) {
+            if (!edgesDataSetRef.current) return;
+            isHoveringRef.current = true;
+            // Reset any previously colored edges
+            try {
+              const idsToReset = Array.from(prevHoverGreenEdgeIdsRef.current);
+              if (idsToReset.length > 0) {
+                const defaultColor = { inherit: 'from', opacity: 0.7, hover: '#2B7CE9', highlight: '#2B7CE9' };
+                edgesDataSetRef.current.update(idsToReset.map((id) => ({ id, color: defaultColor })));
+                prevHoverGreenEdgeIdsRef.current.clear();
+              }
+            } catch {}
+            try {
               const currentEdges = edgesDataSetRef.current.get();
-              const { edges: connectedEdges } = findConnectedElements(params.node, currentEdges);
-              networkRef.current?.setSelection({ nodes: [], edges: Array.from(connectedEdges) });
-            }
+              const { edgesUp, edgesDown } = findConnectedElements(params.node, currentEdges);
+              // Color parents (upward) edges green
+              const greenColor = { inherit: 'from', opacity: 0.7, hover: '#2e7d32', highlight: '#2e7d32' };
+              const upIds = Array.from(edgesUp);
+              if (upIds.length > 0) {
+                edgesDataSetRef.current.update(upIds.map((id) => ({ id, color: greenColor })));
+                prevHoverGreenEdgeIdsRef.current = new Set(upIds);
+              }
+              // Select both sets without using spread on Set (for older TS targets)
+              const combinedSet = new Set<string | number>();
+              edgesUp.forEach((id) => combinedSet.add(id));
+              edgesDown.forEach((id) => combinedSet.add(id));
+              networkRef.current?.setSelection({ nodes: [], edges: Array.from(combinedSet) });
+            } catch {}
           });
 
           networkRef.current.on('blurNode', () => {
+            // Restore edge colors and clear selection
+            try {
+              const idsToReset = Array.from(prevHoverGreenEdgeIdsRef.current);
+              if (edgesDataSetRef.current && idsToReset.length > 0) {
+                const defaultColor = { inherit: 'from', opacity: 0.7, hover: '#2B7CE9', highlight: '#2B7CE9' };
+                edgesDataSetRef.current.update(idsToReset.map((id) => ({ id, color: defaultColor })));
+              }
+              prevHoverGreenEdgeIdsRef.current.clear();
+            } catch {}
             networkRef.current?.setSelection({ nodes: [], edges: [] });
+            isHoveringRef.current = false;
           });
 
           networkRef.current.on('click', (params: any) => handleClick(params, 'view'));
@@ -998,6 +1043,8 @@ const NetworkView: React.FC = () => {
 
   const issueRows = useMemo(() => {
     type IssueType = 'root' | 'leaf' | 'pair' | 'cycle' | 'triangle';
+    type IssueRowNode = { kind: 'node', key: string, id: number, name: string, types: IssueType[] };
+    type IssueRowCycleGroup = { kind: 'cycleGroup', key: string, ids: number[], names: string[] };
     const typeOrder: IssueType[] = ['root', 'leaf', 'pair', 'cycle', 'triangle'];
     const nodeToTypes = new Map<number, Set<IssueType>>();
 
@@ -1028,22 +1075,66 @@ const NetworkView: React.FC = () => {
 
     // Triangles
     insights.triangles.forEach(([a, b, c]) => {
-      ensure(a).add('triangle');
-      ensure(b).add('triangle');
-      ensure(c).add('triangle');
+      // Normalize triangles as cycles in suggestions
+      ensure(a).add('cycle');
+      ensure(b).add('cycle');
+      ensure(c).add('cycle');
     });
 
-    // Build sorted rows
-    const rows = Array.from(nodeToTypes.entries())
-      .map(([id, types]) => ({
-        key: `issue-node-${id}`,
-        id,
-        name: insights.idToGoal.get(id)?.name || `Goal ${id}`,
-        types: typeOrder.filter((t) => types.has(t))
-      }))
+    // Self-loop cycles (size-1 cycles) - valid cycles only if an explicit self edge exists
+    insights.selfLoopNodes.forEach((id) => {
+      ensure(id).add('cycle');
+    });
+
+    // Build sorted node rows (dedupe: triangle => cycle)
+    const nodeRows: IssueRowNode[] = Array.from(nodeToTypes.entries())
+      .map(([id, types]) => {
+        const normalized = new Set<IssueType>();
+        types.forEach((t) => normalized.add(t === 'triangle' ? 'cycle' : t));
+        const ordered = typeOrder.filter((t) => normalized.has(t));
+        const filteredOrdered = ordered.filter((t) => t !== 'triangle');
+        return {
+          kind: 'node' as const,
+          key: `issue-node-${id}`,
+          id,
+          name: insights.idToGoal.get(id)?.name || `Goal ${id}`,
+          types: filteredOrdered as IssueType[]
+        } as IssueRowNode;
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    return rows;
+    // Build grouped cycle rows from SCCs and Triangles, deduped by id-set key
+    const groupKey = (ids: number[]) => ids.slice().sort((x, y) => x - y).join('-');
+    const groupsSet = new Set<string>();
+    const groups: number[][] = [];
+
+    insights.sccs.forEach((comp) => {
+      const key = groupKey(comp);
+      if (!groupsSet.has(key)) {
+        groupsSet.add(key);
+        groups.push(comp.slice().sort((x, y) => x - y));
+      }
+    });
+    insights.triangles.forEach(([a, b, c]) => {
+      // Deduplicate ids within a triangle to prevent degenerate groups
+      const unique = Array.from(new Set([a, b, c]));
+      if (unique.length < 3) return; // skip non-3-node groups
+      const key = groupKey(unique);
+      if (!groupsSet.has(key)) {
+        groupsSet.add(key);
+        groups.push(unique.slice().sort((x, y) => x - y));
+      }
+    });
+
+    const filteredGroups = groups.filter((ids) => ids.length >= 2 || (ids.length === 1 && insights.selfLoopNodes.has(ids[0])));
+    const cycleGroupRows: IssueRowCycleGroup[] = filteredGroups.map((ids) => ({
+      kind: 'cycleGroup' as const,
+      key: `cycle-group-${groupKey(ids)}`,
+      ids,
+      names: ids.map((id) => insights.idToGoal.get(id)?.name || `Goal ${id}`)
+    } as IssueRowCycleGroup));
+
+    return ([] as Array<IssueRowNode | IssueRowCycleGroup>).concat(cycleGroupRows, nodeRows);
   }, [insights]);
 
   return (
@@ -1137,7 +1228,6 @@ const NetworkView: React.FC = () => {
                         className="goal-type-badge"
                         style={{
                           backgroundColor: `${backgroundColor}20`,
-                          color: backgroundColor,
                           display: 'inline-block',
                           maxWidth: '100%',
                           whiteSpace: 'nowrap',
@@ -1181,71 +1271,140 @@ const NetworkView: React.FC = () => {
             <AccordionDetails>
               <div style={{ display: 'grid', gap: '8px' }}>
                 <List dense style={{ maxHeight: 288, overflowY: 'auto' }}>
-                  {issueRows.map((row) => (
-                    <ListItem
-                      key={row.key}
-                      button
-                      onClick={() => {
-                        const network: any = networkRef.current as any;
-                        if (!network || !network.body) { focusNode(row.id); return; }
-                        try { network.setSelection({ nodes: [row.id], edges: [] }); network.fit({ nodes: [row.id], animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); } catch (e) { debug('issue focus failed', e); }
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-                        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
-                          <span
-                            className="goal-type-badge"
-                            style={{
-                              display: 'inline-block',
-                              padding: '2px 8px',
-                              borderRadius: '999px',
-                              backgroundColor: `${((insights.idToGoal.get(row.id) && getGoalStyle(insights.idToGoal.get(row.id) as Goal).backgroundColor) || '#666666')}20`,
-                              color: (insights.idToGoal.get(row.id) && getGoalStyle(insights.idToGoal.get(row.id) as Goal).backgroundColor) || '#666666',
-                              fontWeight: 600,
-                              maxWidth: '100%',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-                            }}
-                            title={row.name}
-                          >
-                            {row.name}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                          {row.types.map((t) => (
-                            <div
-                              key={`${row.key}-${t}`}
+                  {issueRows.map((row) => {
+                    const isCycleGroup = (row as any).kind === 'cycleGroup';
+                    if (isCycleGroup) {
+                      const group = row as any;
+                      return (
+                        <ListItem
+                          key={group.key}
+                          button
+                          onClick={() => {
+                            const network: any = networkRef.current as any;
+                            const ids: number[] = group.ids || [];
+                            if (!ids || ids.length === 0) return;
+                            if (!network || !network.body) { focusNode(ids[0]); return; }
+                            try {
+                              const edges = collectEdgesForNodes(ids);
+                              network.setSelection({ nodes: ids, edges });
+                              network.fit({ nodes: ids, animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+                            } catch (e) { debug('cycle group focus failed', e); }
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                            <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              {(group.ids || []).map((id: number) => {
+                                const goal = insights.idToGoal.get(id) as Goal | undefined;
+                                const { backgroundColor } = goal ? getGoalStyle(goal) : { backgroundColor: '#666666' };
+                                const name = goal?.name || `Goal ${id}`;
+                                return (
+                                  <span
+                                    key={`cycle-group-name-${id}`}
+                                    className="goal-type-badge"
+                                    style={{
+                                      display: 'inline-block',
+                                      padding: '2px 8px',
+                                      borderRadius: '999px',
+                                      backgroundColor: `${backgroundColor}20`,
+                                      fontWeight: 600,
+                                      maxWidth: '100%',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis'
+                                    }}
+                                    title={name}
+                                  >
+                                    {name}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                              <div
+                                style={{
+                                  padding: '2px 8px',
+                                  borderRadius: '999px',
+                                  fontSize: '11px',
+                                  lineHeight: 1.5,
+                                  background: '#ffebee',
+                                  color: '#b71c1c',
+                                  flex: '0 0 auto'
+                                }}
+                                aria-label="Cycle tag"
+                              >
+                                Cycle
+                              </div>
+                            </div>
+                          </div>
+                        </ListItem>
+                      );
+                    }
+                    const node = row as any;
+                    return (
+                      <ListItem
+                        key={node.key}
+                        button
+                        onClick={() => {
+                          const network: any = networkRef.current as any;
+                          if (!network || !network.body) { focusNode(node.id); return; }
+                          try { network.setSelection({ nodes: [node.id], edges: [] }); network.fit({ nodes: [node.id], animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); } catch (e) { debug('issue focus failed', e); }
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                          <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                            <span
+                              className="goal-type-badge"
                               style={{
+                                display: 'inline-block',
                                 padding: '2px 8px',
                                 borderRadius: '999px',
-                                fontSize: '11px',
-                                lineHeight: 1.5,
-                                background: t === 'root' ? '#e3f2fd'
-                                  : t === 'leaf' ? '#e8f5e9'
-                                  : t === 'pair' ? '#fff3e0'
-                                  : t === 'cycle' ? '#ffebee'
-                                  : '#ede7f6',
-                                color: t === 'root' ? '#0d47a1'
-                                  : t === 'leaf' ? '#1b5e20'
-                                  : t === 'pair' ? '#e65100'
-                                  : t === 'cycle' ? '#b71c1c'
-                                  : '#4a148c',
-                                flex: '0 0 auto'
+                                backgroundColor: `${((insights.idToGoal.get(node.id) && getGoalStyle(insights.idToGoal.get(node.id) as Goal).backgroundColor) || '#666666')}20`,
+                                fontWeight: 600,
+                                maxWidth: '100%',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
                               }}
-                              aria-label={`${t} tag`}
+                              title={node.name}
                             >
-                              {t === 'root' ? 'No Parents'
-                                : t === 'leaf' ? 'No Children'
-                                : t === 'pair' ? 'Mutual'
-                                : t === 'cycle' ? 'Cycle'
-                                : 'Triangle'}
-                            </div>
-                          ))}
+                              {node.name}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {(node.types || []).map((t: string) => (
+                              <div
+                                key={`${node.key}-${t}`}
+                                style={{
+                                  padding: '2px 8px',
+                                  borderRadius: '999px',
+                                  fontSize: '11px',
+                                  lineHeight: 1.5,
+                                  background: t === 'root' ? '#e3f2fd'
+                                    : t === 'leaf' ? '#e8f5e9'
+                                    : t === 'pair' ? '#fff3e0'
+                                    : (t === 'cycle' || t === 'triangle') ? '#ffebee'
+                                    : '#ede7f6',
+                                  color: t === 'root' ? '#0d47a1'
+                                    : t === 'leaf' ? '#1b5e20'
+                                    : t === 'pair' ? '#e65100'
+                                    : (t === 'cycle' || t === 'triangle') ? '#b71c1c'
+                                    : '#4a148c',
+                                  flex: '0 0 auto'
+                                }}
+                                aria-label={`${t} tag`}
+                              >
+                                {t === 'root' ? 'No Parents'
+                                  : t === 'leaf' ? 'No Children'
+                                  : t === 'pair' ? 'Mutual'
+                                  : (t === 'cycle' || t === 'triangle') ? 'Cycle'
+                                  : 'Cycle'}
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    </ListItem>
-                  ))}
+                      </ListItem>
+                    );
+                  })}
                 </List>
               </div>
             </AccordionDetails>

@@ -193,6 +193,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [selectedChildren, setSelectedChildren] = useState<Goal[]>([]);
     const [childSearchQuery, setChildSearchQuery] = useState('');
 
+    // Relationship loading guards
+    const [parentsLoaded, setParentsLoaded] = useState<boolean>(
+        initialMode === 'create' || processedInitialGoal.goal_type === 'event' || !processedInitialGoal.id
+    );
+    const [childrenLoaded, setChildrenLoaded] = useState<boolean>(
+        initialMode === 'create' || !processedInitialGoal.id
+    );
+    const relationsLoading = state.mode !== 'create' && (!parentsLoaded || !childrenLoaded);
+
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
     const [totalDuration, setTotalDuration] = useState<number>(0);
@@ -214,6 +223,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const prevStatsHeightRef = useRef<number | null>(null);
     const lastSkeletonStateRef = useRef<boolean | null>(null);
     const statsLoadStartRef = useRef<number | null>(null);
+    // Baseline of routine schedule fields captured once for edit-mode comparisons
+    const routineBaselineRef = useRef<{ frequency?: string | null; start_timestamp?: Date | null; end_timestamp?: Date | null } | null>(null);
 
     // Log stats-related state transitions that may impact layout
     useEffect(() => {
@@ -615,9 +626,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Skip fetching for events - they get their parent from the event-specific helper
         if (state.goal.goal_type === 'event') {
             // console.log('[GoalMenu] Skipping fetchParentGoals for event type');
+            setParentsLoaded(true);
             return;
         }
 
+        setParentsLoaded(false);
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
             // console.log('[GoalMenu] fetchParentGoals hierarchyResponse:', hierarchyResponse);
@@ -650,11 +663,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 setSelectedParents([]);
             }
         }
+        finally {
+            setParentsLoaded(true);
+        }
     }, [state.goal.goal_type]);
 
     // Fetch child goals using traversal API
     const fetchChildGoals = useCallback(async (goalId: number, mode: Mode) => {
         // console.log('[GoalMenu] fetchChildGoals called with goalId:', goalId);
+        setChildrenLoaded(false);
         try {
             const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
             // console.log('[GoalMenu] fetchChildGoals hierarchyResponse:', hierarchyResponse);
@@ -678,6 +695,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         } catch (error) {
             // console.error('Failed to fetch child goals:', error);
             setChildGoals([]);
+        }
+        finally {
+            setChildrenLoaded(true);
         }
     }, []);
 
@@ -715,7 +735,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Default frequency when opening a routine
-        if (goalCopy.goal_type === 'routine' && !goalCopy.frequency) {
+        if (actualMode === 'create' && goalCopy.goal_type === 'routine' && !goalCopy.frequency) {
             goalCopy.frequency = '1D';
         }
 
@@ -735,8 +755,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         if (goal.id) {
             // Skip fetchParentGoals for events - they use their own parent logic
             if (goal.goal_type !== 'event') {
+                setParentsLoaded(false);
                 fetchParentGoals(goal.id, actualMode);
+            } else {
+                setParentsLoaded(true);
             }
+            setChildrenLoaded(false);
             fetchChildGoals(goal.id, actualMode);
 
             // Fetch task events if this is a task
@@ -754,6 +778,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setChildSearchQuery('');
             setTaskEvents([]);
             setTotalDuration(0);
+            // New goals have no relations to load
+            setParentsLoaded(true);
+            setChildrenLoaded(true);
         }
 
         // Reset stats when goal changes
@@ -788,8 +815,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             // console.log('[GoalMenu] useEffect: Fetching relationships for goal ID:', state.goal.id);
             // Skip fetchParentGoals for events - they use their own parent logic
             if (state.goal.goal_type !== 'event') {
+                setParentsLoaded(false);
                 fetchParentGoals(state.goal.id, state.mode);
+            } else {
+                setParentsLoaded(true);
             }
+            setChildrenLoaded(false);
             fetchChildGoals(state.goal.id, state.mode);
         } else {
             // console.log('[GoalMenu] useEffect: No goal ID or dialog closed, clearing relationships');
@@ -798,6 +829,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 setParentGoals([]);
             }
             setChildGoals([]);
+            setParentsLoaded(true);
+            setChildrenLoaded(true);
         }
     }, [state.goal.id, state.goal.goal_type, state.mode, isOpen, fetchParentGoals, fetchChildGoals]);
 
@@ -866,6 +899,100 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             isViewOnly
         });
     }, [isViewOnly, state.goal.id, state.goal.goal_type]);
+
+    // Debug routine field changes (edit mode only)
+    useEffect(() => {
+        if (state.mode === 'edit' && state.goal.goal_type === 'routine') {
+            try {
+                console.log('[GoalMenu][Routine][State]', {
+                    goalId: state.goal.id,
+                    frequency: state.goal.frequency,
+                    startMs: state.goal.start_timestamp instanceof Date ? state.goal.start_timestamp.getTime() : null,
+                    endMs: state.goal.end_timestamp instanceof Date ? state.goal.end_timestamp.getTime() : null,
+                    routineTimeMs: state.goal.routine_time instanceof Date ? state.goal.routine_time.getTime() : null
+                });
+            } catch (_) {}
+        }
+    }, [state.goal.frequency, state.goal.start_timestamp, state.goal.end_timestamp, state.goal.routine_time, state.mode, state.goal.goal_type, state.goal.id]);
+
+    // Debug: Compare baseline sources (props vs server vs state) for routines in edit mode
+    useEffect(() => {
+        if (state.mode === 'edit' && state.goal.goal_type === 'routine' && state.goal.id) {
+            try {
+                const normalizeFrequency = (f?: string) => {
+                    const s = (f || '').trim();
+                    return s === '' ? '1D' : s;
+                };
+                const normalizeDate = (d?: Date | null) =>
+                    (d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : null);
+                const server = allGoals.find(g => g.id === state.goal.id);
+                console.log('[GoalMenu][Routine][BaselineComparison]', {
+                    initial: {
+                        id: initialGoal?.id,
+                        frequency: initialGoal?.frequency ?? null,
+                        startMs: initialGoal?.start_timestamp instanceof Date ? initialGoal.start_timestamp.getTime() : null,
+                        endMs: initialGoal?.end_timestamp instanceof Date ? initialGoal.end_timestamp.getTime() : null,
+                        normalized: {
+                            freq: normalizeFrequency(initialGoal?.frequency),
+                            start: normalizeDate(initialGoal?.start_timestamp),
+                            end: normalizeDate(initialGoal?.end_timestamp)
+                        }
+                    },
+                    server: server ? {
+                        id: server.id,
+                        frequency: server.frequency ?? null,
+                        startMs: server.start_timestamp instanceof Date ? server.start_timestamp.getTime() : null,
+                        endMs: server.end_timestamp instanceof Date ? server.end_timestamp.getTime() : null,
+                        normalized: {
+                            freq: normalizeFrequency(server.frequency),
+                            start: normalizeDate(server.start_timestamp),
+                            end: normalizeDate(server.end_timestamp)
+                        }
+                    } : null,
+                    state: {
+                        id: state.goal.id,
+                        frequency: state.goal.frequency ?? null,
+                        startMs: state.goal.start_timestamp instanceof Date ? state.goal.start_timestamp.getTime() : null,
+                        endMs: state.goal.end_timestamp instanceof Date ? state.goal.end_timestamp.getTime() : null,
+                        normalized: {
+                            freq: normalizeFrequency(state.goal.frequency),
+                            start: normalizeDate(state.goal.start_timestamp),
+                            end: normalizeDate(state.goal.end_timestamp)
+                        }
+                    }
+                });
+            } catch (_) {}
+        }
+    }, [allGoals, initialGoal, state.mode, state.goal.goal_type, state.goal.id, state.goal.frequency, state.goal.start_timestamp, state.goal.end_timestamp]);
+
+    // Capture a stable baseline for routine schedule fields once in edit mode
+    useEffect(() => {
+        if (state.mode !== 'edit' || state.goal.goal_type !== 'routine' || !state.goal.id) return;
+        if (routineBaselineRef.current) return; // already set
+        const server = allGoals.find(g => g.id === state.goal.id);
+        const baseline = {
+            frequency: server?.frequency ?? state.goal.frequency ?? null,
+            start_timestamp: server?.start_timestamp ?? state.goal.start_timestamp ?? null,
+            end_timestamp: server?.end_timestamp ?? state.goal.end_timestamp ?? null
+        };
+        routineBaselineRef.current = baseline;
+        try {
+            const normFreq = (s?: string | null) => {
+                const v = (s || '').trim();
+                return v === '' ? '1D' : v;
+            };
+            const normDate = (d?: Date | null) => (d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : null);
+            console.log('[GoalMenu][RoutineBaseline] set', {
+                id: state.goal.id,
+                raw: baseline,
+                normalized: {
+                    frequency: normFreq(baseline.frequency || undefined),
+                    start: normDate(baseline.start_timestamp || undefined),
+                    end: normDate(baseline.end_timestamp || undefined)
+                }
+            });
+        } catch (_) {}
+    }, [state.mode, state.goal.goal_type, state.goal.id, allGoals, state.goal.frequency, state.goal.start_timestamp, state.goal.end_timestamp]);
 
     // Set title based on initial mode when component mounts
     useEffect(() => {
@@ -1171,7 +1298,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Set default frequency if goal type is 'routine' and frequency is undefined
-        if (newGoal.goal_type === 'routine' && !newGoal.frequency) {
+        if (state.mode === 'create' && newGoal.goal_type === 'routine' && !newGoal.frequency) {
             newGoal.frequency = '1D';
         }
 
@@ -1183,6 +1310,26 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Auto-fill routine_time with the clicked calendar time (stored in scheduled_timestamp)
         if (newGoal.goal_type === 'routine' && newGoal.routine_time === undefined) {
             newGoal.routine_time = newGoal.scheduled_timestamp || new Date();
+        }
+
+        // Debug: Log routine-related field changes to trace unexpected diffs
+        if (newGoal.goal_type === 'routine') {
+            try {
+                console.log('[GoalMenu][Routine][handleChange]', {
+                    prev: {
+                        frequency: state.goal.frequency,
+                        startMs: state.goal.start_timestamp instanceof Date ? state.goal.start_timestamp.getTime() : null,
+                        endMs: state.goal.end_timestamp instanceof Date ? state.goal.end_timestamp.getTime() : null,
+                        routineTimeMs: state.goal.routine_time instanceof Date ? state.goal.routine_time.getTime() : null
+                    },
+                    next: {
+                        frequency: newGoal.frequency,
+                        startMs: newGoal.start_timestamp instanceof Date ? newGoal.start_timestamp.getTime() : null,
+                        endMs: newGoal.end_timestamp instanceof Date ? newGoal.end_timestamp.getTime() : null,
+                        routineTimeMs: newGoal.routine_time instanceof Date ? newGoal.routine_time.getTime() : null
+                    }
+                });
+            } catch (_) {}
         }
 
         // For all changes, update the local state (no immediate prompting for routine events)
@@ -1212,6 +1359,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const handleSubmit = async (another: boolean = false) => {
         if (another && state.mode !== 'create') {
             throw new Error('Cannot create another goal in non-create mode');
+        }
+
+        // Guard: avoid accidental relationship deletion if relations are still loading
+        if (relationsLoading) {
+            setState({ ...state, error: 'Please wait for parents and children to load before saving.' });
+            return;
         }
 
         const actionName: PendingAction = state.mode === 'create' ? 'create' : 'save';
@@ -1316,19 +1469,56 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // If editing a routine and schedule fields changed, prompt to recompute future occurrences
         if (state.mode === 'edit' && state.goal.goal_type === 'routine') {
-            const og = initialGoal;
             const ng = state.goal;
-            const t = (v: any) => (v instanceof Date ? v.getTime() : v ?? null);
-            const scheduleChanged = (
-                og.frequency !== ng.frequency ||
-                t(og.start_timestamp) !== t(ng.start_timestamp) ||
-                t(og.end_timestamp) !== t(ng.end_timestamp)
-            );
+            const normalizeFrequency = (f?: string) => {
+                const s = (f || '').trim();
+                return s === '' ? '1D' : s;
+            };
+            const normalizeDate = (d?: Date | null) =>
+                (d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : null);
+            const og = routineBaselineRef.current; // use captured, server-backed baseline
+            let scheduleChanged = false;
+            if (og) {
+                scheduleChanged = (
+                    normalizeFrequency(og.frequency || undefined) !== normalizeFrequency(ng.frequency) ||
+                    normalizeDate(og.start_timestamp || undefined) !== normalizeDate(ng.start_timestamp) ||
+                    normalizeDate(og.end_timestamp || undefined) !== normalizeDate(ng.end_timestamp)
+                );
+            } else {
+                // No baseline yet: do not prompt
+                scheduleChanged = false;
+            }
+            try {
+                console.log('[GoalMenu][RoutineRecompute] decision context', {
+                    goalId: ng.id,
+                    mode: state.mode,
+                    goalType: state.goal.goal_type,
+                    og: og ? {
+                        frequency: og.frequency,
+                        startMs: og.start_timestamp instanceof Date ? og.start_timestamp.getTime() : null,
+                        endMs: og.end_timestamp instanceof Date ? og.end_timestamp.getTime() : null
+                    } : null,
+                    ng: {
+                        frequency: ng.frequency,
+                        startMs: ng.start_timestamp instanceof Date ? ng.start_timestamp.getTime() : null,
+                        endMs: ng.end_timestamp instanceof Date ? ng.end_timestamp.getTime() : null
+                    },
+                    normalized: {
+                        freqOg: normalizeFrequency(og?.frequency || undefined),
+                        freqNg: normalizeFrequency(ng.frequency),
+                        startOg: normalizeDate(og?.start_timestamp || undefined),
+                        startNg: normalizeDate(ng.start_timestamp),
+                        endOg: normalizeDate(og?.end_timestamp || undefined),
+                        endNg: normalizeDate(ng.end_timestamp)
+                    },
+                    scheduleChanged
+                });
+            } catch (_) {}
 
             if (scheduleChanged && ng.id) {
                 setRoutineRecomputeDialog({
                     isOpen: true,
-                    originalGoal: og,
+                    originalGoal: initialGoal,
                     updatedGoal: ng,
                     onConfirm: async () => {
                         // 1) Save routine changes
@@ -2429,16 +2619,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 options={getParentOptions()}
                 getOptionLabel={(option) => option.name}
                 renderOption={(props, option) => {
+                    const { key, ...liProps } = props as any;
                     if (isCreatePlaceholder(option)) {
                         return (
-                            <Box component="li" {...props} sx={{ color: 'primary.main', fontWeight: 500 }}>
+                            <Box component="li" key={key} {...liProps} sx={{ color: 'primary.main', fontWeight: 500 }}>
                                 <AddIcon sx={{ mr: 1, fontSize: 18 }} />
                                 {option.name}
                             </Box>
                         );
                     }
                     return (
-                        <Box component="li" {...props}>
+                        <Box component="li" key={key} {...liProps}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                                 {(() => {
                                     const style = getGoalStyle(option);
@@ -2539,16 +2730,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 options={getChildOptions()}
                 getOptionLabel={(option) => option.name}
                 renderOption={(props, option) => {
+                    const { key, ...liProps } = props as any;
                     if (isCreatePlaceholder(option)) {
                         return (
-                            <Box component="li" {...props} sx={{ color: 'primary.main', fontWeight: 500 }}>
+                            <Box component="li" key={key} {...liProps} sx={{ color: 'primary.main', fontWeight: 500 }}>
                                 <AddIcon sx={{ mr: 1, fontSize: 18 }} />
                                 {option.name}
                             </Box>
                         );
                     }
                     return (
-                        <Box component="li" {...props}>
+                        <Box component="li" key={key} {...liProps}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                                 {(() => {
                                     const style = getGoalStyle(option);
@@ -3476,7 +3668,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <Button onClick={close} disabled={isBusy}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy}>
+                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || relationsLoading}>
                             {(pendingAction === 'save' || pendingAction === 'create') ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
                             {state.mode === 'create' ? 'Create' : 'Save'}
                         </Button>

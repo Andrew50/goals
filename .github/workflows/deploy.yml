@@ -166,14 +166,23 @@ jobs:
             if [ "$state" = "running" ]; then break; fi
             sleep 5
           done
-          # Trigger immediate backup and verify a new file appears
-          before_count=$(docker exec goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-          docker exec goals_db bash -lc '/scripts/backup.sh'
-          after_count=$(docker exec goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-          if [ "$after_count" -le "$before_count" ]; then
-            echo "Backup count did not increase after manual backup" >&2
-            exit 1
-          fi
+          # Trigger immediate backup and verify newest dump is newer than start time
+          docker exec goals_db bash -lc '
+            set -euo pipefail
+            start_ts=$(date +%s)
+            /scripts/backup.sh
+            latest=$(ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n1 || true)
+            if [ -z "${latest:-}" ]; then
+              echo "No dump found after backup" >&2
+              exit 1
+            fi
+            latest_ts=$(stat -c %Y "$latest")
+            if [ "$latest_ts" -lt "$start_ts" ]; then
+              echo "Backup did not produce a newer dump: $latest" >&2
+              ls -l /backups || true
+              exit 1
+            fi
+          '
           # Now wait for healthcheck to pass (should be quick after manual backup)
           for i in {1..30}; do
             status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')

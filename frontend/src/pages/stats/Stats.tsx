@@ -5,6 +5,9 @@ import '../../shared/styles/badges.css';
 import { useNavigate } from 'react-router-dom';
 import { Goal } from '../../types/goals';
 import { getGoalStyle } from '../../shared/styles/colors';
+import { SearchBar } from '../../shared/components/SearchBar';
+import GoalMenu from '../../shared/components/GoalMenu';
+import CompletionBar from '../../shared/components/CompletionBar';
 
 interface DailyStats {
     date: string;
@@ -127,6 +130,7 @@ interface EffortStat {
     completed_events: number;
     total_duration_minutes: number;
     weighted_completion_rate: number;
+    children_count: number;
 }
 
 const Stats: React.FC = () => {
@@ -148,8 +152,11 @@ const Stats: React.FC = () => {
     const [reschedulingStats, setReschedulingStats] = useState<EventReschedulingStats | null>(null);
     const [effortStats, setEffortStats] = useState<EffortStat[] | null>(null);
     const [effortRange, setEffortRange] = useState<'all' | '5y' | '1y' | '6m' | '3m' | '1m' | '2w'>('all');
-    const [effortSortKey, setEffortSortKey] = useState<'total_duration_minutes' | 'total_events' | 'weighted_completion_rate'>('total_duration_minutes');
+    const [effortSortKey, setEffortSortKey] = useState<'children_count' | 'total_duration_minutes' | 'total_events' | 'weighted_completion_rate'>('total_duration_minutes');
     const [effortSortDir, setEffortSortDir] = useState<'asc' | 'desc'>('desc');
+    const [effortSearchQuery, setEffortSearchQuery] = useState('');
+    const [effortSearchIds, setEffortSearchIds] = useState<Set<number>>(new Set());
+    const [effortGoalTypeFilter, setEffortGoalTypeFilter] = useState<Goal['goal_type'] | ''>('');
 
     const fetchStats = async () => {
         setLoading(true);
@@ -306,14 +313,37 @@ const Stats: React.FC = () => {
         return `${h}h ${m}m`;
     };
 
-    const sortedEffortStats = useMemo(() => {
+    const effortPseudoGoals = useMemo(() => {
+        return (effortStats ?? []).map(g => ({
+            id: g.goal_id,
+            name: g.goal_name,
+            goal_type: g.goal_type as any,
+        } as Goal));
+    }, [effortStats]);
+
+    const filteredEffortStats = useMemo(() => {
         if (!effortStats) return null;
-        const arr = [...effortStats];
+        let arr = [...effortStats];
+        if (effortGoalTypeFilter) {
+            arr = arr.filter(g => g.goal_type === effortGoalTypeFilter);
+        }
+        if (effortSearchQuery) {
+            arr = arr.filter(g => effortSearchIds.has(g.goal_id));
+        }
+        return arr;
+    }, [effortStats, effortGoalTypeFilter, effortSearchQuery, effortSearchIds]);
+
+    const sortedEffortStats = useMemo(() => {
+        if (!filteredEffortStats) return null;
+        const arr = [...filteredEffortStats];
         arr.sort((a, b) => {
             const dir = effortSortDir === 'asc' ? 1 : -1;
             let av: number;
             let bv: number;
-            if (effortSortKey === 'total_duration_minutes') {
+            if (effortSortKey === 'children_count') {
+                av = a.children_count;
+                bv = b.children_count;
+            } else if (effortSortKey === 'total_duration_minutes') {
                 av = a.total_duration_minutes;
                 bv = b.total_duration_minutes;
             } else if (effortSortKey === 'total_events') {
@@ -330,9 +360,9 @@ const Stats: React.FC = () => {
             return av > bv ? dir : -dir;
         });
         return arr;
-    }, [effortStats, effortSortKey, effortSortDir]);
+    }, [filteredEffortStats, effortSortKey, effortSortDir]);
 
-    const handleEffortSort = (key: 'total_duration_minutes' | 'total_events' | 'weighted_completion_rate') => {
+    const handleEffortSort = (key: 'children_count' | 'total_duration_minutes' | 'total_events' | 'weighted_completion_rate') => {
         if (effortSortKey === key) {
             setEffortSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
         } else {
@@ -659,12 +689,42 @@ const Stats: React.FC = () => {
                                             <option value="1m">1 month</option>
                                             <option value="2w">2 weeks</option>
                                         </select>
+                                        <SearchBar
+                                            items={effortPseudoGoals}
+                                            value={effortSearchQuery}
+                                            onChange={setEffortSearchQuery}
+                                            onResults={(_, ids) => setEffortSearchIds(new Set(ids))}
+                                            placeholder="Search goals…"
+                                        />
+                                        <label htmlFor="effort-type" style={{ color: '#666', fontSize: '0.9rem' }}>
+                                            Type:
+                                        </label>
+                                        <select
+                                            id="effort-type"
+                                            className="effort-select"
+                                            value={effortGoalTypeFilter}
+                                            onChange={(e) => setEffortGoalTypeFilter(e.target.value as any)}
+                                        >
+                                            <option value="">All</option>
+                                            <option value="directive">directive</option>
+                                            <option value="project">project</option>
+                                            <option value="achievement">achievement</option>
+                                            <option value="routine">routine</option>
+                                            <option value="task">task</option>
+                                        </select>
                                     </div>
                                     <div className="table-container">
                                         <table className="effort-table">
                                             <thead>
                                                 <tr>
                                                     <th className="sticky">Goal</th>
+                                                    <th
+                                                        className="sortable sticky"
+                                                        onClick={() => handleEffortSort('children_count')}
+                                                        title="Sort by number of descendants"
+                                                    >
+                                                        Children {effortSortKey === 'children_count' ? (effortSortDir === 'asc' ? '▲' : '▼') : ''}
+                                                    </th>
                                                     <th
                                                         className="sortable sticky"
                                                         onClick={() => handleEffortSort('total_duration_minutes')}
@@ -705,23 +765,37 @@ const Stats: React.FC = () => {
                                                                             className="goal-type-badge"
                                                                             style={{
                                                                                 backgroundColor: `${goalStyle.backgroundColor}20`,
-                                                                                color: goalStyle.backgroundColor
+                                                                                color: goalStyle.backgroundColor,
+                                                                                cursor: 'pointer'
                                                                             }}
+                                                                            onClick={() => GoalMenu.open(pseudoGoal, 'view')}
                                                                         >
                                                                             {g.goal_name}
                                                                         </span>
                                                                     </div>
                                                                 </td>
+                                                                <td>{g.children_count}</td>
                                                                 <td>{formatMinutes(g.total_duration_minutes)}</td>
                                                                 <td>{g.total_events}</td>
-                                                                <td>{(g.weighted_completion_rate * 100).toFixed(1)}%</td>
+                                                                <td>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                        <CompletionBar
+                                                                            value={g.weighted_completion_rate}
+                                                                            hasTasks={true}
+                                                                            width={60}
+                                                                            height={8}
+                                                                            title={`${(g.weighted_completion_rate * 100).toFixed(1)}%`}
+                                                                        />
+                                                                        <span>{(g.weighted_completion_rate * 100).toFixed(1)}%</span>
+                                                                    </div>
+                                                                </td>
                                                             </tr>
                                                         );
                                                     })
                                                 ) : (
                                                     <tr>
-                                                        <td colSpan={4} style={{ color: '#666' }}>
-                                                            {effortStats === null ? 'Loading...' : 'No data'}
+                                                        <td colSpan={5} style={{ color: '#666' }}>
+                                                            {effortStats === null ? 'Loading...' : (effortStats.length === 0 ? 'No data' : 'No matches')}
                                                         </td>
                                                     </tr>
                                                 )}

@@ -163,11 +163,9 @@ const DraggableTask: React.FC<{
             Start: {formatDate(goal.start_timestamp)}
           </span>
         )}
-        {goal?.end_timestamp && (
-          <span style={task.isOverdue ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>
-            Due: {formatDate(goal.end_timestamp)}
-          </span>
-        )}
+        <span style={task.isOverdue ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>
+          Due: {goal?.end_timestamp ? formatDate(goal.end_timestamp) : 'No due date'}
+        </span>
       </div>
     </div>
   );
