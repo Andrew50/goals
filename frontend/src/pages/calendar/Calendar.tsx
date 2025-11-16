@@ -27,7 +27,6 @@ import {
 } from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
-import { EventContentArg } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction';
@@ -401,7 +400,11 @@ const Calendar: React.FC = () => {
     if (currentViewType && searchParams.get('view') !== currentViewType) {
       const params = new URLSearchParams(searchParams);
       params.set('view', currentViewType);
-      setSearchParams(params, { replace: true });
+      // Defer URL update to a microtask to avoid flushSync during render
+      const schedule = typeof queueMicrotask === 'function'
+        ? queueMicrotask
+        : (cb: () => void) => Promise.resolve().then(cb);
+      schedule(() => setSearchParams(params, { replace: true }));
     }
 
     // Skip if the calendar is already loading data
@@ -482,6 +485,12 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDidMount = (info: any) => {
+    // Set tooltip/title without using React custom event content
+    const title = info.event.title || '';
+    const timeText = info.timeText || '';
+    const tooltip = timeText ? `${timeText} — ${title}` : title;
+    info.el.setAttribute('title', tooltip);
+
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
@@ -994,13 +1003,6 @@ const Calendar: React.FC = () => {
 
   
 
-  // Title-only event content; time is available via tooltip
-  const renderEventContent = (info: EventContentArg) => {
-    const title = info.event.title || '';
-    const tooltip = info.timeText ? `${info.timeText} — ${title}` : title;
-    return <div className="fc-event-title" title={tooltip}>{title}</div>;
-  };
-
   // Google Calendar sync handlers
   const handleGoogleCalendarSync = async () => {
     setGcalSyncDialog({
@@ -1132,7 +1134,6 @@ const Calendar: React.FC = () => {
             eventDisplay="block" //supposed to add full background color but doesnt ?
             eventMinHeight={12}
             displayEventTime={false}
-            eventContent={renderEventContent}
             eventClassNames={() => 'event-compact'}
             headerToolbar={{
               left: 'prev,next today',

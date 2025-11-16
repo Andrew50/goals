@@ -51,6 +51,7 @@ import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
 import Fuse from 'fuse.js';
 import '../styles/badges.css';
+import { showSnackbar } from './Toaster';
 
 type Mode = 'create' | 'edit' | 'view';
 
@@ -845,6 +846,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setTotalDuration(0);
         }
     }, [state.goal.id, state.goal.goal_type, isOpen, fetchTaskEvents]);
+
+    const hasUserInput = (g: Goal | undefined) =>
+        !!g && (!!g.name?.trim() || !!g.description?.trim());
 
     const close = useCallback(() => {
         // Ensure pending lock is cleared on close
@@ -3489,6 +3493,29 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             disableEscapeKeyDown={isBusy}
             onClose={(event, reason) => {
                 if (isBusy) return;
+                const isBackdrop = reason === 'backdropClick';
+                const isEscape = reason === 'escapeKeyDown';
+                const isCreateDraft = state.mode === 'create' && hasUserInput(state.goal);
+                if ((isBackdrop || isEscape) && isCreateDraft) {
+                    try {
+                        sessionStorage.setItem('goals:last_goal_draft', JSON.stringify(state.goal));
+                    } catch (e) {}
+                    showSnackbar({
+                        message: 'Goal not created',
+                        actionLabel: 'Undo',
+                        onAction: () => {
+                            try {
+                                const raw = sessionStorage.getItem('goals:last_goal_draft');
+                                if (raw) {
+                                    const draft = JSON.parse(raw);
+                                    GoalMenuWithStatic.open(draft as Goal, 'create');
+                                }
+                            } catch (e) {}
+                        },
+                        severity: 'info',
+                        duration: 4000
+                    });
+                }
                 close();
             }}
             maxWidth="sm"
@@ -3666,6 +3693,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
+                    {!isViewOnly && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+                            Not saved until you press Create
+                        </Typography>
+                    )}
                     <Button onClick={close} disabled={isBusy}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
                         <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || relationsLoading}>
