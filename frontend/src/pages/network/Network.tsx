@@ -233,6 +233,12 @@ const NetworkView: React.FC = () => {
         });
       });
     });
+    try {
+      debug('findTriangles result', {
+        count: triangles.length,
+        samples: triangles.slice(0, 5)
+      });
+    } catch {}
     return triangles;
   }, []);
 
@@ -293,7 +299,8 @@ const NetworkView: React.FC = () => {
       });
     });
 
-    const sccs = findSccs(nodeIds, childrenById).filter((comp) => comp.length >= 3);
+    const sccsRaw = findSccs(nodeIds, childrenById);
+    const sccs = sccsRaw.filter((comp) => comp.length >= 3);
     const triangles = findTriangles(nodeSet, childrenById);
 
     const edgeId = (from: number, to: number) => `${from}-${to}`;
@@ -339,6 +346,19 @@ const NetworkView: React.FC = () => {
       triangleEdges.add(edgeId(b, c));
       triangleEdges.add(edgeId(a, c));
     });
+
+    try {
+      debug('Insights cycle stats', {
+        nodeCount: nodeIds.length,
+        selfLoopNodes: Array.from(selfLoopNodes),
+        sccsRawCount: sccsRaw.length,
+        sccsRawSizesSample: sccsRaw.slice(0, 5).map((g) => g.length),
+        sccsUsedCount: sccs.length,
+        sccsUsedSizesSample: sccs.slice(0, 5).map((g) => g.length),
+        trianglesCount: triangles.length,
+        trianglesSample: triangles.slice(0, 5)
+      });
+    } catch {}
 
     return {
       idToGoal,
@@ -1086,13 +1106,38 @@ const NetworkView: React.FC = () => {
       ensure(id).add('cycle');
     });
 
+    // Precompute nodes that belong to any cycle group (SCC>=3 or triangle) to suppress per-node cycle chips
+    const preGroupKey = (ids: number[]) => ids.slice().sort((x, y) => x - y).join('-');
+    const preGroupsSet = new Set<string>();
+    const allGroupNodesForSuppression = new Set<number>();
+    insights.sccs.forEach((comp) => {
+      const key = preGroupKey(comp);
+      if (!preGroupsSet.has(key)) {
+        preGroupsSet.add(key);
+        comp.forEach((id) => allGroupNodesForSuppression.add(id));
+      }
+    });
+    insights.triangles.forEach(([a, b, c]) => {
+      const unique = Array.from(new Set([a, b, c]));
+      if (unique.length < 3) return;
+      const key = preGroupKey(unique);
+      if (!preGroupsSet.has(key)) {
+        preGroupsSet.add(key);
+        unique.forEach((id) => allGroupNodesForSuppression.add(id));
+      }
+    });
+
     // Build sorted node rows (dedupe: triangle => cycle)
-    const nodeRows: IssueRowNode[] = Array.from(nodeToTypes.entries())
+    let nodeRows: IssueRowNode[] = Array.from(nodeToTypes.entries())
       .map(([id, types]) => {
         const normalized = new Set<IssueType>();
         types.forEach((t) => normalized.add(t === 'triangle' ? 'cycle' : t));
         const ordered = typeOrder.filter((t) => normalized.has(t));
-        const filteredOrdered = ordered.filter((t) => t !== 'triangle');
+        let filteredOrdered = ordered.filter((t) => t !== 'triangle');
+        // Suppress 'cycle' chip on node rows if node is represented in a cycle group and has no self-loop
+        if (filteredOrdered.includes('cycle') && allGroupNodesForSuppression.has(id) && !insights.selfLoopNodes.has(id)) {
+          filteredOrdered = filteredOrdered.filter((t) => t !== 'cycle');
+        }
         return {
           kind: 'node' as const,
           key: `issue-node-${id}`,
@@ -1102,6 +1147,37 @@ const NetworkView: React.FC = () => {
         } as IssueRowNode;
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+    // Remove node rows that have no suggestion types left
+    const beforeFilterCount = nodeRows.length;
+    nodeRows = nodeRows.filter((r) => (r.types && r.types.length > 0));
+    try {
+      if (beforeFilterCount !== nodeRows.length) {
+        debug('Filtered empty-type node suggestions', { before: beforeFilterCount, after: nodeRows.length });
+      }
+    } catch {}
+
+    // Log reasons for nodes marked as cycle
+    try {
+      const cycleNodesWithReasons = nodeRows
+        .filter((r) => (r.types || []).includes('cycle'))
+        .map((r) => {
+          const inScc = insights.sccs.some((g) => g.includes(r.id));
+          const inTriangle = insights.triangles.some(([a, b, c]) => a === r.id || b === r.id || c === r.id);
+          const hasSelfLoop = insights.selfLoopNodes.has(r.id);
+          return {
+            id: r.id,
+            name: r.name,
+            inScc,
+            inTriangle,
+            hasSelfLoop
+          };
+        });
+      debug('Cycle node rows (reasons)', cycleNodesWithReasons.slice(0, 50));
+      const suspiciousSingles = cycleNodesWithReasons.filter((x) => !x.inScc && !x.inTriangle && !x.hasSelfLoop);
+      if (suspiciousSingles.length > 0) {
+        debug('Suspicious cycle nodes (no SCC/triangle/self-loop)', suspiciousSingles);
+      }
+    } catch {}
 
     // Build grouped cycle rows from SCCs and Triangles, deduped by id-set key
     const groupKey = (ids: number[]) => ids.slice().sort((x, y) => x - y).join('-');
@@ -1126,7 +1202,30 @@ const NetworkView: React.FC = () => {
       }
     });
 
+    try {
+      debug('Cycle groups (raw)', {
+        count: groups.length,
+        sizesSample: groups.slice(0, 10).map((g) => g.length),
+        sample: groups.slice(0, 5)
+      });
+    } catch {}
+
     const filteredGroups = groups.filter((ids) => ids.length >= 2 || (ids.length === 1 && insights.selfLoopNodes.has(ids[0])));
+    try {
+      const singles = filteredGroups.filter((g) => g.length === 1);
+      if (singles.length > 0) {
+        debug('Filtered groups contain singles (should be self-loops only)', {
+          singles,
+          selfLoopNodes: Array.from(insights.selfLoopNodes)
+        });
+      }
+      debug('Cycle groups (filtered)', {
+        count: filteredGroups.length,
+        sizesSample: filteredGroups.slice(0, 10).map((g) => g.length),
+        sample: filteredGroups.slice(0, 5)
+      });
+    } catch {}
+
     const cycleGroupRows: IssueRowCycleGroup[] = filteredGroups.map((ids) => ({
       kind: 'cycleGroup' as const,
       key: `cycle-group-${groupKey(ids)}`,
