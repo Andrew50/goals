@@ -16,14 +16,15 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { createResizeObserver } from '../../shared/utils/resizeObserver';
-import { NetworkEdge, Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
+import { NetworkEdge, Goal, RelationshipType, ApiGoal, NetworkNode } from '../../types/goals'; // Import ApiGoal
 import GoalMenu from '../../shared/components/GoalMenu';
 import { privateRequest, createRelationship, deleteRelationship } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import {
   buildHierarchy,
   saveNodePosition,
-  calculateNewNodePosition
+  calculateNewNodePosition,
+  formatEdgesForGraph
 } from './buildHierarchy';
 import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
@@ -108,6 +109,19 @@ const NetworkView: React.FC = () => {
       addEdge: async function (data: any, callback: Function) {
         try {
           debug('manipulation.addEdge invoked', data);
+            // Disallow creating an edge from a node to itself
+            if (data && data.from === data.to) {
+              try {
+                alert('Cannot create a relationship from a node to itself.');
+              } catch {}
+              debug('Blocked self-edge creation attempt', data);
+              // Prevent vis from adding a temporary edge; keep addEdgeMode active for another try
+              callback(null);
+              try {
+                (networkRef.current as any)?.addEdgeMode?.();
+              } catch {}
+              return;
+            }
           // Immediately create a child relationship and skip the menu
           await handleCreateRelationship(data.from, data.to, 'child');
           // Prevent vis from adding a temporary edge; we'll manage via dataset updates
@@ -437,6 +451,17 @@ const NetworkView: React.FC = () => {
       if (edgesToRemove.length > 0) {
         edgesDataSetRef.current.remove(edgesToRemove);
       }
+      // Recompute and apply edge styles after syncing this node's edges
+      try {
+        if (nodesDataSetRef.current && edgesDataSetRef.current) {
+          const nodes = (nodesDataSetRef.current.get() || []) as unknown as NetworkNode[];
+          const allEdges = (edgesDataSetRef.current.get() || []) as unknown as NetworkEdge[];
+          const styledEdges = formatEdgesForGraph(nodes, allEdges);
+          edgesDataSetRef.current.update(styledEdges);
+        }
+      } catch (e) {
+        debug('Failed to recompute edge styles in refreshEdgesForNode', e);
+      }
     } catch (error) {
       // console.error('Failed to refresh edges for node:', nodeId, error);
       debug('Failed to refresh edges for node', { nodeId, error });
@@ -531,7 +556,7 @@ const NetworkView: React.FC = () => {
       nodesDataSetRef.current.update(formattedNodes);
 
       // Replace edges
-      const formattedEdges = edges.map((e: any) => ({ ...e, id: `${e.from}-${e.to}` }));
+      const formattedEdges = formatEdgesForGraph(formattedNodes as unknown as NetworkNode[], edges as unknown as NetworkEdge[]);
       const currentEdges = edgesDataSetRef.current.get();
       const serverEdgeIds = new Set(formattedEdges.map((e: any) => e.id));
       const edgesToRemove = currentEdges.filter((e: any) => !serverEdgeIds.has(e.id)).map((e: any) => e.id);
@@ -597,6 +622,17 @@ const NetworkView: React.FC = () => {
                   edgesDataSetRef.current?.remove(edge.id);
                 }
               });
+              // Recompute styles after deletions
+              try {
+                if (nodesDataSetRef.current && edgesDataSetRef.current) {
+                  const nodes = (nodesDataSetRef.current.get() || []) as unknown as NetworkNode[];
+                  const edgesAll = (edgesDataSetRef.current.get() || []) as unknown as NetworkEdge[];
+                  const styled = formatEdgesForGraph(nodes, edgesAll);
+                  edgesDataSetRef.current.update(styled);
+                }
+              } catch (e) {
+                debug('Failed to recompute edge styles after node delete', e);
+              }
             })
             .catch(error => {
               // console.error('Failed to delete node:', error);
@@ -619,6 +655,17 @@ const NetworkView: React.FC = () => {
             .then(() => {
               debug('Edge deleted on backend; removing locally', edgeId);
               edgesDataSetRef.current?.remove(edgeId);
+              // Recompute styles after deletion
+              try {
+                if (nodesDataSetRef.current && edgesDataSetRef.current) {
+                  const nodes = (nodesDataSetRef.current.get() || []) as unknown as NetworkNode[];
+                  const edgesAll = (edgesDataSetRef.current.get() || []) as unknown as NetworkEdge[];
+                  const styled = formatEdgesForGraph(nodes, edgesAll);
+                  edgesDataSetRef.current.update(styled);
+                }
+              } catch (e) {
+                debug('Failed to recompute edge styles after edge delete', e);
+              }
             })
             .catch(error => {
               // console.error('Failed to delete edge:', error);
@@ -938,6 +985,19 @@ const NetworkView: React.FC = () => {
   async function handleCreateRelationship(fromId: number, toId: number, relationshipType: RelationshipType) {
     try {
       debug('handleCreateRelationship called', { fromId, toId, relationshipType });
+      // Disallow self-relationships
+      if (fromId === toId) {
+        try {
+          alert('Cannot create a relationship from a node to itself.');
+        } catch {}
+        debug('Blocked self-relationship attempt', { fromId, toId, relationshipType });
+        setDialogMode(null);
+        setPendingRelationship(null);
+        setTimeout(() => {
+          try { networkRef.current?.addEdgeMode(); } catch {}
+        }, 100);
+        return;
+      }
       const fromNode = nodesDataSetRef.current?.get(fromId);
       const toNode = nodesDataSetRef.current?.get(toId);
       if (!fromNode || !toNode) {
@@ -975,6 +1035,16 @@ const NetworkView: React.FC = () => {
       };
       edgesDataSetRef.current?.add(newEdge);
       debug('Added new edge to DataSet', newEdge);
+      // Immediately recompute and apply edge styles for consistency
+      try {
+        const nodes = (nodesDataSetRef.current?.get() || []) as NetworkNode[];
+        const edgesAll = (edgesDataSetRef.current?.get() || []) as NetworkEdge[];
+        const styled = formatEdgesForGraph(nodes, edgesAll);
+        edgesDataSetRef.current?.update(styled);
+        debug('Recomputed edge styles after relationship creation');
+      } catch (e) {
+        debug('Failed to recompute edge styles after relationship creation', e);
+      }
       // Escalate to full refresh to avoid stale edges across the graph
       try {
         window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { fromId, toId, relationshipType } }));
