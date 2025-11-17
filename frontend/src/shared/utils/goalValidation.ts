@@ -20,6 +20,10 @@ export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipT
         if (fromGoal.goal_type === 'task') {
             return 'Tasks cannot have children (i.e., cannot be parents).';
         }
+        // Achievements can only be children of projects
+        if (toGoal.goal_type === 'achievement' && fromGoal.goal_type !== 'project') {
+            return 'Achievements can only be children of projects.';
+        }
         // Tasks should not be children of routines
         if (fromGoal.goal_type === 'routine' && toGoal.goal_type === 'task') {
             return 'Tasks cannot be children of routines.';

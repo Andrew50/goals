@@ -23,7 +23,7 @@ import Network from './pages/network/Network';
 import List from './pages/list/List';
 import Day from './pages/day/Day';
 // import Query from './pages/query/Query';
-import Achievements from './pages/achievements/Achievements';
+import Projects from './pages/projects/Projects';
 import Stats from './pages/stats/Stats';
 import GoogleCallback from './pages/auth/GoogleCallback';
 
@@ -43,7 +43,7 @@ const NavBar: React.FC = () => {
           <Button color="inherit" component={Link} to="/day">Day</Button>
           <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
           <Button color="inherit" component={Link} to="/network">Network</Button>
-          <Button color="inherit" component={Link} to="/achievements">Achievements</Button>
+          <Button color="inherit" component={Link} to="/projects">Projects</Button>
           <Button color="inherit" component={Link} to="/stats">Stats</Button>
           <Button color="inherit" component={Link} to="/list">List</Button>
           {/* <Button color="inherit" component={Link} to="/query">Query</Button> */}
@@ -120,9 +120,9 @@ const App: React.FC = () => {
                             <Day />
                           </ProtectedRoute>
                         } />
-                        <Route path="/achievements" element={
+                        <Route path="/projects" element={
                           <ProtectedRoute>
-                            <Achievements />
+                            <Projects />
                           </ProtectedRoute>
                         } />
                         <Route path="/stats" element={
