@@ -108,6 +108,19 @@ const NetworkView: React.FC = () => {
       addEdge: async function (data: any, callback: Function) {
         try {
           debug('manipulation.addEdge invoked', data);
+            // Disallow creating an edge from a node to itself
+            if (data && data.from === data.to) {
+              try {
+                alert('Cannot create a relationship from a node to itself.');
+              } catch {}
+              debug('Blocked self-edge creation attempt', data);
+              // Prevent vis from adding a temporary edge; keep addEdgeMode active for another try
+              callback(null);
+              try {
+                (networkRef.current as any)?.addEdgeMode?.();
+              } catch {}
+              return;
+            }
           // Immediately create a child relationship and skip the menu
           await handleCreateRelationship(data.from, data.to, 'child');
           // Prevent vis from adding a temporary edge; we'll manage via dataset updates
@@ -938,6 +951,19 @@ const NetworkView: React.FC = () => {
   async function handleCreateRelationship(fromId: number, toId: number, relationshipType: RelationshipType) {
     try {
       debug('handleCreateRelationship called', { fromId, toId, relationshipType });
+      // Disallow self-relationships
+      if (fromId === toId) {
+        try {
+          alert('Cannot create a relationship from a node to itself.');
+        } catch {}
+        debug('Blocked self-relationship attempt', { fromId, toId, relationshipType });
+        setDialogMode(null);
+        setPendingRelationship(null);
+        setTimeout(() => {
+          try { networkRef.current?.addEdgeMode(); } catch {}
+        }, 100);
+        return;
+      }
       const fromNode = nodesDataSetRef.current?.get(fromId);
       const toNode = nodesDataSetRef.current?.get(toId);
       if (!fromNode || !toNode) {
