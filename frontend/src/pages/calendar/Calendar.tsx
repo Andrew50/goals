@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
 import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, getGoogleCalendars, CalendarListEntry } from '../../shared/utils/api';
 import { getGoalStyle } from '../../shared/styles/colors';
@@ -15,6 +15,11 @@ import {
   Button,
   Typography,
   Box,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  List,
+  ListItem,
   Radio,
   RadioGroup,
   FormControlLabel,
@@ -25,9 +30,9 @@ import {
   InputLabel,
   CircularProgress
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import FullCalendar from '@fullcalendar/react';
-import { EventContentArg } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction';
@@ -401,7 +406,11 @@ const Calendar: React.FC = () => {
     if (currentViewType && searchParams.get('view') !== currentViewType) {
       const params = new URLSearchParams(searchParams);
       params.set('view', currentViewType);
-      setSearchParams(params, { replace: true });
+      // Defer URL update to a microtask to avoid flushSync during render
+      const schedule = typeof queueMicrotask === 'function'
+        ? queueMicrotask
+        : (cb: () => void) => Promise.resolve().then(cb);
+      schedule(() => setSearchParams(params, { replace: true }));
     }
 
     // Skip if the calendar is already loading data
@@ -482,6 +491,12 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDidMount = (info: any) => {
+    // Set tooltip/title without using React custom event content
+    const title = info.event.title || '';
+    const timeText = info.timeText || '';
+    const tooltip = timeText ? `${timeText} — ${title}` : title;
+    info.el.setAttribute('title', tooltip);
+
     info.el.addEventListener('contextmenu', (e: MouseEvent) => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
@@ -826,6 +841,82 @@ const Calendar: React.FC = () => {
   // -----------------------------
   // Helpers and UI
   // -----------------------------
+  const startOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  const addDays = (d: Date, days: number) => {
+    const x = new Date(d);
+    x.setDate(x.getDate() + days);
+    return x;
+  };
+  const rangesOverlap = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) => {
+    return aStart < bEnd && bStart < aEnd;
+  };
+
+  const gotoDate = (d: Date) => {
+    try {
+      calendarRef.current?.getApi().gotoDate(d);
+    } catch {
+      // ignore
+    }
+  };
+
+  const overlapSuggestions = useMemo(() => {
+    try {
+      const today = startOfDay(new Date());
+      // Group events by local day they touch, limited to today or later
+      const byDay = new Map<string, CalendarEvent[]>();
+      (state.events || []).forEach((evt) => {
+        if (!evt?.start || !evt?.end) return;
+        const start = new Date(evt.start);
+        const end = new Date(evt.end);
+        // Skip events that end before today
+        if (end < today) return;
+        // Treat end as exclusive boundary to avoid assigning to the next day when exactly at midnight
+        const endForGrouping = new Date(end.getTime() - 1);
+        let dayCursor = startOfDay(start);
+        const lastDay = startOfDay(endForGrouping);
+        while (dayCursor <= lastDay) {
+          const key = dayCursor.toISOString().slice(0, 10);
+          if (!byDay.has(key)) byDay.set(key, []);
+          byDay.get(key)!.push(evt);
+          dayCursor = addDays(dayCursor, 1);
+        }
+      });
+
+      const suggestions = Array.from(byDay.entries()).map(([key, events]) => {
+        // Detect overlaps within this day's set
+        const list = events.slice().sort((a, b) => a.start.getTime() - b.start.getTime());
+        let count = 0;
+        const samples: Array<{ a: CalendarEvent; b: CalendarEvent }> = [];
+        for (let i = 0; i < list.length; i++) {
+          const a = list[i];
+          for (let j = i + 1; j < list.length; j++) {
+            const b = list[j];
+            if (b.start >= a.end) break;
+            if (rangesOverlap(a.start, a.end, b.start, b.end)) {
+              count++;
+              if (samples.length < 3) samples.push({ a, b });
+            }
+          }
+        }
+        return {
+          dateKey: key,
+          date: new Date(`${key}T00:00:00`),
+          count,
+          samples
+        };
+      }).filter(s => s.count > 0)
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+      return suggestions;
+    } catch {
+      return [];
+    }
+  }, [state.events]);
+
   const handleAddTask = () => {
     const tempGoal: Goal = {
       ...({} as Goal),
@@ -994,13 +1085,6 @@ const Calendar: React.FC = () => {
 
   
 
-  // Title-only event content; time is available via tooltip
-  const renderEventContent = (info: EventContentArg) => {
-    const title = info.event.title || '';
-    const tooltip = info.timeText ? `${info.timeText} — ${title}` : title;
-    return <div className="fc-event-title" title={tooltip}>{title}</div>;
-  };
-
   // Google Calendar sync handlers
   const handleGoogleCalendarSync = async () => {
     setGcalSyncDialog({
@@ -1116,9 +1200,11 @@ const Calendar: React.FC = () => {
             events={state.events}
             onAddTask={handleAddTask}
             onTaskUpdate={handleTaskUpdate}
+            overlapSuggestions={overlapSuggestions}
+            onNavigateDate={gotoDate}
           />
         </div>
-        <div className="calendar-main">
+        <div className="calendar-main" style={{ position: 'relative' }}>
           {state.isLoading && (
             <div className="calendar-loading-indicator">
               <div className="loading-spinner" />
@@ -1132,7 +1218,6 @@ const Calendar: React.FC = () => {
             eventDisplay="block" //supposed to add full background color but doesnt ?
             eventMinHeight={12}
             displayEventTime={false}
-            eventContent={renderEventContent}
             eventClassNames={() => 'event-compact'}
             headerToolbar={{
               left: 'prev,next today',

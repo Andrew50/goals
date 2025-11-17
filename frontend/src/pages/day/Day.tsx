@@ -10,6 +10,7 @@ import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import TodayIcon from '@mui/icons-material/Today';
 import './Day.css';
 import { useSearchParams } from 'react-router-dom';
+import CompletionBar from '../../shared/components/CompletionBar';
 
 // Event type returned from the day endpoint
 interface DayEvent {
@@ -347,6 +348,14 @@ const Day: React.FC = () => {
 
                     <Box className="completion-status">
                         <span>{getCompletionPercentage()}% complete</span>
+                        <CompletionBar
+                            value={getCompletionPercentage() / 100}
+                            hasTasks={events.length > 0}
+                            width={60}
+                            height={8}
+                            title={`${getCompletionPercentage()}%`}
+                            style={{ margin: '0 8px' }}
+                        />
                         <span> • {organizedEvents().completed.length} of {events.length} tasks</span>
                     </Box>
 

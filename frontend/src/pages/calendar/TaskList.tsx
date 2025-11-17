@@ -6,12 +6,20 @@ import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
 import { SearchBar } from '../../shared/components/SearchBar';
+import { List, ListItem } from '@mui/material';
 
-interface TaskListProps {
+export interface TaskListProps {
   tasks: CalendarTask[];
   events: CalendarEvent[];
   onAddTask: () => void;
   onTaskUpdate: (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => void;
+  overlapSuggestions?: Array<{
+    dateKey: string;
+    date: Date;
+    count: number;
+    samples: Array<{ a: CalendarEvent; b: CalendarEvent }>;
+  }>;
+  onNavigateDate?: (d: Date) => void;
 }
 
 interface TaskWithEventInfo extends CalendarTask {
@@ -163,11 +171,9 @@ const DraggableTask: React.FC<{
             Start: {formatDate(goal.start_timestamp)}
           </span>
         )}
-        {goal?.end_timestamp && (
-          <span style={task.isOverdue ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>
-            Due: {formatDate(goal.end_timestamp)}
-          </span>
-        )}
+        <span style={task.isOverdue ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>
+          Due: {goal?.end_timestamp ? formatDate(goal.end_timestamp) : 'No due date'}
+        </span>
       </div>
     </div>
   );
@@ -181,9 +187,10 @@ const DraggableTask: React.FC<{
  *   back into the TaskList (i.e., "unscheduling" them)
  */
 const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
-  ({ tasks, events, onAddTask, onTaskUpdate }, ref) => {
+  ({ tasks, events, onAddTask, onTaskUpdate, overlapSuggestions = [], onNavigateDate }, ref) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
+    const [activeTab, setActiveTab] = useState<'tasks' | 'suggestions'>('tasks');
     /**
      * React DnD drop hook:
      * Accepts drops of type 'calendar-event' or 'task'—depending on how you label them.
@@ -350,45 +357,71 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           padding: '16px'
         }}
       >
-        <h3
-          style={{
-            margin: '0 0 16px 0',
-            color: '#ffffff',
-            fontSize: '20px',
-            fontWeight: 600
-          }}
-        >
-          Active Tasks
-        </h3>
-
-        <div style={{ marginBottom: '12px' }}>
-          <SearchBar
-            items={tasks.map(t => t.goal).filter(Boolean) as Goal[]}
-            value={searchQuery}
-            onChange={setSearchQuery}
-            onResults={(_, ids) => setSearchIds(new Set(ids))}
-            placeholder="Search tasks…"
-            size="md"
-            fullWidth
-          />
+        <div style={{ margin: '0 0 12px 0', display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => setActiveTab('tasks')}
+            style={{
+              padding: '8px 10px',
+              borderRadius: '6px',
+              border: activeTab === 'tasks' ? '2px solid #2196f3' : '1px solid #c1c1c1',
+              background: activeTab === 'tasks' ? '#e3f2fd' : '#f3f3f3',
+              color: '#333333',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            aria-pressed={activeTab === 'tasks'}
+          >
+            Tasks
+          </button>
+          <button
+            onClick={() => setActiveTab('suggestions')}
+            style={{
+              padding: '8px 10px',
+              borderRadius: '6px',
+              border: activeTab === 'suggestions' ? '2px solid #2196f3' : '1px solid #c1c1c1',
+              background: activeTab === 'suggestions' ? '#e3f2fd' : '#f3f3f3',
+              color: '#333333',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            aria-pressed={activeTab === 'suggestions'}
+          >
+            Suggestions
+          </button>
         </div>
 
-        <button
-          onClick={onAddTask}
-          style={{
-            padding: '12px',
-            backgroundColor: '#2196f3',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: 500,
-            marginBottom: '16px'
-          }}
-        >
-          Create Goal
-        </button>
+        {activeTab === 'tasks' && (
+          <div style={{ marginBottom: '12px' }}>
+            <SearchBar
+              items={tasks.map(t => t.goal).filter(Boolean) as Goal[]}
+              value={searchQuery}
+              onChange={setSearchQuery}
+              onResults={(_, ids) => setSearchIds(new Set(ids))}
+              placeholder="Search tasks…"
+              size="md"
+              fullWidth
+            />
+          </div>
+        )}
+
+        {activeTab === 'tasks' && (
+          <button
+            onClick={onAddTask}
+            style={{
+              padding: '12px',
+              backgroundColor: '#2196f3',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 500,
+              marginBottom: '16px'
+            }}
+          >
+            Create Goal
+          </button>
+        )}
 
         <div
           style={{
@@ -398,24 +431,117 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             paddingRight: '8px'
           }}
         >
-          {sortedTasks.length === 0 ? (
-            <div
-              style={{
-                textAlign: 'center',
-                color: 'rgba(255, 255, 255, 0.7)',
-                fontSize: '14px'
-              }}
-            >
-              {searchQuery.trim() ? 'No matching tasks' : 'No tasks yet'}
-            </div>
+          {activeTab === 'tasks' ? (
+            sortedTasks.length === 0 ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  color: 'rgba(255, 255, 255, 0.7)',
+                  fontSize: '14px'
+                }}
+              >
+                {searchQuery.trim() ? 'No matching tasks' : 'No tasks yet'}
+              </div>
+            ) : (
+              sortedTasks.map((task) => (
+                <DraggableTask
+                  key={task.id}
+                  task={task}
+                  onTaskUpdate={onTaskUpdate}
+                />
+              ))
+            )
           ) : (
-            sortedTasks.map((task) => (
-              <DraggableTask
-                key={task.id}
-                task={task}
-                onTaskUpdate={onTaskUpdate}
-              />
-            ))
+            <div>
+              {(!overlapSuggestions || overlapSuggestions.length === 0) ? (
+                <div style={{ color: 'rgba(255, 255, 255, 0.9)' }}>No overlaps today or upcoming</div>
+              ) : (
+                <List dense style={{ padding: 0 }}>
+                  {overlapSuggestions.map(row => {
+                    const label = `${row.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} — ${row.count} overlap${row.count !== 1 ? 's' : ''}`;
+                    return (
+                      <ListItem
+                        key={`suggest-${row.dateKey}`}
+                        button
+                        onClick={() => onNavigateDate && onNavigateDate(row.date)}
+                        style={{ display: 'block', paddingLeft: 0, paddingRight: 0 }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                          <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                            <span
+                              className="goal-type-badge"
+                              style={{
+                                display: 'inline-block',
+                                padding: '2px 8px',
+                                borderRadius: '999px',
+                                backgroundColor: '#f5f5f5',
+                                fontWeight: 600,
+                                maxWidth: '100%',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}
+                              title={label}
+                            >
+                              {label}
+                            </span>
+                            {row.samples && row.samples.length > 0 && (
+                              <div style={{ marginTop: '4px', display: 'grid', gap: '4px' }}>
+                                {row.samples.map((pair, idx) => {
+                                  const aColors = getGoalStyle(pair.a.goal, pair.a.parent);
+                                  const bColors = getGoalStyle(pair.b.goal, pair.b.parent);
+                                  return (
+                                    <div key={`pair-${row.dateKey}-${idx}`} style={{ display: 'flex', gap: '6px', alignItems: 'center', minWidth: 0 }}>
+                                      <span
+                                        className="goal-type-badge"
+                                        style={{
+                                          display: 'inline-block',
+                                          padding: '2px 8px',
+                                          borderRadius: '999px',
+                                          backgroundColor: aColors.backgroundColor,
+                                          color: aColors.textColor,
+                                          maxWidth: '45%',
+                                          whiteSpace: 'nowrap',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          border: `1px solid ${aColors.borderColor}`
+                                        }}
+                                        title={pair.a.title}
+                                      >
+                                        {pair.a.title}
+                                      </span>
+                                      <span style={{ opacity: 0.7 }}>×</span>
+                                      <span
+                                        className="goal-type-badge"
+                                        style={{
+                                          display: 'inline-block',
+                                          padding: '2px 8px',
+                                          borderRadius: '999px',
+                                          backgroundColor: bColors.backgroundColor,
+                                          color: bColors.textColor,
+                                          maxWidth: '45%',
+                                          whiteSpace: 'nowrap',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          border: `1px solid ${bColors.borderColor}`
+                                        }}
+                                        title={pair.b.title}
+                                      >
+                                        {pair.b.title}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </ListItem>
+                    );
+                  })}
+                </List>
+              )}
+            </div>
           )}
         </div>
       </div>

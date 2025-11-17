@@ -147,6 +147,7 @@ pub struct EffortStat {
     pub completed_events: i32,
     pub total_duration_minutes: f64,
     pub weighted_completion_rate: f64,
+    pub children_count: i32,
 }
 
 pub async fn get_year_stats(
@@ -311,8 +312,9 @@ pub async fn get_effort_stats(
           AND (e.is_deleted IS NULL OR e.is_deleted = false)
           AND e.scheduled_timestamp < timestamp()
           AND e.scheduled_timestamp >= $start_timestamp
-        WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs
-        WITH g, epairs,
+        WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs, collect(DISTINCT desc) AS descendants
+        WITH g, epairs, descendants,
+             size([d IN descendants WHERE d.goal_type <> 'event' AND id(d) <> id(g)]) AS children_count,
              // weights across all past events (completed or not) for denominator
              [p IN epairs | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
@@ -359,7 +361,8 @@ pub async fn get_effort_stats(
                CASE reduce(s=0.0, w IN weights_all | s + w)
                     WHEN 0.0 THEN 0.0
                     ELSE reduce(c=0.0, w IN completed_weights | c + w) / reduce(s=0.0, w IN weights_all | s + w)
-               END AS weighted_completion_rate
+               END AS weighted_completion_rate,
+               children_count
         ORDER BY total_duration_minutes DESC
     "#;
 
@@ -372,8 +375,9 @@ pub async fn get_effort_stats(
         WHERE e.goal_type = 'event'
           AND (e.is_deleted IS NULL OR e.is_deleted = false)
           AND e.scheduled_timestamp < timestamp()
-        WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs
-        WITH g, epairs,
+        WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs, collect(DISTINCT desc) AS descendants
+        WITH g, epairs, descendants,
+             size([d IN descendants WHERE d.goal_type <> 'event' AND id(d) <> id(g)]) AS children_count,
              [p IN epairs | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
                   WHEN 'low' THEN 1.0
@@ -416,7 +420,8 @@ pub async fn get_effort_stats(
                CASE reduce(s=0.0, w IN weights_all | s + w)
                     WHEN 0.0 THEN 0.0
                     ELSE reduce(c=0.0, w IN completed_weights | c + w) / reduce(s=0.0, w IN weights_all | s + w)
-               END AS weighted_completion_rate
+               END AS weighted_completion_rate,
+               children_count
         ORDER BY total_duration_minutes DESC
     "#;
 
@@ -445,6 +450,7 @@ pub async fn get_effort_stats(
                 let weighted_completion_rate = row
                     .get::<f64>("weighted_completion_rate")
                     .unwrap_or(0.0);
+                let children_count = row.get::<i64>("children_count").unwrap_or(0) as i32;
 
                 stats.push(EffortStat {
                     goal_id,
@@ -454,6 +460,7 @@ pub async fn get_effort_stats(
                     completed_events,
                     total_duration_minutes,
                     weighted_completion_rate,
+                    children_count,
                 });
             }
 
