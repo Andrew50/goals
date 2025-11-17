@@ -3,15 +3,14 @@
 // Service Worker for Goals PWA
 // Handles push notifications and offline caching
 
-const CACHE_NAME = 'goals-v1';
+const CACHE_NAME = 'goals-v2';
 const urlsToCache = [
   '/',
   '/index.html',
-  '/static/css/main.css',
-  '/static/js/main.js',
   '/manifest.json',
   '/logo192.png',
-  '/logo512.png'
+  '/logo512.png',
+  '/favicon.png'
 ];
 
 // Install event - cache essential files
@@ -47,25 +46,24 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch event - serve from cache when possible
+// Fetch event - only handle navigation requests (SPA offline fallback)
 self.addEventListener('fetch', event => {
-  // Skip non-GET requests and API calls
-  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
-    return;
+  // Only intercept top-level navigations to provide an offline fallback.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      (async () => {
+        try {
+          // Try the network first for navigations
+          return await fetch(event.request);
+        } catch (_) {
+          // Fallback to cached index.html if offline
+          const fallback = await caches.match('/index.html');
+          // Always return a Response for respondWith
+          return fallback || new Response('', { status: 503, statusText: 'Offline' });
+        }
+      })()
+    );
   }
-
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        // Return cached version or fetch from network
-        return response || fetch(event.request).catch(() => {
-          // If both cache and network fail, return a fallback for navigation requests
-          if (event.request.mode === 'navigate') {
-            return caches.match('/index.html');
-          }
-        });
-      })
-  );
 });
 
 // Push event - show notification
