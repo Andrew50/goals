@@ -283,10 +283,51 @@ export async function buildHierarchy(
     });
 
     // 7. Format edges with visual properties (width, color, arrows).
+    // Precompute descendant counts (child edges only, unique, cycles-safe)
+    const childEdges = networkData.edges.filter(e => e.relationship_type === 'child');
+    const childrenByParent = new Map<number, number[]>();
+    for (const e of childEdges) {
+        if (!childrenByParent.has(e.from)) childrenByParent.set(e.from, []);
+        childrenByParent.get(e.from)!.push(e.to);
+    }
+    const nodeById = new Map<number, NetworkNode>(networkData.nodes.map(n => [n.id, n] as [number, NetworkNode]));
+    const descendantCounts: { [id: number]: number } = {};
+    let maxDesc = 0;
+    childrenByParent.forEach((children, parentId) => {
+        const seen = new Set<number>();
+        const queue = [...children];
+        while (queue.length) {
+            const id = queue.shift()!;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const kids = childrenByParent.get(id);
+            if (kids && kids.length) {
+                for (const kid of kids) {
+                    if (!seen.has(kid)) queue.push(kid);
+                }
+            }
+        }
+        let count = 0;
+        seen.forEach(id => {
+            const node = nodeById.get(id);
+            if (node && node.goal_type !== 'event') count++;
+        });
+        descendantCounts[parentId] = count;
+        if (count > maxDesc) maxDesc = count;
+    });
+
     const formattedEdges = networkData.edges.map(edge => {
+        // Keep degree-based importance for color opacity
         const importance = ((degrees[edge.from] || 0) + (degrees[edge.to] || 0)) / 2;
-        const baseWidth = 1;
-        const width = Math.max(baseWidth, Math.min(baseWidth + importance * 0.5, 8));
+        // Width based on sqrt-normalized descendant counts from the parent side
+        const minW = 1;
+        const maxW = 16;
+        const count = descendantCounts[edge.from] || 0;
+        // Use < 2 root (e.g., 1.5-root) to be closer to linear than sqrt
+        const root = 1.5;
+        const norm = maxDesc > 0 ? (count / maxDesc) : 0;
+        const t = norm > 0 ? Math.pow(norm, 1 / root) : 0;
+        const width = minW + t * (maxW - minW);
         const fromNode = networkData.nodes.find(n => n.id === edge.from);
         const toNode = networkData.nodes.find(n => n.id === edge.to);
         const parentColor = fromNode
