@@ -118,6 +118,21 @@
     margin-top: 2rem;
 }
 
+.achievements-scroll {
+    display: flex;
+    gap: 1rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    scroll-snap-type: x mandatory;
+    /* Hide scrollbar in IE/Edge and Firefox while keeping scroll */
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+}
+
+.achievements-scroll::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera */
+}
+
 .empty-state {
     text-align: center;
     padding: 4rem 2rem;
@@ -162,10 +177,13 @@
     transition: all 0.2s;
     position: relative;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 280px;
+    scroll-snap-align: start;
 }
 
 .achievement-card:hover {
-    transform: translateY(-2px);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
@@ -183,6 +201,7 @@
     justify-content: space-between;
     align-items: flex-start;
     margin-bottom: 1rem;
+    flex-direction: column;
 }
 
 .achievement-name {
@@ -192,6 +211,15 @@
     margin: 0;
     flex: 1;
     padding-right: 1rem;
+}
+
+.achievement-project {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
 }
 
 .completed-icon {
@@ -212,7 +240,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 1rem;
+    margin-top: auto;
     padding-top: 1rem;
     border-top: 1px solid #e2e8f0;
 }
@@ -303,3 +331,41 @@
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* Projects-centric layout */
+.projects-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    margin-top: 2rem;
+}
+
+.project-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.project-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #2d3748;
+    margin: 0;
+    display: inline-block;
+    border-radius: 999px;
+    padding: 4px 10px;
+}
+
+.project-count {
+    font-size: 0.875rem;
+    color: #718096;
+}
+
+.project-achievements {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+

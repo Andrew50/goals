@@ -1,0 +1,344 @@
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { privateRequest } from '../../shared/utils/api';
+import { goalToLocal } from '../../shared/utils/time';
+import { Goal, ApiGoal, NetworkEdge } from '../../types/goals';
+import { getGoalStyle } from '../../shared/styles/colors';
+import GoalMenu from '../../shared/components/GoalMenu';
+import { SearchBar } from '../../shared/components/SearchBar';
+import CompletionBar from '../../shared/components/CompletionBar';
+import './Projects.css';
+
+const Projects: React.FC = () => {
+    const [achievements, setAchievements] = useState<Goal[]>([]);
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [filterCompleted, setFilterCompleted] = useState<'all' | 'completed' | 'incomplete'>('all');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
+    const [parentByChild, setParentByChild] = useState<Map<number, Goal>>(new Map());
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        // Fetch achievements from the API
+        privateRequest<ApiGoal[]>('achievements').then(apiGoals => {
+            // Convert ApiGoal[] to Goal[] using goalToLocal
+            setAchievements(apiGoals.map(goalToLocal));
+        });
+    }, [refreshTrigger]);
+
+    useEffect(() => {
+        // Fetch network once to build a mapping from achievement -> parent project
+        (async () => {
+            try {
+                const network = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+                const idToGoal = new Map<number, Goal>();
+                (network.nodes || []).forEach(api => {
+                    const g = goalToLocal(api);
+                    if (g.id != null) idToGoal.set(g.id, g);
+                });
+                const map = new Map<number, Goal>();
+                (network.edges || [])
+                    .filter(e => e.relationship_type === 'child')
+                    .forEach(e => {
+                        const parent = idToGoal.get(e.from as any);
+                        const child = idToGoal.get(e.to as any);
+                        if (parent && child && child.goal_type === 'achievement' && parent.goal_type === 'project') {
+                            map.set(child.id!, parent);
+                        }
+                    });
+                setParentByChild(map);
+            } catch {
+                // Ignore network mapping failures silently for this view
+                setParentByChild(new Map());
+            }
+        })();
+    }, []);
+
+    // Build combined search items (projects + achievements)
+    const searchItems = useMemo(() => {
+        const uniqueProjects = Array.from(new Map(
+            Array.from(parentByChild.values())
+                .filter(p => p && p.id != null)
+                .map(p => [p.id!, p])
+        ).values());
+        return [...achievements, ...uniqueProjects];
+    }, [achievements, parentByChild]);
+
+    // Group achievements by parent project, applying filters and search
+    const projectGroups = useMemo(() => {
+        const groups = new Map<number, { project: Goal; items: Goal[] }>();
+        const trimmed = (searchQuery || '').trim();
+        const isSearching = !!trimmed;
+
+        const list = achievements.filter(a => {
+            if (filterCompleted === 'completed') return a.completed;
+            if (filterCompleted === 'incomplete') return !a.completed;
+            return true;
+        });
+
+        list.forEach(a => {
+            const p = parentByChild.get(a.id);
+            if (!p || p.id == null) return; // only show achievements tied to a project
+            if (isSearching) {
+                const inAch = searchIds.has(a.id);
+                const inProj = searchIds.has(p.id);
+                if (!inAch && !inProj) return;
+            }
+            const g = groups.get(p.id) || { project: p, items: [] };
+            g.items.push(a);
+            groups.set(p.id, g);
+        });
+
+        groups.forEach(g => {
+            g.items.sort((a, b) => {
+                const ca = a.completed ? 1 : 0;
+                const cb = b.completed ? 1 : 0;
+                if (ca !== cb) return ca - cb; // incomplete first
+                const ta = a.end_timestamp ? a.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
+                const tb = b.end_timestamp ? b.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
+                return ta - tb; // soonest first
+            });
+        });
+
+        const arr = Array.from(groups.values());
+        arr.sort((ga, gb) => {
+            const fa = ga.items[0];
+            const fb = gb.items[0];
+            const ta = fa && fa.end_timestamp ? fa.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
+            const tb = fb && fb.end_timestamp ? fb.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
+            if (ta !== tb) return ta - tb;
+            // tie-breaker by project name to keep stable UI
+            const na = (ga.project.name || '').toLowerCase();
+            const nb = (gb.project.name || '').toLowerCase();
+            if (na < nb) return -1;
+            if (na > nb) return 1;
+            return 0;
+        });
+        return arr;
+    }, [achievements, parentByChild, filterCompleted, searchQuery, searchIds]);
+
+    // Horizontal auto-scroll disabled for the projects view
+    // useEffect(() => {
+    //     // Auto-scroll to the achievement whose end date is closest to "now"
+    //     const container = scrollContainerRef.current;
+    //     if (!container || filteredAchievements.length === 0) return;
+    //     const now = Date.now();
+    //     let bestIdx = 0;
+    //     let bestDiff = Number.POSITIVE_INFINITY;
+    //     filteredAchievements.forEach((a, i) => {
+    //         const t = a.end_timestamp?.getTime();
+    //         if (t == null) return;
+    //         const d = Math.abs(t - now);
+    //         if (d < bestDiff) {
+    //             bestDiff = d;
+    //             bestIdx = i;
+    //         }
+    //     });
+    //     const cards = container.querySelectorAll('.achievement-card') as NodeListOf<HTMLElement>;
+    //     const el = cards[bestIdx];
+    //     if (el) {
+    //         const left = el.offsetLeft - container.clientWidth / 2 + el.clientWidth / 2;
+    //         container.scrollTo({ left: Math.max(left, 0), behavior: 'auto' });
+    //     }
+    // }, [filteredAchievements]);
+
+    const handleAchievementClick = (achievement: Goal) => {
+        GoalMenu.open(achievement, 'view', (updatedGoal) => {
+            setRefreshTrigger(prev => prev + 1);
+        });
+    };
+
+    const handleAchievementContextMenu = (event: React.MouseEvent, achievement: Goal) => {
+        event.preventDefault();
+        GoalMenu.open(achievement, 'edit', (updatedGoal) => {
+            setRefreshTrigger(prev => prev + 1);
+        });
+    };
+
+    const handleCreateAchievement = () => {
+        const newAchievement: Partial<Goal> = {
+            goal_type: 'achievement' as Goal['goal_type']
+        };
+        GoalMenu.open(newAchievement as Goal, 'create', (newGoal) => {
+            setRefreshTrigger(prev => prev + 1);
+        });
+    };
+
+    const formatDueDate = (timestamp: Date | undefined) => {
+        if (!timestamp) return 'No due date';
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffTime = date.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays < 0) {
+            return `Overdue by ${Math.abs(diffDays)} days`;
+        } else if (diffDays === 0) {
+            return 'Due today';
+        } else if (diffDays === 1) {
+            return 'Due tomorrow';
+        } else if (diffDays <= 7) {
+            return `Due in ${diffDays} days`;
+        } else {
+            return date.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+            });
+        }
+    };
+
+    const getDueDateClass = (timestamp: Date | undefined) => {
+        if (!timestamp) return '';
+        const now = new Date();
+        const diffTime = new Date(timestamp).getTime() - now.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays < 0) return 'overdue';
+        if (diffDays <= 3) return 'urgent';
+        if (diffDays <= 7) return 'upcoming';
+        return '';
+    };
+
+    return (
+        <div className="achievements-container">
+            <div className="achievements-content">
+                <div className="achievements-header">
+                    <h1 className="achievements-title">Projects</h1>
+                    <div className="header-actions">
+                        <SearchBar
+                            items={searchItems}
+                            value={searchQuery}
+                            onChange={setSearchQuery}
+                            onResults={(_, ids) => setSearchIds(new Set(ids))}
+                            placeholder="Search projects & achievements…"
+                            size="md"
+                            fullWidth={false}
+                        />
+                        <div className="filter-buttons">
+                            <button
+                                className={`filter-button ${filterCompleted === 'all' ? 'active' : ''}`}
+                                onClick={() => setFilterCompleted('all')}
+                            >
+                                All
+                            </button>
+                            <button
+                                className={`filter-button ${filterCompleted === 'incomplete' ? 'active' : ''}`}
+                                onClick={() => setFilterCompleted('incomplete')}
+                            >
+                                In Progress
+                            </button>
+                            <button
+                                className={`filter-button ${filterCompleted === 'completed' ? 'active' : ''}`}
+                                onClick={() => setFilterCompleted('completed')}
+                            >
+                                Completed
+                            </button>
+                        </div>
+                        <button
+                            onClick={handleCreateAchievement}
+                            className="new-achievement-button"
+                        >
+                            <svg className="new-achievement-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            <span>Create Goal</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div className="achievements-list">
+                    {/* Old horizontally scrolling list commented out */}
+                    {/* <div className="achievements-scroll" ref={scrollContainerRef}> ... </div> */}
+                    {projectGroups.length === 0 ? (
+                        <div className="empty-state">
+                            <p>No projects found</p>
+                            <button onClick={handleCreateAchievement} className="create-first-button">
+                                Create your first achievement
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="projects-list">
+                            {projectGroups.map(({ project, items }) => {
+                                const completed = items.filter(i => i.completed).length;
+                                const total = items.length;
+                                const value = completed / Math.max(total, 1);
+                                const projectBg = getGoalStyle(project).backgroundColor;
+                                return (
+                                    <section key={project.id} className="project-section">
+                                        <div className="project-section-header">
+                                            <h2
+                                                className="project-title"
+                                                style={{
+                                                    backgroundColor: projectBg,
+                                                    color: '#ffffff',
+                                                    borderRadius: '999px',
+                                                    padding: '4px 10px'
+                                                }}
+                                            >
+                                                {project.name}
+                                            </h2>
+                                            <CompletionBar
+                                                value={value}
+                                                hasTasks={total > 0}
+                                                width={120}
+                                                height={8}
+                                                title={`${completed}/${total}`}
+                                            />
+                                            <span className="project-count">{completed}/{total}</span>
+                                        </div>
+                                        <div className="project-achievements">
+                                            {items.map(achievement => {
+                                                const goalStyle = getGoalStyle(achievement);
+                                                const dueDateClass = getDueDateClass(achievement.end_timestamp);
+                                                return (
+                                                    <div
+                                                        key={achievement.id}
+                                                        className={`achievement-card ${achievement.completed ? 'completed' : ''} ${dueDateClass}`}
+                                                        onClick={() => handleAchievementClick(achievement)}
+                                                        onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
+                                                        style={{
+                                                            border: goalStyle.border,
+                                                        }}
+                                                    >
+                                                        <div className="achievement-header">
+                                                            <h3 className="achievement-name">{achievement.name}</h3>
+                                                        </div>
+
+                                                        {achievement.description && (
+                                                            <p className="achievement-description">{achievement.description}</p>
+                                                        )}
+
+                                                        <div className="achievement-footer">
+                                                            <div className={`due-date ${dueDateClass}`}>
+                                                                <svg className="calendar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                                                </svg>
+                                                                {formatDueDate(achievement.end_timestamp)}
+                                                            </div>
+                                                            {achievement.priority && (
+                                                                <span
+                                                                    className="priority-indicator"
+                                                                    data-priority={achievement.priority}
+                                                                >
+                                                                    {achievement.priority}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default Projects;
+
+

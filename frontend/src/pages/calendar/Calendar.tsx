@@ -870,6 +870,9 @@ const Calendar: React.FC = () => {
       const byDay = new Map<string, CalendarEvent[]>();
       (state.events || []).forEach((evt) => {
         if (!evt?.start || !evt?.end) return;
+        // Exclude all-day events from overlap detection (both all-day vs any and all-day vs all-day)
+        const isAllDayEvt = (evt.allDay === true) || (evt.goal?.duration === 1440);
+        if (isAllDayEvt) return;
         const start = new Date(evt.start);
         const end = new Date(evt.end);
         // Skip events that end before today

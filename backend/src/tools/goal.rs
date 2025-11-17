@@ -1143,6 +1143,12 @@ impl Goal {
                         "Events cannot be targets of relationships".to_string(),
                     ))
                 }
+                // Achievements can only be children of projects
+                (ft, GoalType::Achievement, "CHILD") if ft != GoalType::Project => {
+                    return Err(neo4rs::Error::UnexpectedMessage(
+                        "Achievements can only be children of projects".to_string(),
+                    ))
+                }
                 _ => {}
             }
 
