@@ -46,24 +46,34 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch event - only handle navigation requests (SPA offline fallback)
+// Fetch event - handle navigations with offline fallback; pass-through others safely
 self.addEventListener('fetch', event => {
-  // Only intercept top-level navigations to provide an offline fallback.
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      (async () => {
-        try {
-          // Try the network first for navigations
-          return await fetch(event.request);
-        } catch (_) {
-          // Fallback to cached index.html if offline
-          const fallback = await caches.match('/index.html');
-          // Always return a Response for respondWith
-          return fallback || new Response('', { status: 503, statusText: 'Offline' });
-        }
-      })()
-    );
+  const { request } = event;
+  // Only handle GET requests
+  if (request.method !== 'GET') return;
+
+  // Top-level navigations: try network, fallback to cached index
+  if (request.mode === 'navigate') {
+    event.respondWith((async () => {
+      try {
+        return await fetch(request);
+      } catch (_) {
+        const fallback = await caches.match('/index.html');
+        return fallback || new Response('', { status: 503, statusText: 'Offline' });
+      }
+    })());
+    return;
   }
+
+  // Non-navigation GETs: pass-through to network; if it fails, try cache or 503
+  event.respondWith((async () => {
+    try {
+      return await fetch(request);
+    } catch (_) {
+      const cached = await caches.match(request);
+      return cached || new Response('', { status: 503, statusText: 'Offline' });
+    }
+  })());
 });
 
 // Push event - show notification
