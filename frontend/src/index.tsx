@@ -7,7 +7,8 @@ import reportWebVitals from './config/reportWebVitals';
 // Register service worker for PWA functionality
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js')
+    const swUrl = '/service-worker.js?v=2';
+    navigator.serviceWorker.register(swUrl)
       .then(registration => {
         console.log('ServiceWorker registered:', registration);
 
