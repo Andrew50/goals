@@ -472,7 +472,10 @@ pub async fn dispatch_tool(
         // 10) get_calendar_data
         "get_calendar_data" => {
             //let user_id = must_get_i64(args, "user_id")?;
-            let result = get_calendar_data(graph.clone(), user_id).await;
+            let start_timestamp = args.get("start_timestamp").and_then(|v| v.as_i64());
+            let end_timestamp = args.get("end_timestamp").and_then(|v| v.as_i64());
+            let result =
+                get_calendar_data(graph.clone(), user_id, start_timestamp, end_timestamp).await;
             wrap_result(result)
         }
 

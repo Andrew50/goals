@@ -20,6 +20,7 @@ export interface TaskListProps {
     samples: Array<{ a: CalendarEvent; b: CalendarEvent }>;
   }>;
   onNavigateDate?: (d: Date) => void;
+  onToggleSuggestions?: (visible: boolean) => void;
 }
 
 interface TaskWithEventInfo extends CalendarTask {
@@ -187,7 +188,7 @@ const DraggableTask: React.FC<{
  *   back into the TaskList (i.e., "unscheduling" them)
  */
 const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
-  ({ tasks, events, onAddTask, onTaskUpdate, overlapSuggestions = [], onNavigateDate }, ref) => {
+  ({ tasks, events, onAddTask, onTaskUpdate, overlapSuggestions = [], onNavigateDate, onToggleSuggestions }, ref) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
     const [activeTab, setActiveTab] = useState<'tasks' | 'suggestions'>('tasks');
@@ -359,7 +360,12 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       >
         <div style={{ margin: '0 0 12px 0', display: 'flex', gap: '8px' }}>
           <button
-            onClick={() => setActiveTab('tasks')}
+            onClick={() => {
+              setActiveTab('tasks');
+              if (typeof onToggleSuggestions === 'function') {
+                onToggleSuggestions(false);
+              }
+            }}
             style={{
               padding: '8px 10px',
               borderRadius: '6px',
@@ -374,7 +380,12 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             Tasks
           </button>
           <button
-            onClick={() => setActiveTab('suggestions')}
+            onClick={() => {
+              setActiveTab('suggestions');
+              if (typeof onToggleSuggestions === 'function') {
+                onToggleSuggestions(true);
+              }
+            }}
             style={{
               padding: '8px 10px',
               borderRadius: '6px',

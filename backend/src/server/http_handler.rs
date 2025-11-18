@@ -562,8 +562,12 @@ async fn handle_query_hierarchy(
 async fn handle_get_calendar_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
+    Query(params): Query<HashMap<String, i64>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    calendar::get_calendar_data(graph, user_id).await
+    let start_timestamp = params.get("start").copied();
+    let end_timestamp = params.get("end").copied();
+
+    calendar::get_calendar_data(graph, user_id, start_timestamp, end_timestamp).await
 }
 
 // List handlers
