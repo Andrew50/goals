@@ -120,6 +120,14 @@ const Projects: React.FC = () => {
             });
         }
         arr.sort((ga, gb) => {
+            const aHasItems = ga.items.length > 0;
+            const bHasItems = gb.items.length > 0;
+
+            // Projects with at least one achievement should come before
+            // projects that have no achievements at all.
+            if (aHasItems && !bHasItems) return -1;
+            if (!aHasItems && bHasItems) return 1;
+
             const fa = ga.items[0];
             const fb = gb.items[0];
             const ta = fa && fa.end_timestamp ? fa.end_timestamp.getTime() : Number.POSITIVE_INFINITY;

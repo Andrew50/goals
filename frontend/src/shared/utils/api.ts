@@ -294,6 +294,11 @@ export const getTaskEvents = async (taskId: number): Promise<{
     total_duration: number;
     next_scheduled: Date | null;
     last_scheduled: Date | null;
+    event_count: number;
+    completed_event_count: number;
+    past_uncompleted_count: number;
+    future_uncompleted_count: number;
+    next_uncompleted: Date | null;
 }> => {
     const response = await privateRequest<{
         task_id: number;
@@ -301,6 +306,11 @@ export const getTaskEvents = async (taskId: number): Promise<{
         total_duration: number;
         next_scheduled: number | null;
         last_scheduled: number | null;
+        event_count: number;
+        completed_event_count: number;
+        past_uncompleted_count: number;
+        future_uncompleted_count: number;
+        next_uncompleted_timestamp: number | null;
     }>(`events/task/${taskId}`, 'GET');
 
     return {
@@ -309,6 +319,11 @@ export const getTaskEvents = async (taskId: number): Promise<{
         total_duration: response.total_duration,
         next_scheduled: response.next_scheduled ? new Date(response.next_scheduled) : null,
         last_scheduled: response.last_scheduled ? new Date(response.last_scheduled) : null,
+        event_count: response.event_count,
+        completed_event_count: response.completed_event_count,
+        past_uncompleted_count: response.past_uncompleted_count,
+        future_uncompleted_count: response.future_uncompleted_count,
+        next_uncompleted: response.next_uncompleted_timestamp ? new Date(response.next_uncompleted_timestamp) : null,
     };
 };
 

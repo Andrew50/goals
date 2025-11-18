@@ -7,6 +7,7 @@ import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
 import { SearchBar } from '../../shared/components/SearchBar';
 import { List, ListItem } from '@mui/material';
+import { getTaskEvents } from '../../shared/utils/api';
 
 export interface TaskListProps {
   tasks: CalendarTask[];
@@ -31,6 +32,14 @@ interface TaskWithEventInfo extends CalendarTask {
   isFutureStart?: boolean;
   pastUncompletedCount: number;
   futureUncompletedCount: number;
+}
+
+interface TaskStats {
+  eventCount: number;
+  completedEventCount: number;
+  pastUncompletedCount: number;
+  futureUncompletedCount: number;
+  nextEventDate?: Date;
 }
 
 /**
@@ -192,6 +201,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
     const [searchQuery, setSearchQuery] = useState('');
     const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
     const [activeTab, setActiveTab] = useState<'tasks' | 'suggestions'>('tasks');
+    const [taskStats, setTaskStats] = useState<Record<number, TaskStats>>({});
     /**
      * React DnD drop hook:
      * Accepts drops of type 'calendar-event' or 'task'—depending on how you label them.
@@ -236,22 +246,68 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
       return tasks.filter(t => t.goal && searchIds.has(t.goal.id));
     }, [tasks, searchQuery, searchIds]);
 
+    // Fetch per-task stats from backend so completion counts don't depend on the visible calendar range
+    useEffect(() => {
+      const goalIds = filteredTasks
+        .map(t => t.goal?.id)
+        .filter((id): id is number => typeof id === 'number');
+
+      if (goalIds.length === 0) {
+        return;
+      }
+
+      const uniqueIds = Array.from(new Set(goalIds));
+      let cancelled = false;
+
+      const loadStats = async () => {
+        try {
+          const results = await Promise.all(
+            uniqueIds.map(async (goalId) => {
+              try {
+                const data = await getTaskEvents(goalId);
+                return { goalId, data };
+              } catch (err) {
+                console.error('[TaskList] Failed to fetch task events for goal', goalId, err);
+                return null;
+              }
+            })
+          );
+
+          if (cancelled) return;
+
+          setTaskStats((prev) => {
+            const next = { ...prev };
+            for (const entry of results) {
+              if (!entry) continue;
+              const { goalId, data } = entry;
+              next[goalId] = {
+                eventCount: data.event_count,
+                completedEventCount: data.completed_event_count,
+                pastUncompletedCount: data.past_uncompleted_count,
+                futureUncompletedCount: data.future_uncompleted_count,
+                nextEventDate: data.next_uncompleted || undefined
+              };
+            }
+            return next;
+          });
+        } catch (err) {
+          console.error('[TaskList] Unexpected error while loading task stats', err);
+        }
+      };
+
+      loadStats();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [filteredTasks, events]);
+
     // Calculate task event info
     const tasksWithInfo: TaskWithEventInfo[] = useMemo(() => {
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
       const now = new Date();
       return filteredTasks.map(task => {
-        const taskEvents = events.filter(e =>
-          e.goal.parent_id === task.goal?.id &&
-          !e.goal.is_deleted
-        );
-
-        const completedEvents = taskEvents.filter(e => e.goal.completed);
-        const futureEvents = taskEvents
-          .filter(e => !e.goal.completed && e.start > now)
-          .sort((a, b) => a.start.getTime() - b.start.getTime());
-
         const endTs = task.goal?.end_timestamp
           ? new Date(task.goal.end_timestamp)
           : undefined;
@@ -264,23 +320,29 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
         const isFutureStart =
           !!startTs && startTs.getTime() > now.getTime();
 
-        const eventCount = taskEvents.length;
-        const completedEventCount = completedEvents.length;
-        const futureUncompletedCount = futureEvents.length;
-        const pastUncompletedCount = Math.max(0, eventCount - completedEventCount - futureUncompletedCount);
+        const goalId = task.goal?.id;
+        const stats = typeof goalId === 'number' ? taskStats[goalId] : undefined;
+
+        const eventCount = stats?.eventCount ?? 0;
+        const completedEventCount = stats?.completedEventCount ?? 0;
+        const futureUncompletedCount = stats?.futureUncompletedCount ?? 0;
+        const pastUncompletedCount =
+          stats?.pastUncompletedCount ??
+          Math.max(0, eventCount - completedEventCount - futureUncompletedCount);
+        const nextEventDate = stats?.nextEventDate;
 
         return {
           ...task,
           eventCount,
           completedEventCount,
-          nextEventDate: futureEvents[0]?.start,
+          nextEventDate,
           isOverdue,
           isFutureStart,
           pastUncompletedCount,
           futureUncompletedCount
         };
       });
-    }, [filteredTasks, events]);
+    }, [filteredTasks, taskStats]);
 
     // Sort tasks by priority/status
     const sortedTasks = useMemo(() => {
