@@ -26,7 +26,7 @@
    Layout Containers
 ----------------------------- */
 .calendar-container {
-    height: calc(100vh - 64px);
+    height: calc(100vh - 65px);
     /* Account for navbar */
     background-color: #f5f7fa;
     padding: 2rem;
@@ -328,7 +328,7 @@
 @media (max-width: 768px) {
     .calendar-content {
         flex-direction: column;
-        height: calc(100vh - 64px);
+        height: calc(100vh - 65px);
         overflow-y: auto;
     }
 
@@ -340,7 +340,7 @@
 
     .calendar-main {
         flex: 1;
-        min-height: calc(160vh - 64px);
+        min-height: calc(160vh - 65px);
     }
 }
 
@@ -348,7 +348,7 @@
     .calendar-container {
         padding: 1rem;
         height: auto;
-        min-height: calc(100vh - 64px);
+        min-height: calc(100vh - 65px);
     }
 
     .fc .fc-toolbar {
