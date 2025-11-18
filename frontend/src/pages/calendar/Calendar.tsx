@@ -1356,6 +1356,117 @@ const Calendar: React.FC = () => {
     });
   };
 
+  // Ensure the "+N more" popover stays within the viewport
+  const repositionMorePopover = () => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return;
+    }
+
+    const popovers = Array.from(
+      document.querySelectorAll<HTMLElement>('.fc-popover')
+    );
+    if (popovers.length === 0) {
+      console.warn('[Calendar][MorePopover] No .fc-popover elements found');
+      return;
+    }
+
+    // Use the most recently added popover, which should correspond to the click
+    const popover = popovers[popovers.length - 1];
+    const rect = popover.getBoundingClientRect();
+    const margin = 8;
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    console.log('[Calendar][MorePopover] raw rect:', rect);
+    console.log('[Calendar][MorePopover] viewport:', {
+      viewportWidth,
+      viewportHeight,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY
+    });
+
+    const maxTop = viewportHeight - rect.height - margin;
+    const maxLeft = viewportWidth - rect.width - margin;
+
+    const clampedTopInViewport = Math.max(
+      margin,
+      Math.min(rect.top, Math.max(margin, maxTop))
+    );
+    const clampedLeftInViewport = Math.max(
+      margin,
+      Math.min(rect.left, Math.max(margin, maxLeft))
+    );
+
+    console.log('[Calendar][MorePopover] computed positions:', {
+      maxTop,
+      maxLeft,
+      clampedTopInViewport,
+      clampedLeftInViewport,
+      // For fixed positioning, we use clamped viewport coordinates directly
+      topForStyle: clampedTopInViewport,
+      leftForStyle: clampedLeftInViewport
+    });
+
+    console.log('[Calendar][MorePopover] offsetParent + container info:', {
+      offsetParent: popover.offsetParent,
+      offsetTop: (popover as any).offsetTop,
+      offsetLeft: (popover as any).offsetLeft
+    });
+
+    // Use fixed positioning so the popover doesn't participate in layout
+    popover.style.position = 'fixed';
+    popover.style.top = `${clampedTopInViewport}px`;
+    popover.style.left = `${clampedLeftInViewport}px`;
+
+    // Constrain size so it doesn't force the page to grow or overflow the viewport
+    const maxHeightPx = viewportHeight - margin * 2;
+    const maxWidthPx = Math.min(420, viewportWidth - margin * 2);
+    popover.style.maxHeight = `${maxHeightPx}px`;
+    popover.style.maxWidth = `${maxWidthPx}px`;
+    popover.style.overflowY = 'auto';
+
+    const finalRect = popover.getBoundingClientRect();
+    console.log('[Calendar][MorePopover] final rect after adjustment:', finalRect);
+  };
+
+  const handleMoreLinkClick = (arg: any) => {
+    // Only adjust in month (dayGridMonth) view and keep popover behavior
+    if (arg?.view?.type !== 'dayGridMonth') {
+      console.log('[Calendar][MorePopover] moreLinkClick in non-month view, skipping reposition', {
+        viewType: arg?.view?.type
+      });
+      return 'popover';
+    }
+
+    console.log('[Calendar][MorePopover] moreLinkClick triggered for month view', {
+      date: arg?.date,
+      allDay: arg?.allDay
+    });
+
+    const schedule = (cb: () => void) => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          // Give FullCalendar a tick to insert the popover into the DOM
+          setTimeout(cb, 0);
+        });
+      } else {
+        setTimeout(cb, 0);
+      }
+    };
+
+    schedule(() => {
+      try {
+        repositionMorePopover();
+      } catch (err) {
+        // Non-fatal; if repositioning fails, fall back to default behavior
+        console.warn('Failed to reposition FullCalendar more popover', err);
+      }
+    });
+
+    return 'popover';
+  };
+
   // -----------------------------
   // Render
   // -----------------------------
@@ -1427,6 +1538,7 @@ const Calendar: React.FC = () => {
             selectable={true}
             selectMirror={true}
             unselectAuto={true}
+            moreLinkClick={handleMoreLinkClick}
             events={eventsWithColors}
             dateClick={handleDateClick}
             eventClick={handleEventClick}
