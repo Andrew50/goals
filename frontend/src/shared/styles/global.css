@@ -17,6 +17,11 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+/* Non-blocking page-level loading overlays */
+.page-loading-overlay {
+    pointer-events: none;
+}
+
 /* Typography */
 h1,
 h2,

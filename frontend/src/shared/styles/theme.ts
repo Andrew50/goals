@@ -31,6 +31,10 @@ export const theme = createTheme({
       main: '#48bb78',
     },
   },
+  zIndex: {
+    // Keep AppBar above page content/overlays but below modals
+    appBar: 1200,
+  },
   components: {
     MuiPaper: {
       styleOverrides: {

@@ -1307,7 +1307,7 @@ const NetworkView: React.FC = () => {
   }, [insights]);
 
   return (
-    <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', height: 'calc(100vh - 65px)', overflow: 'hidden' }}>
       <div ref={networkContainer} style={{ height: '100%', width: '100%', outline: 'none' }} tabIndex={-1} />
 
       <div style={{ position: 'absolute', top: '1rem', right: '1rem', width: 'min(420px, 40vw)', zIndex: 2 }}>
