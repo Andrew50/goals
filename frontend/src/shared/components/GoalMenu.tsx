@@ -46,6 +46,7 @@ import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
 import SmartScheduleDialog from "./SmartScheduleDialog";
 import MiniNetworkGraph from './MiniNetworkGraph';
+import CompletionBar from './CompletionBar';
 import { getGoalStyle } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
@@ -102,6 +103,22 @@ interface BasicGoalStats {
     parent_completed_events?: number;
     event_position?: number; // Which event this is (e.g., event 3 of 5)
     event_total?: number; // Total events for the parent
+    // Effort stats (from stats/effort)
+    weighted_completion_rate?: number;
+    total_duration_minutes?: number;
+    children_count?: number;
+}
+
+// Effort stats (all-time, per non-event goal) — mirrored from stats/Stats.tsx
+interface EffortStat {
+    goal_id: number;
+    goal_name: string;
+    goal_type: string;
+    total_events: number;
+    completed_events: number;
+    total_duration_minutes: number;
+    weighted_completion_rate: number;
+    children_count: number;
 }
 
 // Add routine update dialog state
@@ -201,7 +218,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [childrenLoaded, setChildrenLoaded] = useState<boolean>(
         initialMode === 'create' || !processedInitialGoal.id
     );
-    const relationsLoading = state.mode !== 'create' && (!parentsLoaded || !childrenLoaded);
+    // Cache network edges so we only fetch the network graph once per dialog open
+    const networkEdgesRef = useRef<NetworkEdge[] | null>(null);
+    const networkPromiseRef = useRef<Promise<NetworkEdge[]> | null>(null);
+    const [networkLoading, setNetworkLoading] = useState<boolean>(false);
+    const relationsLoading =
+        state.mode !== 'create' &&
+        (!parentsLoaded || !childrenLoaded || networkLoading);
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -386,6 +409,31 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, []);
 
+    // Load and cache network edges once per dialog open
+    const ensureNetworkEdges = useCallback(async (): Promise<NetworkEdge[]> => {
+        if (networkEdgesRef.current) {
+            return networkEdgesRef.current;
+        }
+        if (!networkPromiseRef.current) {
+            setNetworkLoading(true);
+            networkPromiseRef.current = privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network')
+                .then((networkData) => {
+                    networkEdgesRef.current = networkData.edges;
+                    return networkData.edges;
+                })
+                .catch((error) => {
+                    // On error, allow future retries
+                    networkEdgesRef.current = [];
+                    networkPromiseRef.current = null;
+                    throw error;
+                })
+                .finally(() => {
+                    setNetworkLoading(false);
+                });
+        }
+        return networkPromiseRef.current!;
+    }, []);
+
     // Fetch goal stats
     const fetchGoalStats = useCallback(async (goal: Goal) => {
         if (!goal.id || state.mode !== 'view') return;
@@ -563,17 +611,29 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 // console.log('[GoalMenu] Final event stats:', stats);
             }
 
-            // Fetch rescheduling stats for tasks and routines with events
-            if ((goal.goal_type === 'task' || goal.goal_type === 'routine') && stats.total_events > 0) {
-                try {
-                    const currentYear = new Date().getFullYear();
-                    const reschedulingResponse = await privateRequest<any>(`stats/rescheduling?year=${currentYear}`);
+            // Enrich with effort stats (weighted completion, time spent, children)
+            // Use parent goal for events so stats reflect the broader context
+            const effortTargetId =
+                goal.goal_type === 'event'
+                    ? goal.parent_id
+                    : goal.id;
 
-                    // This is a simplified approach - in a real implementation, you'd want to filter by specific goal
-                    stats.reschedule_count = reschedulingResponse.total_reschedules || 0;
-                    stats.avg_reschedule_distance_hours = reschedulingResponse.avg_reschedule_distance_hours || 0;
+            if (effortTargetId) {
+                try {
+                    const effortStats = await privateRequest<EffortStat[]>(`stats/effort?range=all`);
+                    const effort = effortStats.find(e => e.goal_id === effortTargetId);
+                    if (effort) {
+                        stats.weighted_completion_rate = effort.weighted_completion_rate;
+                        stats.total_duration_minutes = effort.total_duration_minutes;
+                        stats.children_count = effort.children_count;
+
+                        // For non-events, prefer weighted completion rate when available
+                        if (goal.goal_type !== 'event') {
+                            stats.completion_rate = effort.weighted_completion_rate;
+                        }
+                    }
                 } catch (error) {
-                    // console.log('Could not fetch rescheduling stats:', error);
+                    // console.log('Could not fetch effort stats:', error);
                 }
             }
 
@@ -620,87 +680,48 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [autoEventAdded, state.goal.goal_type, state.mode, autoCreateEventTimestamp, taskEvents.length]);
 
-    // Fetch parent goals using traversal API
-    const fetchParentGoals = useCallback(async (goalId: number, mode: Mode) => {
-        // console.log('[GoalMenu] fetchParentGoals called with goalId:', goalId);
-
+    // Fetch parent goals using cached network edges and the global goals list
+    const fetchParentGoals = useCallback(async (goalId: number) => {
         // Skip fetching for events - they get their parent from the event-specific helper
         if (state.goal.goal_type === 'event') {
-            // console.log('[GoalMenu] Skipping fetchParentGoals for event type');
             setParentsLoaded(true);
             return;
         }
 
-        setParentsLoaded(false);
         try {
-            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
-            // console.log('[GoalMenu] fetchParentGoals hierarchyResponse:', hierarchyResponse);
-            // Filter to only get parent goals (those that have a child relationship to current goal)
-            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
-            // console.log('[GoalMenu] fetchParentGoals networkData edges:', networkData.edges);
-            const parentIds = networkData.edges
+            const edges = await ensureNetworkEdges();
+            const parentIds = edges
                 .filter(e => e.relationship_type === 'child' && e.to === goalId)
                 .map(e => e.from);
-            // console.log('[GoalMenu] fetchParentGoals parentIds:', parentIds);
 
-            const parents = hierarchyResponse
-                .filter(g => parentIds.includes(g.id!))
-                .map(goalToLocal);
-            // console.log('[GoalMenu] fetchParentGoals parents:', parents);
+            const parents = allGoals.filter(g => g.id != null && parentIds.includes(g.id!));
 
             // Always update parentGoals, even if empty to clear stale data
             setParentGoals(parents);
-            // console.log('✅ [GoalMenu] Updated parentGoals to:', parents.length, 'items');
-
-            // In edit mode, also populate selectedParents so they show in the selector
-            if (mode === 'edit') {
-                setSelectedParents(parents);
-            }
         } catch (error) {
-            // console.error('Failed to fetch parent goals:', error);
-            // Since we return early for events, this will only run for non-events
             setParentGoals([]);
-            if (mode === 'edit') {
-                setSelectedParents([]);
-            }
-        }
-        finally {
+        } finally {
             setParentsLoaded(true);
         }
-    }, [state.goal.goal_type]);
+    }, [allGoals, ensureNetworkEdges, state.goal.goal_type]);
 
-    // Fetch child goals using traversal API
-    const fetchChildGoals = useCallback(async (goalId: number, mode: Mode) => {
-        // console.log('[GoalMenu] fetchChildGoals called with goalId:', goalId);
-        setChildrenLoaded(false);
+    // Fetch child goals using cached network edges and the global goals list
+    const fetchChildGoals = useCallback(async (goalId: number) => {
         try {
-            const hierarchyResponse = await privateRequest<ApiGoal[]>(`traversal/${goalId}`);
-            // console.log('[GoalMenu] fetchChildGoals hierarchyResponse:', hierarchyResponse);
-            // Filter to only get child goals (those that have a child relationship from current goal)
-            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
-            // console.log('[GoalMenu] fetchChildGoals networkData edges:', networkData.edges);
-            const childIds = networkData.edges
+            const edges = await ensureNetworkEdges();
+            const childIds = edges
                 .filter(e => e.relationship_type === 'child' && e.from === goalId)
                 .map(e => e.to);
-            // console.log('[GoalMenu] fetchChildGoals childIds:', childIds);
 
-            const children = hierarchyResponse
-                .filter(g => childIds.includes(g.id!))
-                .map(goalToLocal);
+            const children = allGoals.filter(g => g.id != null && childIds.includes(g.id!));
 
-            // Sort by hierarchy level (immediate children first)
             setChildGoals(children);
-            if (mode === 'edit') {
-                setSelectedChildren(children);
-            }
         } catch (error) {
-            // console.error('Failed to fetch child goals:', error);
             setChildGoals([]);
-        }
-        finally {
+        } finally {
             setChildrenLoaded(true);
         }
-    }, []);
+    }, [allGoals, ensureNetworkEdges]);
 
     const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         //create copy, might need to be date.
@@ -752,24 +773,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }[actualMode]);
         setIsOpen(true);
 
-        // Fetch parent and child goals if we have a goal ID
-        if (goal.id) {
-            // Skip fetchParentGoals for events - they use their own parent logic
-            if (goal.goal_type !== 'event') {
-                setParentsLoaded(false);
-                fetchParentGoals(goal.id, actualMode);
-            } else {
-                setParentsLoaded(true);
-            }
-            setChildrenLoaded(false);
-            fetchChildGoals(goal.id, actualMode);
-
-            // Fetch task events if this is a task
-            if (goal.goal_type === 'task') {
-                fetchTaskEvents(goal.id);
-            } else {
-            }
-        } else {
+        // Fetch task events if this is a task
+        if (goal.id && goal.goal_type === 'task') {
+            fetchTaskEvents(goal.id);
+        } else if (!goal.id) {
             // Don't clear parentGoals for events as they have their own parent management
             if (goalCopy.goal_type !== 'event') {
                 setParentGoals([]);
@@ -813,18 +820,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Fetch parent and child goals when component mounts or goal changes
     useEffect(() => {
         if (state.goal.id && isOpen) {
-            // console.log('[GoalMenu] useEffect: Fetching relationships for goal ID:', state.goal.id);
             // Skip fetchParentGoals for events - they use their own parent logic
             if (state.goal.goal_type !== 'event') {
                 setParentsLoaded(false);
-                fetchParentGoals(state.goal.id, state.mode);
+                fetchParentGoals(state.goal.id);
             } else {
                 setParentsLoaded(true);
             }
             setChildrenLoaded(false);
-            fetchChildGoals(state.goal.id, state.mode);
+            fetchChildGoals(state.goal.id);
         } else {
-            // console.log('[GoalMenu] useEffect: No goal ID or dialog closed, clearing relationships');
             // Don't clear parentGoals for events as they have their own parent management
             if (state.goal.goal_type !== 'event') {
                 setParentGoals([]);
@@ -833,7 +838,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setParentsLoaded(true);
             setChildrenLoaded(true);
         }
-    }, [state.goal.id, state.goal.goal_type, state.mode, isOpen, fetchParentGoals, fetchChildGoals]);
+    }, [state.goal.id, state.goal.goal_type, isOpen, fetchParentGoals, fetchChildGoals]);
 
     // Fetch task events when component mounts or goal changes (for tasks opened directly via props)
     useEffect(() => {
@@ -846,6 +851,20 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setTotalDuration(0);
         }
     }, [state.goal.id, state.goal.goal_type, isOpen, fetchTaskEvents]);
+
+    // Initialize selected parents/children when entering edit mode once relationships are loaded
+    useEffect(() => {
+        if (state.mode !== 'edit') return;
+        if (!state.goal.id) return;
+        if (!parentsLoaded && !childrenLoaded) return;
+
+        if (parentsLoaded && parentGoals.length > 0) {
+            setSelectedParents(prev => (prev.length === 0 ? parentGoals : prev));
+        }
+        if (childrenLoaded && childGoals.length > 0) {
+            setSelectedChildren(prev => (prev.length === 0 ? childGoals : prev));
+        }
+    }, [state.mode, state.goal.id, parentsLoaded, childrenLoaded, parentGoals, childGoals]);
 
     const hasUserInput = (g: Goal | undefined) =>
         !!g && (!!g.name?.trim() || !!g.description?.trim());
@@ -1062,7 +1081,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         });
     }, [taskEvents]);
 
-    // NEW EFFECT: Automatically populate parentGoals and selectedParents for events once allGoals are available
+    // NEW EFFECT: Automatically populate parentGoals for events once allGoals are available
     useEffect(() => {
         if (
             state.goal.goal_type === 'event' &&
@@ -1073,12 +1092,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (parent) {
                 // Only update if we have not already set the parent
                 setParentGoals(prev => (prev.length === 0 ? [parent] : prev));
-                if (state.mode === 'edit') {
-                    setSelectedParents(prev => (prev.length === 0 ? [parent] : prev));
-                }
             }
         }
-    }, [state.goal.goal_type, state.goal.parent_id, allGoals, state.mode]);
+    }, [state.goal.goal_type, state.goal.parent_id, allGoals]);
 
     // Create fuzzy search instance
     const fuse = useMemo(() => {
@@ -3141,58 +3157,117 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (!Number.isFinite(numeric) || Number.isNaN(numeric)) return 0;
             return Math.max(0, Math.min(1, numeric));
         };
-        const completionRate = normalizeRate(goalStats?.completion_rate);
+        // Prefer weighted completion rate when available (mirrors Effort page)
+        const completionRate = normalizeRate(
+            goalStats?.weighted_completion_rate ?? goalStats?.completion_rate
+        );
         const allTimeRate = isEvent ? normalizeRate(goalStats?.last_30_days_completion_rate) : completionRate;
         const total = goalStats?.total_events || 0;
         const completed = goalStats?.completed_events || 0;
-        const completedPct = total > 0 ? completed / total : 0;
-        const reschedules = goalStats?.reschedule_count ?? 0;
-        const avgMove = goalStats?.avg_reschedule_distance_hours ?? 0;
+        const timeSpentMinutes = goalStats?.total_duration_minutes ?? 0;
+        const childrenCount = goalStats?.children_count ?? 0;
 
-        const RateTile = (props: { label: string; tooltip: string; value: number; icon: React.ReactNode; color?: string; }) => {
+        const formatMinutesShort = (minutes: number): string => {
+            if (!minutes || minutes <= 0) return '0h';
+            const h = Math.floor(minutes);
+            const m = Math.round((minutes - h) * 60);
+            const totalMinutes = Math.round(minutes);
+            const hh = Math.floor(totalMinutes / 60);
+            const mm = totalMinutes % 60;
+            if (hh > 0 && mm > 0) return `${hh}h ${mm}m`;
+            if (hh > 0) return `${hh}h`;
+            return `${mm}m`;
+        };
+
+        const RateTile = (props: {
+            label: string;
+            tooltip: string;
+            value: number;
+            icon: React.ReactNode;
+            color?: string;
+            hasData?: boolean;
+            completed?: number;
+            total?: number;
+        }) => {
             const pct = Number.isFinite(props.value) ? Math.max(0, Math.min(1, props.value)) : 0;
-            const ringSize = 48;
+            const completedCount = props.completed ?? 0;
+            const totalCount = props.total ?? 0;
 
             return (
                 <Tooltip title={props.tooltip} placement="top" arrow>
-                    <Box sx={{
-                        p: 1,
-                        borderRadius: 1,
-                        bgcolor: 'action.hover',
-                        display: 'grid',
-                        gridTemplateColumns: `24px ${ringSize}px 1fr`,
-                        alignItems: 'center',
-                        columnGap: 1,
-                        minHeight: 56,
-                        overflow: 'hidden'
-                    }}>
-                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24 }}>
+                    <Box
+                        sx={{
+                            p: 1,
+                            borderRadius: 1,
+                            bgcolor: 'action.hover',
+                            display: 'grid',
+                            gridTemplateColumns: '24px 1fr',
+                            alignItems: 'center',
+                            columnGap: 1,
+                            minHeight: 56,
+                            overflow: 'hidden'
+                        }}
+                    >
+                        <Box
+                            sx={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                bgcolor: 'background.paper',
+                                borderRadius: '8px',
+                                width: 24,
+                                height: 24
+                            }}
+                        >
                             {props.icon}
                         </Box>
-                        <Box sx={{ position: 'relative', width: ringSize, height: ringSize, flexShrink: 0 }}>
-                            <CircularProgress size={ringSize} thickness={4} variant="determinate" value={pct * 100} sx={{ color: props.color || 'primary.main' }} />
-                            <Typography
-                                variant="caption"
-                                sx={{
-                                    position: 'absolute',
-                                    top: '50%',
-                                    left: '50%',
-                                    transform: 'translate(-50%, -50%)',
-                                    fontWeight: 700,
-                                    lineHeight: 1,
-                                    zIndex: 1,
-                                    pointerEvents: 'none',
-                                    color: 'text.primary',
-                                    fontSize: '0.85rem'
-                                }}
-                            >
-                                {(pct * 100).toFixed(0)}%
-                            </Typography>
-                        </Box>
                         <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', hyphens: 'none' }}>
-                                {props.label}
-                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                {totalCount > 0 && (
+                                    <Typography
+                                        variant="body2"
+                                        sx={{
+                                            fontWeight: 700,
+                                            lineHeight: 1.1,
+                                            minWidth: 52
+                                        }}
+                                    >
+                                        {completedCount}/{totalCount}
+                                    </Typography>
+                                )}
+                                <CompletionBar
+                                    value={pct}
+                                    hasTasks={props.hasData ?? true}
+                                    width={96}
+                                    height={8}
+                                />
+                                <Typography
+                                    variant="caption"
+                                    sx={{
+                                        fontWeight: 700,
+                                        minWidth: 36,
+                                        textAlign: 'right'
+                                    }}
+                                >
+                                    {(pct * 100).toFixed(0)}%
+                                </Typography>
+                            </Box>
+                            {props.label && (
+                                <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{
+                                        mt: 0.5,
+                                        display: 'block',
+                                        whiteSpace: 'nowrap',
+                                        textOverflow: 'ellipsis',
+                                        overflow: 'hidden',
+                                        hyphens: 'none'
+                                    }}
+                                >
+                                    {props.label}
+                                </Typography>
+                            )}
                         </Box>
                     </Box>
                 </Tooltip>
@@ -3219,31 +3294,42 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             </Tooltip>
         );
 
-        const CompletedTile = () => (
-            <Tooltip title="Completed vs total events" placement="top" arrow>
-                <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', minHeight: 56, overflow: 'hidden' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                        <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper', borderRadius: '8px', width: 24, height: 24 }}>
-                            <EventAvailableIcon sx={{ fontSize: 16 }} />
-                        </Box>
-                    </Box>
-                    <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>{completed}/{total}</Typography>
-                    <LinearProgress variant="determinate" value={completedPct * 100} sx={{ height: 6, borderRadius: 999 }} />
-                </Box>
-            </Tooltip>
-        );
-
         return (
             <Box ref={statsContainerRef} sx={{ mt: 2 }} aria-busy={false}>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 1 }}>
-                    <RateTile label={isEvent ? '10d' : 'Completion'} tooltip={isEvent ? '10-day completion rate' : 'Completion rate'} value={completionRate} icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />} />
+                    <RateTile
+                        label={isEvent ? '10d completion' : 'Completion'}
+                        tooltip={isEvent ? '10-day weighted completion rate (by priority)' : 'Weighted completion rate (by priority)'}
+                        value={completionRate}
+                        icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />}
+                        hasData={total > 0}
+                        completed={completed}
+                        total={total}
+                    />
                     {isEvent ? (
-                        <RateTile label="All" tooltip="All-time completion rate" value={allTimeRate} icon={<TrendingUpIcon sx={{ fontSize: 16, color: 'secondary.main' }} />} color={'secondary.main'} />
-                    ) : (
-                        <CompletedTile />
-                    )}
-                    <SimpleTile label={isEvent ? '' : 'Reschedules'} tooltip={isEvent ? 'Events completed' : 'Number of reschedules'} primary={isEvent ? `${completed}/${total}` : String(reschedules)} icon={<EventAvailableIcon sx={{ fontSize: 16 }} />} />
-                    <SimpleTile label={isEvent ? 'Cons' : 'Avg move'} tooltip={isEvent ? 'Consistency (standard error of completion rate)' : 'Average move distance (hours)'} primary={isEvent ? `${(avgMove || 0).toFixed(1)}%` : `${(avgMove || 0).toFixed(1)}h`} icon={<AvTimerIcon sx={{ fontSize: 16 }} />} />
+                        <RateTile
+                            label="All completion"
+                            tooltip="All-time weighted completion rate (by priority)"
+                            value={allTimeRate}
+                            icon={<TrendingUpIcon sx={{ fontSize: 16, color: 'secondary.main' }} />}
+                            color={'secondary.main'}
+                            hasData={total > 0}
+                            completed={completed}
+                            total={total}
+                        />
+                    ) : null}
+                    <SimpleTile
+                        label="Time spent"
+                        tooltip="Total completed time across all descendant events (from Effort stats)"
+                        primary={formatMinutesShort(timeSpentMinutes)}
+                        icon={<AvTimerIcon sx={{ fontSize: 16 }} />}
+                    />
+                    <SimpleTile
+                        label="Children"
+                        tooltip="Number of descendant non-event goals (from Effort stats)"
+                        primary={childrenCount.toString()}
+                        icon={<EventAvailableIcon sx={{ fontSize: 16 }} />}
+                    />
                 </Box>
             </Box>
         );
@@ -3553,6 +3639,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <Box sx={{ minWidth: 0 }}>
                         {state.error && (
                             <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
+                        )}
+                        {relationsLoading && (
+                            <Box sx={{ mb: 2 }}>
+                                <LinearProgress />
+                                <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ mt: 0.5, display: 'block' }}
+                                >
+                                    Loading relationships…
+                                </Typography>
+                            </Box>
                         )}
                         {commonFields}
                         {parentSelectorField}

@@ -1209,7 +1209,7 @@ const Calendar: React.FC = () => {
         </div>
         <div className="calendar-main" style={{ position: 'relative' }}>
           {state.isLoading && (
-            <div className="calendar-loading-indicator">
+            <div className="calendar-loading-indicator page-loading-overlay">
               <div className="loading-spinner" />
               <span className="loading-text">Loading calendar data...</span>
             </div>

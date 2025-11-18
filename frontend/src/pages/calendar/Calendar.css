@@ -93,6 +93,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    /* Allow clicks to pass through to the navbar and other UI while loading */
+    pointer-events: none;
 }
 
 .loading-spinner {
