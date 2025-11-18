@@ -7,6 +7,9 @@ import GoalMenu from '../../shared/components/GoalMenu';
 import { SearchBar } from '../../shared/components/SearchBar';
 import CompletionBar from '../../shared/components/CompletionBar';
 import './Projects.css';
+import { Accordion, AccordionSummary, AccordionDetails, Typography, List, ListItem } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import '../../shared/styles/badges.css';
 
 const Projects: React.FC = () => {
     const [achievements, setAchievements] = useState<Goal[]>([]);
@@ -15,6 +18,7 @@ const Projects: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
     const [parentByChild, setParentByChild] = useState<Map<number, Goal>>(new Map());
+    const [projects, setProjects] = useState<Goal[]>([]);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
@@ -35,6 +39,9 @@ const Projects: React.FC = () => {
                     const g = goalToLocal(api);
                     if (g.id != null) idToGoal.set(g.id, g);
                 });
+                // Collect all projects from the network
+                const allProjects = Array.from(idToGoal.values()).filter(g => g && g.goal_type === 'project');
+                setProjects(allProjects);
                 const map = new Map<number, Goal>();
                 (network.edges || [])
                     .filter(e => e.relationship_type === 'child')
@@ -49,6 +56,7 @@ const Projects: React.FC = () => {
             } catch {
                 // Ignore network mapping failures silently for this view
                 setParentByChild(new Map());
+                setProjects([]);
             }
         })();
     }, []);
@@ -56,18 +64,25 @@ const Projects: React.FC = () => {
     // Build combined search items (projects + achievements)
     const searchItems = useMemo(() => {
         const uniqueProjects = Array.from(new Map(
-            Array.from(parentByChild.values())
+            (projects || [])
                 .filter(p => p && p.id != null)
                 .map(p => [p.id!, p])
         ).values());
         return [...achievements, ...uniqueProjects];
-    }, [achievements, parentByChild]);
+    }, [achievements, projects]);
 
     // Group achievements by parent project, applying filters and search
     const projectGroups = useMemo(() => {
         const groups = new Map<number, { project: Goal; items: Goal[] }>();
         const trimmed = (searchQuery || '').trim();
         const isSearching = !!trimmed;
+
+        // Initialize groups for all projects so we show project bubbles even with no achievements
+        (projects || []).forEach(p => {
+            if (p && p.id != null) {
+                groups.set(p.id, { project: p, items: [] });
+            }
+        });
 
         const list = achievements.filter(a => {
             if (filterCompleted === 'completed') return a.completed;
@@ -78,11 +93,6 @@ const Projects: React.FC = () => {
         list.forEach(a => {
             const p = parentByChild.get(a.id);
             if (!p || p.id == null) return; // only show achievements tied to a project
-            if (isSearching) {
-                const inAch = searchIds.has(a.id);
-                const inProj = searchIds.has(p.id);
-                if (!inAch && !inProj) return;
-            }
             const g = groups.get(p.id) || { project: p, items: [] };
             g.items.push(a);
             groups.set(p.id, g);
@@ -99,7 +109,16 @@ const Projects: React.FC = () => {
             });
         });
 
-        const arr = Array.from(groups.values());
+        // Convert to array and apply search filtering:
+        // - keep groups where project matches search or any child achievement matches search
+        let arr = Array.from(groups.values());
+        if (isSearching) {
+            arr = arr.filter(g => {
+                const pid = g.project.id!;
+                if (searchIds.has(pid)) return true;
+                return g.items.some(i => i.id != null && searchIds.has(i.id));
+            });
+        }
         arr.sort((ga, gb) => {
             const fa = ga.items[0];
             const fb = gb.items[0];
@@ -114,7 +133,7 @@ const Projects: React.FC = () => {
             return 0;
         });
         return arr;
-    }, [achievements, parentByChild, filterCompleted, searchQuery, searchIds]);
+    }, [achievements, parentByChild, filterCompleted, searchQuery, searchIds, projects]);
 
     // Horizontal auto-scroll disabled for the projects view
     // useEffect(() => {
@@ -155,10 +174,21 @@ const Projects: React.FC = () => {
     };
 
     const handleCreateAchievement = () => {
-        const newAchievement: Partial<Goal> = {
-            goal_type: 'achievement' as Goal['goal_type']
-        };
-        GoalMenu.open(newAchievement as Goal, 'create', (newGoal) => {
+        // Allow creating any goal type; if a project is created, update the list immediately
+        GoalMenu.open({} as Goal, 'create', (newGoal) => {
+            if (newGoal && newGoal.goal_type === 'project') {
+                setProjects(prev => {
+                    const exists = prev.some(p => p.id === newGoal.id);
+                    return exists ? prev : [...prev, newGoal];
+                });
+            }
+            // Still refresh achievements so new achievements appear
+            setRefreshTrigger(prev => prev + 1);
+        });
+    };
+
+    const handleProjectClick = (project: Goal) => {
+        GoalMenu.open(project, 'view', () => {
             setRefreshTrigger(prev => prev + 1);
         });
     };
@@ -198,6 +228,26 @@ const Projects: React.FC = () => {
         if (diffDays <= 7) return 'upcoming';
         return '';
     };
+
+    // Suggestions: projects that are not complete and have no incomplete achievements underneath
+    const suggestionProjects = useMemo(() => {
+        const byProjectId = new Map<number, Goal[]>();
+        (achievements || []).forEach(a => {
+            const p = parentByChild.get(a.id);
+            if (!p || p.id == null || p.goal_type !== 'project') return;
+            const arr = byProjectId.get(p.id) || [];
+            arr.push(a);
+            byProjectId.set(p.id, arr);
+        });
+        const res = (projects || []).filter(p => {
+            if (!p || p.id == null) return false;
+            if (p.completed) return false;
+            const achs = byProjectId.get(p.id) || [];
+            // keep if there are no achievements OR all achievements are completed
+            return achs.every(a => a.completed);
+        });
+        return res.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }, [projects, achievements, parentByChild]);
 
     return (
         <div className="achievements-container">
@@ -244,6 +294,80 @@ const Projects: React.FC = () => {
                             <span>Create Goal</span>
                         </button>
                     </div>
+                </div>
+
+                <div style={{ marginTop: '0.5rem' }}>
+                    <Accordion disableGutters>
+                        <AccordionSummary
+                            expandIcon={<ExpandMoreIcon />}
+                            sx={{
+                                minHeight: 'auto',
+                                px: '0.75rem',
+                                py: '0.5rem',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '0.375rem',
+                                background: '#ffffff',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                '& .MuiAccordionSummary-content': { margin: 0, alignItems: 'center' }
+                            }}
+                        >
+                            <Typography variant="body2" style={{ fontSize: '0.95rem' }}>Suggestions</Typography>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                            <div style={{ display: 'grid', gap: '8px' }}>
+                                <List dense style={{ maxHeight: 288, overflowY: 'auto' }}>
+                                    {suggestionProjects.map((p) => {
+                                        const style = getGoalStyle(p);
+                                        return (
+                                            <ListItem
+                                                key={`suggestion-${p.id}`}
+                                                button
+                                                onClick={() => handleProjectClick(p)}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                                                    <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                                                        <span
+                                                            className="goal-type-badge"
+                                                            style={{
+                                                                display: 'inline-block',
+                                                                padding: '2px 8px',
+                                                                borderRadius: '999px',
+                                                                backgroundColor: `${style.backgroundColor}20`,
+                                                                fontWeight: 600,
+                                                                maxWidth: '100%',
+                                                                whiteSpace: 'nowrap',
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis'
+                                                            }}
+                                                            title={p.name}
+                                                        >
+                                                            {p.name}
+                                                        </span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                                        <div
+                                                            style={{
+                                                                padding: '2px 8px',
+                                                                borderRadius: '999px',
+                                                                fontSize: '11px',
+                                                                lineHeight: 1.5,
+                                                                background: '#e8f5e9',
+                                                                color: '#1b5e20',
+                                                                flex: '0 0 auto'
+                                                            }}
+                                                            aria-label="No active achievements"
+                                                        >
+                                                            No active achievements
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </ListItem>
+                                        );
+                                    })}
+                                </List>
+                            </div>
+                        </AccordionDetails>
+                    </Accordion>
                 </div>
 
                 <div className="achievements-list">

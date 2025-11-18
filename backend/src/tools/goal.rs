@@ -836,7 +836,7 @@ pub async fn duplicate_goal_handler(
         .get("g")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let name_suffix = options.name_suffix.unwrap_or_else(|| " (Copy)".to_string());
+    let name_suffix = options.name_suffix.unwrap_or_else(|| "".to_string());
     let keep_parent_links = options.keep_parent_links.unwrap_or(true);
     let include_children = options.include_children.unwrap_or(false);
     let clear_external_ids = options.clear_external_ids.unwrap_or(true);

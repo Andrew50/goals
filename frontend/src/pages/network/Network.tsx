@@ -256,7 +256,27 @@ const NetworkView: React.FC = () => {
     return triangles;
   }, []);
 
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
   const insights = useMemo(() => {
+    if (!showSuggestions) {
+      return {
+        idToGoal: new Map<number, Goal>(),
+        roots: [],
+        leaves: [],
+        mutualPairs: [],
+        sccs: [],
+        triangles: [],
+        selfLoopNodes: new Set<number>(),
+        highlightSets: {
+          roots: { nodes: new Set<number>(), edges: new Set<string>() },
+          leaves: { nodes: new Set<number>(), edges: new Set<string>() },
+          mutual: { nodes: new Set<number>(), edges: new Set<string>() },
+          cycles: { nodes: new Set<number>(), edges: new Set<string>() },
+          triangles: { nodes: new Set<number>(), edges: new Set<string>() }
+        }
+      };
+    }
     const idToGoal = new Map<number, Goal>();
     const nodeIds: number[] = [];
     (searchItems || []).forEach((g) => {
@@ -390,7 +410,7 @@ const NetworkView: React.FC = () => {
         triangles: { nodes: triangleNodes, edges: triangleEdges }
       }
     };
-  }, [searchItems, edgeItems, findSccs, findTriangles]);
+  }, [searchItems, edgeItems, findSccs, findTriangles, showSuggestions]);
 
   // Apply highlights for all issue types (always active)
   useEffect(() => {
@@ -542,12 +562,48 @@ const NetworkView: React.FC = () => {
 
       const { nodes, edges } = await privateRequest<{ nodes: ApiGoal[], edges: NetworkEdge[] }>('network');
 
-      const formattedNodes = nodes.map((n: ApiGoal) => {
+      // Choose layout strategy based on how many nodes already have saved positions
+      const formattedNodesRaw = nodes.map((n: ApiGoal) => {
         const local = goalToLocal(n);
-        const formatted = formatNetworkNode(local);
-        const existing = byId.get(formatted.id);
-        return { ...formatted, x: existing?.x, y: existing?.y };
+        return formatNetworkNode(local);
       });
+
+      const positionedCount = formattedNodesRaw.filter((n: any) =>
+        typeof n.position_x === 'number' && typeof n.position_y === 'number'
+      ).length;
+      const mostHavePositions =
+        formattedNodesRaw.length > 0 &&
+        positionedCount / formattedNodesRaw.length >= 0.8;
+
+      let formattedNodes: NetworkNode[];
+      let formattedEdges: NetworkEdge[];
+
+      if (mostHavePositions) {
+        // Fast path: re‑use stored positions and only recompute edge styling
+        formattedNodes = formattedNodesRaw.map((n: any) => {
+          const existing = byId.get(n.id);
+          return {
+            ...n,
+            x: existing?.x ?? n.position_x,
+            y: existing?.y ?? n.position_y
+          };
+        }) as unknown as NetworkNode[];
+        formattedEdges = formatEdgesForGraph(
+          formattedNodes,
+          edges as unknown as NetworkEdge[]
+        );
+      } else {
+        // Slow path: run full layout to compute positions
+        const laidOut = await buildHierarchy(
+          {
+            nodes: formattedNodesRaw as unknown as NetworkNode[],
+            edges: edges as unknown as NetworkEdge[]
+          },
+          { savePositions: true }
+        );
+        formattedNodes = laidOut.nodes as unknown as NetworkNode[];
+        formattedEdges = laidOut.edges as unknown as NetworkEdge[];
+      }
 
       // Replace nodes (remove missing, add/update present)
       const serverIds = new Set(formattedNodes.map((n: any) => n.id));
@@ -556,7 +612,6 @@ const NetworkView: React.FC = () => {
       nodesDataSetRef.current.update(formattedNodes);
 
       // Replace edges
-      const formattedEdges = formatEdgesForGraph(formattedNodes as unknown as NetworkNode[], edges as unknown as NetworkEdge[]);
       const currentEdges = edgesDataSetRef.current.get();
       const serverEdgeIds = new Set(formattedEdges.map((e: any) => e.id));
       const edgesToRemove = currentEdges.filter((e: any) => !serverEdgeIds.has(e.id)).map((e: any) => e.id);
@@ -1307,7 +1362,7 @@ const NetworkView: React.FC = () => {
   }, [insights]);
 
   return (
-    <div style={{ position: 'relative', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', height: 'calc(100vh - 65px)', overflow: 'hidden' }}>
       <div ref={networkContainer} style={{ height: '100%', width: '100%', outline: 'none' }} tabIndex={-1} />
 
       <div style={{ position: 'absolute', top: '1rem', right: '1rem', width: 'min(420px, 40vw)', zIndex: 2 }}>
@@ -1418,7 +1473,11 @@ const NetworkView: React.FC = () => {
         )}
 
         <div style={{ marginTop: '0.5rem' }}>
-          <Accordion disableGutters>
+          <Accordion
+            disableGutters
+            expanded={showSuggestions}
+            onChange={(_, expanded) => setShowSuggestions(expanded)}
+          >
             <AccordionSummary
               expandIcon={<ExpandMoreIcon />}
               sx={{

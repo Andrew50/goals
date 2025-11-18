@@ -26,7 +26,7 @@
    Layout Containers
 ----------------------------- */
 .calendar-container {
-    height: calc(100vh - 64px);
+    height: calc(100vh - 65px);
     /* Account for navbar */
     background-color: #f5f7fa;
     padding: 2rem;
@@ -93,6 +93,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    /* Allow clicks to pass through to the navbar and other UI while loading */
+    pointer-events: none;
 }
 
 .loading-spinner {
@@ -326,7 +328,7 @@
 @media (max-width: 768px) {
     .calendar-content {
         flex-direction: column;
-        height: calc(100vh - 64px);
+        height: calc(100vh - 65px);
         overflow-y: auto;
     }
 
@@ -338,7 +340,7 @@
 
     .calendar-main {
         flex: 1;
-        min-height: calc(160vh - 64px);
+        min-height: calc(160vh - 65px);
     }
 }
 
@@ -346,7 +348,7 @@
     .calendar-container {
         padding: 1rem;
         height: auto;
-        min-height: calc(100vh - 64px);
+        min-height: calc(100vh - 65px);
     }
 
     .fc .fc-toolbar {
@@ -386,8 +388,19 @@
     box-shadow: none;
 }
 
+.calendar-container .fc .event-compact.event-selected {
+    box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.9);
+}
+
 .calendar-container .fc .event-compact .fc-event-main {
     padding: 0;
+}
+
+/* Time-range selection highlight (dayGrid + timeGrid) */
+.calendar-container .fc .fc-highlight {
+    background-color: rgba(66, 153, 225, 0.25) !important;
+    opacity: 1 !important;
+    border-radius: 2px;
 }
 
 /* Ensure any residual time nodes are hidden */

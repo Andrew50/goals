@@ -16,8 +16,17 @@ interface DateRange {
 
 export const fetchCalendarData = async (dateRange?: DateRange): Promise<TransformedCalendarData> => {
     try {
-        // Make API request to calendar endpoint
-        const response = await privateRequest<CalendarResponse>('calendar');
+        // Make API request to calendar endpoint, optionally scoped to a date range
+        const params =
+            dateRange && dateRange.start && dateRange.end
+                ? {
+                    // Use millisecond timestamps to match backend expectations
+                    start: dateRange.start.getTime(),
+                    end: dateRange.end.getTime(),
+                }
+                : undefined;
+
+        const response = await privateRequest<CalendarResponse>('calendar', 'GET', undefined, params);
 
         if (!response) {
             console.error('Empty calendar response');

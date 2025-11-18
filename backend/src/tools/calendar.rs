@@ -67,11 +67,16 @@ async fn execute_query<T>(
 pub async fn get_calendar_data(
     graph: Graph,
     user_id: i64,
+    start_timestamp: Option<i64>,
+    end_timestamp: Option<i64>,
 ) -> Result<Json<CalendarData>, (StatusCode, String)> {
     // Calculate time range - default to current month +/- 1 month
     let now = Utc::now();
-    let start_timestamp = (now - Duration::days(30)).timestamp_millis();
-    let end_timestamp = (now + Duration::days(60)).timestamp_millis();
+    let default_start = (now - Duration::days(30)).timestamp_millis();
+    let default_end = (now + Duration::days(60)).timestamp_millis();
+
+    let start_timestamp = start_timestamp.unwrap_or(default_start);
+    let end_timestamp = end_timestamp.unwrap_or(default_end);
 
     // Simply fetch all events in range - no more dynamic generation
     let events_query_str = format!(
