@@ -70,6 +70,11 @@ pub struct TaskEventsResponse {
     pub total_duration: i32,
     pub next_scheduled: Option<i64>,
     pub last_scheduled: Option<i64>,
+    pub event_count: i32,
+    pub completed_event_count: i32,
+    pub past_uncompleted_count: i32,
+    pub future_uncompleted_count: i32,
+    pub next_uncompleted_timestamp: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -650,6 +655,11 @@ pub async fn get_task_events_handler(
     let mut total_duration = 0i32;
     let mut next_scheduled = None;
     let mut last_scheduled = None;
+    let mut event_count = 0i32;
+    let mut completed_event_count = 0i32;
+    let mut future_uncompleted_count = 0i32;
+    let mut next_uncompleted_timestamp = None;
+    let now_ms = Utc::now().timestamp_millis();
 
     while let Some(row) = result
         .next()
@@ -660,11 +670,28 @@ pub async fn get_task_events_handler(
             .get("e")
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+        event_count += 1;
+
+        let is_completed = event.completed.unwrap_or(false);
+        if is_completed {
+            completed_event_count += 1;
+        }
+
         if let Some(duration) = event.duration {
             total_duration += duration;
         }
 
         if let Some(scheduled) = event.scheduled_timestamp {
+            if !is_completed && scheduled > now_ms {
+                future_uncompleted_count += 1;
+                if next_uncompleted_timestamp
+                    .map(|existing| scheduled < existing)
+                    .unwrap_or(true)
+                {
+                    next_uncompleted_timestamp = Some(scheduled);
+                }
+            }
+
             if next_scheduled.is_none() || next_scheduled.unwrap() > scheduled {
                 next_scheduled = Some(scheduled);
             }
@@ -676,12 +703,20 @@ pub async fn get_task_events_handler(
         events.push(event);
     }
 
+    let past_uncompleted_count =
+        (event_count - completed_event_count - future_uncompleted_count).max(0);
+
     Ok(Json(TaskEventsResponse {
         task_id,
         events,
         total_duration,
         next_scheduled,
         last_scheduled,
+        event_count,
+        completed_event_count,
+        past_uncompleted_count,
+        future_uncompleted_count,
+        next_uncompleted_timestamp,
     }))
 }
 

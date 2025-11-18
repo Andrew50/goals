@@ -3298,26 +3298,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             <Box ref={statsContainerRef} sx={{ mt: 2 }} aria-busy={false}>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 1 }}>
                     <RateTile
-                        label={isEvent ? '10d completion' : 'Completion'}
-                        tooltip={isEvent ? '10-day weighted completion rate (by priority)' : 'Weighted completion rate (by priority)'}
-                        value={completionRate}
+                        label="Completion"
+                        tooltip="Weighted completion rate (by priority)"
+                        value={isEvent ? allTimeRate : completionRate}
                         icon={<CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'primary.main' }} />}
                         hasData={total > 0}
                         completed={completed}
                         total={total}
                     />
-                    {isEvent ? (
-                        <RateTile
-                            label="All completion"
-                            tooltip="All-time weighted completion rate (by priority)"
-                            value={allTimeRate}
-                            icon={<TrendingUpIcon sx={{ fontSize: 16, color: 'secondary.main' }} />}
-                            color={'secondary.main'}
-                            hasData={total > 0}
-                            completed={completed}
-                            total={total}
-                        />
-                    ) : null}
                     <SimpleTile
                         label="Time spent"
                         tooltip="Total completed time across all descendant events (from Effort stats)"
