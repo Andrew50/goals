@@ -6,11 +6,12 @@ import { privateRequest } from '../../shared/utils/api';
 // Simulation & Layout Parameters
 // =====================================================
 export const BASE_SPACING = 500;         // Base distance used to set ideal edge length
-const NUM_ITERATIONS = 1000;              // Number of simulation iterations
-const REPULSION_CONSTANT = 1000000; //100000       // Controls repulsive force strength
-const ATTRACTION_CONSTANT = 0.05;   //0.01          // Controls attractive (spring) force strength
-const GRAVITY_CONSTANT = 0.03;           // Pulls nodes toward center (radial gravity)
-const DAMPING = 0.85;                    // Damping factor to stabilize the simulation
+const NUM_ITERATIONS = 1000;            // Upper bound for simulation iterations
+const REPULSION_CONSTANT = 1000000;     // Controls repulsive force strength
+const ATTRACTION_CONSTANT = 0.05;       // Controls attractive (spring) force strength
+const GRAVITY_CONSTANT = 0.03;          // Pulls nodes toward center (radial gravity)
+const DAMPING = 0.85;                   // Damping factor to stabilize the simulation
+const VELOCITY_EPSILON = 0.05;          // Early‑stop threshold for maximum velocity magnitude
 
 // =====================================================
 // Helper: Choose a root node (prefer one with no incoming 'child' edges)
@@ -262,8 +263,13 @@ export async function buildHierarchy(
         // a) Repulsive forces between every pair of nodes.
         for (let i = 0; i < networkData.nodes.length; i++) {
             const nodeA = networkData.nodes[i];
+            const nodeAIsFixed = fixedNodes.has(nodeA.id);
             for (let j = i + 1; j < networkData.nodes.length; j++) {
                 const nodeB = networkData.nodes[j];
+                // Skip expensive pairwise computation when both nodes are fixed
+                if (nodeAIsFixed && fixedNodes.has(nodeB.id)) {
+                    continue;
+                }
                 const dx = positions[nodeA.id].x - positions[nodeB.id].x;
                 const dy = positions[nodeA.id].y - positions[nodeB.id].y;
                 let distanceSq = dx * dx + dy * dy;
@@ -316,13 +322,25 @@ export async function buildHierarchy(
         });
 
         // d) Update velocities and positions (except for fixed nodes).
+        let maxVelocitySq = 0;
         networkData.nodes.forEach(node => {
             if (fixedNodes.has(node.id)) return;
-            velocities[node.id].x = (velocities[node.id].x + forces[node.id].x) * DAMPING;
-            velocities[node.id].y = (velocities[node.id].y + forces[node.id].y) * DAMPING;
-            positions[node.id].x += velocities[node.id].x;
-            positions[node.id].y += velocities[node.id].y;
+            const vx = (velocities[node.id].x + forces[node.id].x) * DAMPING;
+            const vy = (velocities[node.id].y + forces[node.id].y) * DAMPING;
+            velocities[node.id].x = vx;
+            velocities[node.id].y = vy;
+            positions[node.id].x += vx;
+            positions[node.id].y += vy;
+            const vSq = vx * vx + vy * vy;
+            if (vSq > maxVelocitySq) {
+                maxVelocitySq = vSq;
+            }
         });
+
+        // Early‑stop when the system has largely stabilized
+        if (Math.sqrt(maxVelocitySq) < VELOCITY_EPSILON) {
+            break;
+        }
     }
 
     // 5. Update node positions and (optionally) save to the backend.

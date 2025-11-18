@@ -195,7 +195,7 @@ const Calendar: React.FC = () => {
   );
 
   const [error, setError] = useState<string | null>(null);
-  const [dataLoadAttempts, setDataLoadAttempts] = useState(0);
+  const stateRef = useRef<CalendarState>(state);
   const [routineRescheduleDialog, setRoutineRescheduleDialog] = useState<RoutineRescheduleDialogState>({
     isOpen: false,
     eventId: null,
@@ -266,66 +266,26 @@ const Calendar: React.FC = () => {
   const [debugMode] = useState(false);
 
   // -----------------------------
-  // Data Loading
-  // -----------------------------
-  const loadCalendarData = useCallback(async (dateRange = state.dateRange) => {
-    if (state.isLoading) return;
-
-    try {
-      // Set loading state
-      setState({
-        ...state,
-        isLoading: true
-      });
-
-      const data = await fetchCalendarData(dateRange);
-
-      // Clear any data-loading timeouts
-      if (dataLoadingTimeoutRef.current) {
-        clearTimeout(dataLoadingTimeoutRef.current);
-      }
-
-      // Update with new data
-      setState({
-        events: data.events,
-        tasks: data.unscheduledTasks,
-        isLoading: false,
-        dateRange
-      });
-    } catch (error) {
-      console.error('Error loading calendar data:', error);
-      setState({
-        ...state,
-        isLoading: false
-      });
-
-      if (dataLoadAttempts < 2) {
-        setTimeout(() => {
-          setDataLoadAttempts((prev) => prev + 1);
-          loadCalendarData(dateRange);
-        }, 2000);
-      } else {
-        setError(
-          'Failed to load calendar data after multiple attempts. Please try refreshing.'
-        );
-      }
-    }
-  }, [state, setState, dataLoadAttempts, setDataLoadAttempts, setError]);
-
-  // -----------------------------
   // Effects
   // -----------------------------
+  // Keep a ref pointing at the latest calendar state for use in stable callbacks
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
   // Initial data load - with a flag to prevent duplicate calls
   const initialLoadRef = useRef(false);
   useEffect(() => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
-    loadCalendarData().catch((err) => {
-      console.error('Error loading calendar data:', err);
+    try {
+      calendarRef.current?.getApi().refetchEvents();
+    } catch (err) {
+      console.error('Error triggering initial calendar fetch:', err);
       setError('Failed to load calendar data. Please try refreshing the page.');
-    });
-  }, [loadCalendarData, setError]);
+    }
+  }, [setError]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {
@@ -365,15 +325,9 @@ const Calendar: React.FC = () => {
             ...state,
             isLoading: false
           });
-
-          if (dataLoadAttempts < 2) {
-            setDataLoadAttempts((prev) => prev + 1);
-            loadCalendarData();
-          } else {
-            setError(
-              'Calendar data loading timed out. Please try refreshing the page.'
-            );
-          }
+          setError(
+            'Calendar data loading timed out. Please try refreshing the page.'
+          );
         }
       }, 20000);
     }
@@ -382,7 +336,7 @@ const Calendar: React.FC = () => {
         clearTimeout(dataLoadingTimeoutRef.current);
       }
     };
-  }, [state, dataLoadAttempts, loadCalendarData, setState, setError]);
+  }, [state, setState, setError]);
 
   // Optional debug: global click logging
   useEffect(() => {
@@ -433,6 +387,14 @@ const Calendar: React.FC = () => {
   // -----------------------------
   // Handlers
   // -----------------------------
+  const refetchCalendarEvents = useCallback(() => {
+    try {
+      calendarRef.current?.getApi().refetchEvents();
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const handleDatesSet = (dateInfo: any) => {
     // Update the "view" query param so refreshes keep the current view
     const currentViewType = dateInfo.view?.type;
@@ -445,51 +407,6 @@ const Calendar: React.FC = () => {
         : (cb: () => void) => Promise.resolve().then(cb);
       schedule(() => setSearchParams(params, { replace: true }));
     }
-
-    // Skip if the calendar is already loading data
-    if (state.isLoading) return;
-
-    const start = dateInfo.start instanceof Date
-      ? dateInfo.start
-      : new Date(dateInfo.start);
-    const end = dateInfo.end instanceof Date
-      ? dateInfo.end
-      : new Date(dateInfo.end);
-
-    // Check if current date range covers this new date range
-    const { start: currentStart, end: currentEnd } = state.dateRange;
-    const isStartCovered = start >= new Date(currentStart.getTime() - 86400000);
-    const isEndCovered = end <= new Date(currentEnd.getTime() + 86400000);
-
-    // Only load new data if outside current range
-    if (isStartCovered && isEndCovered) {
-      return;
-    }
-
-    if (debouncingRef.current) {
-      clearTimeout(debouncingRef.current);
-    }
-
-    // Store the new date range to prevent duplicate requests
-    const newDateRange = { start, end };
-
-    debouncingRef.current = setTimeout(() => {
-      // First update the state with new date range
-      setState({
-        ...state,
-        dateRange: newDateRange
-      });
-
-      debouncingRef.current = null;
-
-      // Use a separate call with requestAnimationFrame to load data after state update
-      requestAnimationFrame(() => {
-        // Prevent duplicate calls by checking if we're already loading for this range
-        if (!state.isLoading) {
-          loadCalendarData(newDateRange);
-        }
-      });
-    }, 300);
   };
 
   const handleDateClick = (arg: any) => {
@@ -510,10 +427,15 @@ const Calendar: React.FC = () => {
     };
 
     console.log('[Calendar] Opening goal menu with goal:', newGoal);
-    openGoalMenu(newGoal, 'create', () => {
-      console.log('[Calendar] Goal menu success callback called');
-      loadCalendarData();
-    }, { autoCreateEventTimestamp: clickedDate });
+    openGoalMenu(
+      newGoal,
+      'create',
+      () => {
+        console.log('[Calendar] Goal menu success callback called');
+        refetchCalendarEvents();
+      },
+      { autoCreateEventTimestamp: clickedDate }
+    );
   };
 
   const handleEventClick = (info: any) => {
@@ -535,7 +457,7 @@ const Calendar: React.FC = () => {
     const goal = info.event.extendedProps?.goal;
     if (goal) {
       openGoalMenu(goal, 'view', () => {
-        loadCalendarData();
+        refetchCalendarEvents();
       });
     }
   };
@@ -585,9 +507,13 @@ const Calendar: React.FC = () => {
       e.preventDefault();
       const goal = info.event.extendedProps?.goal;
       if (goal) {
-        openGoalMenu(goal, goal.goal_type === 'event' ? 'view' : 'edit', () => {
-          loadCalendarData();
-        });
+        openGoalMenu(
+          goal,
+          goal.goal_type === 'event' ? 'view' : 'edit',
+          () => {
+            refetchCalendarEvents();
+          }
+        );
       }
     });
   };
@@ -623,7 +549,7 @@ const Calendar: React.FC = () => {
       });
 
       info.revert(); // Revert the drag since we're creating a new event
-      loadCalendarData();
+      refetchCalendarEvents();
     };
 
     try {
@@ -706,7 +632,7 @@ const Calendar: React.FC = () => {
         // If duration is not 1440 and not moving to all-day, keep existing duration
 
         await updateGoal(existingEvent.goal.id, updates);
-        loadCalendarData();
+        refetchCalendarEvents();
       } else {
         // Non-event goals shouldn't be draggable in the new system
         info.revert();
@@ -793,7 +719,7 @@ const Calendar: React.FC = () => {
         setRoutineRescheduleQueue((prev) => [...prev, ...routineQueueItems]);
       }
 
-      loadCalendarData();
+      refetchCalendarEvents();
     } catch (error) {
       console.error('Failed to move one or more events:', error);
       info.revert();
@@ -875,7 +801,7 @@ const Calendar: React.FC = () => {
         eventInfo: null
       });
       setSelectedUpdateScope('single');
-      loadCalendarData();
+      refetchCalendarEvents();
     } catch (error) {
       console.error('Failed to update routine event:', error);
       setError('Failed to update routine event. Please try again.');
@@ -930,7 +856,7 @@ const Calendar: React.FC = () => {
         eventInfo: null
       });
       setSelectedResizeScope('single');
-      loadCalendarData();
+      refetchCalendarEvents();
     } catch (error) {
       console.error('Failed to resize routine event:', error);
       setError('Failed to resize routine event. Please try again.');
@@ -987,7 +913,7 @@ const Calendar: React.FC = () => {
         };
 
         await updateGoal(existingEvent.goal.id, updates);
-        loadCalendarData();
+        refetchCalendarEvents();
       } else {
         info.revert();
       }
@@ -1047,7 +973,13 @@ const Calendar: React.FC = () => {
     }
   };
 
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
   const overlapSuggestions = useMemo(() => {
+    if (!showSuggestions) {
+      return [];
+    }
+
     try {
       const today = startOfDay(new Date());
       // Group events by local day they touch, limited to today or later
@@ -1102,7 +1034,7 @@ const Calendar: React.FC = () => {
     } catch {
       return [];
     }
-  }, [state.events]);
+  }, [state.events, showSuggestions]);
 
   const handleAddTask = () => {
     const tempGoal: Goal = {
@@ -1113,40 +1045,43 @@ const Calendar: React.FC = () => {
     };
 
     openGoalMenu(tempGoal, 'create', () => {
-      loadCalendarData();
+      refetchCalendarEvents();
     });
   };
 
   const handleTaskUpdate = (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => {
-    setState({ ...state, events: data.events, tasks: data.tasks });
+    setState({
+      ...state,
+      events: data.events,
+      tasks: data.tasks
+    });
   };
 
-  // Build events array using centralized styling from colors.ts
-  const eventsWithColors = state.events.map((evt) => {
-    const goal = evt.goal;
-    const parent = evt.parent;
+  // Helper to convert CalendarEvent objects into FullCalendar events with styling
+  const mapEventsToFullCalendar = (events: CalendarEvent[]) =>
+    events.map((evt) => {
+      const goal = evt.goal;
+      const parent = evt.parent;
 
-    // Use centralized styling that handles parent types and priority borders
-    // Pass parent goal so priority borders fall back to parent if event has no priority
-    const { backgroundColor, textColor, borderColor } = getGoalStyle(goal, parent);
+      const { backgroundColor, textColor, borderColor } = getGoalStyle(goal, parent);
 
-    return {
-      id: evt.id,
-      title: evt.title,
-      start: evt.start,
-      end: evt.end,
-      allDay: evt.allDay,
-      backgroundColor,
-      borderColor,
-      textColor,
-      color: backgroundColor, // Explicitly set color property for FullCalendar
-      extendedProps: {
-        ...evt,
-        goal,
-        parent
-      }
-    };
-  });
+      return {
+        id: evt.id,
+        title: evt.title,
+        start: evt.start,
+        end: evt.end,
+        allDay: evt.allDay,
+        backgroundColor,
+        borderColor,
+        textColor,
+        color: backgroundColor,
+        extendedProps: {
+          ...evt,
+          goal,
+          parent
+        }
+      };
+    });
 
   // Helper function to check if an error is a task date validation error
   const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
@@ -1332,7 +1267,7 @@ const Calendar: React.FC = () => {
       });
 
       // Reload calendar data to show synced events
-      loadCalendarData();
+      refetchCalendarEvents();
     } catch (error) {
       console.error('Google Calendar sync failed:', error);
       setGcalSyncDialog({
@@ -1355,6 +1290,61 @@ const Calendar: React.FC = () => {
       lastResult: null
     });
   };
+
+  // FullCalendar event loader: fetch events for the visible range
+  const handleEventsFetch = useCallback(
+    async (
+      fetchInfo: { start: Date | string; end: Date | string },
+      successCallback: (events: any[]) => void,
+      failureCallback: (error: any) => void
+    ) => {
+      const start = fetchInfo.start instanceof Date ? fetchInfo.start : new Date(fetchInfo.start);
+      const end = fetchInfo.end instanceof Date ? fetchInfo.end : new Date(fetchInfo.end);
+
+      // Mark loading and record the active date range using the latest state snapshot
+      const current = stateRef.current;
+      setState({
+        events: current.events,
+        tasks: current.tasks,
+        isLoading: true,
+        dateRange: { start, end }
+      });
+
+      try {
+        const data = await fetchCalendarData({ start, end });
+
+        // Clear any data-loading timeouts
+        if (dataLoadingTimeoutRef.current) {
+          clearTimeout(dataLoadingTimeoutRef.current);
+        }
+
+        setState({
+          events: data.events,
+          tasks: data.unscheduledTasks,
+          isLoading: false,
+          dateRange: { start, end }
+        });
+
+        successCallback(mapEventsToFullCalendar(data.events));
+      } catch (error) {
+        const current = stateRef.current;
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: false,
+          dateRange: current.dateRange
+        });
+        setError('Failed to load calendar data. Please try refreshing the page.');
+
+        try {
+          failureCallback(error);
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [setState, setError]
+  );
 
   // Ensure the "+N more" popover stays within the viewport
   const repositionMorePopover = () => {
@@ -1478,7 +1468,6 @@ const Calendar: React.FC = () => {
         <button
           onClick={() => {
             setError(null);
-            setDataLoadAttempts((prev) => prev + 1);
           }}
           className="retry-button"
         >
@@ -1500,6 +1489,7 @@ const Calendar: React.FC = () => {
             onTaskUpdate={handleTaskUpdate}
             overlapSuggestions={overlapSuggestions}
             onNavigateDate={gotoDate}
+            onToggleSuggestions={setShowSuggestions}
           />
         </div>
         <div className="calendar-main" style={{ position: 'relative' }}>
@@ -1539,7 +1529,7 @@ const Calendar: React.FC = () => {
             selectMirror={true}
             unselectAuto={true}
             moreLinkClick={handleMoreLinkClick}
-            events={eventsWithColors}
+            events={handleEventsFetch}
             dateClick={handleDateClick}
             eventClick={handleEventClick}
             select={handleRangeSelect}
