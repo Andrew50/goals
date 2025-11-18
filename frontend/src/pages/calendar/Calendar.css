@@ -388,8 +388,19 @@
     box-shadow: none;
 }
 
+.calendar-container .fc .event-compact.event-selected {
+    box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.9);
+}
+
 .calendar-container .fc .event-compact .fc-event-main {
     padding: 0;
+}
+
+/* Time-range selection highlight (dayGrid + timeGrid) */
+.calendar-container .fc .fc-highlight {
+    background-color: rgba(66, 153, 225, 0.25) !important;
+    opacity: 1 !important;
+    border-radius: 2px;
 }
 
 /* Ensure any residual time nodes are hidden */

@@ -65,6 +65,14 @@ interface RoutineResizeDialogState {
   eventInfo: any; // FullCalendar event info for reverting
 }
 
+interface RoutineRescheduleQueueItem {
+  eventId: number;
+  eventName: string;
+  newTimestamp: Date;
+  originalTimestamp: Date;
+  eventInfo?: any;
+}
+
 // Task Date Range Warning Dialog Component
 interface TaskDateRangeWarningDialogProps {
   open: boolean;
@@ -246,6 +254,14 @@ const Calendar: React.FC = () => {
     loadingCalendars: false
   });
 
+  // Multi-select state for calendar events
+  const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
+
+  // Queue for multi-move routine reschedule dialogs
+  const [routineRescheduleQueue, setRoutineRescheduleQueue] = useState<
+    RoutineRescheduleQueueItem[]
+  >([]);
+
   // Debugging mode toggles global logs, etc.
   const [debugMode] = useState(false);
 
@@ -397,6 +413,23 @@ const Calendar: React.FC = () => {
     };
   }, [debugMode]);
 
+  // Drive routine reschedule dialogs from queue (multi-move scenarios)
+  useEffect(() => {
+    if (routineRescheduleDialog.isOpen) return;
+    if (routineRescheduleQueue.length === 0) return;
+
+    const [next, ...rest] = routineRescheduleQueue;
+    setRoutineRescheduleQueue(rest);
+    setRoutineRescheduleDialog({
+      isOpen: true,
+      eventId: next.eventId,
+      eventName: next.eventName,
+      newTimestamp: next.newTimestamp,
+      originalTimestamp: next.originalTimestamp,
+      eventInfo: next.eventInfo ?? null
+    });
+  }, [routineRescheduleQueue, routineRescheduleDialog.isOpen]);
+
   // -----------------------------
   // Handlers
   // -----------------------------
@@ -464,6 +497,8 @@ const Calendar: React.FC = () => {
     const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
     console.log('[Calendar] Parsed date:', clickedDate);
 
+    clearSelection();
+
     const newGoal: Goal = {
       ...({} as Goal),
       name: '',
@@ -482,12 +517,61 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventClick = (info: any) => {
-    const event = info.event.extendedProps?.goal;
-    if (event) {
-      openGoalMenu(event, 'view', () => {
+    const eventId = String(info.event.id);
+    const jsEvent = info.jsEvent as MouseEvent | undefined;
+    const isMultiKey = jsEvent?.metaKey || jsEvent?.ctrlKey || jsEvent?.shiftKey;
+
+    if (isMultiKey) {
+      // Toggle selection without opening the goal menu
+      setSelectedEventIds((prev) =>
+        prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
+      );
+      return;
+    }
+
+    // Single-select behavior + open goal menu
+    setSelectedEventIds([eventId]);
+
+    const goal = info.event.extendedProps?.goal;
+    if (goal) {
+      openGoalMenu(goal, 'view', () => {
         loadCalendarData();
       });
     }
+  };
+
+  const handleRangeSelect = (selectInfo: any) => {
+    const rangeStart =
+      selectInfo.start instanceof Date ? selectInfo.start : new Date(selectInfo.start);
+    const rangeEnd =
+      selectInfo.end instanceof Date ? selectInfo.end : new Date(selectInfo.end);
+
+    const eventsToSelect = (state.events || []).filter((evt) => {
+      if (!evt?.start || !evt?.end) return false;
+
+      // Exclude all-day events from drag selection
+      const isAllDayEvt =
+        evt.allDay === true || (evt.goal?.duration === 1440);
+      if (isAllDayEvt) return false;
+
+      const start = new Date(evt.start);
+      const end = new Date(evt.end);
+      return rangesOverlap(start, end, rangeStart, rangeEnd);
+    });
+
+    const ids = eventsToSelect.map((evt) => String(evt.id));
+    setSelectedEventIds(ids);
+
+    // Remove the visual selection block but keep the selected events
+    try {
+      calendarRef.current?.getApi().unselect();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleCalendarUnselect = () => {
+    // Intentionally no-op so keyboard/auto unselect does not clear multi-selection
   };
 
   const handleEventDidMount = (info: any) => {
@@ -564,7 +648,30 @@ const Calendar: React.FC = () => {
   };
 
   const handleEventDrop = async (info: any) => {
-    const executeEventMove = async () => {
+    const draggedId = String(info.event.id);
+    const draggedEvent = state.events.find((e) => String(e.id) === draggedId);
+
+    if (!draggedEvent?.start || !info.event.start) {
+      info.revert();
+      return;
+    }
+
+    const isMultiSelection =
+      selectedEventIds.length > 1 && selectedEventIds.includes(draggedId);
+
+    const draggedGoal = draggedEvent.goal;
+
+    // Helper to compute anchor move characteristics for duration updates
+    const anchorOriginalWasAllDay =
+      !!draggedEvent.allDay || draggedGoal?.duration === 1440;
+    const anchorNewIsAllDay = !!info.event.allDay;
+    const anchorMoveToAllDay = !anchorOriginalWasAllDay && anchorNewIsAllDay;
+    const anchorMoveToTimed = anchorOriginalWasAllDay && !anchorNewIsAllDay;
+
+    // -----------------------------
+    // Single-event behavior (existing logic)
+    // -----------------------------
+    const runSingleMove = async () => {
       const existingEvent = state.events.find((e) => e.id === info.event.id);
       if (existingEvent?.goal && existingEvent.goal.goal_type === 'event') {
         // Check if this is a routine event
@@ -575,7 +682,9 @@ const Calendar: React.FC = () => {
             eventId: existingEvent.goal.id!,
             eventName: existingEvent.goal.name,
             newTimestamp: info.event.start,
-            originalTimestamp: (existingEvent.goal.scheduled_timestamp as Date | undefined) ?? existingEvent.start,
+            originalTimestamp:
+              (existingEvent.goal.scheduled_timestamp as Date | undefined) ??
+              existingEvent.start,
             eventInfo: info
           });
           return; // Don't proceed with immediate update
@@ -604,24 +713,91 @@ const Calendar: React.FC = () => {
       }
     };
 
-    try {
-      await executeEventMove();
-    } catch (error) {
-      console.error('Failed to move event:', error);
+    // For single-event drags, keep existing behavior
+    if (!isMultiSelection) {
+      try {
+        await runSingleMove();
+      } catch (error) {
+        console.error('Failed to move event:', error);
 
-      // Check if it's a task date validation error
-      if (isTaskDateValidationError(error)) {
-        const validationError = extractValidationError(error);
-        if (validationError) {
-          const eventName = info.event.title || 'Event';
-          showTaskDateWarning(validationError, eventName, executeEventMove, info);
-          return;
+        // Check if it's a task date validation error
+        if (isTaskDateValidationError(error)) {
+          const validationError = extractValidationError(error);
+          if (validationError) {
+            const eventName = info.event.title || 'Event';
+            showTaskDateWarning(validationError, eventName, runSingleMove, info);
+            return;
+          }
         }
+
+        // For other errors, show generic error and revert
+        info.revert();
+        setError('Failed to move event. Please try again.');
+      }
+      return;
+    }
+
+    // -----------------------------
+    // Multi-move behavior (non-routine events only)
+    // -----------------------------
+    const originalStart = new Date(draggedEvent.start);
+    const newStart = info.event.start as Date;
+    const deltaMs = newStart.getTime() - originalStart.getTime();
+
+    const eventsToMove = state.events.filter((evt) =>
+      selectedEventIds.includes(String(evt.id))
+    );
+
+    const routineQueueItems: RoutineRescheduleQueueItem[] = [];
+
+    try {
+      for (const evt of eventsToMove) {
+        const goal = evt.goal;
+        if (!goal || goal.goal_type !== 'event') {
+          continue;
+        }
+
+        const isRoutine = goal.parent_type === 'routine';
+        const evtOriginalTimestamp =
+          (goal.scheduled_timestamp as Date | undefined) ?? evt.start;
+        const evtOriginalStart = new Date(evtOriginalTimestamp);
+        const evtNewStart = new Date(evtOriginalStart.getTime() + deltaMs);
+
+        if (isRoutine) {
+          routineQueueItems.push({
+            eventId: goal.id!,
+            eventName: goal.name,
+            newTimestamp: evtNewStart,
+            originalTimestamp: evtOriginalStart,
+            eventInfo: goal.id === draggedGoal?.id ? info : undefined
+          });
+          continue;
+        }
+
+        const updates: Goal = {
+          ...goal,
+          scheduled_timestamp: evtNewStart
+        };
+
+        // Mirror anchor all-day/timed transitions to other events where sensible
+        if (anchorMoveToAllDay) {
+          updates.duration = 1440;
+        } else if (anchorMoveToTimed && goal.duration === 1440) {
+          updates.duration = 60;
+        }
+
+        await updateGoal(goal.id, updates);
       }
 
-      // For other errors, show generic error and revert
+      if (routineQueueItems.length > 0) {
+        setRoutineRescheduleQueue((prev) => [...prev, ...routineQueueItems]);
+      }
+
+      loadCalendarData();
+    } catch (error) {
+      console.error('Failed to move one or more events:', error);
       info.revert();
-      setError('Failed to move event. Please try again.');
+      setError('Failed to move one or more events. Please try again.');
     }
   };
 
@@ -841,6 +1017,14 @@ const Calendar: React.FC = () => {
   // -----------------------------
   // Helpers and UI
   // -----------------------------
+  const clearSelection = () => {
+    setSelectedEventIds([]);
+  };
+
+  const isEventSelected = (id: string | number) => {
+    return selectedEventIds.includes(String(id));
+  };
+
   const startOfDay = (d: Date) => {
     const x = new Date(d);
     x.setHours(0, 0, 0, 0);
@@ -1221,7 +1405,9 @@ const Calendar: React.FC = () => {
             eventDisplay="block" //supposed to add full background color but doesnt ?
             eventMinHeight={12}
             displayEventTime={false}
-            eventClassNames={() => 'event-compact'}
+            eventClassNames={(arg) =>
+              isEventSelected(arg.event.id) ? 'event-compact event-selected' : 'event-compact'
+            }
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',
@@ -1238,9 +1424,14 @@ const Calendar: React.FC = () => {
             editable={true}
             droppable={true}
             dropAccept=".external-event"
+            selectable={true}
+            selectMirror={true}
+            unselectAuto={true}
             events={eventsWithColors}
             dateClick={handleDateClick}
             eventClick={handleEventClick}
+            select={handleRangeSelect}
+            unselect={handleCalendarUnselect}
             eventReceive={handleEventReceive}
             eventDrop={handleEventDrop}
             eventResize={handleEventResize}
