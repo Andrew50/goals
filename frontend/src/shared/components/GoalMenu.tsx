@@ -2056,22 +2056,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     const priorityField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
-            <strong>Priority:</strong> {state.goal.priority ? state.goal.priority.charAt(0).toUpperCase() + state.goal.priority.slice(1) : 'Not set'}
+            <strong>Priority:</strong>{' '}
+            {state.goal.priority
+                ? state.goal.priority.charAt(0).toUpperCase() + state.goal.priority.slice(1)
+                : 'Not set'}
         </Box>
     ) : (
         <TextField
             label="Priority"
             select
             value={state.goal.priority || ''}
-            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
-                ...state.goal,
-                priority: (e.target.value === '' ? undefined : (e.target.value as 'high' | 'medium' | 'low'))
-            })}
+            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+                handleChange({
+                    ...state.goal,
+                    priority:
+                        e.target.value === ''
+                            ? undefined
+                            : (e.target.value as 'high' | 'medium' | 'low'),
+                })
+            }
             fullWidth
             margin="dense"
             disabled={isViewOnly}
         >
-            <MenuItem value="">None</MenuItem>
+            <MenuItem value="" disabled>
+                Select priority
+            </MenuItem>
             <MenuItem value="high">High</MenuItem>
             <MenuItem value="medium">Medium</MenuItem>
             <MenuItem value="low">Low</MenuItem>
@@ -3693,11 +3703,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    {!isViewOnly && (
-                        <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
-                            Not saved until you press Create
-                        </Typography>
-                    )}
                     <Button onClick={close} disabled={isBusy}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
                         <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || relationsLoading}>
