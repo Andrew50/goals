@@ -348,7 +348,7 @@ async fn send_push_notification(
     payload: &[u8],
 ) -> Result<(), String> {
     // Ensure we have VAPID keys configured
-    let public_key =
+    let _public_key =
         env::var("VAPID_PUBLIC_KEY").map_err(|_| "VAPID_PUBLIC_KEY not configured".to_string())?;
     let private_key = env::var("VAPID_PRIVATE_KEY")
         .map_err(|_| "VAPID_PRIVATE_KEY not configured".to_string())?;

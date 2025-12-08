@@ -934,54 +934,6 @@ pub async fn link_google_account(
     Ok(())
 }
 
-// Unlink Google account from user
-#[allow(dead_code)]
-pub async fn unlink_google_account(graph: &Graph, user_id: i64) -> Result<(), String> {
-    // Check if user has password auth before unlinking Google
-    let check_query = Query::new(
-        "MATCH (u:User) WHERE id(u) = $user_id 
-         RETURN u.password_hash as password_hash"
-            .to_string(),
-    )
-    .param("user_id", user_id);
-
-    let mut result = graph
-        .execute(check_query)
-        .await
-        .map_err(|e| format!("Database query failed: {}", e))?;
-
-    if let Ok(Some(record)) = result.next().await {
-        let _password_hash: Option<String> = record.get("password_hash").ok();
-        if _password_hash.is_none() {
-            return Err(
-                "Cannot unlink Google account: no password set. Set a password first.".to_string(),
-            );
-        }
-    } else {
-        return Err("User not found".to_string());
-    }
-
-    // Unlink Google account
-    let update_query = Query::new(
-        "MATCH (u:User) WHERE id(u) = $user_id 
-         REMOVE u.google_id, u.google_email
-         SET u.display_name = CASE 
-            WHEN u.created_via = 'google' THEN null 
-            ELSE u.display_name 
-         END
-         RETURN u"
-            .to_string(),
-    )
-    .param("user_id", user_id);
-
-    graph
-        .run(update_query)
-        .await
-        .map_err(|e| format!("Failed to unlink Google account: {}", e))?;
-
-    Ok(())
-}
-
 // Set password for Google-only users
 #[allow(dead_code)]
 pub async fn set_password_for_user(
@@ -1227,4 +1179,102 @@ pub struct SetPasswordPayload {
 pub struct LinkAccountPayload {
     pub google_code: String,
     pub google_state: String,
+}
+
+/// Response for Google account status check
+#[derive(Debug, Serialize)]
+pub struct GoogleStatusResponse {
+    pub linked: bool,
+    pub email: Option<String>,
+    pub calendars_synced: i32,
+}
+
+/// Check if user has linked their Google account
+pub async fn get_google_status(
+    graph: &Graph,
+    user_id: i64,
+) -> Result<Json<GoogleStatusResponse>, (StatusCode, String)> {
+    let status_query = Query::new(
+        "MATCH (u:User) WHERE id(u) = $user_id 
+         OPTIONAL MATCH (s:SyncState {user_id: $user_id})
+         RETURN u.google_id as google_id, 
+                u.google_email as email,
+                u.google_refresh_token as refresh_token,
+                count(s) as sync_states"
+            .to_string(),
+    )
+    .param("user_id", user_id);
+
+    let mut result = graph.execute(status_query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to check Google status: {}", e),
+        )
+    })?;
+
+    if let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read result: {}", e),
+        )
+    })? {
+        let google_id: Option<String> = row.get("google_id").ok();
+        let email: Option<String> = row.get("email").ok();
+        let refresh_token: Option<String> = row.get("refresh_token").ok();
+        let sync_states: i64 = row.get("sync_states").unwrap_or(0);
+
+        let linked = google_id.is_some() && refresh_token.is_some();
+
+        Ok(Json(GoogleStatusResponse {
+            linked,
+            email: if linked { email } else { None },
+            calendars_synced: sync_states as i32,
+        }))
+    } else {
+        Err((StatusCode::NOT_FOUND, "User not found".to_string()))
+    }
+}
+
+/// Unlink Google account from user
+pub async fn unlink_google_account(
+    graph: &Graph,
+    user_id: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
+    eprintln!("🔓 [AUTH] Unlinking Google account for user {}", user_id);
+
+    // First, revoke tokens if they exist
+    if let Err(e) = crate::server::token_manager::revoke_tokens(graph, user_id).await {
+        eprintln!("⚠️ [AUTH] Warning: Failed to revoke tokens: {}", e);
+        // Continue anyway - we'll clear the data from the database
+    }
+
+    // Clear all Google-related data from the user node
+    let clear_query = Query::new(
+        "MATCH (u:User) WHERE id(u) = $user_id 
+         REMOVE u.google_id, u.google_email, u.google_access_token, 
+                u.google_refresh_token, u.google_token_expiry,
+                u.gcal_auto_sync_enabled, u.gcal_default_calendar_id
+         SET u.updated_at = timestamp()
+         RETURN u"
+            .to_string(),
+    )
+    .param("user_id", user_id);
+
+    graph.run(clear_query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to unlink Google account: {}", e),
+        )
+    })?;
+
+    // Delete all SyncState nodes for this user
+    let delete_sync_states = Query::new(
+        "MATCH (s:SyncState {user_id: $user_id}) DELETE s".to_string(),
+    )
+    .param("user_id", user_id);
+
+    let _ = graph.run(delete_sync_states).await;
+
+    eprintln!("✅ [AUTH] Google account unlinked for user {}", user_id);
+    Ok(StatusCode::OK)
 }

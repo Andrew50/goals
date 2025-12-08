@@ -44,12 +44,12 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
             priority: None,
             start_timestamp: None,
             end_timestamp: None,
+            resolution_status: None,
+            resolved_at: None,
             next_timestamp: None,
             scheduled_timestamp: None,
             duration: None,
-            completed: None,
             frequency: None,
-            completion_date: None,
             routine_type: None,
             routine_time: None,
             position_x: None,
@@ -66,6 +66,7 @@ pub async fn query_hierarchy(graph: Graph, goal_id: i64) -> Result<Vec<Goal>, ne
             gcal_last_sync: None,
             gcal_sync_direction: None,
             is_gcal_imported: None,
+            updated_at: None,
         });
     }
 
@@ -88,7 +89,7 @@ pub async fn query_parent_hierarchy(
                 node.goal_type AS goal_type, \
                 node.description AS description, \
                 node.priority AS priority, \
-                node.completed AS completed, \
+                node.resolution_status AS resolution_status, \
                 id(node) AS id \
          ORDER BY length((node)-[:CHILD*]->(g)) DESC",
     )
@@ -109,7 +110,7 @@ pub async fn query_parent_hierarchy(
             .map_err(|_| neo4rs::Error::ConversionError)?;
         let description = row.get::<Option<String>>("description").unwrap_or(None);
         let priority = row.get::<Option<String>>("priority").unwrap_or(None);
-        let completed = row.get::<Option<bool>>("completed").unwrap_or(None);
+        let resolution_status = row.get::<Option<String>>("resolution_status").unwrap_or(None);
 
         let goal_type = match goal_type_str.as_str() {
             "directive" => GoalType::Directive,
@@ -129,12 +130,12 @@ pub async fn query_parent_hierarchy(
             priority,
             start_timestamp: None,
             end_timestamp: None,
+            resolution_status,
+            resolved_at: None,
             next_timestamp: None,
             scheduled_timestamp: None,
             duration: None,
-            completed,
             frequency: None,
-            completion_date: None,
             routine_type: None,
             routine_time: None,
             position_x: None,
@@ -151,6 +152,7 @@ pub async fn query_parent_hierarchy(
             gcal_last_sync: None,
             gcal_sync_direction: None,
             is_gcal_imported: None,
+            updated_at: None,
         });
     }
 

@@ -5,9 +5,44 @@ doesnt include fetching of all goals as that is handled by endpoints specific to
 use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 pub const DEBUG_PRINTS: bool = false;
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolutionStatus {
+    Pending,   // Not yet resolved (default)
+    Completed, // Successfully completed
+    Failed,    // Explicitly marked as failed/abandoned
+    Skipped,   // Intentionally skipped
+}
+
+impl ResolutionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ResolutionStatus::Pending => "pending",
+            ResolutionStatus::Completed => "completed",
+            ResolutionStatus::Failed => "failed",
+            ResolutionStatus::Skipped => "skipped",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<ResolutionStatus> {
+        match s.to_lowercase().as_str() {
+            "pending" => Some(ResolutionStatus::Pending),
+            "completed" => Some(ResolutionStatus::Completed),
+            "failed" => Some(ResolutionStatus::Failed),
+            "skipped" => Some(ResolutionStatus::Skipped),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ResolutionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Goal {
@@ -19,12 +54,12 @@ pub struct Goal {
     pub priority: Option<String>,
     pub start_timestamp: Option<i64>,
     pub end_timestamp: Option<i64>,
-    pub completion_date: Option<i64>,
+    pub resolution_status: Option<String>, // "pending", "completed", "failed", "skipped"
+    pub resolved_at: Option<i64>,          // Timestamp when resolution was set
     pub next_timestamp: Option<i64>,
     //pub previous_timestamp: Option<i64>,
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
-    pub completed: Option<bool>,
     pub frequency: Option<String>,
     pub routine_type: Option<String>,
     pub routine_time: Option<i64>,
@@ -48,6 +83,9 @@ pub struct Goal {
     pub gcal_last_sync: Option<i64>,   // Last sync timestamp
     pub gcal_sync_direction: Option<String>, // "bidirectional", "to_gcal", "from_gcal"
     pub is_gcal_imported: Option<bool>, // Whether this event was imported from Google Calendar
+
+    // Modification tracking for conflict detection
+    pub updated_at: Option<i64>, // Track local modifications timestamp
 }
 
 impl Default for Goal {
@@ -61,11 +99,11 @@ impl Default for Goal {
             priority: None,
             start_timestamp: None,
             end_timestamp: None,
-            completion_date: None,
+            resolution_status: None,
+            resolved_at: None,
             next_timestamp: None,
             scheduled_timestamp: None,
             duration: None,
-            completed: None,
             frequency: None,
             routine_type: None,
             routine_time: None,
@@ -83,6 +121,7 @@ impl Default for Goal {
             gcal_last_sync: None,
             gcal_sync_direction: None,
             is_gcal_imported: None,
+            updated_at: None,
         }
     }
 }
@@ -95,10 +134,11 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     priority: g.priority,
                     start_timestamp: g.start_timestamp,
                     end_timestamp: g.end_timestamp,
+                    resolution_status: g.resolution_status,
+                    resolved_at: g.resolved_at,
                     next_timestamp: g.next_timestamp,
                     scheduled_timestamp: g.scheduled_timestamp,
                     duration: g.duration,
-                    completed: g.completed,
                     frequency: g.frequency,
                     routine_type: g.routine_type,
                     routine_time: g.routine_time,
@@ -116,6 +156,7 @@ pub const GOAL_RETURN_QUERY: &str = "RETURN {
                     gcal_last_sync: g.gcal_last_sync,
                     gcal_sync_direction: g.gcal_sync_direction,
                     is_gcal_imported: g.is_gcal_imported,
+                    updated_at: g.updated_at,
                     id: id(g)
                  } as g";
 
@@ -163,11 +204,18 @@ pub struct Relationship {
     pub relationship_type: String,
 }
 
-// Add this new struct for partial updates
+// Request for resolving a goal (setting its resolution status)
 #[derive(Debug, Deserialize)]
-pub struct GoalUpdate {
-    pub id: i64,
-    pub completed: bool,
+pub struct ResolveGoalRequest {
+    pub resolution_status: String, // "pending", "completed", "failed", "skipped"
+}
+
+// Response for resolve goal endpoint
+#[derive(Debug, Serialize)]
+pub struct ResolveGoalResponse {
+    pub resolution_status: String,
+    pub display_status: String,
+    pub resolved_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,11 +317,11 @@ pub async fn create_goal_handler(
             "priority",
             "start_timestamp",
             "end_timestamp",
-            "completion_date",
+            "resolution_status",
+            "resolved_at",
             "next_timestamp",
             "scheduled_timestamp",
             "duration",
-            "completed",
             "frequency",
             "routine_type",
             "routine_time",
@@ -401,7 +449,8 @@ pub async fn update_goal_handler(
     goal: Goal,
 ) -> Result<StatusCode, (StatusCode, String)> {
     // Build the SET clause dynamically based on provided fields
-    let mut set_clauses = vec!["g.name = $name", "g.goal_type = $goal_type"];
+    // Always set updated_at on any update for conflict detection
+    let mut set_clauses = vec!["g.name = $name", "g.goal_type = $goal_type", "g.updated_at = timestamp()"];
     let mut params = vec![
         (
             "id",
@@ -440,9 +489,13 @@ pub async fn update_goal_handler(
         set_clauses.push("g.duration = $duration");
         params.push(("duration", duration.into()));
     }
-    if let Some(completed) = goal.completed {
-        set_clauses.push("g.completed = $completed");
-        params.push(("completed", completed.into()));
+    if let Some(resolution_status) = &goal.resolution_status {
+        set_clauses.push("g.resolution_status = $resolution_status");
+        params.push(("resolution_status", resolution_status.clone().into()));
+    }
+    if let Some(resolved_at) = goal.resolved_at {
+        set_clauses.push("g.resolved_at = $resolved_at");
+        params.push(("resolved_at", resolved_at.into()));
     }
     if let Some(frequency) = &goal.frequency {
         set_clauses.push("g.frequency = $frequency");
@@ -648,21 +701,73 @@ pub async fn delete_goal_handler(
     }
 }
 
-pub async fn toggle_completion(
+/// Computes the display status for a goal based on resolution status and dates
+pub fn get_display_status(
+    resolution_status: Option<&str>,
+    resolved_at: Option<i64>,
+    start_timestamp: Option<i64>,
+    end_timestamp: Option<i64>,
+    due_date: Option<i64>,
+    now: i64,
+) -> String {
+    match resolution_status {
+        Some("completed") => {
+            // Check if tardy (resolved after due/end date)
+            let deadline = due_date.or(end_timestamp);
+            if let (Some(resolved), Some(deadline)) = (resolved_at, deadline) {
+                if resolved > deadline {
+                    return "tardy".to_string();
+                }
+            }
+            "completed".to_string()
+        }
+        Some("failed") => "failed".to_string(),
+        Some("skipped") => "skipped".to_string(),
+        _ => {
+            // Pending - compute temporal state from dates
+            let start = start_timestamp;
+            let end = due_date.or(end_timestamp);
+
+            match (start, end) {
+                (Some(s), _) if now < s => "upcoming".to_string(),
+                (_, Some(e)) if now > e => "late".to_string(),
+                (Some(s), _) if now >= s => "active".to_string(),
+                _ => "active".to_string(), // Default if no dates
+            }
+        }
+    }
+}
+
+/// Resolve a goal by setting its resolution status
+pub async fn resolve_goal_handler(
     graph: Graph,
-    update: GoalUpdate,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    goal_id: i64,
+    request: ResolveGoalRequest,
+) -> Result<Json<ResolveGoalResponse>, (StatusCode, String)> {
+    // Validate resolution status
+    let status = ResolutionStatus::from_str(&request.resolution_status).ok_or((
+        StatusCode::BAD_REQUEST,
+        format!(
+            "Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped",
+            request.resolution_status
+        ),
+    ))?;
+
     println!(
-        "Toggling completion for goal {}: {}",
-        update.id, update.completed
+        "Resolving goal {}: status={}",
+        goal_id,
+        status.as_str()
     );
 
-    // First, check if this is an achievement type goal
+    // First, check if this is a valid goal type for resolution
     let type_query = query(
         "MATCH (g:Goal) WHERE id(g) = $id 
-         RETURN g.goal_type as goal_type, g.completed as current_completed",
+         RETURN g.goal_type as goal_type, 
+                g.start_timestamp as start_timestamp,
+                g.end_timestamp as end_timestamp,
+                g.due_date as due_date",
     )
-    .param("id", update.id);
+    .param("id", goal_id);
 
     let mut result = graph.execute(type_query).await.map_err(|e| {
         (
@@ -684,30 +789,90 @@ pub async fn toggle_completion(
             )
         })?;
 
-        if goal_type == "achievement" || goal_type == "task" || goal_type == "project" {
-            // Toggle completion directly for supported goal types
-            let toggle_query = query(
-                "MATCH (g:Goal) 
-                 WHERE id(g) = $id 
-                 SET g.completed = $completed",
-            )
-            .param("id", update.id)
-            .param("completed", update.completed);
-
-            graph.run(toggle_query).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Database error: {}", e),
-                )
-            })?;
-        } else {
+        // Only allow resolution for these goal types
+        if goal_type != "achievement"
+            && goal_type != "task"
+            && goal_type != "project"
+            && goal_type != "event"
+        {
             return Err((
                 StatusCode::BAD_REQUEST,
-                "Cannot toggle completion for non achievement, task, or project goals".to_string(),
+                "Cannot resolve goals of type: directive or routine".to_string(),
             ));
         }
 
-        Ok(Json(json!({ "completed": update.completed })))
+        let now = chrono::Utc::now().timestamp_millis();
+        let resolved_at = if status == ResolutionStatus::Pending {
+            None
+        } else {
+            Some(now)
+        };
+
+        // Update the goal's resolution status
+        let update_query = if resolved_at.is_some() {
+            query(
+                "MATCH (g:Goal) 
+                 WHERE id(g) = $id 
+                 SET g.resolution_status = $resolution_status,
+                     g.resolved_at = $resolved_at
+                 RETURN g.start_timestamp as start_timestamp,
+                        g.end_timestamp as end_timestamp,
+                        g.due_date as due_date",
+            )
+            .param("id", goal_id)
+            .param("resolution_status", status.as_str())
+            .param("resolved_at", resolved_at.unwrap())
+        } else {
+            query(
+                "MATCH (g:Goal) 
+                 WHERE id(g) = $id 
+                 SET g.resolution_status = $resolution_status,
+                     g.resolved_at = null
+                 RETURN g.start_timestamp as start_timestamp,
+                        g.end_timestamp as end_timestamp,
+                        g.due_date as due_date",
+            )
+            .param("id", goal_id)
+            .param("resolution_status", status.as_str())
+        };
+
+        let mut update_result = graph.execute(update_query).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error: {}", e),
+            )
+        })?;
+
+        if let Some(updated_row) = update_result.next().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error fetching updated result: {}", e),
+            )
+        })? {
+            let start_timestamp: Option<i64> = updated_row.get("start_timestamp").ok();
+            let end_timestamp: Option<i64> = updated_row.get("end_timestamp").ok();
+            let due_date: Option<i64> = updated_row.get("due_date").ok();
+
+            let display_status = get_display_status(
+                Some(status.as_str()),
+                resolved_at,
+                start_timestamp,
+                end_timestamp,
+                due_date,
+                now,
+            );
+
+            Ok(Json(ResolveGoalResponse {
+                resolution_status: status.as_str().to_string(),
+                display_status,
+                resolved_at,
+            }))
+        } else {
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update goal".to_string(),
+            ))
+        }
     } else {
         Err((StatusCode::NOT_FOUND, "Goal not found".to_string()))
     }
@@ -855,8 +1020,8 @@ pub async fn duplicate_goal_handler(
     duplicated.id = None;
     duplicated.user_id = source.user_id.or(Some(user_id));
     duplicated.name = format!("{}{}", source.name, name_suffix);
-    duplicated.completed = Some(false);
-    duplicated.completion_date = None;
+    duplicated.resolution_status = Some("pending".to_string());
+    duplicated.resolved_at = None;
 
     if clear_external_ids {
         duplicated.gcal_event_id = None;
@@ -973,7 +1138,15 @@ impl Goal {
                 self.duration
                     .map(|v| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: v as i64 })),
             ),
-            ("completed", self.completed.map(|v| v.into())),
+            (
+                "resolution_status",
+                self.resolution_status.as_ref().map(|v| v.clone().into()),
+            ),
+            (
+                "resolved_at",
+                self.resolved_at
+                    .map(|ts| neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: ts })),
+            ),
             (
                 "frequency",
                 self.frequency.as_ref().map(|v| v.clone().into()),
@@ -1043,6 +1216,13 @@ impl Goal {
                 self.gcal_sync_direction.as_ref().map(|v| v.clone().into()),
             ),
             ("is_gcal_imported", self.is_gcal_imported.map(|v| v.into())),
+            // Always set updated_at on creation for conflict detection
+            (
+                "updated_at",
+                Some(neo4rs::BoltType::Integer(neo4rs::BoltInteger {
+                    value: chrono::Utc::now().timestamp_millis(),
+                })),
+            ),
         ];
 
         // Build query properties and parameters in one pass

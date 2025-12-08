@@ -1,7 +1,7 @@
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
+import { Goal, ApiGoal, ResolutionStatus } from '../../types/goals'; // Import ApiGoal
 import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
@@ -28,7 +28,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     { key: 'goal_type', label: 'Type', width: '8%', type: 'enum', sortable: true, filterable: true, multi: true },
     { key: 'description', label: 'Description', width: '20%', type: 'text', sortable: false, filterable: false },
     { key: 'priority', label: 'Priority', width: '7%', type: 'enum', sortable: true, filterable: true, multi: true },
-    { key: 'completed', label: 'Status', width: '8%', type: 'boolean', sortable: true, filterable: true, multi: true },
+    { key: 'resolution_status', label: 'Status', width: '8%', type: 'enum', sortable: true, filterable: true, multi: true },
     { key: 'start_timestamp', label: 'Start Date', width: '8%', type: 'date', sortable: true, filterable: true },
     { key: 'end_timestamp', label: 'End Date', width: '8%', type: 'date', sortable: true, filterable: true },
     { key: 'scheduled_timestamp', label: 'Scheduled', width: '8%', type: 'date', sortable: true, filterable: true },
@@ -41,7 +41,7 @@ type DateRange = { from?: string; to?: string };
 type FiltersState = {
     goal_type?: string[];
     priority?: string[]; // 'low' | 'medium' | 'high' | '__none__'
-    completed?: boolean[];
+    resolution_status?: ResolutionStatus[];
     frequency?: string[];
     duration?: number;
     start_timestamp?: DateRange;
@@ -130,7 +130,7 @@ const List: React.FC = () => {
         const goalTypeSet = (filters.goal_type && filters.goal_type.length > 0) ? new Set(filters.goal_type) : undefined;
         const frequencySet = (filters.frequency && filters.frequency.length > 0) ? new Set(filters.frequency) : undefined;
         const prioritySet = (filters.priority && filters.priority.length > 0) ? new Set(filters.priority) : undefined;
-        const completedSet = (filters.completed && filters.completed.length > 0) ? new Set(filters.completed) : undefined;
+        const resolutionStatusSet = (filters.resolution_status && filters.resolution_status.length > 0) ? new Set(filters.resolution_status) : undefined;
 
         // Enum and primitive filters with multi-selection
         if (goalTypeSet) {
@@ -139,8 +139,8 @@ const List: React.FC = () => {
         if (frequencySet) {
             filtered = filtered.filter(g => g.frequency !== undefined && frequencySet.has(g.frequency as any));
         }
-        if (completedSet) {
-            filtered = filtered.filter(g => completedSet.has(Boolean(g.completed) as any));
+        if (resolutionStatusSet) {
+            filtered = filtered.filter(g => resolutionStatusSet.has(g.resolution_status || 'pending'));
         }
         if (prioritySet) {
             filtered = filtered.filter(g => {
@@ -751,9 +751,9 @@ const List: React.FC = () => {
                                         if (filters.priority && filters.priority.length === 1 && filters.priority[0] !== '__none__') {
                                             (template as any).priority = filters.priority[0];
                                         }
-                                        // Prefill completed if exactly one selected
-                                        if (filters.completed && filters.completed.length === 1) {
-                                            (template as any).completed = filters.completed[0];
+                // Prefill resolution_status if exactly one status filter selected
+                if (filters.resolution_status && filters.resolution_status.length === 1) {
+                    (template as any).resolution_status = filters.resolution_status[0];
                                         }
 
                                         const blank: Goal = {
@@ -771,7 +771,7 @@ const List: React.FC = () => {
                                                 // Compute changed fields vs the template blank
                                                 const changed: Partial<Goal> = {};
                                                 const keys: (keyof Goal)[] = [
-                                                    'name', 'description', 'goal_type', 'priority', 'completed', 'start_timestamp', 'end_timestamp', 'scheduled_timestamp', 'next_timestamp', 'frequency', 'duration', 'due_date', 'start_date', 'routine_time'
+                                                    'name', 'description', 'goal_type', 'priority', 'resolution_status', 'start_timestamp', 'end_timestamp', 'scheduled_timestamp', 'next_timestamp', 'frequency', 'duration', 'due_date', 'start_date', 'routine_time'
                                                 ];
                                                 for (const k of keys) {
                                                     const newVal = (updated as any)[k];
@@ -796,7 +796,7 @@ const List: React.FC = () => {
                                                         if (payload.description !== undefined) eventUpdates.description = payload.description;
                                                         if (payload.priority !== undefined) eventUpdates.priority = payload.priority;
                                                         if (payload.duration !== undefined) eventUpdates.duration = payload.duration;
-                                                        if (payload.completed !== undefined) eventUpdates.completed = payload.completed;
+                                                        if (payload.resolution_status !== undefined) eventUpdates.resolution_status = payload.resolution_status;
                                                         if (payload.scheduled_timestamp !== undefined) eventUpdates.scheduled_timestamp = payload.scheduled_timestamp as any;
                                                         if (Object.keys(eventUpdates).length > 0) {
                                                             await updateEvent(g.id, eventUpdates);
@@ -977,8 +977,10 @@ const List: React.FC = () => {
                                                 )}
                                             </td>
                                             <td className="table-cell">
-                                                <span className={`status-badge ${goal.completed ? 'completed' : 'in-progress'}`}>
-                                                    {goal.completed ? 'Completed' : 'In Progress'}
+                                                <span className={`status-badge ${goal.resolution_status === 'completed' ? 'completed' : goal.resolution_status === 'failed' ? 'failed' : goal.resolution_status === 'skipped' ? 'skipped' : 'in-progress'}`}>
+                                                    {goal.resolution_status === 'completed' ? 'Completed' : 
+                                                     goal.resolution_status === 'failed' ? 'Failed' : 
+                                                     goal.resolution_status === 'skipped' ? 'Skipped' : 'In Progress'}
                                                 </span>
                                             </td>
                                             <td className="table-cell">

@@ -38,13 +38,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rollback_migration(&args[2]).await?;
                 return Ok(());
             }
+            "migrate-resolution-status" => {
+                run_resolution_status_migration().await?;
+                return Ok(());
+            }
             _ => {
                 eprintln!("Unknown command: {}", args[1]);
                 eprintln!("Available commands:");
-                eprintln!("  migrate [--force]     - Run the event migration");
-                eprintln!("  verify-migration      - Verify migration integrity");
-                eprintln!("  reset-migration       - Reset migration status (for development)");
-                eprintln!("  rollback-migration <backup_file> - Rollback migration from backup");
+                eprintln!("  migrate [--force]            - Run the event migration");
+                eprintln!("  migrate-resolution-status    - Migrate from completed to resolution_status");
+                eprintln!("  verify-migration             - Verify migration integrity");
+                eprintln!("  reset-migration              - Reset migration status (for development)");
+                eprintln!("  rollback-migration <backup>  - Rollback migration from backup");
                 std::process::exit(1);
             }
         }
@@ -161,17 +166,43 @@ async fn reset_migration() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn run_resolution_status_migration() -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚀 Running resolution_status migration...");
+
+    let graph = create_graph_connection().await?;
+
+    match tools::migration::migrate_to_resolution_status(&graph).await {
+        Ok(result) => {
+            println!("✅ Migration completed successfully!");
+            println!("📊 Migration results:");
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Err(e) => {
+            eprintln!("❌ Migration failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
 async fn create_graph_connection() -> Result<Graph, Box<dyn std::error::Error>> {
     let neo4j_uri = env::var("NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string());
     let neo4j_user = env::var("NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
     let neo4j_password = env::var("NEO4J_PASSWORD").unwrap_or_else(|_| "password".to_string());
+    let max_connections = env::var("NEO4J_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
 
     println!("🔗 Connecting to Neo4j at {}...", neo4j_uri);
+    println!("   Max Connections: {}", max_connections);
 
     let config = ConfigBuilder::default()
         .uri(&neo4j_uri)
         .user(&neo4j_user)
         .password(&neo4j_password)
+        .max_connections(max_connections)
         .db("neo4j")
         .build()?;
 

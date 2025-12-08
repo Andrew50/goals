@@ -23,11 +23,18 @@ pub async fn create_pool() -> Result<Graph> {
     println!("🔧 Building Neo4j configuration...");
 
     // Configure the connection pool
+    let max_connections = env::var("NEO4J_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+
+    println!("   Max Connections: {}", max_connections);
+
     let config = match ConfigBuilder::default()
         .uri(&neo4j_uri)
         .user(&neo4j_username)
         .password(&neo4j_password)
-        .max_connections(5) // Limit max connections
+        .max_connections(max_connections) // Limit max connections
         .build() {
             Ok(config) => {
                 println!("✅ Neo4j configuration built successfully");

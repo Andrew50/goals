@@ -163,12 +163,12 @@ pub async fn get_calendar_data(
         Vec::new()
     };
 
-    // Fetch all non-completed tasks
+    // Fetch all non-resolved tasks (pending or null resolution_status)
     let unscheduled_query_str = format!(
         "MATCH (g:Goal)
         WHERE g.user_id = $user_id
         AND g.goal_type = 'task'
-        AND coalesce(g.completed, false) <> true
+        AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
         AND coalesce(g.is_deleted, false) <> true
         {}
         ORDER BY g.priority DESC, g.name ASC",

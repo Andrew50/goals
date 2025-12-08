@@ -23,7 +23,7 @@ pub struct CreateEventRequest {
 pub struct UpdateEventRequest {
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
-    pub completed: Option<bool>,
+    pub resolution_status: Option<String>, // "pending", "completed", "failed", "skipped"
     pub move_reason: Option<String>,
 }
 
@@ -265,11 +265,11 @@ pub async fn create_event_handler(
         duration: Some(request.duration),
         parent_id: Some(request.parent_id),
         parent_type: Some(request.parent_type),
-        completed: Some(false),
+        resolution_status: Some("pending".to_string()),
+        resolved_at: None,
         is_deleted: Some(false),
         start_timestamp: None,
         end_timestamp: None,
-        completion_date: None,
         next_timestamp: None,
         frequency: None,
         routine_type: None,
@@ -285,6 +285,7 @@ pub async fn create_event_handler(
         gcal_last_sync: None,
         gcal_sync_direction: None,
         is_gcal_imported: None,
+        updated_at: None,
     };
 
     let created_event = event
@@ -318,12 +319,12 @@ pub async fn complete_event_handler(
         "MATCH (e:Goal)
          WHERE id(e) = $event_id
          AND e.goal_type = 'event'
-         SET e.completed = true,
-             e.completion_date = $completion_date
+         SET e.resolution_status = 'completed',
+             e.resolved_at = $resolved_at
          RETURN e",
     )
     .param("event_id", event_id)
-    .param("completion_date", chrono::Utc::now().timestamp());
+    .param("resolved_at", chrono::Utc::now().timestamp_millis());
 
     let mut result = graph
         .execute(complete_query)
@@ -344,7 +345,7 @@ pub async fn complete_event_handler(
          OPTIONAL MATCH (p)-[:HAS_EVENT]->(other:Goal)
          WHERE other.scheduled_timestamp > e.scheduled_timestamp
          AND (other.is_deleted IS NULL OR other.is_deleted = false)
-         AND (other.completed IS NULL OR other.completed = false)
+         AND (other.resolution_status IS NULL OR other.resolution_status = 'pending')
          RETURN e, p, count(other) as future_events",
     )
     .param("event_id", event_id);
@@ -393,19 +394,21 @@ pub async fn complete_task_handler(
     task_id: i64,
     user_id: i64,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let now = chrono::Utc::now().timestamp_millis();
+
     // Mark the task as completed
     let complete_task_query = query(
         "MATCH (t:Goal)
          WHERE id(t) = $task_id
          AND t.user_id = $user_id
          AND t.goal_type = 'task'
-         SET t.completed = true,
-             t.completion_date = $completion_date
+         SET t.resolution_status = 'completed',
+             t.resolved_at = $resolved_at
          RETURN t",
     )
     .param("task_id", task_id)
     .param("user_id", user_id)
-    .param("completion_date", chrono::Utc::now().timestamp());
+    .param("resolved_at", now);
 
     let mut result = graph
         .execute(complete_task_query)
@@ -424,12 +427,12 @@ pub async fn complete_task_handler(
          WHERE id(t) = $task_id
          AND e.goal_type = 'event'
          AND (e.is_deleted IS NULL OR e.is_deleted = false)
-         SET e.completed = true,
-             e.completion_date = $completion_date
+         SET e.resolution_status = 'completed',
+             e.resolved_at = $resolved_at
          RETURN count(e) as completed_events",
     )
     .param("task_id", task_id)
-    .param("completion_date", chrono::Utc::now().timestamp());
+    .param("resolved_at", now);
 
     let mut events_result = graph
         .execute(complete_events_query)
@@ -458,14 +461,14 @@ pub async fn uncomplete_task_handler(
     task_id: i64,
     user_id: i64,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    // Mark the task as not completed
+    // Mark the task as pending (not resolved)
     let uncomplete_task_query = query(
         "MATCH (t:Goal)
          WHERE id(t) = $task_id
          AND t.user_id = $user_id
          AND t.goal_type = 'task'
-         SET t.completed = false,
-             t.completion_date = null
+         SET t.resolution_status = 'pending',
+             t.resolved_at = null
          RETURN t",
     )
     .param("task_id", task_id)
@@ -482,14 +485,14 @@ pub async fn uncomplete_task_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Task not found".to_string()))?;
 
-    // Uncomplete all events of this task
+    // Set all events of this task back to pending
     let uncomplete_events_query = query(
         "MATCH (t:Goal)-[:HAS_EVENT]->(e:Goal)
          WHERE id(t) = $task_id
          AND e.goal_type = 'event'
          AND (e.is_deleted IS NULL OR e.is_deleted = false)
-         SET e.completed = false,
-             e.completion_date = null
+         SET e.resolution_status = 'pending',
+             e.resolved_at = null
          RETURN count(e) as uncompleted_events",
     )
     .param("task_id", task_id);
@@ -529,9 +532,9 @@ pub async fn check_task_completion_status(
          AND (e.is_deleted IS NULL OR e.is_deleted = false)
          WITH t, 
               count(e) as total_events,
-              count(CASE WHEN e.completed = true THEN 1 END) as completed_events
+              count(CASE WHEN e.resolution_status = 'completed' THEN 1 END) as completed_events
          RETURN t.name as task_name,
-                t.completed as task_completed,
+                t.resolution_status as task_resolution_status,
                 total_events,
                 completed_events,
                 CASE 
@@ -555,13 +558,17 @@ pub async fn check_task_completion_status(
         let task_name: String = row
             .get("task_name")
             .unwrap_or_else(|_| "Unknown".to_string());
-        let task_completed: bool = row.get("task_completed").unwrap_or(false);
+        let task_resolution_status: String = row
+            .get("task_resolution_status")
+            .unwrap_or_else(|_| "pending".to_string());
+        let task_completed = task_resolution_status == "completed";
         let total_events: i64 = row.get("total_events").unwrap_or(0);
         let completed_events: i64 = row.get("completed_events").unwrap_or(0);
         let all_events_completed: bool = row.get("all_events_completed").unwrap_or(false);
 
         Ok(Json(serde_json::json!({
             "task_name": task_name,
+            "task_resolution_status": task_resolution_status,
             "task_completed": task_completed,
             "total_events": total_events,
             "completed_events": completed_events,
@@ -672,7 +679,7 @@ pub async fn get_task_events_handler(
 
         event_count += 1;
 
-        let is_completed = event.completed.unwrap_or(false);
+        let is_completed = event.resolution_status.as_deref() == Some("completed");
         if is_completed {
             completed_event_count += 1;
         }
@@ -828,12 +835,27 @@ pub async fn update_event_handler(
         ));
     }
 
-    if let Some(completed) = request.completed {
-        set_clauses.push("e.completed = $completed");
+    if let Some(resolution_status) = &request.resolution_status {
+        set_clauses.push("e.resolution_status = $resolution_status");
         params.push((
-            "completed",
-            neo4rs::BoltType::Boolean(neo4rs::BoltBoolean { value: completed }),
+            "resolution_status",
+            neo4rs::BoltType::String(neo4rs::BoltString {
+                value: resolution_status.clone(),
+            }),
         ));
+        // If setting to completed/failed/skipped, set resolved_at to now
+        // If setting back to pending, clear resolved_at
+        if resolution_status == "pending" {
+            set_clauses.push("e.resolved_at = null");
+        } else {
+            set_clauses.push("e.resolved_at = $resolved_at");
+            params.push((
+                "resolved_at",
+                neo4rs::BoltType::Integer(neo4rs::BoltInteger {
+                    value: chrono::Utc::now().timestamp_millis(),
+                }),
+            ));
+        }
     }
 
     if set_clauses.is_empty() {
@@ -1539,7 +1561,7 @@ struct EventBrief {
     description: Option<String>,
     scheduled_timestamp: Option<i64>,
     duration: Option<i32>,
-    completed: Option<bool>,
+    resolution_status: Option<String>,
 }
 
 async fn fetch_event_briefs(
@@ -1575,7 +1597,7 @@ async fn fetch_event_briefs(
             description: g.description,
             scheduled_timestamp: g.scheduled_timestamp,
             duration: g.duration,
-            completed: g.completed,
+            resolution_status: g.resolution_status,
         });
     }
     Ok(items)

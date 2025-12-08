@@ -20,7 +20,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         AND g.scheduled_timestamp <= $window_end
         AND (g.notification_sent IS NULL OR g.notification_sent = false)
         AND (g.is_deleted IS NULL OR g.is_deleted = false)
-        AND (g.completed IS NULL OR g.completed = false)
+        AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
         RETURN g, id(g) as event_id, u.user_id as user_id, id(u) as user_node_id
     ";
     
@@ -167,7 +167,7 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
             AND g.scheduled_timestamp < $check_end
             AND (g.reminder_sent IS NULL OR NOT $reminder_key IN g.reminder_sent)
             AND (g.is_deleted IS NULL OR g.is_deleted = false)
-            AND (g.completed IS NULL OR g.completed = false)
+            AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
             AND g.send_reminders = true
             RETURN g, id(g) as event_id, id(u) as user_id
         ";

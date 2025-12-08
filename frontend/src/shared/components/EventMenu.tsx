@@ -98,10 +98,10 @@ const EventMenuBase: React.FC<EventMenuProps> = ({ event, parent, onAction, onCl
                     <button
                         className="event-menu-action complete"
                         onClick={() => handleAction('complete')}
-                        disabled={event.completed}
+                        disabled={event.resolution_status === 'completed'}
                     >
                         <i className="icon-check"></i>
-                        {event.completed ? 'Completed' : 'Complete Event'}
+                        {event.resolution_status === 'completed' ? 'Completed' : 'Complete Event'}
                     </button>
 
                     <button
