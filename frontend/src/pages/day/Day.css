@@ -281,6 +281,36 @@
     border-radius: 0.25rem;
 }
 
+/* Subtle priority dot indicator */
+.task-priority-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    opacity: 0.9;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
+}
+
+.task-priority-dot[data-priority="high"] {
+    background-color: #e53e3e;
+    box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.15);
+}
+
+.task-priority-dot[data-priority="medium"] {
+    background-color: #dd6b20;
+    box-shadow: 0 0 0 2px rgba(221, 107, 32, 0.15);
+}
+
+.task-priority-dot[data-priority="low"] {
+    background-color: #718096;
+    box-shadow: 0 0 0 2px rgba(113, 128, 150, 0.15);
+}
+
+/* Muted priority dots for completed tasks */
+.task-card.completed .task-priority-dot {
+    opacity: 0.5;
+}
+
 .task-description {
     color: #4a5568;
     font-size: 0.875rem;

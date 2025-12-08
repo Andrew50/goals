@@ -314,7 +314,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
         const startTs = task.goal?.start_timestamp
           ? new Date(task.goal.start_timestamp)
           : undefined;
-        const isCompleted = task.goal?.completed ?? false;
+        const isCompleted = task.goal?.resolution_status === 'completed';
         const isOverdue =
           !!endTs && !isCompleted && endTs.getTime() < startOfToday.getTime();
         const isFutureStart =
@@ -371,8 +371,8 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
         if (b.eventCount === 0 && a.eventCount > 0) return 1;
 
         // Primary: Completion status (incomplete first)
-        const aCompleted = a.goal?.completed || false;
-        const bCompleted = b.goal?.completed || false;
+        const aCompleted = a.goal?.resolution_status === 'completed';
+        const bCompleted = b.goal?.resolution_status === 'completed';
         if (aCompleted !== bCompleted) {
           return aCompleted ? 1 : -1; // false (incomplete) comes first
         }

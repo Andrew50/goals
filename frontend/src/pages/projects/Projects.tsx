@@ -85,8 +85,8 @@ const Projects: React.FC = () => {
         });
 
         const list = achievements.filter(a => {
-            if (filterCompleted === 'completed') return a.completed;
-            if (filterCompleted === 'incomplete') return !a.completed;
+            if (filterCompleted === 'completed') return a.resolution_status === 'completed';
+            if (filterCompleted === 'incomplete') return a.resolution_status !== 'completed';
             return true;
         });
 
@@ -100,8 +100,8 @@ const Projects: React.FC = () => {
 
         groups.forEach(g => {
             g.items.sort((a, b) => {
-                const ca = a.completed ? 1 : 0;
-                const cb = b.completed ? 1 : 0;
+                const ca = a.resolution_status === 'completed' ? 1 : 0;
+                const cb = b.resolution_status === 'completed' ? 1 : 0;
                 if (ca !== cb) return ca - cb; // incomplete first
                 const ta = a.end_timestamp ? a.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
                 const tb = b.end_timestamp ? b.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
@@ -249,10 +249,10 @@ const Projects: React.FC = () => {
         });
         const res = (projects || []).filter(p => {
             if (!p || p.id == null) return false;
-            if (p.completed) return false;
+            if (p.resolution_status === 'completed') return false;
             const achs = byProjectId.get(p.id) || [];
             // keep if there are no achievements OR all achievements are completed
-            return achs.every(a => a.completed);
+            return achs.every(a => a.resolution_status === 'completed');
         });
         return res.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }, [projects, achievements, parentByChild]);
@@ -391,7 +391,7 @@ const Projects: React.FC = () => {
                     ) : (
                         <div className="projects-list">
                             {projectGroups.map(({ project, items }) => {
-                                const completed = items.filter(i => i.completed).length;
+                                const completed = items.filter(i => i.resolution_status === 'completed').length;
                                 const total = items.length;
                                 const value = completed / Math.max(total, 1);
                                 const projectBg = getGoalStyle(project).backgroundColor;
@@ -425,7 +425,7 @@ const Projects: React.FC = () => {
                                                 return (
                                                     <div
                                                         key={achievement.id}
-                                                        className={`achievement-card ${achievement.completed ? 'completed' : ''} ${dueDateClass}`}
+                                                        className={`achievement-card ${achievement.resolution_status === 'completed' ? 'completed' : ''} ${dueDateClass}`}
                                                         onClick={() => handleAchievementClick(achievement)}
                                                         onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
                                                         style={{

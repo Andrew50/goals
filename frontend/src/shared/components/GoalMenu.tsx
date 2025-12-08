@@ -29,12 +29,11 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, completeGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture } from '../utils/api';
-import { Goal, GoalType, NetworkEdge, ApiGoal } from '../../types/goals';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent } from '../utils/api';
+import { Goal, GoalType, NetworkEdge, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
@@ -243,6 +242,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Stats management
     const [goalStats, setGoalStats] = useState<BasicGoalStats | null>(null);
     const [statsLoading, setStatsLoading] = useState<boolean>(false);
+
+    // Google Calendar state
+    const [gcalCalendars, setGcalCalendars] = useState<CalendarListEntry[]>([]);
+    const [showDeleteGcalConfirm, setShowDeleteGcalConfirm] = useState<boolean>(false);
     const statsContainerRef = useRef<HTMLDivElement | null>(null);
     const prevStatsHeightRef = useRef<number | null>(null);
     const lastSkeletonStateRef = useRef<boolean | null>(null);
@@ -328,6 +331,20 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         updatedGoal: null,
         onConfirm: async () => { }
     });
+
+    // Load Google Calendars when sync is enabled for an event
+    useEffect(() => {
+        const shouldLoadCalendars = 
+            state.goal.goal_type === 'event' && 
+            state.goal.gcal_sync_enabled && 
+            gcalCalendars.length === 0;
+        
+        if (shouldLoadCalendars) {
+            getGoogleCalendars()
+                .then(calendars => setGcalCalendars(calendars))
+                .catch(() => setGcalCalendars([]));
+        }
+    }, [state.goal.gcal_sync_enabled, state.goal.goal_type, gcalCalendars.length]);
 
     // Add routine delete dialog state
     const [routineDeleteDialog, setRoutineDeleteDialog] = useState<{
@@ -466,7 +483,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
             } else if (goal.goal_type === 'task' && taskEvents.length > 0) {
                 // Calculate stats from task events
-                const completedEvents = taskEvents.filter(event => event.completed).length;
+                const completedEvents = taskEvents.filter(event => event.resolution_status === 'completed').length;
                 stats = {
                     completion_rate: taskEvents.length > 0 ? completedEvents / taskEvents.length : 0,
                     total_events: taskEvents.length,
@@ -501,7 +518,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     ).map((e: any) => ({
                                         id: e.id,
                                         scheduled_timestamp: e.scheduled_timestamp,
-                                        completed: e.completed,
+                                        resolution_status: e.resolution_status,
                                         ...e
                                     })) || [];
                                     // console.log('[GoalMenu] Calendar data filtered events:', siblingEvents);
@@ -557,9 +574,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         //     all_sample: allEvents.slice(0, 2)
                         // });
 
-                        // Calculate completion rates - handle boolean and undefined values
-                        const recentCompletedEvents = recentEvents.filter(e => e.completed === true).length;
-                        const allCompletedEvents = allEvents.filter(e => e.completed === true).length;
+                        // Calculate completion rates - handle resolution_status
+                        const recentCompletedEvents = recentEvents.filter(e => e.resolution_status === 'completed').length;
+                        const allCompletedEvents = allEvents.filter(e => e.resolution_status === 'completed').length;
 
                         const recentCompletionRate = recentEvents.length > 0 ? recentCompletedEvents / recentEvents.length : 0;
                         const allTimeCompletionRate = allEvents.length > 0 ? allCompletedEvents / allEvents.length : 0;
@@ -601,10 +618,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 } else {
                     // No parent found
+                    const isCompleted = goal.resolution_status === 'completed';
                     stats = {
-                        completion_rate: goal.completed ? 1.0 : 0.0,
+                        completion_rate: isCompleted ? 1.0 : 0.0,
                         total_events: 1,
-                        completed_events: goal.completed ? 1 : 0
+                        completed_events: isCompleted ? 1 : 0
                     };
                 }
 
@@ -642,8 +660,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             // console.error('Failed to fetch goal stats:', error);
             setGoalStats(null);
         } finally {
-            const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
-            const start = statsLoadStartRef.current || end;
             //console.log('[GoalMenu][Stats] fetch end:', { goalId: goal.id, durationMs });
             setStatsLoading(false);
         }
@@ -793,7 +809,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // Reset stats when goal changes
         setGoalStats(null);
-    }, [selectedParents, setState, relationshipType, fetchTaskEvents, fetchParentGoals, fetchChildGoals, endAction]);
+    }, [setState, fetchTaskEvents, endAction]);
 
     // Fetch stats when in view mode and goal is loaded
     useEffect(() => {
@@ -1220,7 +1236,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         return options.slice(0, 11);
     }, [allGoals, state.goal, childSearchQuery, fuse]);
 
-    const handleCompletionToggle = async (completed: boolean) => {
+    const handleResolutionChange = useCallback(async (newStatus: ResolutionStatus) => {
         try {
             if (state.goal.goal_type === 'event') {
                 // Ensure we have a valid ID before proceeding
@@ -1232,17 +1248,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     return;
                 }
 
-                // For all event completion/uncompletion, use event-specific APIs
-                if (completed) {
-                    // Completing an event - use the event completion API
+                // For events completing, use event-specific API
+                if (newStatus === 'completed') {
                     const response = await completeEvent(state.goal.id);
 
-                    // Update the completion status while preserving the ID
+                    // Update the resolution status while preserving the ID
                     setState({
                         ...state,
                         goal: {
                             ...state.goal,
-                            completed: true
+                            resolution_status: 'completed',
+                            resolved_at: new Date()
                         }
                     });
 
@@ -1250,26 +1266,27 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     if (response.should_prompt_task_completion && response.parent_task_id) {
                         if (window.confirm(`You've completed the last scheduled event for "${response.parent_task_name}". Is this task complete?`)) {
                             // Complete the parent task
-                            await completeGoal(response.parent_task_id, true);
+                            await resolveGoal(response.parent_task_id, 'completed');
                         }
                     }
 
                     if (onSuccess) {
                         onSuccess({
                             ...state.goal,
-                            completed: true
+                            resolution_status: 'completed',
+                            resolved_at: new Date()
                         });
                     }
                 } else {
-                    // Uncompleting an event - use the event update API
+                    // For other statuses, use the event update API
                     const updatedEvent = await updateEvent(state.goal.id, {
-                        completed: false
+                        resolution_status: newStatus
                     });
 
                     // Ensure the ID is preserved from the original goal
                     const safeUpdatedEvent = {
                         ...updatedEvent,
-                        id: updatedEvent.id || state.goal.id // Fallback to original ID if lost
+                        id: updatedEvent.id || state.goal.id
                     };
 
                     setState({
@@ -1282,16 +1299,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     }
                 }
             } else {
-                // For all non-events, use regular completion
-                const completion = await completeGoal(state.goal.id!, completed);
+                // For all non-events, use resolve goal API
+                const response = await resolveGoal(state.goal.id!, newStatus);
 
-                // Create updated goal object with new completion status
-                const updatedGoal = {
+                // Create updated goal object with new resolution status
+                const updatedGoal: Goal = {
                     ...state.goal,
-                    completed: completion
+                    resolution_status: response.resolution_status,
+                    resolved_at: response.resolved_at ? new Date(response.resolved_at) : undefined
                 };
 
-                // Update the completion status
+                // Update the resolution status
                 setState({
                     ...state,
                     goal: updatedGoal
@@ -1302,18 +1320,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
             }
         } catch (error) {
-            // console.error('Failed to update completion status:', error);
+            // console.error('Failed to update resolution status:', error);
             setState({
                 ...state,
-                error: 'Failed to update completion status'
+                error: 'Failed to update resolution status'
             });
         }
-    };
+    }, [onSuccess, setState, state]);
 
     const handleChange = useCallback((newGoal: Goal) => {
-        // If in view mode and completion status changed, update it on the server
-        if (state.mode === 'view' && newGoal.completed !== state.goal.completed) {
-            handleCompletionToggle(newGoal.completed || false);
+        // If in view mode and resolution status changed, update it on the server
+        if (state.mode === 'view' && newGoal.resolution_status !== state.goal.resolution_status) {
+            handleResolutionChange(newGoal.resolution_status || 'pending');
             return;
         }
 
@@ -1357,7 +1375,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             ...state,
             goal: newGoal
         });
-    }, [state.mode, state.goal.completed, setState, handleCompletionToggle]);
+    }, [state, setState, handleResolutionChange]);
 
     const commitDuration = useCallback((): boolean => {
         const hoursStr = durationHoursInput;
@@ -1828,7 +1846,73 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     };
 
-    const handleRoutineEventUpdate = async (
+    const updateMultipleRoutineEvents = useCallback(async (
+        updatedGoal: Goal,
+        changeType: 'duration' | 'other',
+        scope: 'single' | 'all' | 'future'
+    ) => {
+        if (!updatedGoal.id) {
+            throw new Error('Goal ID is required for updating routine events');
+        }
+
+        const updates: {
+            duration?: number;
+            name?: string;
+            description?: string;
+            priority?: string;
+            scheduled_timestamp?: Date;
+        } = {};
+
+        if (changeType === 'duration') {
+            if (updatedGoal.duration !== undefined) {
+                updates.duration = updatedGoal.duration;
+            }
+        } else {
+            if (updatedGoal.name) updates.name = updatedGoal.name;
+            if (updatedGoal.description) updates.description = updatedGoal.description;
+            if (updatedGoal.priority) updates.priority = updatedGoal.priority;
+        }
+
+        const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
+
+        if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
+            const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
+            if (parentRoutine) {
+                const routineUpdates: Partial<Goal> = {};
+
+                if (changeType === 'duration' && updates.duration !== undefined) {
+                    routineUpdates.duration = updates.duration;
+                } else if (changeType === 'other') {
+                    if (updates.name) routineUpdates.name = updates.name;
+                    if (updates.description) routineUpdates.description = updates.description;
+                    if (updates.priority && ['high', 'medium', 'low'].includes(updates.priority)) {
+                        routineUpdates.priority = updates.priority as 'high' | 'medium' | 'low';
+                    }
+                }
+
+                if (Object.keys(routineUpdates).length > 0) {
+                    try {
+                        await updateGoal(parentRoutine.id!, {
+                            ...parentRoutine,
+                            ...routineUpdates
+                        });
+                        console.log('Updated parent routine with changes:', routineUpdates);
+                    } catch (error) {
+                        console.warn('Failed to update parent routine:', error);
+                    }
+                }
+            }
+        }
+
+        const currentEvent = updatedEvents.find(event => event.id === updatedGoal.id);
+        if (currentEvent) {
+            setState({ ...state, goal: currentEvent });
+        }
+
+        return updatedEvents;
+    }, [allGoals, setState, state]);
+
+    const handleRoutineEventUpdate = useCallback(async (
         originalGoal: Goal,
         updatedGoal: Goal,
         updateType: 'scheduled_time' | 'duration' | 'other',
@@ -1896,83 +1980,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             // In case of error, ensure the action lock is released
             endAction();
         }
-    };
-
-    const updateMultipleRoutineEvents = async (
-        updatedGoal: Goal,
-        changeType: 'duration' | 'other',
-        scope: 'single' | 'all' | 'future'
-    ) => {
-        if (!updatedGoal.id) {
-            throw new Error('Goal ID is required for updating routine events');
-        }
-
-        // Extract the updates from the goal based on change type
-        const updates: {
-            duration?: number;
-            name?: string;
-            description?: string;
-            priority?: string;
-            scheduled_timestamp?: Date;
-        } = {};
-
-        if (changeType === 'duration') {
-            // For duration changes, only update the duration
-            if (updatedGoal.duration !== undefined) {
-                updates.duration = updatedGoal.duration;
-            }
-        } else {
-            // For other changes, include all relevant properties except scheduled_timestamp
-            // (scheduled_timestamp should be handled by the separate updateRoutineEvent API)
-            if (updatedGoal.name) updates.name = updatedGoal.name;
-            if (updatedGoal.description) updates.description = updatedGoal.description;
-            if (updatedGoal.priority) updates.priority = updatedGoal.priority;
-        }
-
-        // Use the dedicated API for updating routine event properties
-        const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
-
-        // For 'all' or 'future' scope, also update the parent routine with the same changes
-        if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
-            const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
-            if (parentRoutine) {
-                const routineUpdates: Partial<Goal> = {};
-
-                // Apply the same changes to the parent routine
-                if (changeType === 'duration' && updates.duration !== undefined) {
-                    routineUpdates.duration = updates.duration;
-                } else if (changeType === 'other') {
-                    if (updates.name) routineUpdates.name = updates.name;
-                    if (updates.description) routineUpdates.description = updates.description;
-                    if (updates.priority && ['high', 'medium', 'low'].includes(updates.priority)) {
-                        routineUpdates.priority = updates.priority as 'high' | 'medium' | 'low';
-                    }
-                }
-
-                // Only update if we have changes to apply
-                if (Object.keys(routineUpdates).length > 0) {
-                    try {
-                        await updateGoal(parentRoutine.id!, {
-                            ...parentRoutine,
-                            ...routineUpdates
-                        });
-                        console.log('Updated parent routine with changes:', routineUpdates);
-                    } catch (error) {
-                        console.warn('Failed to update parent routine:', error);
-                        // Don't fail the entire operation if routine update fails
-                    }
-                }
-            }
-        }
-
-        // Update the current goal state with the first updated event (the one being edited)
-        const currentEvent = updatedEvents.find(event => event.id === updatedGoal.id);
-        if (currentEvent) {
-            setState({ ...state, goal: currentEvent });
-        }
-
-        return updatedEvents;
-    };
+    }, [allGoals, close, endAction, onSuccess, setState, state, updateMultipleRoutineEvents]);
 
     const handleDelete = async () => {
         if (!state.goal.id) {
@@ -1987,6 +1995,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         //     goalType: state.goal.goal_type,
         //     parentType: state.goal.parent_type
         // });
+
+        // Check if this event is synced with Google Calendar
+        if (state.goal.goal_type === 'event' && state.goal.gcal_event_id && !showDeleteGcalConfirm) {
+            setShowDeleteGcalConfirm(true);
+            return; // Show confirmation dialog first
+        }
 
         const needsImmediateLock = !(state.goal.goal_type === 'event' && isRoutineParentEvent);
         if (needsImmediateLock) {
@@ -2031,6 +2045,49 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (needsImmediateLock) endAction();
         }
         // Notify network in all delete flows
+        try {
+            window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: state.goal.id } }));
+        } catch (e) {}
+    };
+
+    const handleDeleteWithGcal = async (deleteFromGcal: boolean) => {
+        setShowDeleteGcalConfirm(false);
+        
+        if (!state.goal.id) return;
+        
+        if (!beginAction('delete')) return;
+
+        try {
+            // If user chose to delete from GCal too, do that first
+            if (deleteFromGcal && state.goal.gcal_event_id) {
+                try {
+                    await deleteGCalEvent(state.goal.id);
+                } catch (e) {
+                    console.error('Failed to delete from Google Calendar:', e);
+                    // Continue with local delete even if GCal delete fails
+                }
+            }
+
+            // Delete locally
+            if (state.goal.goal_type === 'event') {
+                await deleteEvent(state.goal.id, false);
+            } else {
+                await deleteGoal(state.goal.id);
+            }
+
+            if (onSuccess) {
+                onSuccess(state.goal);
+            }
+            endAction();
+            close();
+        } catch (error) {
+            setState({
+                ...state,
+                error: error instanceof Error ? error.message : 'Failed to delete goal'
+            });
+            endAction();
+        }
+        
         try {
             window.dispatchEvent(new CustomEvent('network:relationships-changed', { detail: { goalId: state.goal.id } }));
         } catch (e) {}
@@ -2356,10 +2413,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         <FormControlLabel
             control={
                 <Checkbox
-                    checked={state.goal.completed || false}
+                    checked={state.goal.resolution_status === 'completed'}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => handleChange({
                         ...state.goal,
-                        completed: e.target.checked
+                        resolution_status: e.target.checked ? 'completed' : 'pending'
                     })}
                 //disabled={isViewOnly}
                 />
@@ -2524,8 +2581,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {state.goal.priority}
                     </span>
                 )}
-                <span className={`status-badge ${state.goal.completed ? 'completed' : 'in-progress'}`}>
-                    {state.goal.completed ? 'Completed' : 'In Progress'}
+                <span className={`status-badge ${getDisplayStatus(state.goal)}`}>
+                    {getDisplayStatus(state.goal).charAt(0).toUpperCase() + getDisplayStatus(state.goal).slice(1)}
                 </span>
             </Box>
             <Box sx={{ mb: 2 }}>
@@ -3100,6 +3157,29 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         <MenuItem value="from_gcal">From Google Calendar only</MenuItem>
                                     </TextField>
 
+                                    {/* Calendar selector */}
+                                    {gcalCalendars.length > 0 && (
+                                        <TextField
+                                            label="Target Calendar"
+                                            select
+                                            value={state.goal.gcal_calendar_id || 'primary'}
+                                            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
+                                                ...state.goal,
+                                                gcal_calendar_id: e.target.value
+                                            })}
+                                            fullWidth
+                                            margin="dense"
+                                            size="small"
+                                            disabled={isViewOnly}
+                                        >
+                                            {gcalCalendars.map(cal => (
+                                                <MenuItem key={cal.id} value={cal.id}>
+                                                    {cal.summary} {cal.primary && '(Primary)'}
+                                                </MenuItem>
+                                            ))}
+                                        </TextField>
+                                    )}
+
                                     {state.goal.gcal_event_id && (
                                         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                                             Synced with Google Calendar event: {state.goal.gcal_event_id}
@@ -3108,7 +3188,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
                                     {state.goal.is_gcal_imported && (
                                         <Typography variant="caption" color="primary.main" sx={{ mt: 1, display: 'block' }}>
-                                            ⚠️ This event was imported from Google Calendar
+                                            📅 This event was imported from Google Calendar
                                         </Typography>
                                     )}
                                 </Box>
@@ -3169,8 +3249,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         const formatMinutesShort = (minutes: number): string => {
             if (!minutes || minutes <= 0) return '0h';
-            const h = Math.floor(minutes);
-            const m = Math.round((minutes - h) * 60);
             const totalMinutes = Math.round(minutes);
             const hh = Math.floor(totalMinutes / 60);
             const mm = totalMinutes % 60;
@@ -3415,8 +3493,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         setSmartScheduleContext(null);
     };
 
-    // (handleCompletionToggle moved above handleChange)
-
     // This logic should now be handled in the parent component
     // by passing appropriate callbacks to the GoalMenu.
     // For now, we'll just log the error.
@@ -3438,7 +3514,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         goal_type: 'event' as GoalType,
         scheduled_timestamp: scheduledTime,
         duration: duration,
-        completed: false,
+        resolution_status: 'pending',
         parent_type: 'task'
     });
 
@@ -3945,6 +4021,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             : routineDeleteDialog.selectedScope === 'future'
                                 ? 'Delete future and end routine'
                                 : 'Delete all and remove routine'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Google Calendar Delete Confirmation Dialog */}
+            <Dialog open={showDeleteGcalConfirm} onClose={() => setShowDeleteGcalConfirm(false)} maxWidth="sm" fullWidth>
+                <DialogTitle>Delete Synced Event</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body1" sx={{ mb: 2 }}>
+                        This event is synced with Google Calendar.
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Do you want to delete it from Google Calendar as well?
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setShowDeleteGcalConfirm(false)}>Cancel</Button>
+                    <Button onClick={() => handleDeleteWithGcal(false)} color="primary">
+                        Keep in Google Calendar
+                    </Button>
+                    <Button onClick={() => handleDeleteWithGcal(true)} color="error" variant="contained">
+                        Delete Everywhere
                     </Button>
                 </DialogActions>
             </Dialog>

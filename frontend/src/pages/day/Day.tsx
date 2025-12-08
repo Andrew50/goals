@@ -9,8 +9,12 @@ import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import TodayIcon from '@mui/icons-material/Today';
 import './Day.css';
+import '../../shared/styles/badges.css';
 import { useSearchParams } from 'react-router-dom';
 import CompletionBar from '../../shared/components/CompletionBar';
+
+// Resolution status type
+type ResolutionStatus = 'pending' | 'completed' | 'failed' | 'skipped';
 
 // Event type returned from the day endpoint
 interface DayEvent {
@@ -20,7 +24,8 @@ interface DayEvent {
     goal_type: 'event';
     priority: string;
     color?: string;
-    completed: boolean;
+    resolution_status: ResolutionStatus;
+    resolved_at?: number;
     scheduled_timestamp: number;
     duration?: number;
     parent_id: number;
@@ -170,7 +175,7 @@ const Day: React.FC = () => {
         ).then(() => {
             setEvents(prevEvents => prevEvents.map(e => {
                 if (e.id === event.id) {
-                    return { ...e, completed: !e.completed };
+                    return { ...e, resolution_status: e.resolution_status === 'completed' ? 'pending' : 'completed' };
                 }
                 return e;
             }));
@@ -217,8 +222,8 @@ const Day: React.FC = () => {
     };
 
     const organizedEvents = () => {
-        const todoItems = events.filter(item => !item.completed);
-        const completedItems = events.filter(item => item.completed);
+        const todoItems = events.filter(item => item.resolution_status !== 'completed');
+        const completedItems = events.filter(item => item.resolution_status === 'completed');
 
         const sortByScheduled = (a: DayEvent, b: DayEvent) => {
             // All-day events (duration = 1440 minutes) should be sorted to the bottom
@@ -242,7 +247,7 @@ const Day: React.FC = () => {
 
     const getCompletionPercentage = () => {
         if (events.length === 0) return 0;
-        const completed = events.filter(event => event.completed).length;
+        const completed = events.filter(event => event.resolution_status === 'completed').length;
         return Math.round((completed / events.length) * 100);
     };
 
@@ -406,7 +411,7 @@ const Day: React.FC = () => {
                                     const event = item.event!;
                                     const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
                                     const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
-                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, completed: event.completed } as any);
+                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
                                     const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
                                     return (
                                         <Paper
@@ -428,6 +433,9 @@ const Day: React.FC = () => {
                                                     </Typography>
                                                     {timeString && (
                                                         <span className="task-time">{timeString}</span>
+                                                    )}
+                                                    {priority && (
+                                                        <span className="task-priority-dot" data-priority={priority} title={`${priority} priority`} />
                                                     )}
                                                 </div>
                                                 {event.description && (
@@ -472,7 +480,7 @@ const Day: React.FC = () => {
                                 organizedEvents().completed.map(event => {
                                     const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
                                     const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
-                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, completed: event.completed } as any);
+                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
                                     return (
                                         <Paper
                                             key={event.id}
@@ -493,6 +501,9 @@ const Day: React.FC = () => {
                                                     </Typography>
                                                     {isAllDay(event) && (
                                                         <span className="task-time">All day</span>
+                                                    )}
+                                                    {priority && (
+                                                        <span className="task-priority-dot" data-priority={priority} title={`${priority} priority`} />
                                                     )}
                                                 </div>
                                             </div>

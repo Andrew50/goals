@@ -1,6 +1,6 @@
 use axum::{extract::Json, http::StatusCode};
 use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
-use neo4rs::{query, Graph};
+use neo4rs::{query, BoltType, Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -150,6 +150,26 @@ pub struct EffortStat {
     pub children_count: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChildEffortTimeSeries {
+    pub goal_id: i64,
+    pub goal_name: String,
+    pub goal_type: String,
+    pub total_events: i32,
+    pub completed_events: i32,
+    pub total_duration_minutes: f64,
+    pub weighted_completion_rate: f64,
+    pub daily_stats: Vec<DailyEffortPoint>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DailyEffortPoint {
+    pub date: String,
+    pub duration_minutes: f64,
+    pub completed_events: i32,
+    pub weighted_completion: f64,
+}
+
 pub async fn get_year_stats(
     graph: Graph,
     user_id: i64,
@@ -187,7 +207,7 @@ pub async fn get_year_stats(
              timestamp() as current_time
         WHERE event_end_time <= current_time
         RETURN e.scheduled_timestamp as date,
-               COALESCE(e.completed, false) as completed,
+               CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END as completed,
                COALESCE(e.priority, g.priority, 'medium') as priority
     ";
 
@@ -324,7 +344,7 @@ pub async fn get_effort_stats(
                   ELSE 2.0
              END] AS weights_all,
              // weights across completed past events for numerator
-             [p IN epairs WHERE COALESCE(p.e.completed,false) | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+             [p IN epairs WHERE p.e.resolution_status = 'completed' | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
                   WHEN 'low' THEN 1.0
                   WHEN 'medium' THEN 2.0
@@ -332,7 +352,7 @@ pub async fn get_effort_stats(
                   ELSE 2.0
              END] AS completed_weights,
              // duration only for completed past events
-             [p IN epairs WHERE COALESCE(p.e.completed,false) |
+             [p IN epairs WHERE p.e.resolution_status = 'completed' |
                 CASE
                   WHEN (
                     CASE
@@ -351,7 +371,7 @@ pub async fn get_effort_stats(
                 END
              ] AS durations_completed,
              // flags for counting completed past events
-             [p IN epairs WHERE COALESCE(p.e.completed,false) | 1] AS completed_flags
+             [p IN epairs WHERE p.e.resolution_status = 'completed' | 1] AS completed_flags
         RETURN id(g) AS goal_id,
                g.name AS goal_name,
                g.goal_type AS goal_type,
@@ -385,14 +405,14 @@ pub async fn get_effort_stats(
                   WHEN 'high' THEN 3.0
                   ELSE 2.0
              END] AS weights_all,
-             [p IN epairs WHERE COALESCE(p.e.completed,false) | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+             [p IN epairs WHERE p.e.resolution_status = 'completed' | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
                   WHEN 'low' THEN 1.0
                   WHEN 'medium' THEN 2.0
                   WHEN 'high' THEN 3.0
                   ELSE 2.0
              END] AS completed_weights,
-             [p IN epairs WHERE COALESCE(p.e.completed,false) |
+             [p IN epairs WHERE p.e.resolution_status = 'completed' |
                 CASE
                   WHEN (
                     CASE
@@ -410,7 +430,7 @@ pub async fn get_effort_stats(
                     END
                 END
              ] AS durations_completed,
-             [p IN epairs WHERE COALESCE(p.e.completed,false) | 1] AS completed_flags
+             [p IN epairs WHERE p.e.resolution_status = 'completed' | 1] AS completed_flags
         RETURN id(g) AS goal_id,
                g.name AS goal_name,
                g.goal_type AS goal_type,
@@ -471,6 +491,193 @@ pub async fn get_effort_stats(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to fetch effort stats: {}", e),
+            ))
+        }
+    }
+}
+
+pub async fn get_goal_children_effort(
+    graph: Graph,
+    user_id: i64,
+    goal_id: i64,
+    range: Option<String>,
+) -> Result<Json<Vec<ChildEffortTimeSeries>>, (StatusCode, String)> {
+    // Determine lower bound start timestamp from range
+    let start_timestamp_opt: Option<i64> = match range.as_deref() {
+        Some("5y") => Some((Utc::now() - Duration::days(5 * 365)).timestamp_millis()),
+        Some("1y") => Some((Utc::now() - Duration::days(365)).timestamp_millis()),
+        Some("6m") => Some((Utc::now() - Duration::days(182)).timestamp_millis()),
+        Some("3m") => Some((Utc::now() - Duration::days(91)).timestamp_millis()),
+        Some("1m") => Some((Utc::now() - Duration::days(30)).timestamp_millis()),
+        Some("2w") => Some((Utc::now() - Duration::days(14)).timestamp_millis()),
+        Some("all") | None | Some("") => None,
+        Some(_) => None,
+    };
+
+    // Query direct children and their descendant events with time-series data
+    let query_str = r#"
+        MATCH (parent:Goal)-[:CHILD]->(child:Goal)
+        WHERE id(parent) = $goal_id AND parent.user_id = $user_id
+        AND child.goal_type <> 'event'
+        
+        // Get all descendant events for each child (including child's own events)
+        OPTIONAL MATCH (child)-[:CHILD*0..]->(desc:Goal)-[:HAS_EVENT]->(e:Goal)
+        WHERE e.goal_type = 'event'
+          AND (e.is_deleted IS NULL OR e.is_deleted = false)
+          AND e.scheduled_timestamp < timestamp()
+          AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
+        
+        WITH child, e, desc,
+             COALESCE(e.priority, desc.priority, 'medium') AS priority
+        
+        WITH child, collect({
+            date: e.scheduled_timestamp,
+            completed: COALESCE(e.completed, false),
+            duration: CASE
+                WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
+                  THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / (1000.0*60.0)
+                ELSE toFloat(COALESCE(e.duration_minutes, e.duration, 60))
+            END,
+            priority: priority
+        }) AS events
+        
+        RETURN id(child) AS goal_id,
+               child.name AS goal_name,
+               child.goal_type AS goal_type,
+               events
+        ORDER BY child.name
+    "#;
+
+    let mut q = query(query_str)
+        .param("goal_id", goal_id)
+        .param("user_id", user_id);
+
+    if let Some(start) = start_timestamp_opt {
+        q = q.param("start_timestamp", start);
+    } else {
+        q = q.param("start_timestamp", Option::<i64>::None);
+    }
+
+    match graph.execute(q).await {
+        Ok(mut result) => {
+            let mut children_stats = Vec::new();
+
+            while let Ok(Some(row)) = result.next().await {
+                let child_goal_id = row.get::<i64>("goal_id").unwrap_or(0);
+                let goal_name = row.get::<String>("goal_name").unwrap_or_default();
+                let goal_type = row.get::<String>("goal_type").unwrap_or_default();
+                let events: Vec<serde_json::Value> = row.get("events").unwrap_or_default();
+
+                // Aggregate events by date
+                let mut daily_map: HashMap<String, (f64, i32, f64, f64)> = HashMap::new();
+                // (duration_sum, completed_count, weighted_completed, weighted_total)
+
+                let mut total_events = 0;
+                let mut completed_events = 0;
+                let mut total_duration = 0.0;
+                let mut weighted_total = 0.0;
+                let mut weighted_completed = 0.0;
+
+                for event in events {
+                    let timestamp = match event.get("date").and_then(|v| v.as_i64()) {
+                        Some(t) if t > 0 => t,
+                        _ => continue, // Skip null events from OPTIONAL MATCH
+                    };
+                    let completed = event
+                        .get("completed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let duration = event
+                        .get("duration")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(60.0);
+                    let priority = event
+                        .get("priority")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("medium");
+
+                    // Skip all-day events (duration >= 1440 minutes)
+                    let effective_duration = if duration >= 1440.0 { 0.0 } else { duration };
+
+                    let weight = match priority {
+                        "none" => 0.0,
+                        "low" => 1.0,
+                        "medium" => 2.0,
+                        "high" => 3.0,
+                        _ => 2.0,
+                    };
+
+                    // Convert timestamp to date string
+                    let date = Utc
+                        .timestamp_millis_opt(timestamp)
+                        .single()
+                        .map(|dt| dt.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default();
+
+                    if date.is_empty() {
+                        continue;
+                    }
+
+                    total_events += 1;
+                    weighted_total += weight;
+
+                    if completed {
+                        completed_events += 1;
+                        total_duration += effective_duration;
+                        weighted_completed += weight;
+                    }
+
+                    let entry = daily_map.entry(date).or_insert((0.0, 0, 0.0, 0.0));
+                    if completed {
+                        entry.0 += effective_duration; // duration_sum
+                        entry.1 += 1; // completed_count
+                        entry.2 += weight; // weighted_completed
+                    }
+                    entry.3 += weight; // weighted_total
+                }
+
+                // Convert daily_map to sorted Vec<DailyEffortPoint>
+                let mut daily_stats: Vec<DailyEffortPoint> = daily_map
+                    .into_iter()
+                    .map(|(date, (duration, completed, w_completed, w_total))| DailyEffortPoint {
+                        date,
+                        duration_minutes: duration,
+                        completed_events: completed,
+                        weighted_completion: if w_total > 0.0 {
+                            w_completed / w_total
+                        } else {
+                            0.0
+                        },
+                    })
+                    .collect();
+
+                daily_stats.sort_by(|a, b| a.date.cmp(&b.date));
+
+                let weighted_completion_rate = if weighted_total > 0.0 {
+                    weighted_completed / weighted_total
+                } else {
+                    0.0
+                };
+
+                children_stats.push(ChildEffortTimeSeries {
+                    goal_id: child_goal_id,
+                    goal_name,
+                    goal_type,
+                    total_events,
+                    completed_events,
+                    total_duration_minutes: total_duration,
+                    weighted_completion_rate,
+                    daily_stats,
+                });
+            }
+
+            Ok(Json(children_stats))
+        }
+        Err(e) => {
+            eprintln!("Error fetching goal children effort: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to fetch goal children effort: {}", e),
             ))
         }
     }
@@ -602,7 +809,7 @@ pub async fn get_routine_stats(
                    count(e) as total_events,
                    collect({
                        timestamp: e.scheduled_timestamp,
-                       completed: COALESCE(e.completed, false),
+                       completed: CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END,
                        is_deleted: COALESCE(e.is_deleted, false)
                    }) as all_events
         ";
@@ -703,7 +910,7 @@ pub async fn get_routine_stats(
             RETURN r.name as routine_name,
                    collect({
                        date: e.scheduled_timestamp,
-                       completed: COALESCE(e.completed, false)
+                       completed: CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END
                    }) as events
         ";
 
@@ -1193,7 +1400,7 @@ pub async fn get_event_analytics(
         RETURN e.scheduled_timestamp as scheduled_timestamp,
                COALESCE(e.end_timestamp, e.scheduled_timestamp + COALESCE(e.duration_minutes, 60) * 60 * 1000) as end_timestamp,
                COALESCE(e.duration_minutes, 60) as duration_minutes,
-               COALESCE(e.completed, false) as completed,
+               CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END as completed,
                COALESCE(e.priority, g.priority, 'medium') as priority,
                g.goal_type as parent_type,
                g.name as parent_name

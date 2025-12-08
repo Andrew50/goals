@@ -31,7 +31,7 @@ export const getGoalColor = (goal: Goal): string => {
     const baseColor = baseColors[effectiveType];
 
     // If completed, return a muted/grayed out version of the color
-    if (goal.completed) {
+    if (goal.resolution_status === 'completed') {
         return `${baseColor}80`; // Adding 80 for 50% opacity
     }
 

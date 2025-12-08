@@ -12,8 +12,7 @@ use crate::tools::calendar::get_calendar_data;
 use crate::tools::day::{get_day_tasks, toggle_complete_task};
 use crate::tools::goal::{
     create_goal_handler, create_relationship_handler, delete_goal_handler,
-    delete_relationship_handler, toggle_completion, update_goal_handler, Goal, GoalUpdate,
-    Relationship,
+    delete_relationship_handler, update_goal_handler, Goal, Relationship,
 };
 use crate::tools::list::get_list_data;
 use crate::tools::network::{get_network_data, update_node_position};
@@ -186,28 +185,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 6) toggle_completion
-    function_declarations.push(FunctionDeclaration {
-        name: "toggle_completion".to_string(),
-        description: "Toggles the completion state of a goal via a GoalUpdate object.".to_string(),
-        parameters: ParameterDefinition {
-            type_: "object".to_string(),
-            properties: {
-                let mut props = serde_json::Map::new();
-                props.insert(
-                    "update".to_string(),
-                    serde_json::json!({
-                        "type": "object",
-                        "description": "A GoalUpdate object (id, completed, completion_date, etc.)."
-                    }),
-                );
-                props
-            },
-            required: Some(vec!["update".to_string()]),
-        },
-    });
-
-    // 7) get_network_data
+    // 6) get_network_data
     function_declarations.push(FunctionDeclaration {
         name: "get_network_data".to_string(),
         description: "Fetches the entire network data for a given user.".to_string(),
@@ -221,7 +199,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 8) update_node_position
+    // 7) update_node_position
     function_declarations.push(FunctionDeclaration {
         name: "update_node_position".to_string(),
         description: "Updates the position (x, y) of a node in the network graph.".to_string(),
@@ -256,7 +234,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 9) query_hierarchy
+    // 8) query_hierarchy
     function_declarations.push(FunctionDeclaration {
         name: "query_hierarchy".to_string(),
         description: "Queries a hierarchy of goals starting from a given goal ID.".to_string(),
@@ -277,7 +255,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 10) get_calendar_data
+    // 9) get_calendar_data
     function_declarations.push(FunctionDeclaration {
         name: "get_calendar_data".to_string(),
         description: "Fetches calendar-related data for a user.".to_string(),
@@ -298,7 +276,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 11) get_list_data
+    // 10) get_list_data
     function_declarations.push(FunctionDeclaration {
         name: "get_list_data".to_string(),
         description: "Fetches list-related data for a user (e.g., tasks, notes).".to_string(),
@@ -312,7 +290,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 12) get_day_tasks
+    // 11) get_day_tasks
     function_declarations.push(FunctionDeclaration {
         name: "get_day_tasks".to_string(),
         description: "Retrieves tasks for a specified day or day range, for a given user."
@@ -349,7 +327,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
     });
 
-    // 13) toggle_complete_task
+    // 12) toggle_complete_task
     function_declarations.push(FunctionDeclaration {
         name: "toggle_complete_task".to_string(),
         description: "Toggles a day's task by goal ID to mark it complete/incomplete.".to_string(),
@@ -437,23 +415,14 @@ pub async fn dispatch_tool(
             wrap_result(result)
         }
 
-        // 6) toggle_completion
-        "toggle_completion" => {
-            let update_val = must_get_value(args, "update")?;
-            let update_obj: GoalUpdate =
-                serde_json::from_value(update_val).map_err(|e| format!("Invalid 'update': {e}"))?;
-            let result = toggle_completion(graph.clone(), update_obj).await;
-            wrap_result(result)
-        }
-
-        // 7) get_network_data
+        // 6) get_network_data
         "get_network_data" => {
             //let user_id = must_get_i64(args, "user_id")?;
             let result = get_network_data(graph.clone(), user_id).await;
             wrap_result(result)
         }
 
-        // 8) update_node_position
+        // 7) update_node_position
         "update_node_position" => {
             let id = must_get_i64(args, "id")?;
             let x = must_get_f64(args, "x")?;
@@ -462,14 +431,14 @@ pub async fn dispatch_tool(
             wrap_result(result)
         }
 
-        // 9) query_hierarchy
+        // 8) query_hierarchy
         "query_hierarchy" => {
             let goal_id = must_get_i64(args, "goal_id")?;
             let result = query_hierarchy_handler(graph.clone(), goal_id).await;
             wrap_result(result)
         }
 
-        // 10) get_calendar_data
+        // 9) get_calendar_data
         "get_calendar_data" => {
             //let user_id = must_get_i64(args, "user_id")?;
             let start_timestamp = args.get("start_timestamp").and_then(|v| v.as_i64());
@@ -479,14 +448,14 @@ pub async fn dispatch_tool(
             wrap_result(result)
         }
 
-        // 11) get_list_data
+        // 10) get_list_data
         "get_list_data" => {
             //let user_id = must_get_i64(args, "user_id")?;
             let result = get_list_data(graph.clone(), user_id).await;
             wrap_result(result)
         }
 
-        // 12) get_day_tasks
+        // 11) get_day_tasks
         "get_day_tasks" => {
             //let user_id = must_get_i64(args, "user_id")?;
             let start_timestamp = args.get("start_timestamp").and_then(|v| v.as_i64());

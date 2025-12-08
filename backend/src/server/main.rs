@@ -8,9 +8,10 @@ use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::cors::CorsLayer;
 use tracing::Level;
 
-use crate::jobs::{notification_scheduler, routine_generator};
+use crate::jobs::{gcal_sync_scheduler, notification_scheduler, routine_generator};
 use crate::server::db;
 use crate::server::http_handler;
+use crate::tools::migration;
 
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
 
@@ -91,6 +92,22 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ Database connection pool created successfully");
 
+    // Run automatic migrations if needed
+    println!("🔄 Checking for pending migrations...");
+    match migration::run_resolution_status_migration_if_needed(&pool).await {
+        Ok(was_run) => {
+            if was_run {
+                println!("✅ Migrations completed successfully");
+            }
+        }
+        Err(e) => {
+            // Log the error but don't fail startup - the server can still run
+            // with old data, and the user can run migration manually
+            eprintln!("⚠️ Warning: Migration check/run failed: {}", e);
+            eprintln!("   The server will continue to start, but you may need to run migrations manually.");
+        }
+    }
+
     println!("🔧 Setting up background job scheduler...");
     // Set up the scheduler for background jobs
     let scheduler = JobScheduler::new().await?;
@@ -98,6 +115,7 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     // Clone the pool for the scheduler
     let scheduler_pool = pool.clone();
     let notification_pool = pool.clone();
+    let gcal_sync_pool = pool.clone();
 
     // Schedule routine event generation to run every hour
     let routine_job = Job::new_async("0 0 * * * *", move |_uuid, _l| {
@@ -117,12 +135,22 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
         })
     })?;
 
+    // Schedule Google Calendar sync to run every 15 minutes
+    // Only syncs for users with gcal_auto_sync_enabled = true
+    let gcal_sync_job = Job::new_async("0 */15 * * * *", move |_uuid, _l| {
+        let pool = gcal_sync_pool.clone();
+        Box::pin(async move {
+            gcal_sync_scheduler::run_gcal_sync(pool).await;
+        })
+    })?;
+
     scheduler.add(routine_job).await?;
     scheduler.add(notification_job).await?;
+    scheduler.add(gcal_sync_job).await?;
 
     // Start the scheduler
     scheduler.start().await?;
-    println!("✅ Scheduler started - routine events will be generated hourly, notifications checked every minute");
+    println!("✅ Scheduler started - routines hourly, notifications every minute, GCal sync every 15 minutes");
 
     println!("🌐 Configuring CORS and server settings...");
     let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "localhost".to_string());

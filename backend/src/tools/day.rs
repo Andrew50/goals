@@ -60,7 +60,8 @@ pub async fn get_day_tasks(
             goal_type: 'event',
             priority: COALESCE(e.priority, g.priority, 'medium'),
             color: COALESCE(e.color, g.color),
-            completed: COALESCE(e.completed, false),
+            resolution_status: COALESCE(e.resolution_status, 'pending'),
+            resolved_at: e.resolved_at,
             scheduled_timestamp: e.scheduled_timestamp,
             duration: e.duration,
             parent_id: id(g),
@@ -99,27 +100,34 @@ pub async fn toggle_complete_task(
     graph: Graph,
     id: i64,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let now = Utc::now().timestamp();
+    let now = Utc::now().timestamp_millis();
 
-    // Toggle completion on the Event (Goal node with goal_type='event')
+    // Toggle resolution status on the Event (Goal node with goal_type='event')
+    // If currently completed -> set to pending, otherwise -> set to completed
     let query = query(
         "MATCH (e:Goal) 
          WHERE id(e) = $id 
          AND e.goal_type = 'event'
-         SET e.completed = CASE WHEN e.completed = true THEN false ELSE true END,
-             e.completion_date = CASE WHEN e.completed = true THEN null ELSE $completion_date END
+         SET e.resolution_status = CASE 
+             WHEN e.resolution_status = 'completed' THEN 'pending' 
+             ELSE 'completed' 
+         END,
+         e.resolved_at = CASE 
+             WHEN e.resolution_status = 'completed' THEN null 
+             ELSE $resolved_at 
+         END
          RETURN e",
     )
     .param("id", id)
-    .param("completion_date", now);
+    .param("resolved_at", now);
 
     match graph.run(query).await {
         Ok(_) => Ok(StatusCode::OK),
         Err(e) => {
-            eprintln!("Error toggling event completion: {}", e);
+            eprintln!("Error toggling event resolution: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to toggle event completion: {}", e),
+                format!("Failed to toggle event resolution: {}", e),
             ))
         }
     }

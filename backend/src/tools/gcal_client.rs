@@ -21,6 +21,7 @@ pub struct GCalEvent {
     pub description: Option<String>,
     pub start: EventDateTime,
     pub end: EventDateTime,
+    pub updated: Option<String>, // ISO8601 timestamp of last modification in GCal
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,12 +33,24 @@ pub struct EventDateTime {
     pub time_zone: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct SyncConflict {
+    pub goal_id: i64,
+    pub goal_name: String,
+    pub gcal_event_id: String,
+    pub local_updated_at: i64,
+    pub gcal_updated: String,
+    pub local_summary: String,
+    pub gcal_summary: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SyncResult {
     pub imported_events: i32,
     pub exported_events: i32,
     pub updated_events: i32,
     pub errors: Vec<String>,
+    pub conflicts: Vec<SyncConflict>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,11 +507,12 @@ pub async fn sync_from_gcal(
     let mut imported_events = 0;
     let mut updated_events = 0;
     let mut errors = Vec::new();
+    let mut conflicts = Vec::new();
 
     for gcal_event in gcal_events {
         eprintln!(
-            "➡️  [GCAL←] Processing event id='{}' summary='{}' start={:?} end={:?}",
-            gcal_event.id, gcal_event.summary, gcal_event.start, gcal_event.end
+            "➡️  [GCAL←] Processing event id='{}' summary='{}' start={:?} end={:?} updated={:?}",
+            gcal_event.id, gcal_event.summary, gcal_event.start, gcal_event.end, gcal_event.updated
         );
         // Parse timestamps
         let (start_timestamp, is_all_day) = if let Some(date) = &gcal_event.start.date {
@@ -549,13 +563,13 @@ pub async fn sync_from_gcal(
             }
         };
 
-        // Check if event already exists
+        // Check if event already exists and get conflict detection fields
         let existing_query = query(
             "MATCH (g:Goal) 
              WHERE g.user_id = $user_id 
              AND g.gcal_event_id = $gcal_event_id 
              AND g.gcal_calendar_id = $gcal_calendar_id
-             RETURN g",
+             RETURN id(g) as goal_id, g.name as name, g.updated_at as updated_at, g.gcal_last_sync as gcal_last_sync",
         )
         .param("user_id", user_id)
         .param("gcal_event_id", gcal_event.id.clone())
@@ -568,7 +582,7 @@ pub async fn sync_from_gcal(
             )
         })?;
 
-        if existing_result
+        if let Some(row) = existing_result
             .next()
             .await
             .map_err(|e| {
@@ -577,38 +591,68 @@ pub async fn sync_from_gcal(
                     format!("Error checking existing event: {}", e),
                 )
             })?
-            .is_some()
         {
-            // Update existing event
-            let update_query = query(
-                "MATCH (g:Goal) 
-                 WHERE g.user_id = $user_id 
-                 AND g.gcal_event_id = $gcal_event_id 
-                 SET g.name = $name,
-                     g.description = $description,
-                     g.scheduled_timestamp = $scheduled_timestamp,
-                     g.duration = $duration,
-                     g.gcal_last_sync = $sync_time",
-            )
-            .param("user_id", user_id)
-            .param("gcal_event_id", gcal_event.id.clone())
-            .param("name", gcal_event.summary.clone())
-            .param(
-                "description",
-                gcal_event.description.as_deref().unwrap_or(""),
-            )
-            .param("scheduled_timestamp", start_timestamp)
-            .param("duration", duration)
-            .param("sync_time", Utc::now().timestamp_millis());
+            // Event exists - check for conflicts before updating
+            let goal_id: i64 = row.get("goal_id").unwrap_or(0);
+            let local_name: String = row.get("name").unwrap_or_default();
+            let updated_at: Option<i64> = row.get("updated_at").ok();
+            let gcal_last_sync: Option<i64> = row.get("gcal_last_sync").ok();
 
-            graph.run(update_query).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to update event: {}", e),
+            // Detect conflict: local was modified after last sync
+            let has_conflict = match (updated_at, gcal_last_sync) {
+                (Some(local_updated), Some(last_sync)) => local_updated > last_sync,
+                (Some(_), None) => true, // Local was updated but never synced - potential conflict
+                _ => false,
+            };
+
+            if has_conflict {
+                // Record conflict instead of overwriting
+                conflicts.push(SyncConflict {
+                    goal_id,
+                    goal_name: local_name.clone(),
+                    gcal_event_id: gcal_event.id.clone(),
+                    local_updated_at: updated_at.unwrap_or(0),
+                    gcal_updated: gcal_event.updated.clone().unwrap_or_default(),
+                    local_summary: local_name,
+                    gcal_summary: gcal_event.summary.clone(),
+                });
+                eprintln!(
+                    "⚠️  [GCAL←] Conflict detected for event id='{}' - local modified after last sync",
+                    gcal_event.id
+                );
+            } else {
+                // No conflict - safe to update
+                let update_query = query(
+                    "MATCH (g:Goal) 
+                     WHERE g.user_id = $user_id 
+                     AND g.gcal_event_id = $gcal_event_id 
+                     SET g.name = $name,
+                         g.description = $description,
+                         g.scheduled_timestamp = $scheduled_timestamp,
+                         g.duration = $duration,
+                         g.gcal_last_sync = $sync_time,
+                         g.updated_at = $sync_time",
                 )
-            })?;
+                .param("user_id", user_id)
+                .param("gcal_event_id", gcal_event.id.clone())
+                .param("name", gcal_event.summary.clone())
+                .param(
+                    "description",
+                    gcal_event.description.as_deref().unwrap_or(""),
+                )
+                .param("scheduled_timestamp", start_timestamp)
+                .param("duration", duration)
+                .param("sync_time", Utc::now().timestamp_millis());
 
-            updated_events += 1;
+                graph.run(update_query).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to update event: {}", e),
+                    )
+                })?;
+
+                updated_events += 1;
+            }
         } else {
             // Create new event
             let goal = Goal {
@@ -651,6 +695,7 @@ pub async fn sync_from_gcal(
         exported_events: 0,
         updated_events,
         errors,
+        conflicts,
     }))
 }
 
@@ -733,13 +778,19 @@ pub async fn sync_to_gcal(
             goal.is_gcal_imported,
         );
 
+        // Use per-goal calendar_id if set, otherwise fall back to the passed calendar_id
+        let target_calendar_id = goal
+            .gcal_calendar_id
+            .as_deref()
+            .unwrap_or(calendar_id);
+
         if let Some(gcal_event_id) = &goal.gcal_event_id {
             // Update existing Google Calendar event
             eprintln!(
-                "✏️  [GCAL→] Updating existing GCal event id={} for goal id={:?} ('{}')",
-                gcal_event_id, goal.id, goal.name
+                "✏️  [GCAL→] Updating existing GCal event id={} for goal id={:?} ('{}') in calendar={}",
+                gcal_event_id, goal.id, goal.name, target_calendar_id
             );
-            match update_event(&token, calendar_id, gcal_event_id, &goal).await {
+            match update_event(&token, target_calendar_id, gcal_event_id, &goal).await {
                 Ok(_) => {
                     updated_events += 1;
                     // Update sync timestamp
@@ -765,10 +816,10 @@ pub async fn sync_to_gcal(
         } else {
             // Create new Google Calendar event
             eprintln!(
-                "➕ [GCAL→] Creating new GCal event for goal id={:?} ('{}')",
-                goal.id, goal.name
+                "➕ [GCAL→] Creating new GCal event for goal id={:?} ('{}') in calendar={}",
+                goal.id, goal.name, target_calendar_id
             );
-            match create_event(&token, calendar_id, &goal).await {
+            match create_event(&token, target_calendar_id, &goal).await {
                 Ok(gcal_event_id) => {
                     exported_events += 1;
                     // Update goal with Google Calendar event ID and sync timestamp
@@ -781,7 +832,7 @@ pub async fn sync_to_gcal(
                     )
                     .param("id", goal.id.unwrap_or(0))
                     .param("gcal_event_id", gcal_event_id)
-                    .param("gcal_calendar_id", calendar_id)
+                    .param("gcal_calendar_id", target_calendar_id)
                     .param("sync_time", Utc::now().timestamp_millis());
 
                     let _ = graph.run(update_query).await;
@@ -820,6 +871,7 @@ pub async fn sync_to_gcal(
         exported_events,
         updated_events,
         errors,
+        conflicts: Vec::new(), // Conflicts only detected during sync_from_gcal
     }))
 }
 
@@ -886,4 +938,344 @@ pub async fn delete_gcal_event_handler(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Request to resolve a sync conflict
+#[derive(Debug, Deserialize)]
+pub struct ResolveConflictRequest {
+    pub goal_id: i64,
+    pub resolution: String, // "keep_local" or "keep_gcal"
+    pub gcal_event_id: String,
+    pub calendar_id: String,
+}
+
+/// Resolve a sync conflict by keeping either local or GCal version
+pub async fn resolve_conflict_handler(
+    graph: Graph,
+    user_id: i64,
+    request: ResolveConflictRequest,
+) -> Result<StatusCode, (StatusCode, String)> {
+    eprintln!(
+        "🔧 [GCAL] Resolving conflict for goal {} with resolution '{}'",
+        request.goal_id, request.resolution
+    );
+
+    let token = token_manager::get_valid_token(&graph, user_id)
+        .await
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+
+    match request.resolution.as_str() {
+        "keep_local" => {
+            // Update GCal with local data, then update gcal_last_sync
+            let goal_query = query(&format!(
+                "MATCH (g:Goal) WHERE id(g) = $goal_id AND g.user_id = $user_id {}",
+                GOAL_RETURN_QUERY
+            ))
+            .param("goal_id", request.goal_id)
+            .param("user_id", user_id);
+
+            let mut result = graph.execute(goal_query).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to fetch goal: {}", e),
+                )
+            })?;
+
+            if let Some(row) = result.next().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to read goal: {}", e),
+                )
+            })? {
+                let goal: Goal = row.get("g").map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to deserialize goal: {}", e),
+                    )
+                })?;
+
+                // Update the event in Google Calendar
+                update_event(&token, &request.calendar_id, &request.gcal_event_id, &goal)
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to update GCal event: {}", e),
+                        )
+                    })?;
+
+                // Update gcal_last_sync to mark conflict as resolved
+                let sync_time = Utc::now().timestamp_millis();
+                let update_query = query(
+                    "MATCH (g:Goal) WHERE id(g) = $goal_id 
+                     SET g.gcal_last_sync = $sync_time, g.updated_at = $sync_time",
+                )
+                .param("goal_id", request.goal_id)
+                .param("sync_time", sync_time);
+
+                graph.run(update_query).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to update sync timestamp: {}", e),
+                    )
+                })?;
+            } else {
+                return Err((StatusCode::NOT_FOUND, "Goal not found".to_string()));
+            }
+        }
+        "keep_gcal" => {
+            // Fetch event from GCal and update local with that data
+            let client = Client::new();
+            let response = client
+                .get(format!(
+                    "{}/calendars/{}/events/{}",
+                    GOOGLE_CALENDAR_API_BASE, request.calendar_id, request.gcal_event_id
+                ))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to fetch GCal event: {}", e),
+                    )
+                })?;
+
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("GCal API error: {}", error_text),
+                ));
+            }
+
+            let gcal_event: GCalEvent = response.json().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to parse GCal event: {}", e),
+                )
+            })?;
+
+            // Parse start timestamp
+            let start_timestamp = if let Some(date) = &gcal_event.start.date {
+                chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                    .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis())
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to parse date: {}", e),
+                        )
+                    })?
+            } else if let Some(datetime) = &gcal_event.start.date_time {
+                DateTime::parse_from_rfc3339(datetime)
+                    .map(|d| d.timestamp_millis())
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to parse datetime: {}", e),
+                        )
+                    })?
+            } else {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Event has no start time".to_string(),
+                ));
+            };
+
+            // Calculate duration
+            let duration = if gcal_event.start.date.is_some() {
+                1440 // All-day event
+            } else if let Some(datetime) = &gcal_event.end.date_time {
+                if let Ok(end_dt) = DateTime::parse_from_rfc3339(datetime) {
+                    ((end_dt.timestamp_millis() - start_timestamp) / 60000) as i32
+                } else {
+                    60
+                }
+            } else {
+                60
+            };
+
+            // Update local goal with GCal data
+            let sync_time = Utc::now().timestamp_millis();
+            let update_query = query(
+                "MATCH (g:Goal) WHERE id(g) = $goal_id 
+                 SET g.name = $name,
+                     g.description = $description,
+                     g.scheduled_timestamp = $scheduled_timestamp,
+                     g.duration = $duration,
+                     g.gcal_last_sync = $sync_time,
+                     g.updated_at = $sync_time",
+            )
+            .param("goal_id", request.goal_id)
+            .param("name", gcal_event.summary)
+            .param(
+                "description",
+                gcal_event.description.as_deref().unwrap_or(""),
+            )
+            .param("scheduled_timestamp", start_timestamp)
+            .param("duration", duration)
+            .param("sync_time", sync_time);
+
+            graph.run(update_query).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to update local goal: {}", e),
+                )
+            })?;
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid resolution: {}", request.resolution),
+            ));
+        }
+    }
+
+    eprintln!("✅ [GCAL] Conflict resolved successfully");
+    Ok(StatusCode::OK)
+}
+
+/// User's Google Calendar sync settings
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GCalSettings {
+    pub gcal_auto_sync_enabled: Option<bool>,
+    pub gcal_default_calendar_id: Option<String>,
+}
+
+/// Response with current GCal settings
+#[derive(Debug, Serialize)]
+pub struct GCalSettingsResponse {
+    pub gcal_auto_sync_enabled: bool,
+    pub gcal_default_calendar_id: Option<String>,
+}
+
+/// Get user's GCal sync settings
+pub async fn get_gcal_settings_handler(
+    graph: &Graph,
+    user_id: i64,
+) -> Result<Json<GCalSettingsResponse>, (StatusCode, String)> {
+    let query_result = query(
+        "MATCH (u:User) WHERE id(u) = $user_id 
+         RETURN u.gcal_auto_sync_enabled as auto_sync, u.gcal_default_calendar_id as calendar_id",
+    )
+    .param("user_id", user_id);
+
+    let mut result = graph.execute(query_result).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to fetch settings: {}", e),
+        )
+    })?;
+
+    if let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read settings: {}", e),
+        )
+    })? {
+        let auto_sync: bool = row.get("auto_sync").unwrap_or(false);
+        let calendar_id: Option<String> = row.get("calendar_id").ok();
+
+        Ok(Json(GCalSettingsResponse {
+            gcal_auto_sync_enabled: auto_sync,
+            gcal_default_calendar_id: calendar_id,
+        }))
+    } else {
+        Err((StatusCode::NOT_FOUND, "User not found".to_string()))
+    }
+}
+
+/// Update user's GCal sync settings
+pub async fn update_gcal_settings_handler(
+    graph: Graph,
+    user_id: i64,
+    settings: GCalSettings,
+) -> Result<Json<GCalSettingsResponse>, (StatusCode, String)> {
+    eprintln!(
+        "🔧 [GCAL] Updating settings for user {}: {:?}",
+        user_id, settings
+    );
+
+    let mut set_clauses = Vec::new();
+    let mut params = vec![(
+        "user_id",
+        neo4rs::BoltType::Integer(neo4rs::BoltInteger { value: user_id }),
+    )];
+
+    if let Some(auto_sync) = settings.gcal_auto_sync_enabled {
+        set_clauses.push("u.gcal_auto_sync_enabled = $auto_sync");
+        params.push(("auto_sync", auto_sync.into()));
+    }
+
+    if let Some(calendar_id) = &settings.gcal_default_calendar_id {
+        set_clauses.push("u.gcal_default_calendar_id = $calendar_id");
+        params.push(("calendar_id", calendar_id.clone().into()));
+    }
+
+    if set_clauses.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No settings provided".to_string(),
+        ));
+    }
+
+    let query_str = format!(
+        "MATCH (u:User) WHERE id(u) = $user_id SET {} 
+         RETURN u.gcal_auto_sync_enabled as auto_sync, u.gcal_default_calendar_id as calendar_id",
+        set_clauses.join(", ")
+    );
+
+    let mut result = graph.execute(query(&query_str).params(params)).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to update settings: {}", e),
+        )
+    })?;
+
+    if let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read updated settings: {}", e),
+        )
+    })? {
+        let auto_sync: bool = row.get("auto_sync").unwrap_or(false);
+        let calendar_id: Option<String> = row.get("calendar_id").ok();
+
+        eprintln!("✅ [GCAL] Settings updated for user {}", user_id);
+        Ok(Json(GCalSettingsResponse {
+            gcal_auto_sync_enabled: auto_sync,
+            gcal_default_calendar_id: calendar_id,
+        }))
+    } else {
+        Err((StatusCode::NOT_FOUND, "User not found".to_string()))
+    }
+}
+
+/// Reset sync state for a calendar (forces full re-sync on next sync)
+pub async fn reset_sync_state_handler(
+    graph: Graph,
+    user_id: i64,
+    calendar_id: &str,
+) -> Result<StatusCode, (StatusCode, String)> {
+    eprintln!(
+        "🔄 [GCAL] Resetting sync state for user {} calendar {}",
+        user_id, calendar_id
+    );
+
+    let delete_query = query(
+        "MATCH (s:SyncState {user_id: $user_id, calendar_id: $calendar_id})
+         DELETE s",
+    )
+    .param("user_id", user_id)
+    .param("calendar_id", calendar_id.to_string());
+
+    graph.run(delete_query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to reset sync state: {}", e),
+        )
+    })?;
+
+    eprintln!("✅ [GCAL] Sync state reset successfully");
+    Ok(StatusCode::OK)
 }

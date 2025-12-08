@@ -18,7 +18,7 @@ use crate::server::auth::{self};
 use crate::server::middleware;
 use crate::tools::{
     achievements, calendar, day, event, gcal_client,
-    goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, GoalUpdate, Relationship},
+    goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, ResolveGoalRequest, Relationship},
     list, migration, network, push, stats, traversal,
 };
 
@@ -34,6 +34,11 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/validate", get(handle_validate_token))
         .route("/logout", get(handle_logout));
 
+    // Protected auth routes (require authentication)
+    let auth_protected_routes = Router::new()
+        .route("/google-status", get(handle_google_status))
+        .route("/google-unlink", post(handle_google_unlink));
+
     let goal_routes = Router::new()
         .route("/create", post(handle_create_goal))
         .route("/:id", get(handle_get_goal))
@@ -41,7 +46,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/:id", delete(handle_delete_goal))
         .route("/relationship", post(handle_create_relationship))
         .route("/relationship", delete(handle_delete_relationship))
-        .route("/:id/complete", put(handle_complete_goal))
+        .route("/:id/resolve", put(handle_resolve_goal))
         .route("/:id/duplicate", post(handle_duplicate_goal))
         .route("/expand-date-range", post(handle_expand_task_date_range));
 
@@ -98,13 +103,18 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/sync-from", post(handle_sync_from_gcal))
         .route("/sync-to", post(handle_sync_to_gcal))
         .route("/sync-bidirectional", post(handle_sync_bidirectional))
-        .route("/event/:goal_id", delete(handle_delete_gcal_event));
+        .route("/event/:goal_id", delete(handle_delete_gcal_event))
+        .route("/resolve-conflict", post(handle_resolve_conflict))
+        .route("/reset-sync/:calendar_id", post(handle_reset_sync_state))
+        .route("/settings", get(handle_get_gcal_settings))
+        .route("/settings", put(handle_update_gcal_settings));
 
     let stats_routes = Router::new()
         .route("/", get(handle_get_stats_data))
         .route("/extended", get(handle_get_extended_stats))
         .route("/analytics", get(handle_get_event_analytics))
         .route("/effort", get(handle_get_effort_stats))
+        .route("/effort/:id/children", get(handle_get_goal_children_effort))
         .route("/routines/search", get(handle_search_routines))
         .route("/routines/stats", post(handle_get_routine_stats))
         .route("/rescheduling", get(handle_get_rescheduling_stats))
@@ -146,6 +156,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/migration", migration_routes)
         .nest("/routine", routine_generation_routes)
         .nest("/push", push_routes)
+        .nest("/auth", auth_protected_routes)
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -371,11 +382,12 @@ async fn handle_delete_relationship(
     .await
 }
 
-async fn handle_complete_goal(
+async fn handle_resolve_goal(
     Extension(graph): Extension<Graph>,
-    Json(update): Json<GoalUpdate>,
+    Path(id): Path<i64>,
+    Json(request): Json<ResolveGoalRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::tools::goal::toggle_completion(graph, update).await
+    goal::resolve_goal_handler(graph, id, request).await
 }
 
 // Event handlers
@@ -642,6 +654,16 @@ async fn handle_get_effort_stats(
     stats::get_effort_stats(graph, user_id, range).await
 }
 
+async fn handle_get_goal_children_effort(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let range = params.get("range").cloned();
+    stats::get_goal_children_effort(graph, user_id, id, range).await
+}
+
 async fn handle_search_routines(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
@@ -802,6 +824,22 @@ fn build_auth_cookie(token: &str) -> String {
     )
 }
 
+// Google account status handler
+async fn handle_google_status(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    auth::get_google_status(&graph, user_id).await
+}
+
+// Google account unlink handler
+async fn handle_google_unlink(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    auth::unlink_google_account(&graph, user_id).await
+}
+
 // Logout handler clears the auth cookie
 async fn handle_logout() -> impl IntoResponse {
     let mut headers = HeaderMap::new();
@@ -884,6 +922,7 @@ async fn handle_sync_bidirectional(
                 exported_events: 0,
                 updated_events: from_gcal_result.updated_events, // These are updates from GCal->local
                 errors: vec![format!("Error during sync to Google Calendar: {}", msg)],
+                conflicts: from_gcal_result.conflicts, // Preserve conflicts from sync_from
             }));
         }
     };
@@ -896,6 +935,7 @@ async fn handle_sync_bidirectional(
         // `updated_events` in `to_gcal` are GCal events updated from local goals.
         updated_events: from_gcal_result.updated_events + to_gcal_result.updated_events,
         errors: [from_gcal_result.errors, to_gcal_result.errors].concat(),
+        conflicts: from_gcal_result.conflicts, // Conflicts only come from sync_from_gcal
     };
 
     Ok(Json(final_result))
@@ -908,6 +948,40 @@ async fn handle_delete_gcal_event(
     Path(goal_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     gcal_client::delete_gcal_event_handler(graph, user_id, goal_id).await
+}
+
+#[axum::debug_handler]
+async fn handle_resolve_conflict(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<gcal_client::ResolveConflictRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    gcal_client::resolve_conflict_handler(graph, user_id, request).await
+}
+
+#[axum::debug_handler]
+async fn handle_reset_sync_state(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(calendar_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    gcal_client::reset_sync_state_handler(graph, user_id, &calendar_id).await
+}
+
+async fn handle_get_gcal_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    gcal_client::get_gcal_settings_handler(&graph, user_id).await
+}
+
+#[axum::debug_handler]
+async fn handle_update_gcal_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(settings): Json<gcal_client::GCalSettings>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    gcal_client::update_gcal_settings_handler(graph, user_id, settings).await
 }
 
 // Push notification handlers

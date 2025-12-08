@@ -18,6 +18,13 @@ import {
     CardContent,
     CircularProgress,
     Snackbar,
+    FormControlLabel,
+    Switch,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem,
+    SelectChangeEvent,
 } from "@mui/material";
 import {
     Google,
@@ -28,8 +35,10 @@ import {
     NotificationsActive,
     PhoneIphone,
     CheckCircle,
+    CalendarMonth,
+    Sync,
 } from "@mui/icons-material";
-import { privateRequest } from "../../shared/utils/api";
+import { privateRequest, getGoogleStatus, getGCalSettings, updateGCalSettings, getGoogleCalendars, unlinkGoogleAccount, CalendarListEntry, GoogleStatusResponse, GCalSettingsResponse } from "../../shared/utils/api";
 import { usePushNotifications, useInstallPrompt } from "../../shared/hooks/usePushNotifications";
 
 interface AuthMethod {
@@ -61,6 +70,12 @@ const AccountSettings: React.FC = () => {
     const { showPrompt: showInstallPrompt, dismissPrompt } = useInstallPrompt();
     const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
 
+    // Google Calendar state
+    const [googleStatus, setGoogleStatus] = useState<GoogleStatusResponse | null>(null);
+    const [gcalSettings, setGcalSettings] = useState<GCalSettingsResponse | null>(null);
+    const [calendars, setCalendars] = useState<CalendarListEntry[]>([]);
+    const [gcalLoading, setGcalLoading] = useState(false);
+
     const loadAccountInfo = async () => {
         try {
             setLoading(true);
@@ -75,7 +90,73 @@ const AccountSettings: React.FC = () => {
 
     useEffect(() => {
         loadAccountInfo();
+        loadGoogleCalendarSettings();
     }, []);
+
+    const loadGoogleCalendarSettings = async () => {
+        try {
+            setGcalLoading(true);
+            const [status, settings] = await Promise.all([
+                getGoogleStatus(),
+                getGCalSettings().catch(() => null),
+            ]);
+            setGoogleStatus(status);
+            setGcalSettings(settings);
+
+            // If Google is linked, load calendars
+            if (status.linked) {
+                try {
+                    const calendarList = await getGoogleCalendars();
+                    setCalendars(calendarList);
+                } catch {
+                    // Calendars might fail if permissions aren't granted
+                    setCalendars([]);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load Google Calendar settings:', err);
+        } finally {
+            setGcalLoading(false);
+        }
+    };
+
+    const handleGcalAutoSyncChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const enabled = event.target.checked;
+        try {
+            const updated = await updateGCalSettings({ gcal_auto_sync_enabled: enabled });
+            setGcalSettings(updated);
+            setSnackbarMessage(enabled ? 'Auto-sync enabled' : 'Auto-sync disabled');
+        } catch (err) {
+            setError('Failed to update auto-sync setting');
+        }
+    };
+
+    const handleDefaultCalendarChange = async (event: SelectChangeEvent<string>) => {
+        const calendarId = event.target.value;
+        try {
+            const updated = await updateGCalSettings({ gcal_default_calendar_id: calendarId });
+            setGcalSettings(updated);
+            setSnackbarMessage('Default calendar updated');
+        } catch (err) {
+            setError('Failed to update default calendar');
+        }
+    };
+
+    const handleUnlinkGoogleCalendar = async () => {
+        if (!window.confirm('Are you sure you want to unlink your Google account? This will disable calendar sync.')) {
+            return;
+        }
+        try {
+            await unlinkGoogleAccount();
+            setGoogleStatus({ linked: false, email: null, calendars_synced: 0 });
+            setGcalSettings(null);
+            setCalendars([]);
+            setSnackbarMessage('Google account unlinked');
+            loadAccountInfo(); // Reload account info
+        } catch (err) {
+            setError('Failed to unlink Google account');
+        }
+    };
 
     const handleSetPassword = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -425,6 +506,125 @@ const AccountSettings: React.FC = () => {
                                             <strong>Note:</strong> On iOS devices, the app must be installed to your home screen to receive notifications.
                                         </>
                                     )}
+                                </Typography>
+                            </Box>
+
+                            <Divider sx={{ mb: 4 }} />
+
+                            {/* Google Calendar Settings */}
+                            <Box sx={{ mb: 4 }}>
+                                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <CalendarMonth />
+                                    Google Calendar Sync
+                                </Typography>
+
+                                {gcalLoading ? (
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                                        <CircularProgress size={24} />
+                                    </Box>
+                                ) : googleStatus?.linked ? (
+                                    <Card sx={{ mb: 2 }}>
+                                        <CardContent>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                                                <Sync color="success" />
+                                                <Box sx={{ flexGrow: 1 }}>
+                                                    <Typography variant="subtitle1">
+                                                        Google Account Linked
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        {googleStatus.email}
+                                                    </Typography>
+                                                    {googleStatus.calendars_synced > 0 && (
+                                                        <Chip 
+                                                            label={`${googleStatus.calendars_synced} calendar(s) synced`} 
+                                                            size="small" 
+                                                            color="primary" 
+                                                            sx={{ mt: 1 }}
+                                                        />
+                                                    )}
+                                                </Box>
+                                                <IconButton
+                                                    onClick={handleUnlinkGoogleCalendar}
+                                                    title="Unlink Google account"
+                                                    color="error"
+                                                >
+                                                    <LinkOff />
+                                                </IconButton>
+                                            </Box>
+
+                                            <Divider sx={{ my: 2 }} />
+
+                                            {/* Auto-sync toggle */}
+                                            <FormControlLabel
+                                                control={
+                                                    <Switch
+                                                        checked={gcalSettings?.gcal_auto_sync_enabled || false}
+                                                        onChange={handleGcalAutoSyncChange}
+                                                    />
+                                                }
+                                                label={
+                                                    <Box>
+                                                        <Typography variant="body1">Auto-sync (every 15 minutes)</Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            Automatically sync events between Goals and Google Calendar
+                                                        </Typography>
+                                                    </Box>
+                                                }
+                                                sx={{ mb: 2, alignItems: 'flex-start' }}
+                                            />
+
+                                            {/* Default calendar selector */}
+                                            {calendars.length > 0 && (
+                                                <FormControl fullWidth sx={{ mt: 2 }}>
+                                                    <InputLabel id="default-calendar-label">Default Calendar</InputLabel>
+                                                    <Select
+                                                        labelId="default-calendar-label"
+                                                        value={gcalSettings?.gcal_default_calendar_id || 'primary'}
+                                                        label="Default Calendar"
+                                                        onChange={handleDefaultCalendarChange}
+                                                    >
+                                                        {calendars.map((cal) => (
+                                                            <MenuItem key={cal.id} value={cal.id}>
+                                                                {cal.summary} {cal.primary && '(Primary)'}
+                                                            </MenuItem>
+                                                        ))}
+                                                    </Select>
+                                                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                                                        New events will sync to this calendar by default
+                                                    </Typography>
+                                                </FormControl>
+                                            )}
+                                        </CardContent>
+                                    </Card>
+                                ) : (
+                                    <Card sx={{ mb: 2 }}>
+                                        <CardContent>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                <Google color="disabled" />
+                                                <Box sx={{ flexGrow: 1 }}>
+                                                    <Typography variant="subtitle1">
+                                                        Google Calendar Not Connected
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        Link your Google account to sync events with Google Calendar
+                                                    </Typography>
+                                                </Box>
+                                            </Box>
+                                            <Button
+                                                variant="contained"
+                                                startIcon={<Google />}
+                                                onClick={handleLinkGoogle}
+                                                sx={{ mt: 2 }}
+                                            >
+                                                Connect Google Calendar
+                                            </Button>
+                                        </CardContent>
+                                    </Card>
+                                )}
+
+                                <Typography variant="body2" color="text.secondary">
+                                    Google Calendar sync allows you to import events from Google Calendar and export your scheduled events.
+                                    You can also use the Sync button in the Calendar view for manual syncing.
                                 </Typography>
                             </Box>
                         </>

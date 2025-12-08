@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, getGoogleCalendars, CalendarListEntry } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, GCalSyncConflict, getGoogleCalendars, CalendarListEntry, resolveGCalConflict, resetGCalSyncState } from '../../shared/utils/api';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -15,11 +15,6 @@ import {
   Button,
   Typography,
   Box,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  List,
-  ListItem,
   Radio,
   RadioGroup,
   FormControlLabel,
@@ -30,7 +25,6 @@ import {
   InputLabel,
   CircularProgress
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -215,7 +209,6 @@ const Calendar: React.FC = () => {
   const [selectedResizeScope, setSelectedResizeScope] = useState<'single' | 'all' | 'future'>('single');
   const calendarRef = useRef<FullCalendar | null>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
-  const debouncingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Task date range warning dialog state
@@ -1065,6 +1058,15 @@ const Calendar: React.FC = () => {
 
       const { backgroundColor, textColor, borderColor } = getGoalStyle(goal, parent);
 
+      // Build CSS class names for the event
+      const classNames: string[] = [];
+      if (goal.is_gcal_imported) {
+        classNames.push('event-gcal-imported');
+      }
+      if (goal.gcal_event_id) {
+        classNames.push('event-gcal-synced');
+      }
+
       return {
         id: evt.id,
         title: evt.title,
@@ -1075,6 +1077,7 @@ const Calendar: React.FC = () => {
         borderColor,
         textColor,
         color: backgroundColor,
+        classNames,
         extendedProps: {
           ...evt,
           goal,
@@ -1277,7 +1280,8 @@ const Calendar: React.FC = () => {
           imported_events: 0,
           exported_events: 0,
           updated_events: 0,
-          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')]
+          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')],
+          conflicts: []
         }
       });
     }
@@ -1805,6 +1809,94 @@ const Calendar: React.FC = () => {
                 </Typography>
               </Box>
 
+              {/* Conflicts Section */}
+              {gcalSyncDialog.lastResult.conflicts && gcalSyncDialog.lastResult.conflicts.length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ color: 'warning.main', mb: 1 }}>
+                    ⚠️ Conflicts Detected ({gcalSyncDialog.lastResult.conflicts.length}):
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                    These events were modified both locally and in Google Calendar. Choose which version to keep:
+                  </Typography>
+                  {gcalSyncDialog.lastResult.conflicts.map((conflict: GCalSyncConflict) => (
+                    <Box key={conflict.goal_id} sx={{ 
+                      p: 1.5, 
+                      mb: 1, 
+                      bgcolor: 'warning.light', 
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'warning.main'
+                    }}>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                        {conflict.goal_name}
+                      </Typography>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Local: {conflict.local_summary}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          GCal: {conflict.gcal_summary}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button 
+                          size="small" 
+                          variant="outlined"
+                          onClick={async () => {
+                            try {
+                              await resolveGCalConflict({
+                                goal_id: conflict.goal_id,
+                                resolution: 'keep_local',
+                                gcal_event_id: conflict.gcal_event_id,
+                                calendar_id: gcalSyncDialog.calendarId
+                              });
+                              // Remove this conflict from the list
+                              setGcalSyncDialog(prev => ({
+                                ...prev,
+                                lastResult: prev.lastResult ? {
+                                  ...prev.lastResult,
+                                  conflicts: prev.lastResult.conflicts.filter(c => c.goal_id !== conflict.goal_id)
+                                } : null
+                              }));
+                            } catch (e) {
+                              console.error('Failed to resolve conflict:', e);
+                            }
+                          }}
+                        >
+                          Keep Local
+                        </Button>
+                        <Button 
+                          size="small" 
+                          variant="outlined"
+                          onClick={async () => {
+                            try {
+                              await resolveGCalConflict({
+                                goal_id: conflict.goal_id,
+                                resolution: 'keep_gcal',
+                                gcal_event_id: conflict.gcal_event_id,
+                                calendar_id: gcalSyncDialog.calendarId
+                              });
+                              // Remove this conflict from the list
+                              setGcalSyncDialog(prev => ({
+                                ...prev,
+                                lastResult: prev.lastResult ? {
+                                  ...prev.lastResult,
+                                  conflicts: prev.lastResult.conflicts.filter(c => c.goal_id !== conflict.goal_id)
+                                } : null
+                              }));
+                            } catch (e) {
+                              console.error('Failed to resolve conflict:', e);
+                            }
+                          }}
+                        >
+                          Keep Google Calendar
+                        </Button>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+              )}
+
               {gcalSyncDialog.lastResult.errors.length > 0 && (
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="subtitle2" sx={{ color: 'error.main', mb: 1 }}>
@@ -1815,8 +1907,40 @@ const Calendar: React.FC = () => {
                       • {error}
                     </Typography>
                   ))}
+                  <Button
+                    size="small"
+                    sx={{ mt: 1 }}
+                    onClick={handleGcalSyncConfirm}
+                    disabled={gcalSyncDialog.isLoading}
+                  >
+                    Retry Sync
+                  </Button>
                 </Box>
               )}
+
+              {/* Force Resync Option */}
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                <Button
+                  size="small"
+                  color="warning"
+                  onClick={async () => {
+                    try {
+                      await resetGCalSyncState(gcalSyncDialog.calendarId);
+                      setGcalSyncDialog(prev => ({
+                        ...prev,
+                        lastResult: null
+                      }));
+                    } catch (e) {
+                      console.error('Failed to reset sync state:', e);
+                    }
+                  }}
+                >
+                  Force Full Resync
+                </Button>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                  Clear sync history and re-import all events from Google Calendar
+                </Typography>
+              </Box>
             </>
           )}
         </DialogContent>

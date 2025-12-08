@@ -38,13 +38,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rollback_migration(&args[2]).await?;
                 return Ok(());
             }
+            "migrate-resolution-status" => {
+                run_resolution_status_migration().await?;
+                return Ok(());
+            }
             _ => {
                 eprintln!("Unknown command: {}", args[1]);
                 eprintln!("Available commands:");
-                eprintln!("  migrate [--force]     - Run the event migration");
-                eprintln!("  verify-migration      - Verify migration integrity");
-                eprintln!("  reset-migration       - Reset migration status (for development)");
-                eprintln!("  rollback-migration <backup_file> - Rollback migration from backup");
+                eprintln!("  migrate [--force]            - Run the event migration");
+                eprintln!("  migrate-resolution-status    - Migrate from completed to resolution_status");
+                eprintln!("  verify-migration             - Verify migration integrity");
+                eprintln!("  reset-migration              - Reset migration status (for development)");
+                eprintln!("  rollback-migration <backup>  - Rollback migration from backup");
                 std::process::exit(1);
             }
         }
@@ -154,6 +159,26 @@ async fn reset_migration() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("❌ Failed to reset migration status: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_resolution_status_migration() -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚀 Running resolution_status migration...");
+
+    let graph = create_graph_connection().await?;
+
+    match tools::migration::migrate_to_resolution_status(&graph).await {
+        Ok(result) => {
+            println!("✅ Migration completed successfully!");
+            println!("📊 Migration results:");
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Err(e) => {
+            eprintln!("❌ Migration failed: {}", e);
             std::process::exit(1);
         }
     }

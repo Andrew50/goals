@@ -8,6 +8,7 @@ import { getGoalStyle } from '../../shared/styles/colors';
 import { SearchBar } from '../../shared/components/SearchBar';
 import GoalMenu from '../../shared/components/GoalMenu';
 import CompletionBar from '../../shared/components/CompletionBar';
+import EffortRowExpansion from './EffortRowExpansion';
 
 interface DailyStats {
     date: string;
@@ -157,6 +158,16 @@ const Stats: React.FC = () => {
     const [effortSearchQuery, setEffortSearchQuery] = useState('');
     const [effortSearchIds, setEffortSearchIds] = useState<Set<number>>(new Set());
     const [effortGoalTypeFilter, setEffortGoalTypeFilter] = useState<Goal['goal_type'] | ''>('');
+    const [expandedGoalIds, setExpandedGoalIds] = useState<Set<number>>(new Set());
+
+    const toggleExpandGoal = (goalId: number) => {
+        setExpandedGoalIds(prev => {
+            const next = new Set(prev);
+            if (next.has(goalId)) next.delete(goalId);
+            else next.add(goalId);
+            return next;
+        });
+    };
 
     const fetchStats = async () => {
         setLoading(true);
@@ -750,17 +761,27 @@ const Stats: React.FC = () => {
                                             </thead>
                                             <tbody>
                                                 {sortedEffortStats && sortedEffortStats.length > 0 ? (
-                                                    sortedEffortStats.map((g) => {
+                                                    sortedEffortStats.flatMap((g) => {
                                                         const pseudoGoal: Goal = {
                                                             id: g.goal_id,
                                                             name: g.goal_name,
                                                             goal_type: g.goal_type as any,
                                                         } as Goal;
                                                         const goalStyle = getGoalStyle(pseudoGoal);
-                                                        return (
-                                                            <tr key={g.goal_id}>
+                                                        const isExpanded = expandedGoalIds.has(g.goal_id);
+                                                        const rows: React.ReactNode[] = [
+                                                            <tr key={g.goal_id} className={isExpanded ? 'effort-row-expanded' : ''}>
                                                                 <td>
                                                                     <div className="goal-cell">
+                                                                        {g.children_count > 0 && (
+                                                                            <button
+                                                                                className="effort-expand-btn"
+                                                                                onClick={() => toggleExpandGoal(g.goal_id)}
+                                                                                title={isExpanded ? 'Collapse' : 'Expand children'}
+                                                                            >
+                                                                                {isExpanded ? '▼' : '▶'}
+                                                                            </button>
+                                                                        )}
                                                                         <span
                                                                             className="goal-type-badge"
                                                                             style={{
@@ -790,7 +811,17 @@ const Stats: React.FC = () => {
                                                                     </div>
                                                                 </td>
                                                             </tr>
-                                                        );
+                                                        ];
+                                                        if (isExpanded) {
+                                                            rows.push(
+                                                                <EffortRowExpansion
+                                                                    key={`${g.goal_id}-expansion`}
+                                                                    goalId={g.goal_id}
+                                                                    range={effortRange}
+                                                                />
+                                                            );
+                                                        }
+                                                        return rows;
                                                     })
                                                 ) : (
                                                     <tr>

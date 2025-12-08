@@ -422,3 +422,42 @@
 .calendar-container .fc .fc-daygrid-event.event-compact {
     margin: 1px 0;
 }
+
+/* -----------------------------
+   Google Calendar Imported Events
+----------------------------- */
+/* Events imported from Google Calendar */
+.fc-event.event-gcal-imported {
+    border-left: 3px solid #4285F4 !important; /* Google blue */
+    position: relative;
+}
+
+.fc-event.event-gcal-imported::before {
+    content: "📅";
+    font-size: 0.7em;
+    margin-right: 3px;
+    position: relative;
+    top: -1px;
+}
+
+/* Events synced with Google Calendar (but not imported) */
+.fc-event.event-gcal-synced:not(.event-gcal-imported) {
+    border-left: 2px solid #34A853 !important; /* Google green */
+}
+
+/* Subtle indicator in timegrid view */
+.fc-timegrid-event.event-gcal-imported .fc-event-main::before,
+.fc-timegrid-event.event-gcal-synced:not(.event-gcal-imported) .fc-event-main::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #4285F4;
+}
+
+.fc-timegrid-event.event-gcal-synced:not(.event-gcal-imported) .fc-event-main::before {
+    background-color: #34A853;
+}

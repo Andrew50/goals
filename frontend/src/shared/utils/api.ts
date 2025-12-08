@@ -1,6 +1,6 @@
 import axios, { AxiosResponse, Method } from 'axios';
 import { forceLogout } from './authEvents';
-import { Goal, RelationshipType, ApiGoal } from '../../types/goals'; // Import ApiGoal
+import { Goal, RelationshipType, ApiGoal, ResolutionStatus, DisplayStatus } from '../../types/goals';
 import { goalToUTC, goalToLocal } from './time';
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -234,15 +234,29 @@ export async function deleteRelationship(
     });
 }
 
-// Add this new function
-export async function completeGoal(goalId: number, completed: boolean): Promise<boolean> {
-    const response = await privateRequest<{ completed: boolean }>(
-        `goals/${goalId}/complete`,
+// Resolve a goal by setting its resolution status
+export interface ResolveGoalResponse {
+    resolution_status: ResolutionStatus;
+    display_status: DisplayStatus;
+    resolved_at: number | null;
+}
+
+export async function resolveGoal(
+    goalId: number,
+    status: ResolutionStatus
+): Promise<ResolveGoalResponse> {
+    return privateRequest<ResolveGoalResponse>(
+        `goals/${goalId}/resolve`,
         'PUT',
-        { id: goalId, completed }
+        { resolution_status: status }
     );
-    return response.completed;
-    //return processGoalFromAPI(response);
+}
+
+// Convenience function for completing a goal (backward compatible name)
+export async function completeGoal(goalId: number, completed: boolean): Promise<ResolutionStatus> {
+    const status: ResolutionStatus = completed ? 'completed' : 'pending';
+    const response = await resolveGoal(goalId, status);
+    return response.resolution_status;
 }
 
 // Event-specific API calls
@@ -420,6 +434,7 @@ export const updateEvent = async (eventId: number, updates: {
     scheduled_timestamp?: Date;
     duration?: number;
     completed?: boolean;
+    resolution_status?: ResolutionStatus;
     move_reason?: string;
 }): Promise<Goal> => {
     const apiUpdates = {
@@ -531,11 +546,22 @@ export interface GCalSyncRequest {
     sync_direction: 'bidirectional' | 'to_gcal' | 'from_gcal';
 }
 
+export interface GCalSyncConflict {
+    goal_id: number;
+    goal_name: string;
+    gcal_event_id: string;
+    local_updated_at: number;
+    gcal_updated: string;
+    local_summary: string;
+    gcal_summary: string;
+}
+
 export interface GCalSyncResult {
     imported_events: number;
     exported_events: number;
     updated_events: number;
     errors: string[];
+    conflicts: GCalSyncConflict[];
 }
 
 export const syncFromGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
@@ -548,6 +574,58 @@ export const syncToGoogleCalendar = async (request: GCalSyncRequest): Promise<GC
 
 export const syncBidirectionalGoogleCalendar = async (request: GCalSyncRequest): Promise<GCalSyncResult> => {
     return privateRequest<GCalSyncResult>('gcal/sync-bidirectional', 'POST', request);
+};
+
+export interface ResolveConflictRequest {
+    goal_id: number;
+    resolution: 'keep_local' | 'keep_gcal';
+    gcal_event_id: string;
+    calendar_id: string;
+}
+
+export const resolveGCalConflict = async (request: ResolveConflictRequest): Promise<void> => {
+    await privateRequest('gcal/resolve-conflict', 'POST', request);
+};
+
+export const resetGCalSyncState = async (calendarId: string): Promise<void> => {
+    await privateRequest(`gcal/reset-sync/${encodeURIComponent(calendarId)}`, 'POST');
+};
+
+export const deleteGCalEvent = async (goalId: number): Promise<void> => {
+    await privateRequest(`gcal/event/${goalId}`, 'DELETE');
+};
+
+export interface GCalSettings {
+    gcal_auto_sync_enabled?: boolean;
+    gcal_default_calendar_id?: string;
+}
+
+export interface GCalSettingsResponse {
+    gcal_auto_sync_enabled: boolean;
+    gcal_default_calendar_id: string | null;
+}
+
+export const getGCalSettings = async (): Promise<GCalSettingsResponse> => {
+    return privateRequest<GCalSettingsResponse>('gcal/settings', 'GET');
+};
+
+export const updateGCalSettings = async (settings: GCalSettings): Promise<GCalSettingsResponse> => {
+    return privateRequest<GCalSettingsResponse>('gcal/settings', 'PUT', settings);
+};
+
+// Google Account Status
+export interface GoogleStatusResponse {
+    linked: boolean;
+    email: string | null;
+    calendars_synced: number;
+}
+
+export const getGoogleStatus = async (): Promise<GoogleStatusResponse> => {
+    return privateRequest<GoogleStatusResponse>('auth/google-status', 'GET');
+};
+
+export const unlinkGoogleAccount = async (): Promise<void> => {
+    await privateRequest('auth/google-unlink', 'POST');
 };
 
 // Routine recompute API – soft-delete future events and regenerate on the new schedule

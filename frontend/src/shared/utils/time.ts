@@ -73,6 +73,8 @@ export const goalToLocal = (apiGoal: ApiGoal): Goal => ({
   due_date: msToDate(apiGoal.due_date),
   start_date: msToDate(apiGoal.start_date),
   gcal_last_sync: msToDate(apiGoal.gcal_last_sync),
+  updated_at: msToDate(apiGoal.updated_at),
+  resolved_at: msToDate(apiGoal.resolved_at),
 });
 
 /** Converts a frontend Goal (Date objects) to an API Goal representation (numeric timestamps). */
@@ -86,6 +88,8 @@ export const goalToUTC = (goal: Goal): ApiGoal => ({
   due_date: dateToMs(goal.due_date),
   start_date: dateToMs(goal.start_date),
   gcal_last_sync: dateToMs(goal.gcal_last_sync),
+  updated_at: dateToMs(goal.updated_at),
+  resolved_at: dateToMs(goal.resolved_at),
 });
 
 /* ────────────────────────────────────────────────────────── *
