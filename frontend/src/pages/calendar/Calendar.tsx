@@ -98,18 +98,10 @@ const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
     return date ? date.toLocaleDateString() : 'Not set';
   };
 
-  const getExpandMessage = () => {
-    if (violation.violation_type === 'before_start') {
-      return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
-    } else {
-      return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
-    }
-  };
-
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ color: 'warning.main' }}>
-        ⚠️ Event Outside Task Date Range
+      <DialogTitle>
+        Expand Task Date Range
       </DialogTitle>
       <DialogContent>
         <Typography variant="body1" sx={{ mb: 2 }}>
@@ -118,41 +110,36 @@ const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
         </Typography>
 
         <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
-          <Typography variant="body2">
-            Start: {formatDate(taskStartDate)}
-            <br />
-            End: {formatDate(taskEndDate)}
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Proposed Change
+          </Typography>
+          <Typography variant="body1" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5 }}>
+            {violation.violation_type === 'before_start' ? (
+              <>
+                Start Date: {formatDate(taskStartDate)} 
+                <Box component="span" sx={{ color: 'text.secondary', mx: 1 }}>&gt;</Box>
+                <strong>{formatDate(suggestedStartDate)}</strong>
+              </>
+            ) : (
+              <>
+                End Date: {formatDate(taskEndDate)}
+                <Box component="span" sx={{ color: 'text.secondary', mx: 1 }}>&gt;</Box>
+                <strong>{formatDate(suggestedEndDate)}</strong>
+              </>
+            )}
           </Typography>
         </Box>
 
-        <Typography variant="body2" sx={{ mb: 2 }}>
-          What would you like to do?
+        <Typography variant="body2" color="text.secondary">
+          Expanding the range will allow this event to be created.
         </Typography>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          <Box>
-            <strong>Option 1: Cancel event creation</strong>
-            <br />
-            <Typography variant="body2" color="text.secondary">
-              Don't create this event and keep the task dates as they are.
-            </Typography>
-          </Box>
-          <Box>
-            <strong>Option 2: Expand task date range</strong>
-            <br />
-            <Typography variant="body2" color="text.secondary">
-              {getExpandMessage()}
-            </Typography>
-          </Box>
-        </Box>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onRevert} color="secondary">
+        <Button onClick={onRevert} color="inherit">
           Cancel Event
         </Button>
         <Button onClick={onExpand} color="primary" variant="contained">
-          Expand Task Dates
+          Expand Range
         </Button>
       </DialogActions>
     </Dialog>
@@ -967,6 +954,7 @@ const Calendar: React.FC = () => {
   };
 
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const overlapSuggestions = useMemo(() => {
     if (!showSuggestions) {
@@ -1484,18 +1472,20 @@ const Calendar: React.FC = () => {
   return (
     <div className="calendar-container">
       <div className="calendar-content">
-        <div className="calendar-sidebar">
-          <TaskList
-            ref={taskListRef}
-            tasks={state.tasks}
-            events={state.events}
-            onAddTask={handleAddTask}
-            onTaskUpdate={handleTaskUpdate}
-            overlapSuggestions={overlapSuggestions}
-            onNavigateDate={gotoDate}
-            onToggleSuggestions={setShowSuggestions}
-          />
-        </div>
+        {!isSidebarCollapsed && (
+          <div className="calendar-sidebar">
+            <TaskList
+              ref={taskListRef}
+              tasks={state.tasks}
+              events={state.events}
+              onAddTask={handleAddTask}
+              onTaskUpdate={handleTaskUpdate}
+              overlapSuggestions={overlapSuggestions}
+              onNavigateDate={gotoDate}
+              onToggleSuggestions={setShowSuggestions}
+            />
+          </div>
+        )}
         <div className="calendar-main" style={{ position: 'relative' }}>
           {state.isLoading && (
             <div className="calendar-loading-indicator page-loading-overlay">
@@ -1516,12 +1506,16 @@ const Calendar: React.FC = () => {
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',
-              right: 'gcalSync dayGridMonth,timeGridWeek,timeGridDay'
+              right: 'gcalSync toggleTasks dayGridMonth,timeGridWeek,timeGridDay'
             }}
             customButtons={{
               gcalSync: {
                 text: '📅 Sync',
                 click: handleGoogleCalendarSync
+              },
+              toggleTasks: {
+                text: isSidebarCollapsed ? 'Show Tasks' : 'Hide Tasks',
+                click: () => setIsSidebarCollapsed((prev) => !prev)
               }
             }}
             height="100%"

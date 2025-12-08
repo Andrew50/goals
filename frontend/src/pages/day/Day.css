@@ -133,6 +133,8 @@
 
 /* Task card styling */
 .task-card {
+    position: relative;
+    overflow: hidden;
     display: flex !important;
     align-items: center;
     justify-content: space-between;
@@ -143,6 +145,14 @@
     gap: 1rem;
     transition: all 0.2s;
     cursor: pointer;
+}
+
+.priority-strip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
 }
 
 .task-card:hover {

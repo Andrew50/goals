@@ -159,6 +159,7 @@ pub struct ChildEffortTimeSeries {
     pub completed_events: i32,
     pub total_duration_minutes: f64,
     pub weighted_completion_rate: f64,
+    pub children_count: i32,
     pub daily_stats: Vec<DailyEffortPoint>,
 }
 
@@ -168,6 +169,7 @@ pub struct DailyEffortPoint {
     pub duration_minutes: f64,
     pub completed_events: i32,
     pub weighted_completion: f64,
+    pub weighted_score: f64,
 }
 
 pub async fn get_year_stats(
@@ -519,6 +521,11 @@ pub async fn get_goal_children_effort(
         MATCH (parent:Goal)-[:CHILD]->(child:Goal)
         WHERE id(parent) = $goal_id AND parent.user_id = $user_id
         AND child.goal_type <> 'event'
+
+        // Calculate children count for the child
+        OPTIONAL MATCH (child)-[:CHILD]->(grandchild:Goal)
+        WHERE grandchild.goal_type <> 'event'
+        WITH child, count(grandchild) as children_count
         
         // Get all descendant events for each child (including child's own events)
         OPTIONAL MATCH (child)-[:CHILD*0..]->(desc:Goal)-[:HAS_EVENT]->(e:Goal)
@@ -527,12 +534,12 @@ pub async fn get_goal_children_effort(
           AND e.scheduled_timestamp < timestamp()
           AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
         
-        WITH child, e, desc,
+        WITH child, children_count, e, desc,
              COALESCE(e.priority, desc.priority, 'medium') AS priority
         
-        WITH child, collect({
+        WITH child, children_count, collect({
             date: e.scheduled_timestamp,
-            completed: COALESCE(e.completed, false),
+            completed: CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END,
             duration: CASE
                 WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
                   THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / (1000.0*60.0)
@@ -544,6 +551,7 @@ pub async fn get_goal_children_effort(
         RETURN id(child) AS goal_id,
                child.name AS goal_name,
                child.goal_type AS goal_type,
+               children_count,
                events
         ORDER BY child.name
     "#;
@@ -566,6 +574,7 @@ pub async fn get_goal_children_effort(
                 let child_goal_id = row.get::<i64>("goal_id").unwrap_or(0);
                 let goal_name = row.get::<String>("goal_name").unwrap_or_default();
                 let goal_type = row.get::<String>("goal_type").unwrap_or_default();
+                let children_count = row.get::<i64>("children_count").unwrap_or(0) as i32;
                 let events: Vec<serde_json::Value> = row.get("events").unwrap_or_default();
 
                 // Aggregate events by date
@@ -648,6 +657,7 @@ pub async fn get_goal_children_effort(
                         } else {
                             0.0
                         },
+                        weighted_score: w_completed,
                     })
                     .collect();
 
@@ -667,6 +677,7 @@ pub async fn get_goal_children_effort(
                     completed_events,
                     total_duration_minutes: total_duration,
                     weighted_completion_rate,
+                    children_count,
                     daily_stats,
                 });
             }

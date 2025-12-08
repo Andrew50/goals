@@ -977,7 +977,7 @@ const List: React.FC = () => {
                                                 )}
                                             </td>
                                             <td className="table-cell">
-                                                <span className={`status-badge ${goal.resolution_status === 'completed' ? 'completed' : goal.resolution_status || 'pending'}`}>
+                                                <span className={`status-badge ${goal.resolution_status === 'completed' ? 'completed' : goal.resolution_status === 'failed' ? 'failed' : goal.resolution_status === 'skipped' ? 'skipped' : 'in-progress'}`}>
                                                     {goal.resolution_status === 'completed' ? 'Completed' : 
                                                      goal.resolution_status === 'failed' ? 'Failed' : 
                                                      goal.resolution_status === 'skipped' ? 'Skipped' : 'In Progress'}

@@ -1,9 +1,9 @@
-import { privateRequest } from '../../shared/utils/api';
+import { privateRequest, updateEvent } from '../../shared/utils/api';
 import { timestampToDisplayString } from '../../shared/utils/time';
 import React, { useEffect, useState, useCallback } from 'react';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
-import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
+import { Box, Typography, Paper, Button, IconButton, Select, MenuItem, SelectChangeEvent } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
@@ -168,17 +168,18 @@ const Day: React.FC = () => {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [goToNextDay, goToPreviousDay]);
 
-    const handleEventComplete = (event: DayEvent) => {
-        privateRequest<void>(
-            `day/complete/${event.id}`,
-            'PUT'
-        ).then(() => {
+    const handleStatusChange = (event: DayEvent, newStatus: ResolutionStatus) => {
+        updateEvent(event.id, {
+            resolution_status: newStatus
+        }).then(() => {
             setEvents(prevEvents => prevEvents.map(e => {
                 if (e.id === event.id) {
-                    return { ...e, resolution_status: e.resolution_status === 'completed' ? 'pending' : 'completed' };
+                    return { ...e, resolution_status: newStatus };
                 }
                 return e;
             }));
+        }).catch(error => {
+            console.error('Error updating status:', error);
         });
     };
 
@@ -194,6 +195,7 @@ const Day: React.FC = () => {
             parent_id: event.parent_id,
             parent_type: event.parent_goal_type === 'routine' ? 'routine' : 'task',
             duration: event.duration,
+            resolution_status: event.resolution_status, // Ensure status is passed
         };
 
         openGoalMenu(eventGoal as any, 'view', (updatedGoal) => {
@@ -214,6 +216,7 @@ const Day: React.FC = () => {
             parent_id: event.parent_id,
             parent_type: event.parent_goal_type === 'routine' ? 'routine' : 'task',
             duration: event.duration,
+            resolution_status: event.resolution_status, // Ensure status is passed
         };
 
         openGoalMenu(eventGoal as any, 'edit', (updatedGoal) => {
@@ -222,8 +225,8 @@ const Day: React.FC = () => {
     };
 
     const organizedEvents = () => {
-        const todoItems = events.filter(item => item.resolution_status !== 'completed');
-        const completedItems = events.filter(item => item.resolution_status === 'completed');
+        const todoItems = events.filter(item => item.resolution_status === 'pending');
+        const completedItems = events.filter(item => item.resolution_status !== 'pending');
 
         const sortByScheduled = (a: DayEvent, b: DayEvent) => {
             // All-day events (duration = 1440 minutes) should be sorted to the bottom
@@ -417,11 +420,11 @@ const Day: React.FC = () => {
                                         <Paper
                                             key={event.id}
                                             className="task-card"
-                                            style={{
-                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`,
-                                                border: goalStyle.border,
-                                            }}
                                         >
+                                            <div 
+                                                className="priority-strip" 
+                                                style={{ backgroundColor: goalStyle.borderColor }}
+                                            />
                                             <div
                                                 className="task-content"
                                                 onClick={() => handleEventClick(event)}
@@ -434,9 +437,6 @@ const Day: React.FC = () => {
                                                     {timeString && (
                                                         <span className="task-time">{timeString}</span>
                                                     )}
-                                                    {priority && (
-                                                        <span className="task-priority-dot" data-priority={priority} title={`${priority} priority`} />
-                                                    )}
                                                 </div>
                                                 {event.description && (
                                                     <Typography variant="body2" className="task-description">
@@ -445,15 +445,26 @@ const Day: React.FC = () => {
                                                 )}
                                             </div>
 
-                                            <label className="checkbox-container">
-                                                <input
-                                                    type="checkbox"
-                                                    className="hidden-checkbox"
-                                                    checked={false}
-                                                    onChange={() => handleEventComplete(event)}
-                                                />
-                                                <div className="custom-checkbox" />
-                                            </label>
+                                            <Box onClick={(e) => e.stopPropagation()}>
+                                                <Select
+                                                    value={event.resolution_status}
+                                                    onChange={(e: SelectChangeEvent) => handleStatusChange(event, e.target.value as ResolutionStatus)}
+                                                    size="small"
+                                                    variant="standard"
+                                                    disableUnderline
+                                                    sx={{ 
+                                                        fontSize: '0.875rem',
+                                                        color: 'text.secondary',
+                                                        '& .MuiSelect-select': { paddingRight: '16px !important' },
+                                                        minWidth: 'auto'
+                                                    }}
+                                                >
+                                                    <MenuItem value="pending">Pending</MenuItem>
+                                                    <MenuItem value="completed">Completed</MenuItem>
+                                                    <MenuItem value="skipped">Skipped</MenuItem>
+                                                    <MenuItem value="failed">Failed</MenuItem>
+                                                </Select>
+                                            </Box>
                                         </Paper>
                                     );
                                 })
@@ -485,11 +496,11 @@ const Day: React.FC = () => {
                                         <Paper
                                             key={event.id}
                                             className="task-card completed"
-                                            style={{
-                                                borderLeft: `4px solid ${goalStyle.backgroundColor}`,
-                                                border: goalStyle.border,
-                                            }}
                                         >
+                                            <div 
+                                                className="priority-strip" 
+                                                style={{ backgroundColor: goalStyle.borderColor }}
+                                            />
                                             <div
                                                 className="task-content"
                                                 onClick={() => handleEventClick(event)}
@@ -502,21 +513,29 @@ const Day: React.FC = () => {
                                                     {isAllDay(event) && (
                                                         <span className="task-time">All day</span>
                                                     )}
-                                                    {priority && (
-                                                        <span className="task-priority-dot" data-priority={priority} title={`${priority} priority`} />
-                                                    )}
                                                 </div>
                                             </div>
 
-                                            <label className="checkbox-container">
-                                                <input
-                                                    type="checkbox"
-                                                    className="hidden-checkbox"
-                                                    checked={true}
-                                                    onChange={() => handleEventComplete(event)}
-                                                />
-                                                <div className="custom-checkbox checked" />
-                                            </label>
+                                            <Box onClick={(e) => e.stopPropagation()}>
+                                                <Select
+                                                    value={event.resolution_status}
+                                                    onChange={(e: SelectChangeEvent) => handleStatusChange(event, e.target.value as ResolutionStatus)}
+                                                    size="small"
+                                                    variant="standard"
+                                                    disableUnderline
+                                                    sx={{ 
+                                                        fontSize: '0.875rem',
+                                                        color: 'text.secondary',
+                                                        '& .MuiSelect-select': { paddingRight: '16px !important' },
+                                                        minWidth: 'auto'
+                                                    }}
+                                                >
+                                                    <MenuItem value="pending">Pending</MenuItem>
+                                                    <MenuItem value="completed">Completed</MenuItem>
+                                                    <MenuItem value="skipped">Skipped</MenuItem>
+                                                    <MenuItem value="failed">Failed</MenuItem>
+                                                </Select>
+                                            </Box>
                                         </Paper>
                                     );
                                 })

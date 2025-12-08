@@ -21,6 +21,7 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
       VAPID_SUBJECT: ${VAPID_SUBJECT}
+      NEO4J_MAX_CONNECTIONS: 10
     networks:
       - dev_network
       #    db:

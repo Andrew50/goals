@@ -30,7 +30,9 @@ const Projects: React.FC = () => {
     }, [refreshTrigger]);
 
     useEffect(() => {
-        // Fetch network once to build a mapping from achievement -> parent project
+        // Fetch network to build a mapping from achievement -> parent project.
+        // Re-run whenever refreshTrigger changes so newly created or updated goals
+        // are reflected in the projects view without a full page reload.
         (async () => {
             try {
                 const network = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
@@ -59,7 +61,7 @@ const Projects: React.FC = () => {
                 setProjects([]);
             }
         })();
-    }, []);
+    }, [refreshTrigger]);
 
     // Build combined search items (projects + achievements)
     const searchItems = useMemo(() => {
@@ -85,8 +87,9 @@ const Projects: React.FC = () => {
         });
 
         const list = achievements.filter(a => {
-            if (filterCompleted === 'completed') return a.resolution_status === 'completed';
-            if (filterCompleted === 'incomplete') return a.resolution_status !== 'completed';
+            const isCompleted = a.resolution_status && a.resolution_status !== 'pending';
+            if (filterCompleted === 'completed') return isCompleted;
+            if (filterCompleted === 'incomplete') return !isCompleted;
             return true;
         });
 
@@ -100,8 +103,8 @@ const Projects: React.FC = () => {
 
         groups.forEach(g => {
             g.items.sort((a, b) => {
-                const ca = a.resolution_status === 'completed' ? 1 : 0;
-                const cb = b.resolution_status === 'completed' ? 1 : 0;
+                const ca = (a.resolution_status && a.resolution_status !== 'pending') ? 1 : 0;
+                const cb = (b.resolution_status && b.resolution_status !== 'pending') ? 1 : 0;
                 if (ca !== cb) return ca - cb; // incomplete first
                 const ta = a.end_timestamp ? a.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
                 const tb = b.end_timestamp ? b.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
@@ -249,7 +252,8 @@ const Projects: React.FC = () => {
         });
         const res = (projects || []).filter(p => {
             if (!p || p.id == null) return false;
-            if (p.resolution_status === 'completed') return false;
+            const projectCompleted = p.resolution_status === 'completed';
+            if (projectCompleted) return false;
             const achs = byProjectId.get(p.id) || [];
             // keep if there are no achievements OR all achievements are completed
             return achs.every(a => a.resolution_status === 'completed');
@@ -391,7 +395,7 @@ const Projects: React.FC = () => {
                     ) : (
                         <div className="projects-list">
                             {projectGroups.map(({ project, items }) => {
-                                const completed = items.filter(i => i.resolution_status === 'completed').length;
+                                const completed = items.filter(i => i.resolution_status && i.resolution_status !== 'pending').length;
                                 const total = items.length;
                                 const value = completed / Math.max(total, 1);
                                 const projectBg = getGoalStyle(project).backgroundColor;
@@ -401,11 +405,13 @@ const Projects: React.FC = () => {
                                             <h2
                                                 className="project-title"
                                                 style={{
+                                                    cursor: 'pointer',
                                                     backgroundColor: projectBg,
                                                     color: '#ffffff',
                                                     borderRadius: '999px',
                                                     padding: '4px 10px'
                                                 }}
+                                                onClick={() => handleProjectClick(project)}
                                             >
                                                 {project.name}
                                             </h2>
@@ -422,10 +428,11 @@ const Projects: React.FC = () => {
                                             {items.map(achievement => {
                                                 const goalStyle = getGoalStyle(achievement);
                                                 const dueDateClass = getDueDateClass(achievement.end_timestamp);
+                                                const isDone = achievement.resolution_status && achievement.resolution_status !== 'pending';
                                                 return (
                                                     <div
                                                         key={achievement.id}
-                                                        className={`achievement-card ${achievement.resolution_status === 'completed' ? 'completed' : ''} ${dueDateClass}`}
+                                                        className={`achievement-card ${isDone ? 'completed' : ''} ${dueDateClass}`}
                                                         onClick={() => handleAchievementClick(achievement)}
                                                         onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
                                                         style={{

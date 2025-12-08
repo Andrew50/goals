@@ -1296,170 +1296,182 @@ pub async fn migrate_to_resolution_status(graph: &Graph) -> Result<serde_json::V
     let mut results = serde_json::Map::new();
 
     // Step 1: Check current state
-    let check_query = "
-        MATCH (g:Goal)
-        RETURN 
-            count(CASE WHEN g.completed IS NOT NULL THEN 1 END) as goals_with_completed,
-            count(CASE WHEN g.completion_date IS NOT NULL THEN 1 END) as goals_with_completion_date,
-            count(CASE WHEN g.resolution_status IS NOT NULL THEN 1 END) as goals_with_resolution_status,
-            count(CASE WHEN g.resolved_at IS NOT NULL THEN 1 END) as goals_with_resolved_at
-    ";
+    {
+        let check_query = "
+            MATCH (g:Goal)
+            RETURN 
+                count(CASE WHEN g.completed IS NOT NULL THEN 1 END) as goals_with_completed,
+                count(CASE WHEN g.completion_date IS NOT NULL THEN 1 END) as goals_with_completion_date,
+                count(CASE WHEN g.resolution_status IS NOT NULL THEN 1 END) as goals_with_resolution_status,
+                count(CASE WHEN g.resolved_at IS NOT NULL THEN 1 END) as goals_with_resolved_at
+        ";
 
-    let mut check_result = graph
-        .execute(query(check_query))
-        .await
-        .map_err(|e| format!("Failed to check migration state: {}", e))?;
+        let mut check_result = graph
+            .execute(query(check_query))
+            .await
+            .map_err(|e| format!("Failed to check migration state: {}", e))?;
 
-    if let Some(row) = check_result.next().await.map_err(|e| e.to_string())? {
-        let goals_with_completed: i64 = row.get("goals_with_completed").unwrap_or(0);
-        let goals_with_completion_date: i64 = row.get("goals_with_completion_date").unwrap_or(0);
-        let goals_with_resolution_status: i64 = row.get("goals_with_resolution_status").unwrap_or(0);
-        let goals_with_resolved_at: i64 = row.get("goals_with_resolved_at").unwrap_or(0);
+        if let Some(row) = check_result.next().await.map_err(|e| e.to_string())? {
+            let goals_with_completed: i64 = row.get("goals_with_completed").unwrap_or(0);
+            let goals_with_completion_date: i64 = row.get("goals_with_completion_date").unwrap_or(0);
+            let goals_with_resolution_status: i64 = row.get("goals_with_resolution_status").unwrap_or(0);
+            let goals_with_resolved_at: i64 = row.get("goals_with_resolved_at").unwrap_or(0);
 
-        results.insert("before_goals_with_completed".to_string(), goals_with_completed.into());
-        results.insert("before_goals_with_completion_date".to_string(), goals_with_completion_date.into());
-        results.insert("before_goals_with_resolution_status".to_string(), goals_with_resolution_status.into());
-        results.insert("before_goals_with_resolved_at".to_string(), goals_with_resolved_at.into());
+            results.insert("before_goals_with_completed".to_string(), goals_with_completed.into());
+            results.insert("before_goals_with_completion_date".to_string(), goals_with_completion_date.into());
+            results.insert("before_goals_with_resolution_status".to_string(), goals_with_resolution_status.into());
+            results.insert("before_goals_with_resolved_at".to_string(), goals_with_resolved_at.into());
 
-        println!("Before migration:");
-        println!("  - Goals with completed field: {}", goals_with_completed);
-        println!("  - Goals with completion_date field: {}", goals_with_completion_date);
-        println!("  - Goals with resolution_status field: {}", goals_with_resolution_status);
-        println!("  - Goals with resolved_at field: {}", goals_with_resolved_at);
+            println!("Before migration:");
+            println!("  - Goals with completed field: {}", goals_with_completed);
+            println!("  - Goals with completion_date field: {}", goals_with_completion_date);
+            println!("  - Goals with resolution_status field: {}", goals_with_resolution_status);
+            println!("  - Goals with resolved_at field: {}", goals_with_resolved_at);
+        }
     }
 
     // Step 2: Rename completion_date to resolved_at (for goals that have it)
     println!("Step 1: Renaming completion_date to resolved_at...");
-    let rename_query = "
-        MATCH (g:Goal)
-        WHERE g.completion_date IS NOT NULL AND g.resolved_at IS NULL
-        SET g.resolved_at = g.completion_date
-        REMOVE g.completion_date
-        RETURN count(g) as migrated
-    ";
+    {
+        let rename_query = "
+            MATCH (g:Goal)
+            WHERE g.completion_date IS NOT NULL AND g.resolved_at IS NULL
+            SET g.resolved_at = g.completion_date
+            REMOVE g.completion_date
+            RETURN count(g) as migrated
+        ";
 
-    let mut rename_result = graph
-        .execute(query(rename_query))
-        .await
-        .map_err(|e| format!("Failed to rename completion_date: {}", e))?;
+        let mut rename_result = graph
+            .execute(query(rename_query))
+            .await
+            .map_err(|e| format!("Failed to rename completion_date: {}", e))?;
 
-    let renamed_count: i64 = if let Some(row) = rename_result.next().await.map_err(|e| e.to_string())? {
-        row.get("migrated").unwrap_or(0)
-    } else {
-        0
-    };
-    println!("  - Renamed {} completion_date fields to resolved_at", renamed_count);
-    results.insert("renamed_completion_date".to_string(), renamed_count.into());
+        let renamed_count: i64 = if let Some(row) = rename_result.next().await.map_err(|e| e.to_string())? {
+            row.get("migrated").unwrap_or(0)
+        } else {
+            0
+        };
+        println!("  - Renamed {} completion_date fields to resolved_at", renamed_count);
+        results.insert("renamed_completion_date".to_string(), renamed_count.into());
+    }
 
     // Step 3: Migrate completed=true to resolution_status='completed'
     println!("Step 2: Migrating completed=true to resolution_status='completed'...");
-    let completed_true_query = "
-        MATCH (g:Goal)
-        WHERE g.completed = true AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
-        SET g.resolution_status = 'completed',
-            g.resolved_at = COALESCE(g.resolved_at, timestamp())
-        REMOVE g.completed
-        RETURN count(g) as migrated
-    ";
+    {
+        let completed_true_query = "
+            MATCH (g:Goal)
+            WHERE g.completed = true AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
+            SET g.resolution_status = 'completed',
+                g.resolved_at = COALESCE(g.resolved_at, timestamp())
+            REMOVE g.completed
+            RETURN count(g) as migrated
+        ";
 
-    let mut completed_true_result = graph
-        .execute(query(completed_true_query))
-        .await
-        .map_err(|e| format!("Failed to migrate completed=true: {}", e))?;
+        let mut completed_true_result = graph
+            .execute(query(completed_true_query))
+            .await
+            .map_err(|e| format!("Failed to migrate completed=true: {}", e))?;
 
-    let completed_true_count: i64 = if let Some(row) = completed_true_result.next().await.map_err(|e| e.to_string())? {
-        row.get("migrated").unwrap_or(0)
-    } else {
-        0
-    };
-    println!("  - Migrated {} goals from completed=true to resolution_status='completed'", completed_true_count);
-    results.insert("migrated_completed_true".to_string(), completed_true_count.into());
+        let completed_true_count: i64 = if let Some(row) = completed_true_result.next().await.map_err(|e| e.to_string())? {
+            row.get("migrated").unwrap_or(0)
+        } else {
+            0
+        };
+        println!("  - Migrated {} goals from completed=true to resolution_status='completed'", completed_true_count);
+        results.insert("migrated_completed_true".to_string(), completed_true_count.into());
+    }
 
     // Step 4: Migrate completed=false or completed IS NULL to resolution_status='pending'
     println!("Step 3: Migrating remaining goals to resolution_status='pending'...");
-    let pending_query = "
-        MATCH (g:Goal)
-        WHERE (g.completed = false OR g.completed IS NULL) AND g.resolution_status IS NULL
-        SET g.resolution_status = 'pending'
-        REMOVE g.completed
-        RETURN count(g) as migrated
-    ";
+    {
+        let pending_query = "
+            MATCH (g:Goal)
+            WHERE (g.completed = false OR g.completed IS NULL) AND g.resolution_status IS NULL
+            SET g.resolution_status = 'pending'
+            REMOVE g.completed
+            RETURN count(g) as migrated
+        ";
 
-    let mut pending_result = graph
-        .execute(query(pending_query))
-        .await
-        .map_err(|e| format!("Failed to migrate pending goals: {}", e))?;
+        let mut pending_result = graph
+            .execute(query(pending_query))
+            .await
+            .map_err(|e| format!("Failed to migrate pending goals: {}", e))?;
 
-    let pending_count: i64 = if let Some(row) = pending_result.next().await.map_err(|e| e.to_string())? {
-        row.get("migrated").unwrap_or(0)
-    } else {
-        0
-    };
-    println!("  - Set {} goals to resolution_status='pending'", pending_count);
-    results.insert("migrated_pending".to_string(), pending_count.into());
+        let pending_count: i64 = if let Some(row) = pending_result.next().await.map_err(|e| e.to_string())? {
+            row.get("migrated").unwrap_or(0)
+        } else {
+            0
+        };
+        println!("  - Set {} goals to resolution_status='pending'", pending_count);
+        results.insert("migrated_pending".to_string(), pending_count.into());
+    }
 
     // Step 5: Clean up any remaining completed fields
     println!("Step 4: Cleaning up remaining completed fields...");
-    let cleanup_query = "
-        MATCH (g:Goal)
-        WHERE g.completed IS NOT NULL
-        REMOVE g.completed
-        RETURN count(g) as cleaned
-    ";
+    {
+        let cleanup_query = "
+            MATCH (g:Goal)
+            WHERE g.completed IS NOT NULL
+            REMOVE g.completed
+            RETURN count(g) as cleaned
+        ";
 
-    let mut cleanup_result = graph
-        .execute(query(cleanup_query))
-        .await
-        .map_err(|e| format!("Failed to cleanup completed field: {}", e))?;
+        let mut cleanup_result = graph
+            .execute(query(cleanup_query))
+            .await
+            .map_err(|e| format!("Failed to cleanup completed field: {}", e))?;
 
-    let cleanup_count: i64 = if let Some(row) = cleanup_result.next().await.map_err(|e| e.to_string())? {
-        row.get("cleaned").unwrap_or(0)
-    } else {
-        0
-    };
-    println!("  - Cleaned up {} remaining completed fields", cleanup_count);
-    results.insert("cleanup_completed".to_string(), cleanup_count.into());
+        let cleanup_count: i64 = if let Some(row) = cleanup_result.next().await.map_err(|e| e.to_string())? {
+            row.get("cleaned").unwrap_or(0)
+        } else {
+            0
+        };
+        println!("  - Cleaned up {} remaining completed fields", cleanup_count);
+        results.insert("cleanup_completed".to_string(), cleanup_count.into());
+    }
 
     // Step 6: Verify final state
     println!("Step 5: Verifying migration...");
-    let verify_query = "
-        MATCH (g:Goal)
-        RETURN 
-            count(CASE WHEN g.completed IS NOT NULL THEN 1 END) as remaining_completed,
-            count(CASE WHEN g.completion_date IS NOT NULL THEN 1 END) as remaining_completion_date,
-            count(CASE WHEN g.resolution_status IS NOT NULL THEN 1 END) as with_resolution_status,
-            count(CASE WHEN g.resolved_at IS NOT NULL THEN 1 END) as with_resolved_at
-    ";
+    {
+        let verify_query = "
+            MATCH (g:Goal)
+            RETURN 
+                count(CASE WHEN g.completed IS NOT NULL THEN 1 END) as remaining_completed,
+                count(CASE WHEN g.completion_date IS NOT NULL THEN 1 END) as remaining_completion_date,
+                count(CASE WHEN g.resolution_status IS NOT NULL THEN 1 END) as with_resolution_status,
+                count(CASE WHEN g.resolved_at IS NOT NULL THEN 1 END) as with_resolved_at
+        ";
 
-    let mut verify_result = graph
-        .execute(query(verify_query))
-        .await
-        .map_err(|e| format!("Failed to verify migration: {}", e))?;
+        let mut verify_result = graph
+            .execute(query(verify_query))
+            .await
+            .map_err(|e| format!("Failed to verify migration: {}", e))?;
 
-    if let Some(row) = verify_result.next().await.map_err(|e| e.to_string())? {
-        let remaining_completed: i64 = row.get("remaining_completed").unwrap_or(0);
-        let remaining_completion_date: i64 = row.get("remaining_completion_date").unwrap_or(0);
-        let with_resolution_status: i64 = row.get("with_resolution_status").unwrap_or(0);
-        let with_resolved_at: i64 = row.get("with_resolved_at").unwrap_or(0);
+        if let Some(row) = verify_result.next().await.map_err(|e| e.to_string())? {
+            let remaining_completed: i64 = row.get("remaining_completed").unwrap_or(0);
+            let remaining_completion_date: i64 = row.get("remaining_completion_date").unwrap_or(0);
+            let with_resolution_status: i64 = row.get("with_resolution_status").unwrap_or(0);
+            let with_resolved_at: i64 = row.get("with_resolved_at").unwrap_or(0);
 
-        results.insert("after_remaining_completed".to_string(), remaining_completed.into());
-        results.insert("after_remaining_completion_date".to_string(), remaining_completion_date.into());
-        results.insert("after_with_resolution_status".to_string(), with_resolution_status.into());
-        results.insert("after_with_resolved_at".to_string(), with_resolved_at.into());
+            results.insert("after_remaining_completed".to_string(), remaining_completed.into());
+            results.insert("after_remaining_completion_date".to_string(), remaining_completion_date.into());
+            results.insert("after_with_resolution_status".to_string(), with_resolution_status.into());
+            results.insert("after_with_resolved_at".to_string(), with_resolved_at.into());
 
-        println!("After migration:");
-        println!("  - Remaining completed fields: {}", remaining_completed);
-        println!("  - Remaining completion_date fields: {}", remaining_completion_date);
-        println!("  - Goals with resolution_status: {}", with_resolution_status);
-        println!("  - Goals with resolved_at: {}", with_resolved_at);
+            println!("After migration:");
+            println!("  - Remaining completed fields: {}", remaining_completed);
+            println!("  - Remaining completion_date fields: {}", remaining_completion_date);
+            println!("  - Goals with resolution_status: {}", with_resolution_status);
+            println!("  - Goals with resolved_at: {}", with_resolved_at);
 
-        let migration_complete = remaining_completed == 0 && remaining_completion_date == 0;
-        results.insert("migration_complete".to_string(), migration_complete.into());
+            let migration_complete = remaining_completed == 0 && remaining_completion_date == 0;
+            results.insert("migration_complete".to_string(), migration_complete.into());
 
-        if migration_complete {
-            println!("Migration to resolution_status completed successfully!");
-        } else {
-            println!("Warning: Some old fields remain - check results for details");
+            if migration_complete {
+                println!("Migration to resolution_status completed successfully!");
+            } else {
+                println!("Warning: Some old fields remain - check results for details");
+            }
         }
     }
 
