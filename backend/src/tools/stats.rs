@@ -1,6 +1,6 @@
 use axum::{extract::Json, http::StatusCode};
 use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
-use neo4rs::{query, BoltType, Graph};
+use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
