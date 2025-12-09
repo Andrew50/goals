@@ -74,12 +74,16 @@ jobs:
           BACKUP_LOGS_PATH=${{ secrets.BACKUP_LOGS_PATH }}
           GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
           REACT_APP_API_URL=${{ secrets.REACT_APP_API_URL }}
+          REACT_APP_GOOGLE_CLIENT_ID=${{ secrets.REACT_APP_GOOGLE_CLIENT_ID }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           JWT_EXPIRATION=${{ secrets.JWT_EXPIRATION }}
           GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URL=${{ secrets.GOOGLE_REDIRECT_URL }}
           HOST_URL=${{ secrets.HOST_URL }}
+          VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT=${{ secrets.VAPID_SUBJECT }}
           NEO4J_URI=bolt://goals_db:7687
           NEO4J_USERNAME=neo4j
           NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}

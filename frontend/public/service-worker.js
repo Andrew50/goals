@@ -52,11 +52,25 @@ self.addEventListener('fetch', event => {
   // Only handle GET requests
   if (request.method !== 'GET') return;
 
+  // Helper to fix Safari issue with redirected responses in SW
+  const cleanRedirect = (response) => {
+    if (response.redirected) {
+      const clean = new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+      return clean;
+    }
+    return response;
+  };
+
   // Top-level navigations: try network, fallback to cached index
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        return await fetch(request);
+        const response = await fetch(request);
+        return cleanRedirect(response);
       } catch (_) {
         const fallback = await caches.match('/index.html');
         return fallback || new Response('', { status: 503, statusText: 'Offline' });
@@ -68,7 +82,8 @@ self.addEventListener('fetch', event => {
   // Non-navigation GETs: pass-through to network; if it fails, try cache or 503
   event.respondWith((async () => {
     try {
-      return await fetch(request);
+      const response = await fetch(request);
+      return cleanRedirect(response);
     } catch (_) {
       const cached = await caches.match(request);
       return cached || new Response('', { status: 503, statusText: 'Offline' });
