@@ -27,6 +27,7 @@ impl ResolutionStatus {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<ResolutionStatus> {
         match s.to_lowercase().as_str() {
             "pending" => Some(ResolutionStatus::Pending),
@@ -809,7 +810,7 @@ pub async fn resolve_goal_handler(
         };
 
         // Update the goal's resolution status
-        let update_query = if resolved_at.is_some() {
+        let update_query = if let Some(ts) = resolved_at {
             query(
                 "MATCH (g:Goal) 
                  WHERE id(g) = $id 
@@ -821,7 +822,7 @@ pub async fn resolve_goal_handler(
             )
             .param("id", goal_id)
             .param("resolution_status", status.as_str())
-            .param("resolved_at", resolved_at.unwrap())
+            .param("resolved_at", ts)
         } else {
             query(
                 "MATCH (g:Goal) 
@@ -1001,7 +1002,7 @@ pub async fn duplicate_goal_handler(
         .get("g")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let name_suffix = options.name_suffix.unwrap_or_else(|| "".to_string());
+    let name_suffix = options.name_suffix.unwrap_or_default();
     let keep_parent_links = options.keep_parent_links.unwrap_or(true);
     let include_children = options.include_children.unwrap_or(false);
     let clear_external_ids = options.clear_external_ids.unwrap_or(true);
