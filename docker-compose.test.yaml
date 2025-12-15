@@ -35,6 +35,10 @@ services:
       - /usr/src/app/target
     command: ["bash", "-lc", "export PATH=/usr/local/cargo/bin:$PATH; sleep infinity"]
     environment:
+      # Rust official images default CARGO_HOME/RUSTUP_HOME to /usr/local/* (root-owned).
+      # This service runs as a non-root UID, so point them at writable locations.
+      - CARGO_HOME=/tmp/cargo-home
+      - CARGO_TARGET_DIR=/tmp/cargo-target
       - RUST_BACKTRACE=1
       - RUST_LOG=info
     networks:
@@ -61,7 +65,7 @@ services:
     command:
       - "bash"
       - "-c"
-      - "export PATH=/var/lib/neo4j/bin:$PATH; /startup/docker-entrypoint.sh neo4j start && tail -F /logs/neo4j.log"
+      - "NEO4J_HOME=\"${NEO4J_HOME:-/var/lib/neo4j}\"; export PATH=\"$NEO4J_HOME/bin:$PATH\"; /startup/docker-entrypoint.sh neo4j start && tail -F /logs/neo4j.log"
     ports:
       - "7475:7474" # Web UI on a different port to avoid conflicts
       - "7688:7687" # Bolt protocol on a different port
@@ -70,6 +74,7 @@ services:
       - ./db/seed_test_db.sh:/data/seed_test_db.sh # Mount the seed script
     environment:
       - NEO4J_AUTH=neo4j/password123
+      - NEO4J_HOME=/var/lib/neo4j
     networks:
       - dev_network
 

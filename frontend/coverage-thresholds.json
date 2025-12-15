@@ -8,7 +8,7 @@
   "perFile": {
     "lines": 70
   },
-  "mode": "all",
+  "mode": "auto",
   "exclude": [
     "frontend/src/config/",
     "frontend/src/index.tsx",

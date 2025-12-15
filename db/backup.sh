@@ -2,13 +2,16 @@
 # db/backup.sh
 set -euo pipefail
 
+# Keep `NEO4J_HOME` explicit and consistent with other scripts/CI.
+NEO4J_HOME="${NEO4J_HOME:-/var/lib/neo4j}"
+
 BACKUP_DIR="/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINAL_DUMP="${BACKUP_DIR}/neo4j_dump_${TIMESTAMP}.dump"
 TMP_DIR="${BACKUP_DIR}/tmp_${TIMESTAMP}"
 
 # Detect neo4j CLI binary (used for Community Edition backups where DB admin commands are unsupported)
-NEO4J_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j"
+NEO4J_BIN="${NEO4J_HOME}/bin/neo4j"
 if [ ! -x "${NEO4J_BIN}" ] && command -v neo4j >/dev/null 2>&1; then
     NEO4J_BIN="$(command -v neo4j)"
 fi
@@ -63,9 +66,11 @@ start_best_effort() {
         database)
             if [ -n "${CYPHER_SHELL_BIN-}" ] && [ -x "${CYPHER_SHELL_BIN}" ]; then
                 echo "[$(date)] Starting database '${DB_NAME}'..."
-                # Neo4j 5.x supports "WAIT <n>" (no SECONDS keyword); suppress errors so we don't fail the backup on restart issues.
+                # Syntax differs slightly across versions; try explicit units first, then fall back. Suppress errors so we don't fail the backup on restart issues.
                 "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
-                    "START DATABASE \`${DB_NAME}\` WAIT 120;" >/dev/null 2>&1 || true
+                    "START DATABASE \`${DB_NAME}\` WAIT 120 SECONDS;" >/dev/null 2>&1 || \
+                    "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+                        "START DATABASE \`${DB_NAME}\` WAIT 120;" >/dev/null 2>&1 || true
             fi
             ;;
         *)
@@ -86,7 +91,15 @@ stop_for_offline_dump_or_fail() {
         echo "[$(date)] Attempting database stop via Cypher (system database)..."
         local out=""
         out="$("${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
-            "STOP DATABASE \`${DB_NAME}\` WAIT 120;" 2>&1)" || true
+            "STOP DATABASE \`${DB_NAME}\` WAIT 120 SECONDS;" 2>&1)" || true
+
+        # Some versions don't accept the "SECONDS" keyword. Retry without units if we got a parse/syntax style error.
+        if echo "${out}" | grep -qiE 'invalid input|syntax|parse|expected|seconds'; then
+            local out2=""
+            out2="$("${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+                "STOP DATABASE \`${DB_NAME}\` WAIT 120;" 2>&1)" || true
+            out="${out}"$'\n'"${out2}"
+        fi
 
         if echo "${out}" | grep -qi 'Unsupported administration command'; then
             echo "[$(date)] Database admin commands not supported (Neo4j Community). Will stop the server process instead."
@@ -135,12 +148,12 @@ stop_for_offline_dump_or_fail() {
 }
 
 # Determine path to neo4j-admin (works for Neo4j 4.x and 5.x official images)
-NEO4J_ADMIN_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
+NEO4J_ADMIN_BIN="${NEO4J_HOME}/bin/neo4j-admin"
 if [ ! -x "${NEO4J_ADMIN_BIN}" ]; then
     if command -v neo4j-admin >/dev/null 2>&1; then
         NEO4J_ADMIN_BIN="$(command -v neo4j-admin)"
     else
-        echo "[$(date)] neo4j-admin binary not found in PATH or at ${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
+        echo "[$(date)] neo4j-admin binary not found in PATH or at ${NEO4J_HOME}/bin/neo4j-admin"
         exit 1
     fi
 fi
@@ -156,7 +169,7 @@ else
 fi
 
 # Resolve cypher-shell + credentials early so we can wait for readiness and/or query SHOW DATABASES.
-CYPHER_SHELL_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/cypher-shell"
+CYPHER_SHELL_BIN="${NEO4J_HOME}/bin/cypher-shell"
 if [ ! -x "${CYPHER_SHELL_BIN}" ] && command -v cypher-shell >/dev/null 2>&1; then
     CYPHER_SHELL_BIN="$(command -v cypher-shell)"
 fi
@@ -194,7 +207,7 @@ if [ -z "${DB_NAME}" ]; then
             | tr -d '\r' | grep -o 'DB=[^[:space:]]\\+' | head -n 1 | cut -d= -f2 || true)"
     fi
 
-    DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME:-/var/lib/neo4j}/data}"
+    DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME}/data}"
     # Some versions can take a moment to create the databases/ directories. Wait briefly before giving up.
     if [ ! -d "${DATA_DIR}/databases" ] && [ -d "/data/databases" ]; then
         DATA_DIR="/data"
@@ -255,8 +268,8 @@ else
     echo "[$(date)] Debug: data directory candidates:"
     ls -la /data 2>/dev/null || true
     ls -la /data/databases 2>/dev/null || true
-    ls -la "${NEO4J_HOME:-/var/lib/neo4j}/data" 2>/dev/null || true
-    ls -la "${NEO4J_HOME:-/var/lib/neo4j}/data/databases" 2>/dev/null || true
+    ls -la "${NEO4J_HOME}/data" 2>/dev/null || true
+    ls -la "${NEO4J_HOME}/data/databases" 2>/dev/null || true
     rm -rf "${TMP_DIR}"
     exit 1
 fi

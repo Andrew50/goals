@@ -433,6 +433,15 @@ jobs:
           cov_code="${{ steps.frontend-coverage-gate.outputs.exit_code }}"
           echo "Frontend unit test exit_code: ${test_code:-unset}"
           echo "Frontend coverage gate exit_code: ${cov_code:-unset}"
+          
+          # If the job is going to fail due to the coverage gate, re-print a compact coverage summary
+          # here so it's visible at the very end of the job logs.
+          if [ "${cov_code:-1}" != "0" ]; then
+            echo "::group::Coverage gate (compact summary)"
+            COVERAGE_GATE_FORMAT=compact COVERAGE_GATE_VERBOSE=0 node frontend/scripts/check-coverage.js || true
+            echo "::endgroup::"
+          fi
+
           if [ "${test_code:-1}" != "0" ] || [ "${cov_code:-1}" != "0" ]; then
             echo "Failing job due to unit test or coverage gate failure."
             exit 1

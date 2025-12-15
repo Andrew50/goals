@@ -148,7 +148,7 @@ jobs:
           echo "Waiting for Neo4j (cypher-shell) to be ready inside goals_db_test..."
           for i in {1..60}; do
             if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test \
-              /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" >/dev/null 2>&1; then
+              bash -lc 'NEO4J_HOME="${NEO4J_HOME:-/var/lib/neo4j}"; "$NEO4J_HOME/bin/cypher-shell" -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;"' >/dev/null 2>&1; then
               echo "Neo4j cypher-shell is ready"
               break
             fi
