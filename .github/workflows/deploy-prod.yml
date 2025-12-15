@@ -59,6 +59,38 @@ jobs:
           # Fallback: force remove any containers with expected name prefixes
           docker ps --format '{{.Names}}' | awk '/^(goals_|p_)/{print $1}' | xargs -r docker rm -f || true
 
+      - name: Force-clean workspace (handles root-owned artifacts)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$GITHUB_WORKSPACE" ]; then
+            echo "GITHUB_WORKSPACE does not exist yet; skipping force-clean."
+            exit 0
+          fi
+
+          echo "Force-cleaning workspace to avoid checkout failures from root-owned files..."
+
+          # First try as the current user (best-effort; may fail on root-owned dirs).
+          rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+
+          # Prefer sudo if available (no password prompts in CI; fall back if not allowed).
+          if command -v sudo >/dev/null 2>&1; then
+            sudo -n env GITHUB_WORKSPACE="$GITHUB_WORKSPACE" bash -lc '
+              set -euo pipefail
+              find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+            ' || true
+          fi
+
+          # If anything is still left (e.g., sudo not permitted), try a Docker-based cleanup.
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null || true)" ]; then
+            echo "Workspace still not empty; attempting Docker-based cleanup..."
+            docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'set -eux; find /ws -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+          fi
+
+          echo "Workspace listing after force-clean:"
+          ls -la "$GITHUB_WORKSPACE" || true
+
       - name: Pre-fix workspace ownership
         shell: bash
         run: |
