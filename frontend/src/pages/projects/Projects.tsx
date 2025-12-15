@@ -133,6 +133,12 @@ const Projects: React.FC = () => {
 
             const fa = ga.items[0];
             const fb = gb.items[0];
+            // Respect resolution_status priority:
+            // pending (or unset) should sort above any resolved state (completed/failed/skipped).
+            const aPending = !!fa && (!fa.resolution_status || fa.resolution_status === 'pending');
+            const bPending = !!fb && (!fb.resolution_status || fb.resolution_status === 'pending');
+            if (aPending !== bPending) return aPending ? -1 : 1;
+
             const ta = fa && fa.end_timestamp ? fa.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
             const tb = fb && fb.end_timestamp ? fb.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
             if (ta !== tb) return ta - tb;
@@ -252,11 +258,11 @@ const Projects: React.FC = () => {
         });
         const res = (projects || []).filter(p => {
             if (!p || p.id == null) return false;
-            const projectCompleted = p.resolution_status === 'completed';
-            if (projectCompleted) return false;
+            const projectResolved = p.resolution_status && p.resolution_status !== 'pending';
+            if (projectResolved) return false;
             const achs = byProjectId.get(p.id) || [];
-            // keep if there are no achievements OR all achievements are completed
-            return achs.every(a => a.resolution_status === 'completed');
+            // keep if there are no achievements OR all achievements are resolved (completed/failed/skipped)
+            return achs.every(a => a.resolution_status && a.resolution_status !== 'pending');
         });
         return res.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }, [projects, achievements, parentByChild]);

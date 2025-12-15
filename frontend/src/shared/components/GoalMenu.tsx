@@ -46,6 +46,7 @@ import GoalRelations from "./GoalRelations";
 import SmartScheduleDialog from "./SmartScheduleDialog";
 import MiniNetworkGraph from './MiniNetworkGraph';
 import CompletionBar from './CompletionBar';
+import ResolutionStatusToggle from './ResolutionStatusToggle';
 import { getGoalStyle } from '../styles/colors';
 import { goalToLocal } from '../utils/time';
 import { privateRequest } from '../utils/api';
@@ -2465,26 +2466,27 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     );
 
     const completedField = (
-        <TextField
-            select
-            label="Status"
-            value={state.goal.resolution_status || 'pending'}
-            onChange={(e) => handleChange({
-                ...state.goal,
-                resolution_status: e.target.value as ResolutionStatus
-            })}
-            fullWidth
-            margin="dense"
-            // disabled={isViewOnly} // Allow status change in view mode
-            SelectProps={{
-                native: false
-            }}
-        >
-            <MenuItem value="pending">Pending</MenuItem>
-            <MenuItem value="completed">Completed</MenuItem>
-            <MenuItem value="skipped">Skipped</MenuItem>
-            <MenuItem value="failed">Failed</MenuItem>
-        </TextField>
+        <Box sx={{ mt: 1, mb: 2 }}>
+            <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: 'block', mb: 0.5 }}
+            >
+                Status
+            </Typography>
+            <ResolutionStatusToggle
+                value={state.goal.resolution_status || 'pending'}
+                onChange={(status) =>
+                    handleChange({
+                        ...state.goal,
+                        resolution_status: status
+                    })
+                }
+                disabled={isBusy}
+                ariaLabel="Set status"
+                dense
+            />
+        </Box>
     );
     const frequencyField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
