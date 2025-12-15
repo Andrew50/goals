@@ -7,8 +7,7 @@ import {
   AccordionDetails,
   Typography,
   List,
-  ListItem,
-  ListItemText
+  ListItem
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
@@ -34,16 +33,15 @@ import '../../shared/styles/badges.css';
 
 // Node formatting moved to shared util
 
-type DialogMode = 'create' | 'edit' | 'view' | 'relationship' | null;
-
 const NetworkView: React.FC = () => {
   const networkContainer = useRef<HTMLDivElement>(null);
   const networkRef = useRef<VisNetwork | null>(null);
   const nodesDataSetRef = useRef<DataSet<any> | null>(null);
   const edgesDataSetRef = useRef<DataSet<any> | null>(null);
+  const handleCreateRelationshipRef = useRef<(fromId: number, toId: number, relationshipType: RelationshipType) => Promise<void>>(
+    async () => { /* placeholder until initialized */ }
+  );
 
-  const [pendingRelationship, setPendingRelationship] = useState<{ from: number, to: number } | null>(null);
-  const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [addNodeMode, setAddNodeMode] = useState(false);
   const [addEdgeMode, setAddEdgeMode] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
@@ -62,7 +60,7 @@ const NetworkView: React.FC = () => {
   }, [searchItems]);
 
   // Debug logger for focused instrumentation
-  const debug = (...args: any[]) => console.log('[NetworkDebug]', ...args);
+  const debug = useCallback((...args: any[]) => console.log('[NetworkDebug]', ...args), []);
 
   // vis‑network configuration options
   const options = useMemo(() => ({
@@ -123,7 +121,7 @@ const NetworkView: React.FC = () => {
               return;
             }
           // Immediately create a child relationship and skip the menu
-          await handleCreateRelationship(data.from, data.to, 'child');
+          await handleCreateRelationshipRef.current(data.from, data.to, 'child');
           // Prevent vis from adding a temporary edge; we'll manage via dataset updates
           callback(null);
         } catch (err) {
@@ -137,7 +135,7 @@ const NetworkView: React.FC = () => {
       deleteNode: true,
       deleteEdge: true
     }
-  }), []);
+  }), [debug]);
 
   // Helper: Given a node ID, find connected elements split by direction (for hover highlighting)
   const findConnectedElements = (nodeId: number, edges: NetworkEdge[]): {
@@ -1037,7 +1035,7 @@ const NetworkView: React.FC = () => {
   };
 
   // Create a relationship edge between two nodes
-  async function handleCreateRelationship(fromId: number, toId: number, relationshipType: RelationshipType) {
+  const handleCreateRelationship = useCallback(async (fromId: number, toId: number, relationshipType: RelationshipType) => {
     try {
       debug('handleCreateRelationship called', { fromId, toId, relationshipType });
       // Disallow self-relationships
@@ -1046,8 +1044,6 @@ const NetworkView: React.FC = () => {
           alert('Cannot create a relationship from a node to itself.');
         } catch {}
         debug('Blocked self-relationship attempt', { fromId, toId, relationshipType });
-        setDialogMode(null);
-        setPendingRelationship(null);
         setTimeout(() => {
           try { networkRef.current?.addEdgeMode(); } catch {}
         }, 100);
@@ -1070,8 +1066,6 @@ const NetworkView: React.FC = () => {
       if (error) {
         alert(error);
         debug('Relationship validation error', { error, fromId, toId, relationshipType });
-        setDialogMode(null);
-        setPendingRelationship(null);
         setTimeout(() => {
           if (networkRef.current) {
             networkRef.current.addEdgeMode();
@@ -1109,16 +1103,19 @@ const NetworkView: React.FC = () => {
       // console.error('Error creating relationship:', err);
       debug('Error creating relationship', err);
     }
-    setDialogMode(null);
-    setPendingRelationship(null);
-    debug('Relationship dialog closed and state cleared');
+    debug('Relationship flow finished');
     setTimeout(() => {
       if (networkRef.current) {
         networkRef.current.addEdgeMode();
         debug('Re-enabled Vis addEdgeMode after relationship flow');
       }
     }, 100);
-  }
+  }, [debug]);
+
+  // Ensure vis-network callbacks always call the latest implementation
+  useEffect(() => {
+    handleCreateRelationshipRef.current = handleCreateRelationship;
+  }, [handleCreateRelationship]);
 
   // (moved refreshEdgesForNode earlier)
 

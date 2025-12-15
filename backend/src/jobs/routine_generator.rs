@@ -497,7 +497,11 @@ pub async fn recompute_future_for_routine(
             }
         }
 
-        // If an event exists at this timestamp (deleted or not), revive it and reset to routine defaults.
+        // If an event exists at this timestamp (deleted or not), revive it and reset it to routine defaults.
+        //
+        // Note: recompute intentionally resets `resolution_status` to 'pending' and clears `resolved_at`.
+        // This keeps regenerated schedules consistent after routine changes, but it also means prior
+        // completions/skips/failures for an existing event instance may be overwritten during recompute.
         // Otherwise, create a new one.
         let mut existing_result = graph
             .execute(

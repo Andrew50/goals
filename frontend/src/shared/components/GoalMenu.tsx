@@ -1180,7 +1180,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         // Ensure selected parents are always in the options to avoid Autocomplete warnings
         // This is critical because MUI Autocomplete complains if 'value' items are not in 'options'
-        const selectedIds = new Set(selectedParents.map(p => p.id));
         // Use a Set for O(1) lookup of existing option IDs
         const optionIds = new Set(options.map(o => o.id));
         const selectedButMissing = selectedParents.filter(p => !optionIds.has(p.id));
@@ -1418,7 +1417,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
             }
         }
-    }, [taskEvents, state.mode, state.goal.goal_type, state.goal.end_timestamp, handleChange]);
+    }, [taskEvents, state.mode, state.goal, handleChange]);
 
     const commitDuration = useCallback((): boolean => {
         const hoursStr = durationHoursInput;

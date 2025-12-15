@@ -1,8 +1,60 @@
 use axum::{extract::Json, http::StatusCode};
-use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, Duration, LocalResult, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+fn normalize_tz(tz: &str) -> Result<String, (StatusCode, String)> {
+    let tz = tz.trim();
+    let tz = if tz.is_empty() { "UTC" } else { tz };
+    let tz = if tz.eq_ignore_ascii_case("utc") {
+        "UTC"
+    } else {
+        tz
+    };
+
+    tz.parse::<Tz>()
+        .map(|tz| tz.to_string())
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid timezone '{}'. Expected an IANA timezone like 'America/New_York' or 'UTC'.",
+                    tz
+                ),
+            )
+        })
+}
+
+fn tz_local_datetime_to_utc_millis(tz: &Tz, naive: chrono::NaiveDateTime) -> i64 {
+    match tz.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => dt.with_timezone(&Utc).timestamp_millis(),
+        LocalResult::Ambiguous(dt1, _dt2) => dt1.with_timezone(&Utc).timestamp_millis(),
+        // Extremely rare for midnights in IANA zones, but handle DST gaps defensively:
+        LocalResult::None => {
+            let fallback = naive + Duration::hours(1);
+            match tz.from_local_datetime(&fallback) {
+                LocalResult::Single(dt) => dt.with_timezone(&Utc).timestamp_millis(),
+                LocalResult::Ambiguous(dt1, _dt2) => dt1.with_timezone(&Utc).timestamp_millis(),
+                LocalResult::None => tz.from_utc_datetime(&naive).timestamp_millis(),
+            }
+        }
+    }
+}
+
+fn tz_midnight_utc_millis(tz: &Tz, date: NaiveDate) -> i64 {
+    tz_local_datetime_to_utc_millis(tz, date.and_hms_opt(0, 0, 0).unwrap())
+}
+
+fn tz_year_range_utc_millis(year: i32, tz: &Tz) -> (i64, i64) {
+    let start_date = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
+    let end_date = NaiveDate::from_ymd_opt(year, 12, 31).unwrap();
+
+    let start = tz_local_datetime_to_utc_millis(tz, start_date.and_hms_opt(0, 0, 0).unwrap());
+    let end = tz_local_datetime_to_utc_millis(tz, end_date.and_hms_opt(23, 59, 59).unwrap());
+    (start, end)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DailyStats {
@@ -179,21 +231,17 @@ pub async fn get_year_stats(
     tz: String,
 ) -> Result<Json<YearStats>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let tz = normalize_tz(&tz)?;
+    let tz_parsed: Tz = tz
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
 
     // Get start and end timestamps for the year
     let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
     let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
 
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    // Use the user's timezone for year boundaries so "year" matches their local calendar.
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     // Query all events (Goal nodes with goal_type='event') linked to tasks, achievements, and routines for the year
     // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
@@ -310,16 +358,40 @@ pub async fn get_effort_stats(
     graph: Graph,
     user_id: i64,
     range: Option<String>,
-    _tz: String,
+    tz: String,
 ) -> Result<Json<Vec<EffortStat>>, (StatusCode, String)> {
-    // Determine lower bound start timestamp from range (approximate months/years using days)
+    // Determine lower bound start timestamp from range (approximate months/years using days),
+    // anchored to the user's local midnight to match their calendar expectations.
+    let tz_parsed: Tz = normalize_tz(&tz)?
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
+    let today_local = Utc::now().with_timezone(&tz_parsed).date_naive();
+
     let start_timestamp_opt: Option<i64> = match range.as_deref() {
-        Some("5y") => Some((Utc::now() - Duration::days(5 * 365)).timestamp_millis()),
-        Some("1y") => Some((Utc::now() - Duration::days(365)).timestamp_millis()),
-        Some("6m") => Some((Utc::now() - Duration::days(182)).timestamp_millis()),
-        Some("3m") => Some((Utc::now() - Duration::days(91)).timestamp_millis()),
-        Some("1m") => Some((Utc::now() - Duration::days(30)).timestamp_millis()),
-        Some("2w") => Some((Utc::now() - Duration::days(14)).timestamp_millis()),
+        Some("5y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(5 * 365),
+        )),
+        Some("1y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(365),
+        )),
+        Some("6m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(182),
+        )),
+        Some("3m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(91),
+        )),
+        Some("1m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(30),
+        )),
+        Some("2w") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(14),
+        )),
         Some("all") | None | Some("") => None,
         Some(_) => None,
     };
@@ -513,14 +585,37 @@ pub async fn get_goal_children_effort(
     range: Option<String>,
     tz: String,
 ) -> Result<Json<Vec<ChildEffortTimeSeries>>, (StatusCode, String)> {
+    let tz = normalize_tz(&tz)?;
+    let tz_parsed: Tz = tz
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
     // Determine lower bound start timestamp from range
+    let today_local = Utc::now().with_timezone(&tz_parsed).date_naive();
     let start_timestamp_opt: Option<i64> = match range.as_deref() {
-        Some("5y") => Some((Utc::now() - Duration::days(5 * 365)).timestamp_millis()),
-        Some("1y") => Some((Utc::now() - Duration::days(365)).timestamp_millis()),
-        Some("6m") => Some((Utc::now() - Duration::days(182)).timestamp_millis()),
-        Some("3m") => Some((Utc::now() - Duration::days(91)).timestamp_millis()),
-        Some("1m") => Some((Utc::now() - Duration::days(30)).timestamp_millis()),
-        Some("2w") => Some((Utc::now() - Duration::days(14)).timestamp_millis()),
+        Some("5y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(5 * 365),
+        )),
+        Some("1y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(365),
+        )),
+        Some("6m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(182),
+        )),
+        Some("3m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(91),
+        )),
+        Some("1m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(30),
+        )),
+        Some("2w") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(14),
+        )),
         Some("all") | None | Some("") => None,
         Some(_) => None,
     };
@@ -791,19 +886,14 @@ pub async fn get_routine_stats(
     tz: String,
 ) -> Result<Json<Vec<RoutineStats>>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let tz = normalize_tz(&tz)?;
+    let tz_parsed: Tz = tz
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
     let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
     let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
 
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     eprintln!(
         "🔍 [ROUTINE_STATS] Getting stats for routine_ids: {:?}, year: {}",
@@ -1029,22 +1119,13 @@ pub async fn get_rescheduling_stats(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
-    _tz: String,
+    tz: String,
 ) -> Result<Json<EventReschedulingStats>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
-    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
-    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
-
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    let tz_parsed: Tz = normalize_tz(&tz)?
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     // Query event moves - for events that belong to tasks, achievements, or routines
     // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
@@ -1098,7 +1179,7 @@ pub async fn get_rescheduling_stats(
                 total_distance_hours += distance_hours;
 
                 // Group by month
-                let month = Utc
+                let month = tz_parsed
                     .timestamp_millis_opt(move_timestamp)
                     .single()
                     .map(|dt| dt.format("%Y-%m").to_string())
@@ -1384,24 +1465,15 @@ pub async fn get_event_analytics(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
-    _tz: String,
+    tz: String,
 ) -> Result<Json<EventAnalytics>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let tz_parsed: Tz = normalize_tz(&tz)?
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
 
     // Get start and end timestamps for the year
-    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
-    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
-
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     // Query all events with their parent information and duration
     // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)

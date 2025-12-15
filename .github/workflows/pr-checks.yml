@@ -153,26 +153,81 @@ jobs:
           fi
       - name: Check for previous failures
         id: check-failures
-        run: |
-          # Initialize all outputs to false by default
-          echo "backend_failed=false" >> $GITHUB_OUTPUT
-          echo "frontend_failed=false" >> $GITHUB_OUTPUT
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const workflow_id = "pr-checks.yml";
+            const currentRunId = context.runId;
+            const prHeadSha = context.payload.pull_request?.head?.sha;
 
-          # Get repository in owner/repo format
-          REPO="${GITHUB_REPOSITORY}"
+            core.info(`Checking previous runs for ${owner}/${repo}`);
+            core.info(`Workflow: ${workflow_id}`);
+            core.info(`Current run id: ${currentRunId}`);
+            core.info(`PR head sha: ${prHeadSha || "unknown"}`);
 
-          # Try to get workflow runs with error handling
-          echo "Checking previous runs for $REPO"
+            // Default: do NOT force checks to run (changed-files decides); only flip to true if we detect a prior failure
+            // (or if we truly cannot query the API, in which case we fail-open to avoid incorrect skipping).
+            let backendFailed = false;
+            let frontendFailed = false;
 
-          # Check workflow conclusion (best-effort signal)
-          workflow_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous workflow status: $workflow_status"
-          if [ "$workflow_status" == "failure" ]; then
-            echo "backend_failed=true" >> $GITHUB_OUTPUT
-            echo "frontend_failed=true" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            try {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id,
+                per_page: 50,
+              });
+
+              // Prefer a previous run for the same PR head SHA (exclude this run).
+              let prev = null;
+              if (prHeadSha) {
+                prev = runs.find((r) => r.id !== currentRunId && r.head_sha === prHeadSha);
+              }
+              // Fallback: any previous run (exclude this run).
+              if (!prev) {
+                prev = runs.find((r) => r.id !== currentRunId);
+              }
+
+              if (!prev) {
+                core.info("No previous workflow run found.");
+              } else {
+                const prevConclusion = prev.conclusion ?? "unknown";
+                core.info(`Previous workflow status: ${prevConclusion}`);
+
+                // Treat any non-success terminal conclusion as "previously failed" so we rerun checks.
+                // If conclusion is missing/unknown (API oddities), fail-open so we don't incorrectly skip.
+                const terminalNonSuccess = new Set([
+                  "failure",
+                  "cancelled",
+                  "timed_out",
+                  "action_required",
+                  "stale",
+                  "startup_failure",
+                ]);
+
+                if (terminalNonSuccess.has(prevConclusion)) {
+                  backendFailed = true;
+                  frontendFailed = true;
+                } else if (prevConclusion === "unknown" || prev.conclusion === null) {
+                  backendFailed = true;
+                  frontendFailed = true;
+                  core.warning(
+                    "Unable to determine previous run conclusion; forcing checks to run (fail-open)."
+                  );
+                }
+              }
+            } catch (err) {
+              backendFailed = true;
+              frontendFailed = true;
+              core.warning(
+                `Failed to query previous workflow runs; forcing checks to run (fail-open). Error: ${err?.message || err}`
+              );
+            }
+
+            core.setOutput("backend_failed", String(backendFailed));
+            core.setOutput("frontend_failed", String(frontendFailed));
 
   # BACKEND PIPELINE (lint, build, unit tests)
   backend-verify:

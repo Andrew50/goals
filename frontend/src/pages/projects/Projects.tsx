@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import { Goal, ApiGoal, NetworkEdge } from '../../types/goals';
@@ -19,7 +19,6 @@ const Projects: React.FC = () => {
     const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
     const [parentByChild, setParentByChild] = useState<Map<number, Goal>>(new Map());
     const [projects, setProjects] = useState<Goal[]>([]);
-    const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         // Fetch achievements from the API

@@ -304,7 +304,14 @@ async fn create_performance_indexes(
 ) -> Result<(), String> {
     println!("Creating performance indexes...");
 
-    let indexes = vec![
+    // NOTE: This list is ordered. We drop obsolete/renamed indexes first, then create the expected ones.
+    let index_ops = vec![
+        // Older databases may still have `event_completion_idx` (based on legacy `completed`).
+        // We migrated to `resolution_status`, so we explicitly drop it to avoid stale/duplicate indexes.
+        (
+            "drop_event_completion_idx",
+            "DROP INDEX event_completion_idx IF EXISTS",
+        ),
         // Primary event query indexes
         ("goal_type_scheduled_idx", "CREATE INDEX goal_type_scheduled_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.scheduled_timestamp)"),
         ("parent_relationship_idx", "CREATE INDEX parent_relationship_idx IF NOT EXISTS FOR (g:Goal) ON (g.parent_id, g.parent_type)"),
@@ -317,14 +324,14 @@ async fn create_performance_indexes(
         ("event_move_user_time", "CREATE INDEX event_move_user_time IF NOT EXISTS FOR (em:EventMove) ON (em.user_id, em.move_timestamp)"),
     ];
 
-    for (name, index_query) in indexes {
+    for (name, index_query) in index_ops {
         graph
             .run(neo4rs::query(index_query))
             .await
-            .map_err(|e| format!("Failed to create index {}: {}", name, e))?;
+            .map_err(|e| format!("Failed to apply index operation {}: {}", name, e))?;
 
         state.created_indexes.push(name.to_string());
-        println!("  ✓ Created index: {}", name);
+        println!("  ✓ Applied index operation: {}", name);
     }
 
     println!("Performance indexes created successfully");

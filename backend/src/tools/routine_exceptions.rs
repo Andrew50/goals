@@ -135,5 +135,3 @@ pub async fn clear_all_exceptions(graph: &Graph, routine_id: i64) -> Result<i64,
         Ok(0)
     }
 }
-
-

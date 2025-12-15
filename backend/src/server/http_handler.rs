@@ -6,9 +6,11 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use chrono_tz::Tz;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use neo4rs::Graph;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -24,6 +26,32 @@ use crate::tools::{
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
+
+fn validated_tz(params: &HashMap<String, String>) -> Result<String, (StatusCode, String)> {
+    let tz_raw = params
+        .get("tz")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("UTC");
+
+    let tz_raw = if tz_raw.eq_ignore_ascii_case("utc") {
+        "UTC"
+    } else {
+        tz_raw
+    };
+
+    Tz::from_str(tz_raw)
+        .map(|tz| tz.to_string())
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid timezone '{}'. Expected an IANA timezone like 'America/New_York' or 'UTC'.",
+                    tz_raw
+                ),
+            )
+        })
+}
 
 pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let auth_routes = Router::new()
@@ -625,7 +653,7 @@ async fn handle_get_stats_data(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     stats::get_year_stats(graph, user_id, year, tz).await
 }
 
@@ -635,7 +663,7 @@ async fn handle_get_extended_stats(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     stats::get_extended_stats(graph, user_id, year, tz).await
 }
 
@@ -645,7 +673,7 @@ async fn handle_get_event_analytics(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     stats::get_event_analytics(graph, user_id, year, tz).await
 }
 
@@ -655,7 +683,7 @@ async fn handle_get_effort_stats(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let range = params.get("range").cloned();
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     stats::get_effort_stats(graph, user_id, range, tz).await
 }
 
@@ -666,7 +694,7 @@ async fn handle_get_goal_children_effort(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let range = params.get("range").cloned();
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     stats::get_goal_children_effort(graph, user_id, id, range, tz).await
 }
 
@@ -686,7 +714,7 @@ async fn handle_get_routine_stats(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     let routine_ids: Vec<i64> = payload
         .get("routine_ids")
         .and_then(|v| v.as_array())
@@ -702,7 +730,7 @@ async fn handle_get_rescheduling_stats(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
-    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    let tz = validated_tz(&params)?;
     stats::get_rescheduling_stats(graph, user_id, year, tz).await
 }
 

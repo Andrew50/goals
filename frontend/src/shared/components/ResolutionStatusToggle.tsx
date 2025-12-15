@@ -16,6 +16,9 @@ export interface ResolutionStatusToggleProps {
   dense?: boolean;
 }
 
+const isResolutionStatus = (value: unknown): value is ResolutionStatus =>
+  value === 'pending' || value === 'completed' || value === 'failed' || value === 'skipped';
+
 const ResolutionStatusToggle: React.FC<ResolutionStatusToggleProps> = ({
   value,
   onChange,
@@ -65,8 +68,8 @@ const ResolutionStatusToggle: React.FC<ResolutionStatusToggleProps> = ({
       size={size}
       value={value}
       onChange={(_, next) => {
-        if (!next) return;
-        onChange(next as ResolutionStatus);
+        if (!isResolutionStatus(next)) return;
+        onChange(next);
       }}
       aria-label={ariaLabel}
       disabled={disabled}
@@ -108,5 +111,3 @@ const ResolutionStatusToggle: React.FC<ResolutionStatusToggleProps> = ({
 };
 
 export default ResolutionStatusToggle;
-
-
