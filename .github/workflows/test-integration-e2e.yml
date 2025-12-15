@@ -130,7 +130,14 @@ jobs:
         shell: bash
         run: |
           echo "Waiting for services to be ready..."
-          for port in 5057 3031 7688; do
+          # Only check the host-published ports the test suite actually needs:
+          # - 5057: backend
+          # - 3031: frontend
+          #
+          # We intentionally do NOT check the host-published Neo4j Bolt port (7688) here because:
+          # - Tests connect to Neo4j over the docker network (bolt://goals_db_test:7687), not via host port
+          # - We already have a stronger readiness check below using cypher-shell inside the container
+          for port in 5057 3031; do
             echo "Checking port $port..."
             for i in {1..60}; do
               if nc -z localhost $port 2>/dev/null; then
