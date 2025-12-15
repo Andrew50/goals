@@ -9,7 +9,9 @@ jest.mock('./testUtils', () => ({
     mockTimezone: jest.fn(() => jest.fn())
 }));
 
-import { mockTimezone } from './testUtils';
+function getMockTimezone(): jest.Mock {
+    return (jest.requireMock('./testUtils') as { mockTimezone: jest.Mock }).mockTimezone;
+}
 
 function AuthProbe() {
     const { isAuthenticated, username } = useAuth();
@@ -62,7 +64,7 @@ describe('renderWithProviders', () => {
 describe('withMockTimezone', () => {
     test('restores timezone after a sync function', () => {
         const restore = jest.fn();
-        (mockTimezone as unknown as jest.Mock).mockReturnValueOnce(restore);
+        getMockTimezone().mockReturnValueOnce(restore);
 
         withMockTimezone(300, () => {
             // no-op
@@ -72,7 +74,7 @@ describe('withMockTimezone', () => {
 
     test('restores timezone after an async function', async () => {
         const restore = jest.fn();
-        (mockTimezone as unknown as jest.Mock).mockReturnValueOnce(restore);
+        getMockTimezone().mockReturnValueOnce(restore);
 
         withMockTimezone(300, async () => {
             await Promise.resolve();
@@ -86,7 +88,7 @@ describe('withMockTimezone', () => {
 
     test('restores timezone even if the function throws', () => {
         const restore = jest.fn();
-        (mockTimezone as unknown as jest.Mock).mockReturnValueOnce(restore);
+        getMockTimezone().mockReturnValueOnce(restore);
 
         expect(() =>
             withMockTimezone(300, () => {
