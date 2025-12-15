@@ -62,7 +62,7 @@ jobs:
             fi
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           clean: true
 

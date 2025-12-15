@@ -61,7 +61,7 @@ jobs:
               fi
             fi
           fi
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           clean: false
@@ -213,7 +213,7 @@ jobs:
           set -euo pipefail
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cargo-target" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           clean: false
 
@@ -270,7 +270,7 @@ jobs:
       contents: read
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           clean: false
 
