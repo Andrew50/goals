@@ -398,11 +398,24 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const contentRef = useRef<HTMLDivElement | null>(null);
     const scrollDialogToTop = useCallback(() => {
         if (contentRef.current) {
-            contentRef.current.scrollTo({ top: 0, behavior: 'auto' });
+            // JSDOM doesn't implement HTMLElement.scrollTo; gracefully fall back to scrollTop
+            const el: any = contentRef.current;
+            if (typeof el.scrollTo === 'function') {
+                el.scrollTo({ top: 0, behavior: 'auto' });
+            } else {
+                contentRef.current.scrollTop = 0;
+            }
             return;
         }
         const fallback = document.querySelector('.MuiDialogContent-root') as HTMLDivElement | null;
-        if (fallback) fallback.scrollTop = 0;
+        if (fallback) {
+            const el: any = fallback;
+            if (typeof el.scrollTo === 'function') {
+                el.scrollTo({ top: 0, behavior: 'auto' });
+            } else {
+                fallback.scrollTop = 0;
+            }
+        }
     }, []);
     useEffect(() => {
         if (isOpen && state.error) {

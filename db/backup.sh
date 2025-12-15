@@ -30,14 +30,39 @@ fi
 
 # Resolve database name:
 # - Respect NEO4J_DATABASE if explicitly set
-# - Otherwise auto-detect by looking under the configured data directory's "databases" folder
+# - Otherwise prefer asking the running server (SHOW DATABASES) for the default/non-system database
+# - Fallback: auto-detect by looking under the configured data directory's "databases" folder
 DB_NAME="${NEO4J_DATABASE-}"
 if [ -z "${DB_NAME}" ]; then
+    CYPHER_SHELL_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/cypher-shell"
+    if [ ! -x "${CYPHER_SHELL_BIN}" ] && command -v cypher-shell >/dev/null 2>&1; then
+        CYPHER_SHELL_BIN="$(command -v cypher-shell)"
+    fi
+
+    # Try to query the running server for the default database
+    if [ -x "${CYPHER_SHELL_BIN}" ]; then
+        # Parse credentials from NEO4J_AUTH=user/password if present
+        NEO4J_USER="${NEO4J_USER-}"
+        NEO4J_PASSWORD="${NEO4J_PASSWORD-}"
+        if [ -z "${NEO4J_USER}" ] || [ -z "${NEO4J_PASSWORD}" ]; then
+            if [ -n "${NEO4J_AUTH-}" ] && echo "${NEO4J_AUTH}" | grep -q '/'; then
+                NEO4J_USER="${NEO4J_AUTH%%/*}"
+                NEO4J_PASSWORD="${NEO4J_AUTH#*/}"
+            fi
+        fi
+        NEO4J_USER="${NEO4J_USER:-neo4j}"
+        NEO4J_PASSWORD="${NEO4J_PASSWORD:-password123}"
+        NEO4J_BOLT_URI="${NEO4J_BOLT_URI:-bolt://localhost:7687}"
+
+        # Prefer the default database; otherwise pick the first online non-system database.
+        DB_NAME="$("${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" \
+            "SHOW DATABASES YIELD name, default, currentStatus WHERE name <> 'system' AND currentStatus = 'online' RETURN 'DB=' + name AS out ORDER BY default DESC, name ASC LIMIT 1;" 2>/dev/null \
+            | tr -d '\r' | grep -o 'DB=[^[:space:]]\\+' | head -n 1 | cut -d= -f2 || true)"
+    fi
+
     DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME:-/var/lib/neo4j}/data}"
     if [ -d "${DATA_DIR}/databases" ]; then
-        if [ -d "${DATA_DIR}/databases/neo4j" ]; then
-            DB_NAME="neo4j"
-        else
+        if [ -z "${DB_NAME}" ]; then
             # Pick the first non-system database directory
             DB_NAME="$(find "${DATA_DIR}/databases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -v '^system$' | head -n 1 || true)"
         fi
@@ -68,6 +93,18 @@ if "${NEO4J_ADMIN_BIN}" database dump "${DB_NAME}" --to-path="${TMP_DIR}" --over
     echo "[$(date)] Database dump completed successfully"
 else
     echo "[$(date)] Database dump failed"
+    echo "[$(date)] Debug: databases as seen by the running server (if available):"
+    if [ -n "${CYPHER_SHELL_BIN-}" ] && [ -x "${CYPHER_SHELL_BIN}" ]; then
+        "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI:-bolt://localhost:7687}" -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD:-password123}" \
+            "SHOW DATABASES;" 2>&1 || true
+    else
+        echo "[$(date)] cypher-shell not found; skipping SHOW DATABASES"
+    fi
+    echo "[$(date)] Debug: data directory candidates:"
+    ls -la /data 2>/dev/null || true
+    ls -la /data/databases 2>/dev/null || true
+    ls -la "${NEO4J_HOME:-/var/lib/neo4j}/data" 2>/dev/null || true
+    ls -la "${NEO4J_HOME:-/var/lib/neo4j}/data/databases" 2>/dev/null || true
     rm -rf "${TMP_DIR}"
     exit 1
 fi
