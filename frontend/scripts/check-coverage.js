@@ -19,6 +19,23 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FRONTEND_ROOT = path.resolve(REPO_ROOT, 'frontend');
 const COVERAGE_DIR = path.resolve(FRONTEND_ROOT, 'coverage');
 
+const VERBOSE =
+  process.env.COVERAGE_GATE_VERBOSE === '1' ||
+  process.env.COVERAGE_GATE_VERBOSE === 'true' ||
+  process.env.COVERAGE_GATE_VERBOSE === 'yes';
+
+const OUTPUT_FORMAT = (process.env.COVERAGE_GATE_FORMAT || '').toLowerCase(); // "compact" | (default verbose)
+
+function toIntEnv(name, def) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return def;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : def;
+}
+
+const MAX_FAILURES_TO_PRINT = toIntEnv('COVERAGE_GATE_MAX_FAILURES', 500);
+const TOP_LOWEST_FILES_TO_PRINT = toIntEnv('COVERAGE_GATE_TOP_LOWEST_FILES', 30);
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
@@ -35,6 +52,26 @@ function exists(p) {
 function pct(covered, total) {
   if (!total) return 100;
   return (covered / total) * 100;
+}
+
+function fmtPct(n) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return 'n/a';
+  return `${n.toFixed(2)}%`;
+}
+
+function metricLabel(metric) {
+  switch (metric) {
+    case 'statements':
+      return 'statements';
+    case 'branches':
+      return 'branches';
+    case 'functions':
+      return 'functions';
+    case 'lines':
+      return 'lines';
+    default:
+      return String(metric);
+  }
 }
 
 function normalizeToRepoRelative(fileKey) {
@@ -111,29 +148,111 @@ function isExcluded(repoRelPath, excludeList) {
   });
 }
 
-function getChangedFrontendSourceFiles() {
-  const baseRef = process.env.GITHUB_BASE_REF || '';
-  const headSha = process.env.GITHUB_SHA || 'HEAD';
-
-  if (!baseRef) {
-    console.warn('[coverage-gate] GITHUB_BASE_REF not set; cannot compute changed files. Falling back to all files.');
+function tryReadGithubEventPayload() {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !exists(eventPath)) return null;
+  try {
+    return readJson(eventPath);
+  } catch (e) {
+    console.warn('[coverage-gate] Failed to parse GITHUB_EVENT_PATH payload; ignoring.');
     return null;
   }
+}
 
-  // Ensure base ref exists locally. (best effort)
-  const baseRefFull = `origin/${baseRef}`;
-  const hasBase = spawnSync('git', ['rev-parse', '--verify', baseRefFull], {
+function isPullRequestContext() {
+  if (process.env.GITHUB_BASE_REF) return true;
+  const eventName = process.env.GITHUB_EVENT_NAME || '';
+  if (eventName.includes('pull_request')) return true;
+  const payload = tryReadGithubEventPayload();
+  return Boolean(payload && payload.pull_request);
+}
+
+function ensureGitRefAvailable(ref, fetchSpec) {
+  const has = spawnSync('git', ['rev-parse', '--verify', ref], {
     cwd: REPO_ROOT,
     encoding: 'utf8'
   });
-  if (hasBase.status !== 0) {
-    spawnSync('git', ['fetch', '--no-tags', 'origin', `${baseRef}:${baseRef}`], {
-      cwd: REPO_ROOT,
-      stdio: 'inherit'
-    });
+  if (has.status === 0) return true;
+  if (!fetchSpec) return false;
+
+  const fetched = spawnSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', fetchSpec], {
+    cwd: REPO_ROOT,
+    stdio: 'inherit'
+  });
+  return fetched.status === 0;
+}
+
+function ensureShaAvailable(sha, targetRef, fetchSpec) {
+  // Prefer using the SHA directly if it's already present locally. Only fall back to fetching into targetRef.
+  const hasLocal = ensureGitRefAvailable(sha, null);
+  if (hasLocal) return sha;
+  if (!fetchSpec) return null;
+  const ok = ensureGitRefAvailable(targetRef, fetchSpec);
+  return ok ? targetRef : null;
+}
+
+function resolveDiffBaseAndHead() {
+  const payload = tryReadGithubEventPayload();
+  const pr = payload?.pull_request;
+  if (pr?.base?.sha && pr?.head?.sha) {
+    // Prefer explicit SHAs from the PR payload when available.
+    const baseSha = pr.base.sha;
+    const headSha = pr.head.sha;
+    return { base: baseSha, head: headSha, baseFetchSpec: `${baseSha}:refs/coverage-gate/base`, headFetchSpec: `${headSha}:refs/coverage-gate/head` };
   }
 
-  const diff = spawnSync('git', ['diff', '--name-only', `${baseRefFull}...${headSha}`], {
+  const baseRef = process.env.GITHUB_BASE_REF || process.env.COVERAGE_GATE_BASE_REF || '';
+  const head = process.env.GITHUB_SHA || process.env.COVERAGE_GATE_HEAD_REF || 'HEAD';
+  if (!baseRef) return null;
+
+  // If baseRef is already a full ref like "origin/main", use it as-is; otherwise treat it as a branch name.
+  const base = baseRef.includes('/') ? baseRef : `origin/${baseRef}`;
+  // For branch bases, fetching "branch" updates refs/remotes/origin/branch in a typical clone.
+  const baseFetchSpec = baseRef.includes('/') ? null : baseRef;
+  return { base, head, baseFetchSpec, headFetchSpec: null };
+}
+
+function getChangedFrontendSourceFiles({ allowSkip = false } = {}) {
+  const resolved = resolveDiffBaseAndHead();
+  if (!resolved) {
+    const msg = '[coverage-gate] Unable to determine diff base; cannot compute changed files.';
+    if (allowSkip) {
+      console.warn(`${msg} Skipping changed-files gating.`);
+      return null;
+    }
+    console.warn(`${msg} Falling back to all files.`);
+    return null;
+  }
+
+  let baseRefForDiff = resolved.base;
+  let headRefForDiff = resolved.head;
+
+  // Ensure base/head are present locally. If they are SHAs, fetch into stable local refs.
+  const baseLooksLikeSha = /^[0-9a-f]{7,40}$/i.test(baseRefForDiff);
+  const headLooksLikeSha = /^[0-9a-f]{7,40}$/i.test(headRefForDiff);
+
+  if (baseLooksLikeSha) {
+    const baseResolved = ensureShaAvailable(baseRefForDiff, 'refs/coverage-gate/base', resolved.baseFetchSpec);
+    if (!baseResolved) {
+      console.warn('[coverage-gate] Failed to resolve base SHA; falling back to all files.');
+      return null;
+    }
+    baseRefForDiff = baseResolved;
+  } else if (resolved.baseFetchSpec) {
+    // Best-effort fetch of base branch if missing.
+    ensureGitRefAvailable(baseRefForDiff, resolved.baseFetchSpec);
+  }
+
+  if (headLooksLikeSha) {
+    const headResolved = ensureShaAvailable(headRefForDiff, 'refs/coverage-gate/head', resolved.headFetchSpec);
+    if (!headResolved) {
+      console.warn('[coverage-gate] Failed to resolve head SHA; falling back to all files.');
+      return null;
+    }
+    headRefForDiff = headResolved;
+  }
+
+  const diff = spawnSync('git', ['diff', '--name-only', `${baseRefForDiff}...${headRefForDiff}`], {
     cwd: REPO_ROOT,
     encoding: 'utf8'
   });
@@ -160,6 +279,29 @@ function fail(msg) {
   process.exit(2);
 }
 
+function printCompactFailures({ globalFailures, perFileFailures }) {
+  // Only print what failed + actual vs required.
+  if (globalFailures.length) {
+    console.error('[coverage-gate] global:');
+    for (const f of globalFailures) {
+      console.error(
+        `[coverage-gate] - ${metricLabel(f.metric)} required ${fmtPct(f.required)} actual ${fmtPct(f.actual)} (${f.covered}/${f.total})`
+      );
+    }
+  }
+  if (perFileFailures.length) {
+    console.error('[coverage-gate] per-file:');
+    const sorted = perFileFailures.slice().sort((a, b) => (b.delta || 0) - (a.delta || 0));
+    const limit = Math.min(sorted.length, MAX_FAILURES_TO_PRINT);
+    for (const f of sorted.slice(0, limit)) {
+      console.error(
+        `[coverage-gate] - ${f.file} ${metricLabel(f.metric)} required ${fmtPct(f.required)} actual ${fmtPct(f.actual)} (${f.covered}/${f.total})`
+      );
+    }
+    if (sorted.length > limit) console.error(`[coverage-gate] ... and ${sorted.length - limit} more`);
+  }
+}
+
 function main() {
   const thresholds = loadThresholds();
 
@@ -176,7 +318,39 @@ function main() {
   const excludeList = thresholds.exclude || [];
 
   // Compute global coverage from coverage-final.json (CRA doesn't always emit coverage-summary.json).
-  const globalTotals = {
+  const includedTotals = {
+    statements: { covered: 0, total: 0 },
+    functions: { covered: 0, total: 0 },
+    branches: { covered: 0, total: 0 },
+    lines: { covered: 0, total: 0 }
+  };
+
+  // Support an "auto" mode: gate changed files in PRs; otherwise skip gating (to avoid forcing legacy projects to 80%).
+  const configuredMode = (process.env.COVERAGE_GATE_MODE || thresholds.mode || 'auto').toLowerCase(); // "changed" | "all" | "auto"
+  const prContext = isPullRequestContext();
+  const shouldComputeChanged = configuredMode === 'changed' || configuredMode === 'auto';
+  const changed = shouldComputeChanged ? getChangedFrontendSourceFiles({ allowSkip: configuredMode === 'auto' && !prContext }) : null;
+
+  let effectiveMode = configuredMode;
+  if (configuredMode === 'auto') {
+    if (prContext) {
+      // In PRs, auto mode MUST be able to compute changed files; otherwise we'd silently skip enforcement.
+      if (!changed) {
+        fail(
+          '[coverage-gate] AUTO mode requires changed-files in PR context but failed to compute them. Ensure the checkout has git metadata and that base/head refs are fetchable.'
+        );
+      }
+      effectiveMode = 'changed';
+    } else {
+      // Outside PRs, auto mode skips gating unless changed files are explicitly computable via env overrides.
+      effectiveMode = changed ? 'changed' : 'auto';
+    }
+  }
+
+  // In auto mode outside PRs (and with no explicit changed set), we skip gating entirely.
+  const skipGating = effectiveMode === 'auto';
+
+  const gatedTotals = {
     statements: { covered: 0, total: 0 },
     functions: { covered: 0, total: 0 },
     branches: { covered: 0, total: 0 },
@@ -192,40 +366,92 @@ function main() {
       const totalCount = filePct.totals[metric];
       const coveredCount = filePct.covered[metric];
       if (typeof totalCount !== 'number' || typeof coveredCount !== 'number') continue;
-      globalTotals[metric].total += totalCount;
-      globalTotals[metric].covered += coveredCount;
+      includedTotals[metric].total += totalCount;
+      includedTotals[metric].covered += coveredCount;
+
+      // Gated totals are either:
+      // - all included files (mode=all)
+      // - only changed files (mode=changed/auto when changed set is available)
+      const inGate = effectiveMode === 'all' || (effectiveMode === 'changed' && changed && changed.has(repoRel));
+      if (inGate) {
+        gatedTotals[metric].total += totalCount;
+        gatedTotals[metric].covered += coveredCount;
+      }
     }
   }
 
-  const globalActual = {
-    statements: pct(globalTotals.statements.covered, globalTotals.statements.total),
-    branches: pct(globalTotals.branches.covered, globalTotals.branches.total),
-    functions: pct(globalTotals.functions.covered, globalTotals.functions.total),
-    lines: pct(globalTotals.lines.covered, globalTotals.lines.total)
+  const includedActual = {
+    statements: pct(includedTotals.statements.covered, includedTotals.statements.total),
+    branches: pct(includedTotals.branches.covered, includedTotals.branches.total),
+    functions: pct(includedTotals.functions.covered, includedTotals.functions.total),
+    lines: pct(includedTotals.lines.covered, includedTotals.lines.total)
   };
+
+  const gatedActual = {
+    statements: pct(gatedTotals.statements.covered, gatedTotals.statements.total),
+    branches: pct(gatedTotals.branches.covered, gatedTotals.branches.total),
+    functions: pct(gatedTotals.functions.covered, gatedTotals.functions.total),
+    lines: pct(gatedTotals.lines.covered, gatedTotals.lines.total)
+  };
+
+  const actualForThresholds = skipGating ? null : gatedActual;
+  const totalsForThresholds = skipGating ? null : gatedTotals;
 
   for (const metric of ['statements', 'branches', 'functions', 'lines']) {
     if (typeof globalReq[metric] !== 'number') continue;
-    const actual = globalActual[metric];
-    if (actual + 1e-9 < globalReq[metric]) {
-      globalFailures.push(`${metric}: ${actual.toFixed(2)}% < ${globalReq[metric]}%`);
+    if (skipGating) continue;
+    const actual = actualForThresholds[metric];
+    const required = globalReq[metric];
+    if (actual + 1e-9 < required) {
+      globalFailures.push({
+        scope: 'global',
+        file: null,
+        metric,
+        required,
+        actual,
+        covered: totalsForThresholds[metric].covered,
+        total: totalsForThresholds[metric].total,
+        delta: required - actual
+      });
     }
   }
-
-  const mode = thresholds.mode || 'all'; // "changed" or "all"
-  const changed = mode === 'changed' ? getChangedFrontendSourceFiles() : null;
 
   const perFileReq = thresholds.perFile || {};
   const perFileMetric = Object.keys(perFileReq);
   const perFileFailures = [];
+  // For verbose diagnostics, keep both:
+  // - all included frontend/src files (regardless of mode=changed)
+  // - gated files (after applying changed-files filter, if any)
+  const allIncludedFileLineCoverage = [];
+  const gatedFileLineCoverage = [];
 
   for (const [fileKey, fileCov] of Object.entries(coverageFinal)) {
     const repoRel = normalizeToRepoRelative(fileKey);
     if (!repoRel.startsWith('frontend/src/')) continue;
     if (isExcluded(repoRel, excludeList)) continue;
-    if (changed && !changed.has(repoRel)) continue;
 
     const filePct = getCoveragePctForFile(fileCov);
+
+    allIncludedFileLineCoverage.push({
+      file: repoRel,
+      linesPct: filePct.lines,
+      covered: filePct.covered.lines,
+      total: filePct.totals.lines
+    });
+
+    if (!skipGating) {
+      const shouldGateFile = effectiveMode === 'all' || (effectiveMode === 'changed' && changed && changed.has(repoRel));
+      if (!shouldGateFile) continue;
+    } else {
+      // auto mode outside PRs: no per-file gating
+      continue;
+    }
+    gatedFileLineCoverage.push({
+      file: repoRel,
+      linesPct: filePct.lines,
+      covered: filePct.covered.lines,
+      total: filePct.totals.lines
+    });
 
     for (const metric of perFileMetric) {
       const required = perFileReq[metric];
@@ -233,47 +459,193 @@ function main() {
       const actual = filePct[metric];
       if (typeof actual !== 'number') continue;
       if (actual + 1e-9 < required) {
-        perFileFailures.push(
-          `${repoRel} :: ${metric} ${actual.toFixed(2)}% < ${required}% (total ${filePct.totals[metric] ?? 'n/a'})`
-        );
-        // Only report first metric failure per file to keep logs readable
-        break;
+        perFileFailures.push({
+          scope: 'file',
+          file: repoRel,
+          metric,
+          required,
+          actual,
+          covered: filePct.covered[metric],
+          total: filePct.totals[metric],
+          delta: required - actual
+        });
       }
     }
   }
 
   if (globalFailures.length === 0 && perFileFailures.length === 0) {
+    if (OUTPUT_FORMAT === 'compact') {
+      // In "auto" mode outside PRs we skip gating; in that case, report the included set.
+      // Otherwise, report the gated set (the same set used for global threshold checks).
+      const globalActual = skipGating ? includedActual : gatedActual;
+      console.log(
+        `[coverage-gate] PASS global lines ${fmtPct(globalActual.lines)} statements ${fmtPct(globalActual.statements)} branches ${fmtPct(
+          globalActual.branches
+        )} functions ${fmtPct(globalActual.functions)}`
+      );
+      return;
+    }
+
     console.log('[coverage-gate] PASS');
+    console.log('[coverage-gate] Thresholds:');
     console.log(
-      `[coverage-gate] Global coverage: lines ${globalActual.lines.toFixed(2)}%, statements ${globalActual.statements.toFixed(
-        2
-      )}%, branches ${globalActual.branches.toFixed(2)}%, functions ${globalActual.functions.toFixed(2)}%`
+      `[coverage-gate] - global: lines ${fmtPct(globalReq.lines)} statements ${fmtPct(globalReq.statements)} branches ${fmtPct(
+        globalReq.branches
+      )} functions ${fmtPct(globalReq.functions)}`
     );
-    if (changed) {
+    console.log(
+      `[coverage-gate] - perFile: ${Object.keys(perFileReq)
+        .map((k) => `${metricLabel(k)} ${fmtPct(perFileReq[k])}`)
+        .join(', ') || '(none)'}`
+    );
+    console.log(`[coverage-gate] - mode: ${configuredMode}`);
+    console.log(`[coverage-gate] - exclude: ${(excludeList || []).length ? excludeList.join(', ') : '(none)'}`);
+    console.log('[coverage-gate] Actual global coverage (included files):');
+    console.log(
+      `[coverage-gate] - lines ${fmtPct(includedActual.lines)} (${includedTotals.lines.covered}/${includedTotals.lines.total}), statements ${fmtPct(
+        includedActual.statements
+      )} (${includedTotals.statements.covered}/${includedTotals.statements.total}), branches ${fmtPct(includedActual.branches)} (${
+        includedTotals.branches.covered
+      }/${includedTotals.branches.total}), functions ${fmtPct(includedActual.functions)} (${includedTotals.functions.covered}/${
+        includedTotals.functions.total
+      })`
+    );
+    if (skipGating) {
+      console.log('[coverage-gate] Auto mode: not in PR context; skipping gating checks.');
+    } else if (effectiveMode === 'all') {
+      console.log('[coverage-gate] Per-file checks applied to all included frontend/src files');
+    } else if (changed) {
       console.log(`[coverage-gate] Per-file checks applied to ${changed.size} changed frontend/src files`);
+      console.log(
+        `[coverage-gate] Actual global coverage (gated set): lines ${fmtPct(gatedActual.lines)} (${gatedTotals.lines.covered}/${gatedTotals.lines.total}), statements ${fmtPct(
+          gatedActual.statements
+        )} (${gatedTotals.statements.covered}/${gatedTotals.statements.total}), branches ${fmtPct(gatedActual.branches)} (${gatedTotals.branches.covered}/${
+          gatedTotals.branches.total
+        }), functions ${fmtPct(gatedActual.functions)} (${gatedTotals.functions.covered}/${gatedTotals.functions.total})`
+      );
     } else {
-      console.log('[coverage-gate] Per-file checks applied to all frontend/src files (or changed-files unavailable)');
+      console.log('[coverage-gate] Per-file checks could not be scoped (changed-files unavailable); gating used included set.');
+      console.log(
+        `[coverage-gate] Actual global coverage (gated set): lines ${fmtPct(gatedActual.lines)} (${gatedTotals.lines.covered}/${gatedTotals.lines.total}), statements ${fmtPct(
+          gatedActual.statements
+        )} (${gatedTotals.statements.covered}/${gatedTotals.statements.total}), branches ${fmtPct(gatedActual.branches)} (${gatedTotals.branches.covered}/${
+          gatedTotals.branches.total
+        }), functions ${fmtPct(gatedActual.functions)} (${gatedTotals.functions.covered}/${gatedTotals.functions.total})`
+      );
     }
     return;
   }
 
   console.error('[coverage-gate] FAIL');
+
+  if (OUTPUT_FORMAT === 'compact') {
+    printCompactFailures({ globalFailures, perFileFailures });
+    process.exit(2);
+  }
+
+  console.error('[coverage-gate] Thresholds:');
   console.error(
-    `[coverage-gate] Global coverage: lines ${globalActual.lines.toFixed(2)}%, statements ${globalActual.statements.toFixed(
-      2
-    )}%, branches ${globalActual.branches.toFixed(2)}%, functions ${globalActual.functions.toFixed(2)}%`
+    `[coverage-gate] - global: lines ${fmtPct(globalReq.lines)} statements ${fmtPct(globalReq.statements)} branches ${fmtPct(
+      globalReq.branches
+    )} functions ${fmtPct(globalReq.functions)}`
   );
+  console.error(
+    `[coverage-gate] - perFile: ${Object.keys(perFileReq)
+      .map((k) => `${metricLabel(k)} ${fmtPct(perFileReq[k])}`)
+      .join(', ') || '(none)'}`
+  );
+    console.error(`[coverage-gate] - mode: ${configuredMode}`);
+  console.error(`[coverage-gate] - exclude: ${(excludeList || []).length ? excludeList.join(', ') : '(none)'}`);
+  console.error('[coverage-gate] Actual global coverage (included files):');
+  console.error(
+    `[coverage-gate] - lines ${fmtPct(includedActual.lines)} (${includedTotals.lines.covered}/${includedTotals.lines.total}), statements ${fmtPct(
+      includedActual.statements
+    )} (${includedTotals.statements.covered}/${includedTotals.statements.total}), branches ${fmtPct(includedActual.branches)} (${
+      includedTotals.branches.covered
+    }/${includedTotals.branches.total}), functions ${fmtPct(includedActual.functions)} (${includedTotals.functions.covered}/${
+      includedTotals.functions.total
+    })`
+  );
+  if (skipGating) {
+    console.error('[coverage-gate] Auto mode: not in PR context; skipping gating checks.');
+  } else if (effectiveMode === 'all') {
+    console.error('[coverage-gate] Per-file checks applied to all included frontend/src files');
+    console.error(
+      `[coverage-gate] Actual global coverage (gated set): lines ${fmtPct(gatedActual.lines)} (${gatedTotals.lines.covered}/${gatedTotals.lines.total}), statements ${fmtPct(
+        gatedActual.statements
+      )} (${gatedTotals.statements.covered}/${gatedTotals.statements.total}), branches ${fmtPct(gatedActual.branches)} (${gatedTotals.branches.covered}/${
+        gatedTotals.branches.total
+      }), functions ${fmtPct(gatedActual.functions)} (${gatedTotals.functions.covered}/${gatedTotals.functions.total})`
+    );
+  } else if (changed) {
+    console.error(`[coverage-gate] Per-file checks applied to ${changed.size} changed frontend/src files`);
+    console.error(
+      `[coverage-gate] Actual global coverage (gated set): lines ${fmtPct(gatedActual.lines)} (${gatedTotals.lines.covered}/${gatedTotals.lines.total}), statements ${fmtPct(
+        gatedActual.statements
+      )} (${gatedTotals.statements.covered}/${gatedTotals.statements.total}), branches ${fmtPct(gatedActual.branches)} (${gatedTotals.branches.covered}/${
+        gatedTotals.branches.total
+      }), functions ${fmtPct(gatedActual.functions)} (${gatedTotals.functions.covered}/${gatedTotals.functions.total})`
+    );
+  } else {
+    console.error('[coverage-gate] Changed-files unavailable; gating used included set.');
+    console.error(
+      `[coverage-gate] Actual global coverage (gated set): lines ${fmtPct(gatedActual.lines)} (${gatedTotals.lines.covered}/${gatedTotals.lines.total}), statements ${fmtPct(
+        gatedActual.statements
+      )} (${gatedTotals.statements.covered}/${gatedTotals.statements.total}), branches ${fmtPct(gatedActual.branches)} (${gatedTotals.branches.covered}/${
+        gatedTotals.branches.total
+      }), functions ${fmtPct(gatedActual.functions)} (${gatedTotals.functions.covered}/${gatedTotals.functions.total})`
+    );
+  }
 
   if (globalFailures.length) {
     console.error('[coverage-gate] Global threshold failures:');
-    for (const f of globalFailures) console.error(`- ${f}`);
+    for (const f of globalFailures) {
+      console.error(
+        `- ${metricLabel(f.metric)}: actual ${fmtPct(f.actual)} (${f.covered}/${f.total}) < required ${fmtPct(f.required)} (missed by ${fmtPct(
+          f.delta
+        )})`
+      );
+    }
   }
 
   if (perFileFailures.length) {
     console.error('[coverage-gate] Per-file threshold failures:');
-    for (const f of perFileFailures.slice(0, 200)) console.error(`- ${f}`);
-    if (perFileFailures.length > 200) {
-      console.error(`[coverage-gate] ... and ${perFileFailures.length - 200} more`);
+    const sorted = perFileFailures.slice().sort((a, b) => (b.delta || 0) - (a.delta || 0));
+    const limit = Math.min(sorted.length, MAX_FAILURES_TO_PRINT);
+    for (const f of sorted.slice(0, limit)) {
+      console.error(
+        `- ${f.file} :: ${metricLabel(f.metric)} actual ${fmtPct(f.actual)} (${f.covered}/${f.total}) < required ${fmtPct(
+          f.required
+        )} (missed by ${fmtPct(f.delta)})`
+      );
+    }
+    if (sorted.length > limit) console.error(`[coverage-gate] ... and ${sorted.length - limit} more`);
+  }
+
+  if (VERBOSE) {
+    console.error(`[coverage-gate] Verbose diagnostics (COVERAGE_GATE_VERBOSE=1):`);
+    const lineSorted = allIncludedFileLineCoverage
+      .slice()
+      .sort((a, b) => (a.linesPct || 0) - (b.linesPct || 0))
+      .slice(0, TOP_LOWEST_FILES_TO_PRINT);
+    if (lineSorted.length) {
+      console.error(`[coverage-gate] Lowest line coverage files (top ${lineSorted.length}):`);
+      for (const f of lineSorted) {
+        console.error(`- ${f.file} :: lines ${fmtPct(f.linesPct)} (${f.covered}/${f.total})`);
+      }
+    }
+
+    if (changed) {
+      const gatedSorted = gatedFileLineCoverage
+        .slice()
+        .sort((a, b) => (a.linesPct || 0) - (b.linesPct || 0))
+        .slice(0, TOP_LOWEST_FILES_TO_PRINT);
+      if (gatedSorted.length) {
+        console.error(`[coverage-gate] Lowest line coverage files in changed set (top ${gatedSorted.length}):`);
+        for (const f of gatedSorted) {
+          console.error(`- ${f.file} :: lines ${fmtPct(f.linesPct)} (${f.covered}/${f.total})`);
+        }
+      }
     }
   }
 

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { Snackbar, Button, Alert } from '@mui/material';
+import Snackbar from '@mui/material/Snackbar';
+import Button from '@mui/material/Button';
+import Alert from '@mui/material/Alert';
 
 type SnackbarOptions = {
     message: string;
@@ -18,7 +20,10 @@ export function showSnackbar(options: SnackbarOptions) {
 
     if (activeRoot && hostEl) {
         activeRoot.unmount();
-        document.body.removeChild(hostEl);
+        // Tests sometimes wipe `document.body.innerHTML`, so hostEl may already be detached.
+        if (hostEl.parentNode) {
+            hostEl.parentNode.removeChild(hostEl);
+        }
         activeRoot = null;
         hostEl = null;
     }
@@ -33,7 +38,9 @@ export function showSnackbar(options: SnackbarOptions) {
         const cleanup = () => {
             if (activeRoot && hostEl) {
                 activeRoot.unmount();
-                document.body.removeChild(hostEl);
+                if (hostEl.parentNode) {
+                    hostEl.parentNode.removeChild(hostEl);
+                }
                 activeRoot = null;
                 hostEl = null;
             }

@@ -44,7 +44,7 @@
     "start": "PORT=3030 react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "test:ci": "react-scripts test --watchAll=false --coverage --passWithNoTests --ci",
+    "test:ci": "node scripts/test-ci-with-coverage-gate.js",
     "check:coverage": "node scripts/check-coverage.js",
     "eject": "react-scripts eject",
     "dev": "react-scripts start",

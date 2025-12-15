@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload backup logs artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: backup-logs
           path: |

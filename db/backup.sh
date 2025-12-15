@@ -2,10 +2,19 @@
 # db/backup.sh
 set -euo pipefail
 
+# Keep `NEO4J_HOME` explicit and consistent with other scripts/CI.
+NEO4J_HOME="${NEO4J_HOME:-/var/lib/neo4j}"
+
 BACKUP_DIR="/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINAL_DUMP="${BACKUP_DIR}/neo4j_dump_${TIMESTAMP}.dump"
 TMP_DIR="${BACKUP_DIR}/tmp_${TIMESTAMP}"
+
+# Detect neo4j CLI binary (used for Community Edition backups where DB admin commands are unsupported)
+NEO4J_BIN="${NEO4J_HOME}/bin/neo4j"
+if [ ! -x "${NEO4J_BIN}" ] && command -v neo4j >/dev/null 2>&1; then
+    NEO4J_BIN="$(command -v neo4j)"
+fi
 
 # Helper: best-effort wait for Neo4j to become queryable (so the data dir is initialized and SHOW DATABASES works).
 wait_for_neo4j_ready() {
@@ -33,67 +42,118 @@ wait_for_neo4j_ready() {
 
 # NOTE: `neo4j-admin database dump` requires the target database to be stopped (Neo4j Community has no online backup).
 # We'll stop the target database via cypher-shell (connected to the `system` database), perform the dump, then start it again.
-DB_WAS_STOPPED_BY_SCRIPT="false"
+STOP_MODE="none" # none | database | server
 
-start_db_best_effort() {
-    if [ "${DB_WAS_STOPPED_BY_SCRIPT}" != "true" ]; then
-        return 0
-    fi
-    if [ -z "${CYPHER_SHELL_BIN-}" ] || [ ! -x "${CYPHER_SHELL_BIN}" ]; then
-        return 0
-    fi
-    echo "[$(date)] Starting database '${DB_NAME}'..."
-    "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" -d system \
-        "START DATABASE \`${DB_NAME}\` WAIT 120 SECONDS;" >/dev/null 2>&1 || true
-}
-
-stop_db_for_offline_dump_or_fail() {
-    if [ -z "${CYPHER_SHELL_BIN-}" ] || [ ! -x "${CYPHER_SHELL_BIN}" ]; then
-        echo "[$(date)] cypher-shell not found; cannot stop database '${DB_NAME}' for offline dump"
-        return 1
-    fi
-
-    echo "[$(date)] Stopping database '${DB_NAME}' for offline dump..."
-
-    # Prefer WAIT syntax; fall back to older syntax. Treat "already stopped" as non-fatal by checking status.
-    if "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" -d system \
-        "STOP DATABASE \`${DB_NAME}\` WAIT 120 SECONDS;" >/dev/null 2>&1; then
-        DB_WAS_STOPPED_BY_SCRIPT="true"
-    elif "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" -d system \
-        "STOP DATABASE \`${DB_NAME}\`;" >/dev/null 2>&1; then
-        DB_WAS_STOPPED_BY_SCRIPT="true"
-    else
-        if "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" -d system \
-            "SHOW DATABASES YIELD name, currentStatus WHERE name = '${DB_NAME}' RETURN currentStatus;" 2>/dev/null \
-            | tr -d '\r' | grep -qi 'offline'; then
-            DB_WAS_STOPPED_BY_SCRIPT="true"
-        else
-            echo "[$(date)] Failed to stop database '${DB_NAME}'"
-            return 1
-        fi
-    fi
-
-    # Wait briefly for the DB to report offline so the store lock is released.
-    for _ in {1..60}; do
-        if "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" -d system \
-            "SHOW DATABASES YIELD name, currentStatus WHERE name = '${DB_NAME}' RETURN currentStatus;" 2>/dev/null \
-            | tr -d '\r' | grep -qi 'offline'; then
+neo4j_server_is_queryable() {
+    if [ -n "${CYPHER_SHELL_BIN-}" ] && [ -x "${CYPHER_SHELL_BIN}" ]; then
+        if "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" "RETURN 1;" >/dev/null 2>&1; then
             return 0
         fi
-        sleep 2
-    done
+    fi
+    return 1
+}
 
-    echo "[$(date)] Warning: database '${DB_NAME}' did not report status=offline; attempting dump anyway"
-    return 0
+start_best_effort() {
+    case "${STOP_MODE}" in
+        server)
+            if [ -x "${NEO4J_BIN}" ]; then
+                echo "[$(date)] Starting Neo4j server (daemon)..."
+                "${NEO4J_BIN}" start >/dev/null 2>&1 || true
+                # Best-effort wait for readiness again
+                wait_for_neo4j_ready "${CYPHER_SHELL_BIN-}" "${NEO4J_BOLT_URI}" "${NEO4J_USER}" "${NEO4J_PASSWORD}" 60 2 || true
+            fi
+            ;;
+        database)
+            if [ -n "${CYPHER_SHELL_BIN-}" ] && [ -x "${CYPHER_SHELL_BIN}" ]; then
+                echo "[$(date)] Starting database '${DB_NAME}'..."
+                # Syntax differs slightly across versions; try explicit units first, then fall back. Suppress errors so we don't fail the backup on restart issues.
+                "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+                    "START DATABASE \`${DB_NAME}\` WAIT 120 SECONDS;" >/dev/null 2>&1 || \
+                    "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+                        "START DATABASE \`${DB_NAME}\` WAIT 120;" >/dev/null 2>&1 || true
+            fi
+            ;;
+        *)
+            ;;
+    esac
+}
+
+stop_for_offline_dump_or_fail() {
+    # If the server isn't queryable, assume we're already offline (e.g., running in a helper container) and proceed.
+    if ! neo4j_server_is_queryable; then
+        echo "[$(date)] Neo4j is not queryable at ${NEO4J_BOLT_URI}; assuming offline mode (no stop required)"
+        STOP_MODE="none"
+        return 0
+    fi
+
+    # Try database-level stop via Cypher first (works in Neo4j editions that support admin commands).
+    if [ -n "${CYPHER_SHELL_BIN-}" ] && [ -x "${CYPHER_SHELL_BIN}" ]; then
+        echo "[$(date)] Attempting database stop via Cypher (system database)..."
+        local out=""
+        out="$("${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+            "STOP DATABASE \`${DB_NAME}\` WAIT 120 SECONDS;" 2>&1)" || true
+
+        # Some versions don't accept the "SECONDS" keyword. Retry without units if we got a parse/syntax style error.
+        if echo "${out}" | grep -qiE 'invalid input|syntax|parse|expected|seconds'; then
+            local out2=""
+            out2="$("${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+                "STOP DATABASE \`${DB_NAME}\` WAIT 120;" 2>&1)" || true
+            out="${out}"$'\n'"${out2}"
+        fi
+
+        if echo "${out}" | grep -qi 'Unsupported administration command'; then
+            echo "[$(date)] Database admin commands not supported (Neo4j Community). Will stop the server process instead."
+        else
+            # If stop succeeded, we're good; if not, fall back to server stop if possible.
+            if echo "${out}" | tr -d '\r' | grep -qiE 'stopped|offline|completed|success|database.*stopped'; then
+                STOP_MODE="database"
+                return 0
+            fi
+            # Some versions print nothing on success; verify with SHOW DATABASES when possible.
+            if "${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" --database system \
+                "SHOW DATABASES YIELD name, currentStatus WHERE name = '${DB_NAME}' RETURN currentStatus;" 2>/dev/null \
+                | tr -d '\r' | grep -qi 'offline'; then
+                STOP_MODE="database"
+                return 0
+            fi
+            echo "[$(date)] Cypher stop did not succeed; output was:"
+            echo "${out}" | sed 's/^/  /'
+        fi
+    fi
+
+    # Community Edition: stop the server daemon (requires the container entrypoint to keep running while Neo4j is stopped).
+    if [ -x "${NEO4J_BIN}" ]; then
+        echo "[$(date)] Stopping Neo4j server (daemon) for offline dump..."
+        if "${NEO4J_BIN}" stop >/dev/null 2>&1; then
+            STOP_MODE="server"
+        else
+            echo "[$(date)] Failed to stop Neo4j server via '${NEO4J_BIN} stop'"
+            "${NEO4J_BIN}" status 2>&1 | sed 's/^/  /' || true
+            return 1
+        fi
+
+        # Wait for server to stop so the store lock is released.
+        for _ in {1..60}; do
+            if ! neo4j_server_is_queryable; then
+                return 0
+            fi
+            sleep 2
+        done
+        echo "[$(date)] Warning: Neo4j still appears queryable; attempting dump anyway"
+        return 0
+    fi
+
+    echo "[$(date)] Cannot stop database/server for offline dump (missing cypher-shell/neo4j CLI)"
+    return 1
 }
 
 # Determine path to neo4j-admin (works for Neo4j 4.x and 5.x official images)
-NEO4J_ADMIN_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
+NEO4J_ADMIN_BIN="${NEO4J_HOME}/bin/neo4j-admin"
 if [ ! -x "${NEO4J_ADMIN_BIN}" ]; then
     if command -v neo4j-admin >/dev/null 2>&1; then
         NEO4J_ADMIN_BIN="$(command -v neo4j-admin)"
     else
-        echo "[$(date)] neo4j-admin binary not found in PATH or at ${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
+        echo "[$(date)] neo4j-admin binary not found in PATH or at ${NEO4J_HOME}/bin/neo4j-admin"
         exit 1
     fi
 fi
@@ -109,7 +169,7 @@ else
 fi
 
 # Resolve cypher-shell + credentials early so we can wait for readiness and/or query SHOW DATABASES.
-CYPHER_SHELL_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/cypher-shell"
+CYPHER_SHELL_BIN="${NEO4J_HOME}/bin/cypher-shell"
 if [ ! -x "${CYPHER_SHELL_BIN}" ] && command -v cypher-shell >/dev/null 2>&1; then
     CYPHER_SHELL_BIN="$(command -v cypher-shell)"
 fi
@@ -147,7 +207,7 @@ if [ -z "${DB_NAME}" ]; then
             | tr -d '\r' | grep -o 'DB=[^[:space:]]\\+' | head -n 1 | cut -d= -f2 || true)"
     fi
 
-    DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME:-/var/lib/neo4j}/data}"
+    DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME}/data}"
     # Some versions can take a moment to create the databases/ directories. Wait briefly before giving up.
     if [ ! -d "${DATA_DIR}/databases" ] && [ -d "/data/databases" ]; then
         DATA_DIR="/data"
@@ -185,10 +245,10 @@ echo "[$(date)] Creating temporary dump directory: ${TMP_DIR}"
 mkdir -p "${TMP_DIR}"
 
 echo "[$(date)] Starting database dump to temporary directory..."
-# Always try to start the DB back up if we stopped it.
-trap 'start_db_best_effort' EXIT
+# Always try to start the DB/server back up if we stopped it.
+trap 'start_best_effort' EXIT
 
-if ! stop_db_for_offline_dump_or_fail; then
+if ! stop_for_offline_dump_or_fail; then
     echo "[$(date)] Cannot perform offline dump because database could not be stopped"
     rm -rf "${TMP_DIR}"
     exit 1
@@ -208,8 +268,8 @@ else
     echo "[$(date)] Debug: data directory candidates:"
     ls -la /data 2>/dev/null || true
     ls -la /data/databases 2>/dev/null || true
-    ls -la "${NEO4J_HOME:-/var/lib/neo4j}/data" 2>/dev/null || true
-    ls -la "${NEO4J_HOME:-/var/lib/neo4j}/data/databases" 2>/dev/null || true
+    ls -la "${NEO4J_HOME}/data" 2>/dev/null || true
+    ls -la "${NEO4J_HOME}/data/databases" 2>/dev/null || true
     rm -rf "${TMP_DIR}"
     exit 1
 fi

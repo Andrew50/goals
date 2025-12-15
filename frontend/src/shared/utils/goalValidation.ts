@@ -5,11 +5,6 @@ function isUnsetDate(val: any) {
 }
 
 export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipType: RelationshipType): string | null {
-    // Events cannot have children
-    if (relationshipType === 'child' && fromGoal.goal_type === 'event') {
-        return 'Events cannot have children.';
-    }
-
     // Events cannot be in relationships
     if (toGoal.goal_type === 'event') {
         return 'Events cannot be targets of relationships.';
@@ -17,23 +12,25 @@ export function validateRelationship(fromGoal: Goal, toGoal: Goal, relationshipT
 
     // If the relationship being formed is 'child'
     if (relationshipType === 'child') {
+        // Parent-side constraints (what types can have children)
+        if (fromGoal.goal_type === 'event') {
+            return 'Events cannot have children.';
+        }
         if (fromGoal.goal_type === 'task') {
             return 'Tasks cannot have children (i.e., cannot be parents).';
         }
+
         // Achievements can only be children of projects
         if (toGoal.goal_type === 'achievement' && fromGoal.goal_type !== 'project') {
             return 'Achievements can only be children of projects.';
         }
+        // Only allow routines to be children of other routines, projects, directives, or achievements
+        if (toGoal.goal_type === 'routine' && !['routine', 'project', 'directive', 'achievement'].includes(fromGoal.goal_type)) {
+            return 'Routines can only be children of routines, projects, directives, or achievements.';
+        }
         // Tasks should not be children of routines
         if (fromGoal.goal_type === 'routine' && toGoal.goal_type === 'task') {
             return 'Tasks cannot be children of routines.';
-        }
-        // Routines should not be children of tasks (but tasks can't be parents anyway due to check above)
-        if (toGoal.goal_type === 'routine' && fromGoal.goal_type !== 'routine') {
-            // Only allow routines to be children of other routines, projects, directives, or achievements
-            if (!['routine', 'project', 'directive', 'achievement'].includes(fromGoal.goal_type)) {
-                return 'Routines can only be children of routines, projects, directives, or achievements.';
-            }
         }
     }
 
@@ -70,8 +67,12 @@ export function validateGoal(goal: Goal): string[] {
                     if (!frequencyMatch) {
                         validationErrors.push('Invalid frequency format');
                     } else {
-                        const [interval, unit, days] = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/) || [];
-                        if (interval && parseInt(interval) < 1) {
+                        const match = goal.frequency.match(/^(\d+)([DWMY])(?::(.+))?$/);
+                        const intervalStr = match?.[1];
+                        const unit = match?.[2];
+                        const days = match?.[3];
+
+                        if (intervalStr && parseInt(intervalStr, 10) < 1) {
                             validationErrors.push('Frequency interval must be at least 1');
                         }
                         if (unit === 'W' && (!days || days.split(',').length === 0)) {
