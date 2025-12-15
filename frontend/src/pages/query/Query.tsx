@@ -1,18 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-    Box,
-    Typography,
-    TextField,
-    Button,
-    Paper,
-    Container,
-    Avatar,
-    CircularProgress,
-    Divider,
-    IconButton,
-    Chip,
-    Collapse
-} from '@mui/material';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import Paper from '@mui/material/Paper';
+import Container from '@mui/material/Container';
+import Avatar from '@mui/material/Avatar';
+import CircularProgress from '@mui/material/CircularProgress';
+import Divider from '@mui/material/Divider';
+import IconButton from '@mui/material/IconButton';
+import Chip from '@mui/material/Chip';
+import Collapse from '@mui/material/Collapse';
 import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -370,15 +368,20 @@ const Query: React.FC = () => {
 
         return () => {
             // Clean up WebSocket connection on component unmount
-            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-                ws.current.close();
+            // Be defensive: in tests/mocks `WebSocket.OPEN` or `.close` may be missing.
+            if (ws.current && typeof (ws.current as any).close === 'function') {
+                try {
+                    (ws.current as any).close();
+                } catch {
+                    // ignore cleanup errors
+                }
             }
         };
     }, [connectWebSocket]);
 
     useEffect(() => {
         // Scroll to bottom whenever messages change
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
     }, [conversation?.messages]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -545,7 +548,7 @@ const Query: React.FC = () => {
                     <IconButton
                         size="small"
                         sx={{ color: 'white', p: 0.2 }}
-                        onClick={e => {
+                        onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
                             toggleResultsExpansion();
                         }}
