@@ -53,6 +53,16 @@ describe('Toaster', () => {
                 expect(onAction).toHaveBeenCalled();
             }
         }, { timeout: 3000 });
+
+        // Allow Toaster's internal delayed cleanup (setTimeout(..., 200)) to run.
+        // This also ensures we cover the cleanup path for function coverage gating.
+        await new Promise((r) => setTimeout(r, 250));
+
+        await waitFor(() => {
+            const alert = document.body.querySelector('[data-testid^="alert-"]') ||
+                         document.body.querySelector('[role="alert"]');
+            expect(alert).toBeFalsy();
+        }, { timeout: 3000 });
     });
 });
 

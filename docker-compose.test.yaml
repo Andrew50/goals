@@ -61,13 +61,20 @@ services:
     # Run Neo4j as a daemon so backups can stop/start the server without killing the container,
     # and keep the container alive by tailing logs.
     # IMPORTANT: avoid invoking `/startup/docker-entrypoint.sh` recursively (it can break PATH and
-    # make `neo4j-admin` unavailable). The Neo4j image already uses that script as its ENTRYPOINT,
-    # so we only override the CMD here.
+    # make `neo4j-admin` unavailable). We override the container ENTRYPOINT so we can invoke the
+    # Neo4j entrypoint script exactly once, apply NEO4J_* env handling (like NEO4J_AUTH), then keep
+    # the container alive with `tail` while Neo4j runs in daemon mode.
     # Also avoid `bash -l` (login shell) because it may reset PATH.
-    command:
+    # We override ENTRYPOINT so we can call the Neo4j entrypoint script exactly once (to apply
+    # NEO4J_* env handling like NEO4J_AUTH) and then keep the container alive with `tail`.
+    #
+    # Important: use exec-form args here (NOT a shell-form `command:` string), otherwise Compose/Docker
+    # can reinterpret the command via `/bin/sh -c` and the container may exit immediately.
+    # Use `$$` so docker-compose does NOT interpolate host env vars; we want these expanded inside the container.
+    entrypoint:
       - "bash"
       - "-c"
-      - "neo4j start && tail -F /logs/neo4j.log"
+      - "export PATH=\"$$NEO4J_HOME/bin:$$PATH\"; /startup/docker-entrypoint.sh neo4j start && tail -F /logs/neo4j.log"
     ports:
       - "7475:7474" # Web UI on a different port to avoid conflicts
       - "7688:7687" # Bolt protocol on a different port
