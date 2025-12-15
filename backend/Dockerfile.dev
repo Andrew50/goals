@@ -2,8 +2,11 @@ FROM rust:latest
 
 # Install build dependencies needed by crates like reqwest (OpenSSL)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Prefer system libcurl over vendored builds (avoids compiling bundled curl sources)
+ENV CURL_NO_VENDOR=1
 
 # Ensure cargo binaries are on PATH
 ENV PATH="/usr/local/cargo/bin:${PATH}"
