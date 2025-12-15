@@ -84,6 +84,11 @@ services:
     environment:
       - NEO4J_AUTH=neo4j/password123
       - NEO4J_HOME=/var/lib/neo4j
+      # Keep Neo4j memory small in CI/self-hosted runners to avoid OOM kills during `neo4j-admin database dump`.
+      # Neo4j 5 uses `server.memory.*` settings; in env vars, dots become underscores and `_` becomes `__`.
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=512m
+      - NEO4J_server_memory_pagecache_size=256m
     networks:
       - dev_network
 

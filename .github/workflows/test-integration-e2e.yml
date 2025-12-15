@@ -124,7 +124,10 @@ jobs:
           
       - name: Start test stack
         run: |
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
+          # Start only the services needed for CI. Avoid starting the dev Neo4j (`goals_db`)
+          # alongside the test Neo4j (`goals_db_test`) to reduce memory usage and prevent OOM kills.
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build \
+            goals_db_test goals_backend goals_frontend
           
       - name: Wait for services
         shell: bash
