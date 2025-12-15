@@ -181,8 +181,6 @@ jobs:
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
     timeout-minutes: 45
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
     steps:
       - name: Pre-fix workspace ownership
         shell: bash
@@ -208,6 +206,13 @@ jobs:
               fi
             fi
           fi
+
+      - name: Set Cargo target dir (use runner temp)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cargo-target" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v5
         with:
           clean: false
@@ -235,7 +240,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
+            ${{ runner.temp }}/cargo-target
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-

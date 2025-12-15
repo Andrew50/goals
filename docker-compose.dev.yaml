@@ -6,7 +6,10 @@ services:
     user: "${UID:-1000}:${GID:-1000}"
     restart: unless-stopped
     ports:
-      - "5059:5059"
+      # Default: publish backend on host port 5059 for local dev.
+      # In CI (when merged with docker-compose.test.yaml), set GOALS_BACKEND_PORTS=5059
+      # to publish container port 5059 on a random host port and avoid host-port conflicts.
+      - "${GOALS_BACKEND_PORTS:-5059:5059}"
     volumes:
       - ./backend/:/usr/src/app
     env_file:
@@ -40,8 +43,10 @@ services:
       context: ./db
       dockerfile: Dockerfile.dev
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      # Default: publish Neo4j for local dev.
+      # In CI you can set these to "7474"/"7687" to publish on random host ports.
+      - "${GOALS_DB_HTTP_PORTS:-7474:7474}"
+      - "${GOALS_DB_BOLT_PORTS:-7687:7687}"
     volumes:
       - goal_db:/data
     networks:
@@ -63,7 +68,10 @@ services:
     env_file:
       - .env
     ports:
-      - "3030:3030"
+      # Default: publish frontend on host port 3030 for local dev.
+      # In CI (when merged with docker-compose.test.yaml), set GOALS_FRONTEND_PORTS=3030
+      # to publish container port 3030 on a random host port and avoid host-port conflicts.
+      - "${GOALS_FRONTEND_PORTS:-3030:3030}"
     restart: unless-stopped
     networks:
       - dev_network

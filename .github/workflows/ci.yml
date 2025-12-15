@@ -110,6 +110,14 @@ jobs:
           echo "VAPID_PUBLIC_KEY=dummy_public" >> .env
           echo "VAPID_PRIVATE_KEY=dummy_private" >> .env
           echo "VAPID_SUBJECT=mailto:test@example.com" >> .env
+          # Avoid host-port conflicts from docker-compose.dev.yaml when it is merged with docker-compose.test.yaml.
+          # Using "5059"/"3030" means "publish container port only" (random host port), while docker-compose.test.yaml
+          # still publishes the stable ports needed by the test suite (5057 + 3031).
+          echo "GOALS_BACKEND_PORTS=5059" >> .env
+          echo "GOALS_FRONTEND_PORTS=3030" >> .env
+          # Optional: also avoid conflicts for the unused dev Neo4j service in CI
+          echo "GOALS_DB_HTTP_PORTS=7474" >> .env
+          echo "GOALS_DB_BOLT_PORTS=7687" >> .env
           
       - name: Start test stack
         run: |
