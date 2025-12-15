@@ -20,6 +20,16 @@ If you're using the existing docker setup, the test database should already be c
 docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d goals_db_test
 ```
 
+### Neo4j version + local volumes
+
+Neo4j does **not** support starting an older engine version on a data directory created by a newer version ("downgrade").
+If you recently changed Neo4j image tags and see an `UnsupportedLogVersionException`, recreate the affected volume:
+
+```bash
+docker compose -f docker-compose.dev.yaml down -v
+docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
+```
+
 ### Running Tests
 
 Run the integration tests with:

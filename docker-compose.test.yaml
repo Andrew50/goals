@@ -53,7 +53,7 @@ services:
   goals_db_test:
     build:
       context: ./db
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.ci
     ports:
       - "7475:7474" # Web UI on a different port to avoid conflicts
       - "7688:7687" # Bolt protocol on a different port
