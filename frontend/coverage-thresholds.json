@@ -1,14 +1,14 @@
 {
   "global": {
-    "statements": 11,
-    "branches": 12,
-    "functions": 8,
-    "lines": 12
+    "statements": 80,
+    "branches": 75,
+    "functions": 80,
+    "lines": 80
   },
   "perFile": {
-    "lines": 5
+    "lines": 70
   },
-  "mode": "changed",
+  "mode": "all",
   "exclude": [
     "frontend/src/config/",
     "frontend/src/index.tsx",
