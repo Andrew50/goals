@@ -212,7 +212,14 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npx playwright install --with-deps chromium
+          # On self-hosted runners, Playwright's `--with-deps` uses sudo to apt-get dependencies.
+          # If sudo isn't passwordless/non-interactive, the install will fail (no TTY for password).
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            npx playwright install --with-deps chromium
+          else
+            echo "sudo not available/passwordless; installing chromium without OS deps (runner must have Playwright deps preinstalled)"
+            npx playwright install chromium
+          fi
           npx playwright test tests/routine --project=chromium
           
       - name: Dump docker logs on failure
