@@ -6,9 +6,11 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use chrono_tz::Tz;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use neo4rs::Graph;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -24,6 +26,32 @@ use crate::tools::{
 
 // Type alias for user locks that's used in routine processing
 type UserLocks = Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>;
+
+fn validated_tz(params: &HashMap<String, String>) -> Result<String, (StatusCode, String)> {
+    let tz_raw = params
+        .get("tz")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("UTC");
+
+    let tz_raw = if tz_raw.eq_ignore_ascii_case("utc") {
+        "UTC"
+    } else {
+        tz_raw
+    };
+
+    Tz::from_str(tz_raw)
+        .map(|tz| tz.to_string())
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid timezone '{}'. Expected an IANA timezone like 'America/New_York' or 'UTC'.",
+                    tz_raw
+                ),
+            )
+        })
+}
 
 pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
     let auth_routes = Router::new()
@@ -488,6 +516,7 @@ async fn handle_check_task_completion_status(
 
 async fn handle_delete_event(
     Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
@@ -496,7 +525,7 @@ async fn handle_delete_event(
         .map(|v| v == "true")
         .unwrap_or(false);
 
-    event::delete_event_handler(graph, id, delete_future).await
+    event::delete_event_handler(graph, user_id, id, delete_future).await
 }
 
 // removed split handler; replaced by duplicate goal API at /goals/:id/duplicate
@@ -621,28 +650,31 @@ async fn handle_get_achievements_data(
 async fn handle_get_stats_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_year_stats(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = validated_tz(&params)?;
+    stats::get_year_stats(graph, user_id, year, tz).await
 }
 
 async fn handle_get_extended_stats(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_extended_stats(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = validated_tz(&params)?;
+    stats::get_extended_stats(graph, user_id, year, tz).await
 }
 
 async fn handle_get_event_analytics(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_event_analytics(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = validated_tz(&params)?;
+    stats::get_event_analytics(graph, user_id, year, tz).await
 }
 
 async fn handle_get_effort_stats(
@@ -651,7 +683,8 @@ async fn handle_get_effort_stats(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let range = params.get("range").cloned();
-    stats::get_effort_stats(graph, user_id, range).await
+    let tz = validated_tz(&params)?;
+    stats::get_effort_stats(graph, user_id, range, tz).await
 }
 
 async fn handle_get_goal_children_effort(
@@ -661,7 +694,8 @@ async fn handle_get_goal_children_effort(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let range = params.get("range").cloned();
-    stats::get_goal_children_effort(graph, user_id, id, range).await
+    let tz = validated_tz(&params)?;
+    stats::get_goal_children_effort(graph, user_id, id, range, tz).await
 }
 
 async fn handle_search_routines(
@@ -676,26 +710,28 @@ async fn handle_search_routines(
 async fn handle_get_routine_stats(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = validated_tz(&params)?;
     let routine_ids: Vec<i64> = payload
         .get("routine_ids")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
         .unwrap_or_default();
 
-    stats::get_routine_stats(graph, user_id, routine_ids, year).await
+    stats::get_routine_stats(graph, user_id, routine_ids, year, tz).await
 }
 
 async fn handle_get_rescheduling_stats(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_rescheduling_stats(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = validated_tz(&params)?;
+    stats::get_rescheduling_stats(graph, user_id, year, tz).await
 }
 
 async fn handle_record_event_move(
@@ -798,10 +834,18 @@ struct RecomputeResult {
 // Recompute handler – soft-delete future events for a routine and regenerate upcoming ones
 async fn handle_recompute_routine_future(
     Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    match routine_generator::recompute_future_for_routine(&graph, id).await {
+    let from_timestamp = params
+        .get("from_timestamp")
+        .and_then(|v| v.parse::<i64>().ok());
+
+    match routine_generator::recompute_future_for_routine(&graph, user_id, id, from_timestamp).await
+    {
         Ok((deleted, created)) => Ok((StatusCode::OK, Json(RecomputeResult { deleted, created }))),
+        Err(e) if e == "Routine not found" => Err((StatusCode::NOT_FOUND, e)),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }

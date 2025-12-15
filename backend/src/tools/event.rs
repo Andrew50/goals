@@ -8,6 +8,7 @@ use std::env;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 
 use crate::tools::goal::{Goal, GoalType};
+use crate::tools::routine_exceptions;
 use crate::tools::stats::EventMove;
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +25,8 @@ pub struct UpdateEventRequest {
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub resolution_status: Option<String>, // "pending", "completed", "failed", "skipped"
+    #[serde(default)]
+    pub completed: Option<bool>, // Legacy field for backward compatibility
     pub move_reason: Option<String>,
 }
 
@@ -72,6 +75,8 @@ pub struct TaskEventsResponse {
     pub last_scheduled: Option<i64>,
     pub event_count: i32,
     pub completed_event_count: i32,
+    pub failed_event_count: i32,
+    pub skipped_event_count: i32,
     pub past_uncompleted_count: i32,
     pub future_uncompleted_count: i32,
     pub next_uncompleted_timestamp: Option<i64>,
@@ -527,16 +532,19 @@ pub async fn check_task_completion_status(
         "MATCH (t:Goal)
          WHERE id(t) = $task_id
          AND t.goal_type = 'task'
-         OPTIONAL MATCH (t)-[:HAS_EVENT]->(e:Goal)
+          OPTIONAL MATCH (t)-[:HAS_EVENT]->(e:Goal)
          WHERE e.goal_type = 'event'
          AND (e.is_deleted IS NULL OR e.is_deleted = false)
+         AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
          WITH t, 
               count(e) as total_events,
-              count(CASE WHEN e.resolution_status = 'completed' THEN 1 END) as completed_events
+              count(CASE WHEN COALESCE(e.resolution_status, 'pending') = 'completed' THEN 1 END) as completed_events,
+              count(CASE WHEN COALESCE(e.resolution_status, 'pending') = 'failed' THEN 1 END) as failed_events
          RETURN t.name as task_name,
                 t.resolution_status as task_resolution_status,
                 total_events,
                 completed_events,
+                failed_events,
                 CASE 
                     WHEN total_events = 0 THEN false
                     WHEN completed_events = total_events THEN true
@@ -582,16 +590,53 @@ pub async fn check_task_completion_status(
 
 pub async fn delete_event_handler(
     graph: Graph,
+    user_id: i64,
     event_id: i64,
     delete_future: bool,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    // Authorization: ensure the event belongs to the authenticated user.
+    // Without this, a user could delete other users' events by guessing `event_id`.
+    let auth_query = query(
+        "MATCH (e:Goal)
+         WHERE id(e) = $event_id
+           AND e.goal_type = 'event'
+         RETURN e.user_id AS user_id",
+    )
+    .param("event_id", event_id);
+
+    let mut auth_result = graph
+        .execute(auth_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(row) = auth_result
+        .next()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        let event_user_id: i64 = row.get("user_id").map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to get event user_id".to_string(),
+            )
+        })?;
+        if event_user_id != user_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "You are not authorized to delete this event".to_string(),
+            ));
+        }
+    } else {
+        return Err((StatusCode::NOT_FOUND, "Event not found".to_string()));
+    }
+
     if delete_future {
         // Delete this and all future occurrences for the parent routine,
         // and set the routine's end_timestamp so no new events are generated.
         // Note: Scope by parent_id (entire routine), not by routine_instance_id.
         let delete_query = query(
             "MATCH (e:Goal)
-             WHERE id(e) = $event_id AND e.goal_type = 'event'
+             WHERE id(e) = $event_id AND e.goal_type = 'event' AND e.user_id = $user_id
              WITH e, e.scheduled_timestamp AS cutoff, e.parent_id AS parent_id
              // Soft-delete all future events for this routine
              MATCH (r:Goal)
@@ -613,22 +658,71 @@ pub async fn delete_event_handler(
              SET r.end_timestamp = coalesce(last_kept, cutoff - 1)"
         )
         .param("event_id", event_id);
+        let delete_query = delete_query.param("user_id", user_id);
 
         graph
             .run(delete_query)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     } else {
-        // Soft delete single event
-        let delete_query = query(
-            "MATCH (e:Goal)
-             WHERE id(e) = $event_id
-             SET e.is_deleted = true",
-        )
-        .param("event_id", event_id);
+        // Soft delete single event.
+        //
+        // If it's a routine occurrence, also create a skip exception so the generator
+        // does not recreate it later.
+        let mut fetch_result = graph
+            .execute(
+                query(
+                    "MATCH (e:Goal)
+                     WHERE id(e) = $event_id
+                       AND e.goal_type = 'event'
+                       AND e.user_id = $user_id
+                     RETURN e.parent_type as parent_type, e.parent_id as parent_id, e.scheduled_timestamp as ts",
+                )
+                .param("event_id", event_id)
+                .param("user_id", user_id),
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if let Some(row) = fetch_result
+            .next()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            let parent_type: Option<String> = row.get("parent_type").ok();
+            let parent_id: Option<i64> = row.get("parent_id").ok();
+            let ts: Option<i64> = row.get("ts").ok();
+
+            if parent_type.as_deref() == Some("routine") {
+                if let (Some(routine_id), Some(timestamp)) = (parent_id, ts) {
+                    if let Err(e) = routine_exceptions::create_skip_exception(
+                        &graph,
+                        user_id,
+                        routine_id,
+                        timestamp,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "Warning: failed to create routine skip exception for routine_id={}, ts={}: {}",
+                            routine_id, timestamp, e
+                        );
+                    }
+                }
+            }
+        }
 
         graph
-            .run(delete_query)
+            .run(
+                query(
+                    "MATCH (e:Goal)
+                     WHERE id(e) = $event_id
+                       AND e.user_id = $user_id
+                     SET e.is_deleted = true",
+                )
+                .param("event_id", event_id)
+                .param("user_id", user_id),
+            )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -647,6 +741,7 @@ pub async fn get_task_events_handler(
         WHERE id(t) = $task_id 
         AND e.goal_type = 'event'
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         RETURN e
         ORDER BY e.scheduled_timestamp ASC
     ";
@@ -664,6 +759,8 @@ pub async fn get_task_events_handler(
     let mut last_scheduled = None;
     let mut event_count = 0i32;
     let mut completed_event_count = 0i32;
+    let mut failed_event_count = 0i32;
+    let mut skipped_event_count = 0i32;
     let mut future_uncompleted_count = 0i32;
     let mut next_uncompleted_timestamp = None;
     let now_ms = Utc::now().timestamp_millis();
@@ -679,9 +776,17 @@ pub async fn get_task_events_handler(
 
         event_count += 1;
 
-        let is_completed = event.resolution_status.as_deref() == Some("completed");
+        let status = event.resolution_status.as_deref().unwrap_or("pending");
+        let is_completed = status == "completed";
+        let is_failed = status == "failed";
+        let is_skipped = status == "skipped";
+        
         if is_completed {
             completed_event_count += 1;
+        } else if is_failed {
+            failed_event_count += 1;
+        } else if is_skipped {
+            skipped_event_count += 1;
         }
 
         if let Some(duration) = event.duration {
@@ -689,7 +794,8 @@ pub async fn get_task_events_handler(
         }
 
         if let Some(scheduled) = event.scheduled_timestamp {
-            if !is_completed && scheduled > now_ms {
+            // Future uncompleted includes pending and failed (but not skipped, which are already excluded)
+            if !is_completed && !is_skipped && scheduled > now_ms {
                 future_uncompleted_count += 1;
                 if next_uncompleted_timestamp
                     .map(|existing| scheduled < existing)
@@ -710,6 +816,8 @@ pub async fn get_task_events_handler(
         events.push(event);
     }
 
+    // Past uncompleted = total eligible (non-skipped) - completed - future uncompleted
+    // This includes pending and failed events in the past
     let past_uncompleted_count =
         (event_count - completed_event_count - future_uncompleted_count).max(0);
 
@@ -721,6 +829,8 @@ pub async fn get_task_events_handler(
         last_scheduled,
         event_count,
         completed_event_count,
+        failed_event_count,
+        skipped_event_count,
         past_uncompleted_count,
         future_uncompleted_count,
         next_uncompleted_timestamp,
@@ -835,7 +945,29 @@ pub async fn update_event_handler(
         ));
     }
 
-    if let Some(resolution_status) = &request.resolution_status {
+    // Handle resolution_status (with backward compatibility for completed boolean)
+    let resolution_status = if let Some(status) = &request.resolution_status {
+        Some(status.clone())
+    } else {
+        // Legacy compatibility: map boolean to resolution_status
+        request.completed.map(|completed| {
+            if completed {
+                "completed".to_string()
+            } else {
+                "pending".to_string()
+            }
+        })
+    };
+
+    if let Some(resolution_status) = &resolution_status {
+        // Validate resolution_status
+        if !["pending", "completed", "failed", "skipped"].contains(&resolution_status.as_str()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped", resolution_status)
+            ));
+        }
+        
         set_clauses.push("e.resolution_status = $resolution_status");
         params.push((
             "resolution_status",
@@ -915,7 +1047,7 @@ pub async fn update_event_handler(
 
 pub async fn update_routine_event_handler(
     graph: Graph,
-    _user_id: i64,
+    user_id: i64,
     event_id: i64,
     request: UpdateRoutineEventRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
@@ -930,9 +1062,11 @@ pub async fn update_routine_event_handler(
          WHERE id(e) = $event_id
          AND e.goal_type = 'event'
          AND e.parent_type = 'routine'
+         AND e.user_id = $user_id
          RETURN e",
     )
     .param("event_id", event_id);
+    let fetch_query = fetch_query.param("user_id", user_id);
 
     let mut result = graph
         .execute(fetch_query)
@@ -964,15 +1098,27 @@ pub async fn update_routine_event_handler(
     match request.update_scope.as_str() {
         "single" => {
             println!("🎯 [ROUTINE_UPDATE] Processing single event update");
+            // Create a skip exception for the old slot so the generator doesn't backfill it.
+            if let Err(e) =
+                routine_exceptions::create_skip_exception(&graph, user_id, parent_id, current_timestamp).await
+            {
+                eprintln!(
+                    "Warning: failed to create routine skip exception for routine_id={}, ts={}: {}",
+                    parent_id, current_timestamp, e
+                );
+            }
+
             // Update only this event
             let update_query = query(
                 "MATCH (e:Goal)
                  WHERE id(e) = $event_id
+                 AND e.user_id = $user_id
                  SET e.scheduled_timestamp = $new_timestamp
                  RETURN e",
             )
             .param("event_id", event_id)
-            .param("new_timestamp", request.new_timestamp);
+            .param("new_timestamp", request.new_timestamp)
+            .param("user_id", user_id);
 
             let mut update_result = graph
                 .execute(update_query)
@@ -1013,16 +1159,25 @@ pub async fn update_routine_event_handler(
             // Also update the parent routine so future generated events inherit this time-of-day
             let update_parent_time_query = query(
                 "MATCH (r:Goal)
-                 WHERE id(r) = $parent_id AND r.goal_type = 'routine'
+                 WHERE id(r) = $parent_id AND r.goal_type = 'routine' AND r.user_id = $user_id
                  SET r.routine_time = $new_timestamp",
             )
             .param("parent_id", parent_id)
-            .param("new_timestamp", request.new_timestamp);
+            .param("new_timestamp", request.new_timestamp)
+            .param("user_id", user_id);
 
             graph
                 .run(update_parent_time_query)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Clear all exceptions for this routine when applying a schedule change to ALL.
+            if let Err(e) = routine_exceptions::clear_all_exceptions(&graph, parent_id).await {
+                eprintln!(
+                    "Warning: failed to clear routine exceptions for routine_id={} (all): {}",
+                    parent_id, e
+                );
+            }
 
             // For "all" scope, update ALL events for this routine to the new time-of-day
             let check_query = query(
@@ -1030,10 +1185,12 @@ pub async fn update_routine_event_handler(
                  WHERE e.goal_type = 'event'
                  AND e.parent_id = $parent_id
                  AND e.parent_type = 'routine'
+                 AND e.user_id = $user_id
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
                  RETURN count(e) as event_count, collect(id(e)) as ids",
             )
-            .param("parent_id", parent_id);
+            .param("parent_id", parent_id)
+            .param("user_id", user_id);
 
             let mut check_result = graph
                 .execute(check_query)
@@ -1059,6 +1216,7 @@ pub async fn update_routine_event_handler(
                  WHERE e.goal_type = 'event'
                  AND e.parent_id = $parent_id
                  AND e.parent_type = 'routine'
+                 AND e.user_id = $user_id
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
                  WITH e
                  SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
@@ -1066,7 +1224,8 @@ pub async fn update_routine_event_handler(
             )
             .param("parent_id", parent_id)
             .param("day_in_ms", day_in_ms)
-            .param("new_time_of_day", new_time_of_day);
+            .param("new_time_of_day", new_time_of_day)
+            .param("user_id", user_id);
 
             let mut update_result = graph
                 .execute(update_query)
@@ -1105,16 +1264,27 @@ pub async fn update_routine_event_handler(
             // Also update the parent routine so future generated events inherit this time-of-day
             let update_parent_time_query = query(
                 "MATCH (r:Goal)
-                 WHERE id(r) = $parent_id AND r.goal_type = 'routine'
+                 WHERE id(r) = $parent_id AND r.goal_type = 'routine' AND r.user_id = $user_id
                  SET r.routine_time = $new_timestamp",
             )
             .param("parent_id", parent_id)
-            .param("new_timestamp", request.new_timestamp);
+            .param("new_timestamp", request.new_timestamp)
+            .param("user_id", user_id);
 
             graph
                 .run(update_parent_time_query)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Clear exceptions at-or-after the cutoff for this routine when applying a schedule change to FUTURE.
+            if let Err(e) =
+                routine_exceptions::clear_exceptions_from(&graph, parent_id, current_timestamp).await
+            {
+                eprintln!(
+                    "Warning: failed to clear routine exceptions for routine_id={} from_ts={} (future): {}",
+                    parent_id, current_timestamp, e
+                );
+            }
 
             // For "future" scope, update ALL future events for this routine to the new time-of-day
             let check_query = query(
@@ -1122,12 +1292,14 @@ pub async fn update_routine_event_handler(
                  WHERE e.goal_type = 'event'
                  AND e.parent_id = $parent_id
                  AND e.parent_type = 'routine'
+                 AND e.user_id = $user_id
                  AND e.scheduled_timestamp >= $current_timestamp
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
                  RETURN count(e) as event_count, collect(id(e)) as ids",
             )
             .param("parent_id", parent_id)
-            .param("current_timestamp", current_timestamp);
+            .param("current_timestamp", current_timestamp)
+            .param("user_id", user_id);
 
             let mut check_result = graph
                 .execute(check_query)
@@ -1153,6 +1325,7 @@ pub async fn update_routine_event_handler(
                  WHERE e.goal_type = 'event'
                  AND e.parent_id = $parent_id
                  AND e.parent_type = 'routine'
+                 AND e.user_id = $user_id
                  AND e.scheduled_timestamp >= $current_timestamp
                  AND (e.is_deleted IS NULL OR e.is_deleted = false)
                  WITH e
@@ -1162,7 +1335,8 @@ pub async fn update_routine_event_handler(
             .param("parent_id", parent_id)
             .param("current_timestamp", current_timestamp)
             .param("day_in_ms", day_in_ms)
-            .param("new_time_of_day", new_time_of_day);
+            .param("new_time_of_day", new_time_of_day)
+            .param("user_id", user_id);
 
             let mut update_result = graph
                 .execute(update_query)
@@ -1211,9 +1385,11 @@ pub async fn get_reschedule_options_handler(
         "MATCH (e:Goal)
          WHERE id(e) = $event_id
          AND e.goal_type = 'event'
+         AND e.user_id = $user_id
          RETURN e",
     )
-    .param("event_id", event_id);
+    .param("event_id", event_id)
+    .param("user_id", user_id);
 
     let mut event_result = graph
         .execute(event_query)
@@ -1876,7 +2052,7 @@ async fn get_llm_smart_schedule_suggestions(
 
 pub async fn update_routine_event_properties_handler(
     graph: Graph,
-    _user_id: i64,
+    user_id: i64,
     event_id: i64,
     request: UpdateRoutineEventPropertiesRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
@@ -1888,9 +2064,11 @@ pub async fn update_routine_event_properties_handler(
          WHERE id(e) = $event_id
          AND e.goal_type = 'event'
          AND e.parent_type = 'routine'
+         AND e.user_id = $user_id
          RETURN e",
     )
-    .param("event_id", event_id);
+    .param("event_id", event_id)
+    .param("user_id", user_id);
 
     let mut result = graph
         .execute(fetch_query)
@@ -1925,12 +2103,36 @@ pub async fn update_routine_event_properties_handler(
         "single" => {
             println!("🎯 [ROUTINE_PROPERTIES] Processing single event property update");
 
+            // If this single update changes the scheduled_timestamp, create a skip exception for the old slot
+            // so the generator doesn't backfill it.
+            if let Some(new_ts) = request.scheduled_timestamp {
+                if new_ts != current_timestamp {
+                    if let Err(e) = routine_exceptions::create_skip_exception(
+                        &graph,
+                        user_id,
+                        parent_id,
+                        current_timestamp,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "Warning: failed to create routine skip exception for routine_id={}, ts={}: {}",
+                            parent_id, current_timestamp, e
+                        );
+                    }
+                }
+            }
+
             // Build the SET clause dynamically based on what properties are provided
             let mut set_clauses = Vec::new();
             let mut params = vec![(
                 "event_id".to_string(),
                 neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(event_id)),
             )];
+            params.push((
+                "user_id".to_string(),
+                neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(user_id)),
+            ));
 
             if let Some(timestamp) = request.scheduled_timestamp {
                 set_clauses.push("e.scheduled_timestamp = $scheduled_timestamp");
@@ -1976,7 +2178,7 @@ pub async fn update_routine_event_properties_handler(
             }
 
             let query_str = format!(
-                "MATCH (e:Goal) WHERE id(e) = $event_id SET {} RETURN e",
+                "MATCH (e:Goal) WHERE id(e) = $event_id AND e.user_id = $user_id SET {} RETURN e",
                 set_clauses.join(", ")
             );
 
@@ -2014,12 +2216,40 @@ pub async fn update_routine_event_properties_handler(
                 request.update_scope
             );
 
+            // If this bulk update is changing scheduled_timestamp, it's schedule-affecting.
+            // Clear exceptions so previously deleted occurrences in-range can reappear.
+            if let Some(new_ts) = request.scheduled_timestamp {
+                // If it's the same timestamp, it's not really a schedule change.
+                if new_ts != current_timestamp {
+                    if request.update_scope == "all" {
+                        if let Err(e) = routine_exceptions::clear_all_exceptions(&graph, parent_id).await
+                        {
+                            eprintln!(
+                                "Warning: failed to clear routine exceptions for routine_id={} (all properties): {}",
+                                parent_id, e
+                            );
+                        }
+                    } else if let Err(e) =
+                        routine_exceptions::clear_exceptions_from(&graph, parent_id, current_timestamp).await
+                    {
+                        eprintln!(
+                            "Warning: failed to clear routine exceptions for routine_id={} from_ts={} (future properties): {}",
+                            parent_id, current_timestamp, e
+                        );
+                    }
+                }
+            }
+
             // Build the SET clause dynamically based on what properties are provided
             let mut set_clauses = Vec::new();
             let mut params = vec![(
                 "parent_id".to_string(),
                 neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(parent_id)),
             )];
+            params.push((
+                "user_id".to_string(),
+                neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(user_id)),
+            ));
 
             if let Some(timestamp) = request.scheduled_timestamp {
                 set_clauses.push("e.scheduled_timestamp = $scheduled_timestamp");
@@ -2072,6 +2302,10 @@ pub async fn update_routine_event_properties_handler(
                     neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(parent_id)),
                 ),
             ];
+            routine_params.push((
+                "user_id".to_string(),
+                neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(user_id)),
+            ));
 
             if request.duration.is_some() {
                 routine_set_clauses.push("r.duration = $r_duration");
@@ -2104,7 +2338,7 @@ pub async fn update_routine_event_properties_handler(
 
             if !routine_set_clauses.is_empty() {
                 let routine_query_str = format!(
-                    "MATCH (r:Goal) WHERE id(r) = $parent_id AND r.goal_type = 'routine' SET {} RETURN id(r) as id",
+                    "MATCH (r:Goal) WHERE id(r) = $parent_id AND r.goal_type = 'routine' AND r.user_id = $user_id SET {} RETURN id(r) as id",
                     routine_set_clauses.join(", ")
                 );
                 let mut routine_update_query = query(&routine_query_str);
@@ -2124,6 +2358,7 @@ pub async fn update_routine_event_properties_handler(
                      WHERE e.goal_type = 'event'
                      AND e.parent_id = $parent_id
                      AND e.parent_type = 'routine'
+                     AND e.user_id = $user_id
                      AND (e.is_deleted IS NULL OR e.is_deleted = false)
                      SET {}
                      RETURN collect(e) as events",
@@ -2140,6 +2375,7 @@ pub async fn update_routine_event_properties_handler(
                      WHERE e.goal_type = 'event'
                      AND e.parent_id = $parent_id
                      AND e.parent_type = 'routine'
+                     AND e.user_id = $user_id
                      AND e.scheduled_timestamp >= $current_timestamp
                      AND (e.is_deleted IS NULL OR e.is_deleted = false)
                      SET {}

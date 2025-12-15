@@ -680,6 +680,22 @@ pub async fn delete_goal_handler(
                     format!("Error deleting routine events: {}", e),
                 )
             })?;
+
+            // Delete all routine exceptions so we don't leave orphaned tombstones behind
+            let delete_exceptions_query = query(
+                "MATCH (r:Goal)-[:HAS_EXCEPTION]->(x:RoutineException)
+                 WHERE id(r) = $id
+                 DETACH DELETE x",
+            )
+            .param("id", id);
+
+            graph.run(delete_exceptions_query).await.map_err(|e| {
+                eprintln!("Error deleting routine exceptions: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error deleting routine exceptions: {}", e),
+                )
+            })?;
         }
     }
 

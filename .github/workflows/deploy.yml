@@ -17,6 +17,28 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 60
     steps:
+      - name: Pre-deploy backup (required if DB is running)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Backup the *currently running* prod DB before we tear anything down.
+          if docker ps -q -f name='^goals_db$' | grep -q .; then
+            echo "goals_db is running; taking a pre-deploy backup..."
+            before_count=$(docker exec --user neo4j goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            docker exec --user neo4j goals_db bash -lc '/scripts/backup.sh'
+            after_count=$(docker exec --user neo4j goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            echo "Backup count before: ${before_count}, after: ${after_count}"
+            if [ "${after_count}" -le "${before_count}" ]; then
+              echo "Pre-deploy backup did not produce a new dump file" >&2
+              docker exec goals_db bash -lc 'ls -la /backups || true'
+              exit 1
+            fi
+            docker exec goals_db bash -lc 'echo "Latest dump:"; ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n 1 || true'
+          else
+            echo "goals_db is not running; skipping pre-deploy backup (first deploy or DB down)."
+          fi
+
       - name: Stop existing Docker Compose stacks (pre-checkout)
         shell: bash
         run: |
@@ -62,7 +84,7 @@ jobs:
             fi
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           clean: true
 
@@ -96,57 +118,6 @@ jobs:
           BP="${BACKUP_PATH:-/var/lib/goals/backups}"
           docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
           docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
-      #- name: Prepare backup directories (idempotent)
-      #  env:
-      #    BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-      #    BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
-      #  run: |
-      #    set -euxo pipefail
-      #    : "${BACKUP_PATH:=/var/lib/goals/backups}"
-      #    : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
-      #    sudo mkdir -p "$BACKUP_PATH" "$BACKUP_LOGS_PATH"
-      #    # Set permissive ownership/permissions to avoid container write issues
-      #    sudo chown -R 7474:7474 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
-      #    sudo chmod -R 0775 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
-      #    # Cleanup zero-byte or partial backups from previous runs, retain last 30
-      #    find "$BACKUP_PATH" -type f -name 'neo4j_dump_*.dump' -size 0 -delete || true
-      #    # Retention: keep last 30 dumps, delete older
-      #    ls -1t "$BACKUP_PATH"/neo4j_dump_*.dump 2>/dev/null | tail -n +31 | xargs -r rm -f || true
-
-      # - name: Pre-deploy backup (required)
-      #   env:
-      #     BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-      #   run: |
-      #     set -euxo pipefail
-      #     if docker ps -q -f name=goals_db | grep -q .; then
-      #       echo "goals_db is running; taking a pre-deploy backup (in-place)"
-      #       before_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-      #       # Prefer script (shebang uses bash); fallback to inline dump via sh
-      #       if docker exec goals_db test -x /scripts/backup.sh; then
-      #         docker exec goals_db /scripts/backup.sh
-      #       else
-      #         docker exec goals_db sh -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
-      #       fi
-      #       after_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-      #       if [ "$after_count" -le "$before_count" ]; then
-      #         echo "Pre-deploy backup did not increase backup count" >&2
-      #         exit 1
-      #       fi
-      #     else
-      #       echo "goals_db not running; running one-off backup container to verify backup system"
-      #       before_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
-      #       # Prefer script; fallback to inline dump
-      #       if docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'test -x /scripts/backup.sh' >/dev/null 2>&1; then
-      #         docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint /scripts/backup.sh goals_db
-      #       else
-      #         docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
-      #       fi
-      #       after_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
-      #       if [ "${after_count}" -le "${before_count}" ]; then
-      #         echo "Pre-deploy backup (one-off) did not increase backup count" >&2
-      #         exit 1
-      #       fi
-      #     fi
 
       - name: Stop and remove existing containers
         run: |

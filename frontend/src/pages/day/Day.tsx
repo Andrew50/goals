@@ -3,7 +3,7 @@ import { timestampToDisplayString } from '../../shared/utils/time';
 import React, { useEffect, useState, useCallback } from 'react';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
-import { Box, Typography, Paper, Button, IconButton, Select, MenuItem, SelectChangeEvent } from '@mui/material';
+import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
@@ -12,9 +12,8 @@ import './Day.css';
 import '../../shared/styles/badges.css';
 import { useSearchParams } from 'react-router-dom';
 import CompletionBar from '../../shared/components/CompletionBar';
-
-// Resolution status type
-type ResolutionStatus = 'pending' | 'completed' | 'failed' | 'skipped';
+import { ResolutionStatus } from '../../types/goals';
+import ResolutionStatusToggle from '../../shared/components/ResolutionStatusToggle';
 
 // Event type returned from the day endpoint
 interface DayEvent {
@@ -224,9 +223,11 @@ const Day: React.FC = () => {
         });
     };
 
+    type ResolvedStatus = Exclude<ResolutionStatus, 'pending'>;
+
     const organizedEvents = () => {
         const todoItems = events.filter(item => item.resolution_status === 'pending');
-        const completedItems = events.filter(item => item.resolution_status !== 'pending');
+        const resolvedItems = events.filter(item => item.resolution_status !== 'pending');
 
         const sortByScheduled = (a: DayEvent, b: DayEvent) => {
             // All-day events (duration = 1440 minutes) should be sorted to the bottom
@@ -244,14 +245,20 @@ const Day: React.FC = () => {
 
         return {
             todo: todoItems.sort(sortByScheduled),
-            completed: completedItems.sort(sortByScheduled)
+            resolved: {
+                completed: resolvedItems.filter(item => item.resolution_status === 'completed').sort(sortByScheduled),
+                skipped: resolvedItems.filter(item => item.resolution_status === 'skipped').sort(sortByScheduled),
+                failed: resolvedItems.filter(item => item.resolution_status === 'failed').sort(sortByScheduled),
+            }
         };
     };
 
     const getCompletionPercentage = () => {
-        if (events.length === 0) return 0;
-        const completed = events.filter(event => event.resolution_status === 'completed').length;
-        return Math.round((completed / events.length) * 100);
+        // Exclude skipped events from denominator (they don't count toward completion metrics)
+        const eligibleEvents = events.filter(event => event.resolution_status !== 'skipped');
+        if (eligibleEvents.length === 0) return 0;
+        const completed = eligibleEvents.filter(event => event.resolution_status === 'completed').length;
+        return Math.round((completed / eligibleEvents.length) * 100);
     };
 
     // Current time line component
@@ -314,6 +321,63 @@ const Day: React.FC = () => {
         );
     };
 
+    const organized = organizedEvents();
+    const resolvedCounts = {
+        completed: organized.resolved.completed.length,
+        skipped: organized.resolved.skipped.length,
+        failed: organized.resolved.failed.length,
+    };
+    const resolvedTotalCount = resolvedCounts.completed + resolvedCounts.skipped + resolvedCounts.failed;
+
+    const renderResolvedEvent = (event: DayEvent) => {
+        const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
+        const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
+        const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
+        const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
+        const isCompleted = event.resolution_status === 'completed';
+
+        return (
+            <Paper
+                key={event.id}
+                className="task-card resolved"
+            >
+                <div
+                    className="priority-strip"
+                    style={{ backgroundColor: goalStyle.borderColor }}
+                />
+                <div
+                    className="task-content"
+                    onClick={() => handleEventClick(event)}
+                    onContextMenu={(e) => handleEventContextMenu(e, event)}
+                >
+                    <div className="task-header">
+                        <Typography variant="body1" className={`task-name ${isCompleted ? 'completed' : ''}`}>
+                            {event.name}
+                        </Typography>
+                        {timeString && (
+                            <span className="task-time">{timeString}</span>
+                        )}
+                    </div>
+                </div>
+
+                <Box onClick={(e) => e.stopPropagation()}>
+                    <ResolutionStatusToggle
+                        value={event.resolution_status}
+                        onChange={(status) => handleStatusChange(event, status)}
+                        ariaLabel="Set event status"
+                        dense
+                    />
+                </Box>
+            </Paper>
+        );
+    };
+
+    const resolvedGroups: Array<{ status: ResolvedStatus; items: DayEvent[] }> = [
+        { status: 'completed', items: organized.resolved.completed },
+        { status: 'skipped', items: organized.resolved.skipped },
+        { status: 'failed', items: organized.resolved.failed },
+    ];
+
     return (
         <Box className="day-container">
             <div className="day-content">
@@ -364,7 +428,10 @@ const Day: React.FC = () => {
                             title={`${getCompletionPercentage()}%`}
                             style={{ margin: '0 8px' }}
                         />
-                        <span> • {organizedEvents().completed.length} of {events.length} tasks</span>
+                        {(() => {
+                            const eligibleCount = events.filter(e => e.resolution_status !== 'skipped').length;
+                            return <span> • {resolvedCounts.completed} of {eligibleCount} tasks completed</span>;
+                        })()}
                     </Box>
 
                     <Button
@@ -383,10 +450,10 @@ const Day: React.FC = () => {
                     <Box className="column">
                         <div className="column-header">
                             <Typography variant="h6" className="column-title">To Do</Typography>
-                            <span className="column-count">{organizedEvents().todo.length}</span>
+                            <span className="column-count">{organized.todo.length}</span>
                         </div>
                         <div className="tasks-list">
-                            {organizedEvents().todo.length === 0 ? (
+                            {organized.todo.length === 0 ? (
                                 <>
                                     {isToday(currentDate) && <CurrentTimeLine />}
                                     <div className="empty-state">
@@ -406,7 +473,7 @@ const Day: React.FC = () => {
                                     </div>
                                 </>
                             ) : (
-                                insertCurrentTimeLine(organizedEvents().todo).map((item, index) => {
+                                insertCurrentTimeLine(organized.todo).map((item, index) => {
                                     if (item.type === 'current-time') {
                                         return <CurrentTimeLine key={`current-time-todo-${index}`} />;
                                     }
@@ -446,24 +513,12 @@ const Day: React.FC = () => {
                                             </div>
 
                                             <Box onClick={(e) => e.stopPropagation()}>
-                                                <Select
+                                                <ResolutionStatusToggle
                                                     value={event.resolution_status}
-                                                    onChange={(e: SelectChangeEvent) => handleStatusChange(event, e.target.value as ResolutionStatus)}
-                                                    size="small"
-                                                    variant="standard"
-                                                    disableUnderline
-                                                    sx={{ 
-                                                        fontSize: '0.875rem',
-                                                        color: 'text.secondary',
-                                                        '& .MuiSelect-select': { paddingRight: '16px !important' },
-                                                        minWidth: 'auto'
-                                                    }}
-                                                >
-                                                    <MenuItem value="pending">Pending</MenuItem>
-                                                    <MenuItem value="completed">Completed</MenuItem>
-                                                    <MenuItem value="skipped">Skipped</MenuItem>
-                                                    <MenuItem value="failed">Failed</MenuItem>
-                                                </Select>
+                                                    onChange={(status) => handleStatusChange(event, status)}
+                                                    ariaLabel="Set event status"
+                                                    dense
+                                                />
                                             </Box>
                                         </Paper>
                                     );
@@ -474,69 +529,29 @@ const Day: React.FC = () => {
 
                     <Box className="column">
                         <div className="column-header">
-                            <Typography variant="h6" className="column-title completed">
-                                Completed
+                            <Typography variant="h6" className="column-title resolved">
+                                Resolved
                             </Typography>
-                            <span className="column-count">{organizedEvents().completed.length}</span>
+                            <span className="column-count">{resolvedTotalCount}</span>
                         </div>
-                        <div className="tasks-list completed">
-                            {organizedEvents().completed.length === 0 ? (
+                        <div className="tasks-list resolved">
+                            {resolvedTotalCount === 0 ? (
                                 <div className="empty-state">
                                     <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
-                                    <p className="empty-state-text">No completed tasks yet</p>
+                                    <p className="empty-state-text">No resolved tasks yet</p>
                                 </div>
                             ) : (
-                                organizedEvents().completed.map(event => {
-                                    const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
-                                    const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
-                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
+                                resolvedGroups.map((group, groupIndex) => {
+                                    if (group.items.length === 0) return null;
                                     return (
-                                        <Paper
-                                            key={event.id}
-                                            className="task-card completed"
+                                        <div
+                                            key={group.status}
+                                            className={`resolved-group ${groupIndex > 0 ? 'not-first' : ''}`}
                                         >
-                                            <div 
-                                                className="priority-strip" 
-                                                style={{ backgroundColor: goalStyle.borderColor }}
-                                            />
-                                            <div
-                                                className="task-content"
-                                                onClick={() => handleEventClick(event)}
-                                                onContextMenu={(e) => handleEventContextMenu(e, event)}
-                                            >
-                                                <div className="task-header">
-                                                    <Typography variant="body1" className="task-name completed">
-                                                        {event.name}
-                                                    </Typography>
-                                                    {isAllDay(event) && (
-                                                        <span className="task-time">All day</span>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            <Box onClick={(e) => e.stopPropagation()}>
-                                                <Select
-                                                    value={event.resolution_status}
-                                                    onChange={(e: SelectChangeEvent) => handleStatusChange(event, e.target.value as ResolutionStatus)}
-                                                    size="small"
-                                                    variant="standard"
-                                                    disableUnderline
-                                                    sx={{ 
-                                                        fontSize: '0.875rem',
-                                                        color: 'text.secondary',
-                                                        '& .MuiSelect-select': { paddingRight: '16px !important' },
-                                                        minWidth: 'auto'
-                                                    }}
-                                                >
-                                                    <MenuItem value="pending">Pending</MenuItem>
-                                                    <MenuItem value="completed">Completed</MenuItem>
-                                                    <MenuItem value="skipped">Skipped</MenuItem>
-                                                    <MenuItem value="failed">Failed</MenuItem>
-                                                </Select>
-                                            </Box>
-                                        </Paper>
+                                            {group.items.map(renderResolvedEvent)}
+                                        </div>
                                     );
                                 })
                             )}

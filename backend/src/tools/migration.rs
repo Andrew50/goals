@@ -304,27 +304,34 @@ async fn create_performance_indexes(
 ) -> Result<(), String> {
     println!("Creating performance indexes...");
 
-    let indexes = vec![
+    // NOTE: This list is ordered. We drop obsolete/renamed indexes first, then create the expected ones.
+    let index_ops = vec![
+        // Older databases may still have `event_completion_idx` (based on legacy `completed`).
+        // We migrated to `resolution_status`, so we explicitly drop it to avoid stale/duplicate indexes.
+        (
+            "drop_event_completion_idx",
+            "DROP INDEX event_completion_idx IF EXISTS",
+        ),
         // Primary event query indexes
         ("goal_type_scheduled_idx", "CREATE INDEX goal_type_scheduled_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.scheduled_timestamp)"),
         ("parent_relationship_idx", "CREATE INDEX parent_relationship_idx IF NOT EXISTS FOR (g:Goal) ON (g.parent_id, g.parent_type)"),
         ("routine_instance_idx", "CREATE INDEX routine_instance_idx IF NOT EXISTS FOR (g:Goal) ON (g.routine_instance_id)"),
         ("user_goal_type_idx", "CREATE INDEX user_goal_type_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.goal_type)"),
-        ("event_completion_idx", "CREATE INDEX event_completion_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.completed, g.is_deleted)"),
+        ("event_resolution_idx", "CREATE INDEX event_resolution_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.resolution_status, g.is_deleted)"),
         ("task_date_range_idx", "CREATE INDEX task_date_range_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.start_timestamp, g.end_timestamp)"),
         ("calendar_query_idx", "CREATE INDEX calendar_query_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.goal_type, g.scheduled_timestamp, g.is_deleted)"),
         // EventMove tracking index (moved here for proper ordering)
         ("event_move_user_time", "CREATE INDEX event_move_user_time IF NOT EXISTS FOR (em:EventMove) ON (em.user_id, em.move_timestamp)"),
     ];
 
-    for (name, index_query) in indexes {
+    for (name, index_query) in index_ops {
         graph
             .run(neo4rs::query(index_query))
             .await
-            .map_err(|e| format!("Failed to create index {}: {}", name, e))?;
+            .map_err(|e| format!("Failed to apply index operation {}: {}", name, e))?;
 
         state.created_indexes.push(name.to_string());
-        println!("  ✓ Created index: {}", name);
+        println!("  ✓ Applied index operation: {}", name);
     }
 
     println!("Performance indexes created successfully");
@@ -1137,7 +1144,7 @@ async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
         SHOW INDEXES
         YIELD name
         WHERE name IN ['goal_type_scheduled_idx', 'parent_relationship_idx', 'routine_instance_idx', 
-                       'user_goal_type_idx', 'event_completion_idx', 'task_date_range_idx', 
+                       'user_goal_type_idx', 'event_resolution_idx', 'task_date_range_idx', 
                        'calendar_query_idx', 'event_move_user_time']
         RETURN count(name) as created_indexes
     ";

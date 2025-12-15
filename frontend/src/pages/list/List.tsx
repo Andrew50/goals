@@ -8,7 +8,7 @@ import './List.css';
 import '../../shared/styles/badges.css';
 import { SearchBar } from '../../shared/components/SearchBar';
 import { formatFrequency } from '../../shared/utils/frequency';
-import { deleteGoal, duplicateGoal, updateGoal, completeGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
+import { deleteGoal, duplicateGoal, updateGoal, resolveGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
 
 type FieldType = 'text' | 'enum' | 'number' | 'boolean' | 'date';
 type ColumnKey = keyof Goal;
@@ -299,10 +299,11 @@ const List: React.FC = () => {
         const selectedGoals = getSelectedGoals();
         try {
             await Promise.all(selectedGoals.map(async (g) => {
+                const status: ResolutionStatus = completed ? 'completed' : 'pending';
                 if (g.goal_type === 'event') {
-                    await updateEvent(g.id, { completed });
+                    await updateEvent(g.id, { resolution_status: status });
                 } else {
-                    await completeGoal(g.id, completed);
+                    await resolveGoal(g.id, status);
                 }
             }));
             refreshAndClearSelection();

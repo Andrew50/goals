@@ -23,7 +23,8 @@ import {
   SelectChangeEvent,
   MenuItem,
   InputLabel,
-  CircularProgress
+  CircularProgress,
+  Alert
 } from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
@@ -259,13 +260,58 @@ const Calendar: React.FC = () => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
-    try {
-      calendarRef.current?.getApi().refetchEvents();
-    } catch (err) {
-      console.error('Error triggering initial calendar fetch:', err);
-      setError('Failed to load calendar data. Please try refreshing the page.');
-    }
-  }, [setError]);
+    const triggerInitialLoad = async () => {
+      // Prefer letting FullCalendar drive the load via its `events` callback.
+      // In unit tests we mock `@fullcalendar/react` without a real ref/getApi implementation,
+      // so we fall back to fetching directly to keep behavior testable.
+      try {
+        const api = (calendarRef.current as any)?.getApi?.();
+        if (api?.refetchEvents) {
+          api.refetchEvents();
+          return;
+        }
+      } catch (err) {
+        // If FullCalendar isn't ready yet, fall back below.
+        console.warn('FullCalendar getApi/refetchEvents not available, falling back to direct fetch', err);
+      }
+
+      // Fallback: fetch directly using the current dateRange (useful for tests/mocks)
+      try {
+        const current = stateRef.current;
+        const { start, end } = current.dateRange;
+
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: true,
+          dateRange: { start, end }
+        });
+
+        const data = await fetchCalendarData({ start, end });
+
+        setState({
+          events: data.events,
+          tasks: data.unscheduledTasks,
+          isLoading: false,
+          dateRange: { start, end }
+        });
+      } catch (err) {
+        console.error('Error triggering initial calendar fetch:', err);
+        setError('Failed to load calendar data. Please try refreshing the page.');
+
+        // Best-effort: clear loading state if we had set it
+        const current = stateRef.current;
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: false,
+          dateRange: current.dateRange
+        });
+      }
+    };
+
+    void triggerInitialLoad();
+  }, [setError, setState]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {
@@ -1593,20 +1639,36 @@ const Calendar: React.FC = () => {
               <FormControlLabel
                 value="single"
                 control={<Radio />}
-                label="Only this occurrence"
+                label="Apply to just this occurrence"
               />
               <FormControlLabel
                 value="future"
                 control={<Radio />}
-                label="This and all future occurrences"
+                label="Apply to this occurrence and beyond"
               />
               <FormControlLabel
                 value="all"
                 control={<Radio />}
-                label="All occurrences of this routine"
+                label="Apply to all occurrences"
               />
             </RadioGroup>
           </FormControl>
+
+          <Box sx={{ mt: 2 }}>
+            {selectedUpdateScope === 'single' ? (
+              <Alert severity="info">
+                Only this event will be moved. The old time slot will be remembered as intentionally changed, so it won’t be recreated later.
+              </Alert>
+            ) : selectedUpdateScope === 'future' ? (
+              <Alert severity="warning">
+                This event and all future events will be shifted. Any previously deleted/skipped future occurrences starting at this event may reappear on the new schedule.
+              </Alert>
+            ) : (
+              <Alert severity="warning">
+                All occurrences will be shifted. Any previously deleted/skipped occurrences may reappear on the new schedule.
+              </Alert>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineRescheduleCancel}>
@@ -1659,20 +1721,32 @@ const Calendar: React.FC = () => {
               <FormControlLabel
                 value="single"
                 control={<Radio />}
-                label="Only this occurrence"
+                label="Apply to just this occurrence"
               />
               <FormControlLabel
                 value="future"
                 control={<Radio />}
-                label="This and all future occurrences"
+                label="Apply to this occurrence and beyond"
               />
               <FormControlLabel
                 value="all"
                 control={<Radio />}
-                label="All occurrences of this routine"
+                label="Apply to all occurrences"
               />
             </RadioGroup>
           </FormControl>
+
+          <Box sx={{ mt: 2 }}>
+            {selectedResizeScope === 'single' ? (
+              <Alert severity="info">
+                Only this event will be updated. Deleted/skipped occurrences stay deleted.
+              </Alert>
+            ) : (
+              <Alert severity="info">
+                Existing events will be updated and routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
+              </Alert>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineResizeCancel}>

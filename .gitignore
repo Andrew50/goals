@@ -36,6 +36,7 @@ backups/
 /frontend/playwright-report/
 /frontend/blob-report/
 /frontend/playwright/.cache/
+/frontend/tests/.auth/
 
 node_modules
 .cargo/

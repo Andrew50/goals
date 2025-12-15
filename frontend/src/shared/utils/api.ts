@@ -433,7 +433,6 @@ export const updateRoutineEventProperties = async (
 export const updateEvent = async (eventId: number, updates: {
     scheduled_timestamp?: Date;
     duration?: number;
-    completed?: boolean;
     resolution_status?: ResolutionStatus;
     move_reason?: string;
 }): Promise<Goal> => {
@@ -630,10 +629,12 @@ export const unlinkGoogleAccount = async (): Promise<void> => {
 
 // Routine recompute API – soft-delete future events and regenerate on the new schedule
 export const recomputeRoutineFuture = async (
-    routineId: number
+    routineId: number,
+    fromTimestamp?: Date
 ): Promise<{ deleted: number; created: number }> => {
+    const qs = fromTimestamp ? `?from_timestamp=${fromTimestamp.getTime()}` : '';
     return privateRequest<{ deleted: number; created: number }>(
-        `routine/${routineId}/recompute-future`,
+        `routine/${routineId}/recompute-future${qs}`,
         'POST'
     );
 };

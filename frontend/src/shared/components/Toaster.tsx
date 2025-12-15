@@ -71,7 +71,3 @@ export function showSnackbar(options: SnackbarOptions) {
 
     activeRoot.render(<Toast />);
 }
-
-
-
-

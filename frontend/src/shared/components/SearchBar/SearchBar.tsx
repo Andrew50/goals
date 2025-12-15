@@ -61,8 +61,6 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     return items.filter(it => !excludeGoalTypes || !excludeGoalTypes.includes(it.goal_type));
   }, [items, excludeGoalTypes]);
 
-  const keysSignature = useMemo(() => JSON.stringify(keys), [keys]);
-
   const fuse = useMemo(() => {
     return new Fuse(effectiveItems, {
       keys: keys as string[],
@@ -71,7 +69,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
       ignoreLocation: true,
       useExtendedSearch: false
     });
-  }, [effectiveItems, keysSignature, keys]);
+  }, [effectiveItems, keys]);
 
   useEffect(() => {
     const trimmed = (query || '').trim();

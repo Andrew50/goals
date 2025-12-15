@@ -1,8 +1,60 @@
 use axum::{extract::Json, http::StatusCode};
-use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, Duration, LocalResult, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+fn normalize_tz(tz: &str) -> Result<String, (StatusCode, String)> {
+    let tz = tz.trim();
+    let tz = if tz.is_empty() { "UTC" } else { tz };
+    let tz = if tz.eq_ignore_ascii_case("utc") {
+        "UTC"
+    } else {
+        tz
+    };
+
+    tz.parse::<Tz>()
+        .map(|tz| tz.to_string())
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid timezone '{}'. Expected an IANA timezone like 'America/New_York' or 'UTC'.",
+                    tz
+                ),
+            )
+        })
+}
+
+fn tz_local_datetime_to_utc_millis(tz: &Tz, naive: chrono::NaiveDateTime) -> i64 {
+    match tz.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => dt.with_timezone(&Utc).timestamp_millis(),
+        LocalResult::Ambiguous(dt1, _dt2) => dt1.with_timezone(&Utc).timestamp_millis(),
+        // Extremely rare for midnights in IANA zones, but handle DST gaps defensively:
+        LocalResult::None => {
+            let fallback = naive + Duration::hours(1);
+            match tz.from_local_datetime(&fallback) {
+                LocalResult::Single(dt) => dt.with_timezone(&Utc).timestamp_millis(),
+                LocalResult::Ambiguous(dt1, _dt2) => dt1.with_timezone(&Utc).timestamp_millis(),
+                LocalResult::None => tz.from_utc_datetime(&naive).timestamp_millis(),
+            }
+        }
+    }
+}
+
+fn tz_midnight_utc_millis(tz: &Tz, date: NaiveDate) -> i64 {
+    tz_local_datetime_to_utc_millis(tz, date.and_hms_opt(0, 0, 0).unwrap())
+}
+
+fn tz_year_range_utc_millis(year: i32, tz: &Tz) -> (i64, i64) {
+    let start_date = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
+    let end_date = NaiveDate::from_ymd_opt(year, 12, 31).unwrap();
+
+    let start = tz_local_datetime_to_utc_millis(tz, start_date.and_hms_opt(0, 0, 0).unwrap());
+    let end = tz_local_datetime_to_utc_millis(tz, end_date.and_hms_opt(23, 59, 59).unwrap());
+    (start, end)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DailyStats {
@@ -176,26 +228,24 @@ pub async fn get_year_stats(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
+    tz: String,
 ) -> Result<Json<YearStats>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let tz = normalize_tz(&tz)?;
+    let tz_parsed: Tz = tz
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
 
     // Get start and end timestamps for the year
     let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
     let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
 
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    // Use the user's timezone for year boundaries so "year" matches their local calendar.
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     // Query all events (Goal nodes with goal_type='event') linked to tasks, achievements, and routines for the year
     // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
+    // Exclude skipped events from metrics entirely
     let query_str = "
         MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
         WHERE e.goal_type = 'event'
@@ -206,35 +256,33 @@ pub async fn get_year_stats(
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
         WITH e, g, 
              (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
-             timestamp() as current_time
+             timestamp() as current_time,
+             COALESCE(e.resolution_status, 'pending') as status
         WHERE event_end_time <= current_time
-        RETURN e.scheduled_timestamp as date,
-               CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END as completed,
+        AND status <> 'skipped'
+        WITH e, g, status,
+             datetime({epochMillis: e.scheduled_timestamp, timezone: $tz}) as dt
+        RETURN toString(date(dt)) as date,
+               CASE WHEN status = 'completed' THEN true ELSE false END as completed,
                COALESCE(e.priority, g.priority, 'medium') as priority
     ";
 
     let query = query(query_str)
         .param("user_id", user_id)
         .param("start_timestamp", start_timestamp)
-        .param("end_timestamp", end_timestamp);
+        .param("end_timestamp", end_timestamp)
+        .param("tz", tz);
 
     match graph.execute(query).await {
         Ok(mut result) => {
             let mut daily_events: HashMap<String, Vec<(bool, String)>> = HashMap::new();
 
             while let Ok(Some(row)) = result.next().await {
-                let timestamp = row.get::<i64>("date").unwrap_or(0);
+                let date = row.get::<String>("date").unwrap_or_default();
                 let completed = row.get::<bool>("completed").unwrap_or(false);
                 let priority = row
                     .get::<String>("priority")
                     .unwrap_or_else(|_| "medium".to_string());
-
-                // Convert timestamp to date string (YYYY-MM-DD)
-                let date = Utc
-                    .timestamp_millis_opt(timestamp)
-                    .single()
-                    .map(|dt| dt.format("%Y-%m-%d").to_string())
-                    .unwrap_or_default();
 
                 daily_events
                     .entry(date)
@@ -310,15 +358,40 @@ pub async fn get_effort_stats(
     graph: Graph,
     user_id: i64,
     range: Option<String>,
+    tz: String,
 ) -> Result<Json<Vec<EffortStat>>, (StatusCode, String)> {
-    // Determine lower bound start timestamp from range (approximate months/years using days)
+    // Determine lower bound start timestamp from range (approximate months/years using days),
+    // anchored to the user's local midnight to match their calendar expectations.
+    let tz_parsed: Tz = normalize_tz(&tz)?
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
+    let today_local = Utc::now().with_timezone(&tz_parsed).date_naive();
+
     let start_timestamp_opt: Option<i64> = match range.as_deref() {
-        Some("5y") => Some((Utc::now() - Duration::days(5 * 365)).timestamp_millis()),
-        Some("1y") => Some((Utc::now() - Duration::days(365)).timestamp_millis()),
-        Some("6m") => Some((Utc::now() - Duration::days(182)).timestamp_millis()),
-        Some("3m") => Some((Utc::now() - Duration::days(91)).timestamp_millis()),
-        Some("1m") => Some((Utc::now() - Duration::days(30)).timestamp_millis()),
-        Some("2w") => Some((Utc::now() - Duration::days(14)).timestamp_millis()),
+        Some("5y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(5 * 365),
+        )),
+        Some("1y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(365),
+        )),
+        Some("6m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(182),
+        )),
+        Some("3m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(91),
+        )),
+        Some("1m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(30),
+        )),
+        Some("2w") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(14),
+        )),
         Some("all") | None | Some("") => None,
         Some(_) => None,
     };
@@ -334,10 +407,11 @@ pub async fn get_effort_stats(
           AND (e.is_deleted IS NULL OR e.is_deleted = false)
           AND e.scheduled_timestamp < timestamp()
           AND e.scheduled_timestamp >= $start_timestamp
+          AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs, collect(DISTINCT desc) AS descendants
         WITH g, epairs, descendants,
              size([d IN descendants WHERE d.goal_type <> 'event' AND id(d) <> id(g)]) AS children_count,
-             // weights across all past events (completed or not) for denominator
+             // weights across all eligible past events (excluding skipped) for denominator
              [p IN epairs | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
                   WHEN 'low' THEN 1.0
@@ -346,7 +420,7 @@ pub async fn get_effort_stats(
                   ELSE 2.0
              END] AS weights_all,
              // weights across completed past events for numerator
-             [p IN epairs WHERE p.e.resolution_status = 'completed' | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+             [p IN epairs WHERE COALESCE(p.e.resolution_status, 'pending') = 'completed' | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
                   WHEN 'low' THEN 1.0
                   WHEN 'medium' THEN 2.0
@@ -354,7 +428,7 @@ pub async fn get_effort_stats(
                   ELSE 2.0
              END] AS completed_weights,
              // duration only for completed past events
-             [p IN epairs WHERE p.e.resolution_status = 'completed' |
+             [p IN epairs WHERE COALESCE(p.e.resolution_status, 'pending') = 'completed' |
                 CASE
                   WHEN (
                     CASE
@@ -372,12 +446,14 @@ pub async fn get_effort_stats(
                     END
                 END
              ] AS durations_completed,
-             // flags for counting completed past events
-             [p IN epairs WHERE p.e.resolution_status = 'completed' | 1] AS completed_flags
+             // flags for counting eligible events (denominator - excludes skipped)
+             [p IN epairs | 1] AS eligible_flags,
+             // flags for counting completed past events (numerator)
+             [p IN epairs WHERE COALESCE(p.e.resolution_status, 'pending') = 'completed' | 1] AS completed_flags
         RETURN id(g) AS goal_id,
                g.name AS goal_name,
                g.goal_type AS goal_type,
-               size(completed_flags) AS total_events,
+               size(eligible_flags) AS total_events,
                reduce(s=0.0, d IN durations_completed | s + d) AS total_duration_minutes,
                size(completed_flags) AS completed_events,
                CASE reduce(s=0.0, w IN weights_all | s + w)
@@ -397,6 +473,7 @@ pub async fn get_effort_stats(
         WHERE e.goal_type = 'event'
           AND (e.is_deleted IS NULL OR e.is_deleted = false)
           AND e.scheduled_timestamp < timestamp()
+          AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         WITH g, collect(DISTINCT {e: e, parent: desc}) AS epairs, collect(DISTINCT desc) AS descendants
         WITH g, epairs, descendants,
              size([d IN descendants WHERE d.goal_type <> 'event' AND id(d) <> id(g)]) AS children_count,
@@ -407,14 +484,14 @@ pub async fn get_effort_stats(
                   WHEN 'high' THEN 3.0
                   ELSE 2.0
              END] AS weights_all,
-             [p IN epairs WHERE p.e.resolution_status = 'completed' | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
+             [p IN epairs WHERE COALESCE(p.e.resolution_status, 'pending') = 'completed' | CASE COALESCE(p.e.priority, p.parent.priority, 'medium')
                   WHEN 'none' THEN 0.0
                   WHEN 'low' THEN 1.0
                   WHEN 'medium' THEN 2.0
                   WHEN 'high' THEN 3.0
                   ELSE 2.0
              END] AS completed_weights,
-             [p IN epairs WHERE p.e.resolution_status = 'completed' |
+             [p IN epairs WHERE COALESCE(p.e.resolution_status, 'pending') = 'completed' |
                 CASE
                   WHEN (
                     CASE
@@ -432,11 +509,14 @@ pub async fn get_effort_stats(
                     END
                 END
              ] AS durations_completed,
-             [p IN epairs WHERE p.e.resolution_status = 'completed' | 1] AS completed_flags
+             // flags for counting eligible events (denominator - excludes skipped)
+             [p IN epairs | 1] AS eligible_flags,
+             // flags for counting completed past events (numerator)
+             [p IN epairs WHERE COALESCE(p.e.resolution_status, 'pending') = 'completed' | 1] AS completed_flags
         RETURN id(g) AS goal_id,
                g.name AS goal_name,
                g.goal_type AS goal_type,
-               size(completed_flags) AS total_events,
+               size(eligible_flags) AS total_events,
                reduce(s=0.0, d IN durations_completed | s + d) AS total_duration_minutes,
                size(completed_flags) AS completed_events,
                CASE reduce(s=0.0, w IN weights_all | s + w)
@@ -503,15 +583,39 @@ pub async fn get_goal_children_effort(
     user_id: i64,
     goal_id: i64,
     range: Option<String>,
+    tz: String,
 ) -> Result<Json<Vec<ChildEffortTimeSeries>>, (StatusCode, String)> {
+    let tz = normalize_tz(&tz)?;
+    let tz_parsed: Tz = tz
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
     // Determine lower bound start timestamp from range
+    let today_local = Utc::now().with_timezone(&tz_parsed).date_naive();
     let start_timestamp_opt: Option<i64> = match range.as_deref() {
-        Some("5y") => Some((Utc::now() - Duration::days(5 * 365)).timestamp_millis()),
-        Some("1y") => Some((Utc::now() - Duration::days(365)).timestamp_millis()),
-        Some("6m") => Some((Utc::now() - Duration::days(182)).timestamp_millis()),
-        Some("3m") => Some((Utc::now() - Duration::days(91)).timestamp_millis()),
-        Some("1m") => Some((Utc::now() - Duration::days(30)).timestamp_millis()),
-        Some("2w") => Some((Utc::now() - Duration::days(14)).timestamp_millis()),
+        Some("5y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(5 * 365),
+        )),
+        Some("1y") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(365),
+        )),
+        Some("6m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(182),
+        )),
+        Some("3m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(91),
+        )),
+        Some("1m") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(30),
+        )),
+        Some("2w") => Some(tz_midnight_utc_millis(
+            &tz_parsed,
+            today_local - Duration::days(14),
+        )),
         Some("all") | None | Some("") => None,
         Some(_) => None,
     };
@@ -533,13 +637,17 @@ pub async fn get_goal_children_effort(
           AND (e.is_deleted IS NULL OR e.is_deleted = false)
           AND e.scheduled_timestamp < timestamp()
           AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
+          AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         
         WITH child, children_count, e, desc,
-             COALESCE(e.priority, desc.priority, 'medium') AS priority
+             COALESCE(e.priority, desc.priority, 'medium') AS priority,
+             COALESCE(e.resolution_status, 'pending') AS status
         
+        WITH child, children_count, e, status, priority,
+             datetime({epochMillis: e.scheduled_timestamp, timezone: $tz}) as dt
         WITH child, children_count, collect({
-            date: e.scheduled_timestamp,
-            completed: CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END,
+            date: toString(date(dt)),
+            completed: CASE WHEN status = 'completed' THEN true ELSE false END,
             duration: CASE
                 WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
                   THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / (1000.0*60.0)
@@ -558,7 +666,8 @@ pub async fn get_goal_children_effort(
 
     let mut q = query(query_str)
         .param("goal_id", goal_id)
-        .param("user_id", user_id);
+        .param("user_id", user_id)
+        .param("tz", tz);
 
     if let Some(start) = start_timestamp_opt {
         q = q.param("start_timestamp", start);
@@ -588,8 +697,8 @@ pub async fn get_goal_children_effort(
                 let mut weighted_completed = 0.0;
 
                 for event in events {
-                    let timestamp = match event.get("date").and_then(|v| v.as_i64()) {
-                        Some(t) if t > 0 => t,
+                    let date = match event.get("date").and_then(|v| v.as_str()) {
+                        Some(d) if !d.is_empty() => d.to_string(),
                         _ => continue, // Skip null events from OPTIONAL MATCH
                     };
                     let completed = event
@@ -615,17 +724,6 @@ pub async fn get_goal_children_effort(
                         "high" => 3.0,
                         _ => 2.0,
                     };
-
-                    // Convert timestamp to date string
-                    let date = Utc
-                        .timestamp_millis_opt(timestamp)
-                        .single()
-                        .map(|dt| dt.format("%Y-%m-%d").to_string())
-                        .unwrap_or_default();
-
-                    if date.is_empty() {
-                        continue;
-                    }
 
                     total_events += 1;
                     weighted_total += weight;
@@ -698,9 +796,10 @@ pub async fn get_extended_stats(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
+    tz: String,
 ) -> Result<Json<ExtendedStats>, (StatusCode, String)> {
     // First get the daily stats
-    let year_stats_result = get_year_stats(graph.clone(), user_id, year).await?;
+    let year_stats_result = get_year_stats(graph.clone(), user_id, year, tz.clone()).await?;
     let year_stats = year_stats_result.0;
 
     // Aggregate into weekly and monthly stats
@@ -784,21 +883,17 @@ pub async fn get_routine_stats(
     user_id: i64,
     routine_ids: Vec<i64>,
     year: Option<i32>,
+    tz: String,
 ) -> Result<Json<Vec<RoutineStats>>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let tz = normalize_tz(&tz)?;
+    let tz_parsed: Tz = tz
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
     let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
     let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
 
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     eprintln!(
         "🔍 [ROUTINE_STATS] Getting stats for routine_ids: {:?}, year: {}",
@@ -816,11 +911,12 @@ pub async fn get_routine_stats(
             WHERE id(r) = $routine_id
             OPTIONAL MATCH (r)-[:HAS_EVENT]->(e:Goal)
             WHERE e.goal_type = 'event'
+            AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
             RETURN r.name as routine_name,
                    count(e) as total_events,
                    collect({
                        timestamp: e.scheduled_timestamp,
-                       completed: CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END,
+                       completed: CASE WHEN COALESCE(e.resolution_status, 'pending') = 'completed' THEN true ELSE false END,
                        is_deleted: COALESCE(e.is_deleted, false)
                    }) as all_events
         ";
@@ -913,15 +1009,19 @@ pub async fn get_routine_stats(
             AND e.scheduled_timestamp >= $start_timestamp
             AND e.scheduled_timestamp <= $end_timestamp
             AND (e.is_deleted IS NULL OR e.is_deleted = false)
+            AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
             WITH r, e,
                  (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
-                 timestamp() as current_time
+                 timestamp() as current_time,
+                 COALESCE(e.resolution_status, 'pending') as status
             WHERE event_end_time <= current_time
+            WITH r, e, status,
+                 datetime({epochMillis: e.scheduled_timestamp, timezone: $tz}) as dt
             ORDER BY e.scheduled_timestamp
             RETURN r.name as routine_name,
                    collect({
-                       date: e.scheduled_timestamp,
-                       completed: CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END
+                       date: toString(date(dt)),
+                       completed: CASE WHEN status = 'completed' THEN true ELSE false END
                    }) as events
         ";
 
@@ -929,7 +1029,8 @@ pub async fn get_routine_stats(
             .param("routine_id", routine_id)
             .param("user_id", user_id)
             .param("start_timestamp", start_timestamp)
-            .param("end_timestamp", end_timestamp);
+            .param("end_timestamp", end_timestamp)
+            .param("tz", tz.clone());
 
         match graph.execute(query).await {
             Ok(mut result) => {
@@ -948,8 +1049,8 @@ pub async fn get_routine_stats(
                     let mut daily_completion: HashMap<String, (i32, i32)> = HashMap::new();
 
                     for event in events {
-                        if let (Some(timestamp), Some(completed)) = (
-                            event.get("date").and_then(|v| v.as_i64()),
+                        if let (Some(date_str), Some(completed)) = (
+                            event.get("date").and_then(|v| v.as_str()),
                             event.get("completed").and_then(|v| v.as_bool()),
                         ) {
                             total_events += 1;
@@ -957,12 +1058,8 @@ pub async fn get_routine_stats(
                                 completed_events += 1;
                             }
 
-                            // Group by date for smoothing
-                            let date = Utc
-                                .timestamp_millis_opt(timestamp)
-                                .single()
-                                .map(|dt| dt.format("%Y-%m-%d").to_string())
-                                .unwrap_or_default();
+                            // Group by date for smoothing (date is already a string from Cypher)
+                            let date = date_str.to_string();
 
                             let entry = daily_completion.entry(date).or_insert((0, 0));
                             entry.0 += 1; // total
@@ -1022,21 +1119,13 @@ pub async fn get_rescheduling_stats(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
+    tz: String,
 ) -> Result<Json<EventReschedulingStats>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
-    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
-    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
-
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    let tz_parsed: Tz = normalize_tz(&tz)?
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     // Query event moves - for events that belong to tasks, achievements, or routines
     // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
@@ -1090,7 +1179,7 @@ pub async fn get_rescheduling_stats(
                 total_distance_hours += distance_hours;
 
                 // Group by month
-                let month = Utc
+                let month = tz_parsed
                     .timestamp_millis_opt(move_timestamp)
                     .single()
                     .map(|dt| dt.format("%Y-%m").to_string())
@@ -1376,23 +1465,15 @@ pub async fn get_event_analytics(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
+    tz: String,
 ) -> Result<Json<EventAnalytics>, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
+    let tz_parsed: Tz = normalize_tz(&tz)?
+        .parse()
+        .expect("normalize_tz validated timezone; parse should not fail");
 
     // Get start and end timestamps for the year
-    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
-    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
-
-    let start_timestamp = start_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
-    let end_timestamp = end_date
-        .and_hms_opt(23, 59, 59)
-        .unwrap()
-        .and_utc()
-        .timestamp_millis();
+    let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
     // Query all events with their parent information and duration
     // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
@@ -1404,14 +1485,16 @@ pub async fn get_event_analytics(
         AND e.scheduled_timestamp >= $start_timestamp
         AND e.scheduled_timestamp <= $end_timestamp
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         WITH e, g,
              (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
-             timestamp() as current_time
+             timestamp() as current_time,
+             COALESCE(e.resolution_status, 'pending') as status
         WHERE event_end_time <= current_time
         RETURN e.scheduled_timestamp as scheduled_timestamp,
                COALESCE(e.end_timestamp, e.scheduled_timestamp + COALESCE(e.duration_minutes, 60) * 60 * 1000) as end_timestamp,
                COALESCE(e.duration_minutes, 60) as duration_minutes,
-               CASE WHEN e.resolution_status = 'completed' THEN true ELSE false END as completed,
+               CASE WHEN status = 'completed' THEN true ELSE false END as completed,
                COALESCE(e.priority, g.priority, 'medium') as priority,
                g.goal_type as parent_type,
                g.name as parent_name

@@ -1,0 +1,6 @@
+# CI/test image: pinned within Neo4j 5 community so our test DB behavior is stable over time.
+FROM neo4j:5-community
+
+ENV NEO4J_AUTH=neo4j/password123
+
+

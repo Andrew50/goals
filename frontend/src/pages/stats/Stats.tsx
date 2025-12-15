@@ -137,8 +137,8 @@ interface EffortStat {
 const Stats: React.FC = () => {
     const navigate = useNavigate();
     const [yearStats, setYearStats] = useState<YearStats | null>(null);
-    const [extendedStats, setExtendedStats] = useState<ExtendedStats | null>(null);
-    const [eventAnalytics, setEventAnalytics] = useState<EventAnalytics | null>(null);
+    const [, setExtendedStats] = useState<ExtendedStats | null>(null);
+    const [, setEventAnalytics] = useState<EventAnalytics | null>(null);
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
     const [hoveredDay, setHoveredDay] = useState<DailyStats | null>(null);
     const [loading, setLoading] = useState(true);
@@ -146,11 +146,11 @@ const Stats: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'overview' | 'effort' | 'periods' | 'routines' | 'rescheduling' | 'analytics'>('overview');
 
     // Routine-specific state
-    const [routineSearchTerm, setRoutineSearchTerm] = useState('');
-    const [routineSearchResults, setRoutineSearchResults] = useState<RoutineSearchResult[]>([]);
-    const [selectedRoutineIds, setSelectedRoutineIds] = useState<number[]>([]);
-    const [routineStats, setRoutineStats] = useState<RoutineStats[]>([]);
-    const [reschedulingStats, setReschedulingStats] = useState<EventReschedulingStats | null>(null);
+    const [routineSearchTerm] = useState('');
+    const [, setRoutineSearchResults] = useState<RoutineSearchResult[]>([]);
+    const [selectedRoutineIds] = useState<number[]>([]);
+    const [, setRoutineStats] = useState<RoutineStats[]>([]);
+    const [, setReschedulingStats] = useState<EventReschedulingStats | null>(null);
     const [effortStats, setEffortStats] = useState<EffortStat[] | null>(null);
     const [effortRange, setEffortRange] = useState<'all' | '5y' | '1y' | '6m' | '3m' | '1m' | '2w'>('all');
     const [effortSortKey, setEffortSortKey] = useState<'children_count' | 'total_duration_minutes' | 'total_events' | 'weighted_completion_rate'>('total_duration_minutes');
@@ -172,11 +172,12 @@ const Stats: React.FC = () => {
     const fetchStats = async () => {
         setLoading(true);
         try {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const [yearData, extendedData, reschedulingData, analyticsData] = await Promise.all([
-                privateRequest<YearStats>(`stats?year=${selectedYear}`),
-                privateRequest<ExtendedStats>(`stats/extended?year=${selectedYear}`),
-                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}`),
-                privateRequest<EventAnalytics>(`stats/analytics?year=${selectedYear}`)
+                privateRequest<YearStats>(`stats?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
+                privateRequest<ExtendedStats>(`stats/extended?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
+                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
+                privateRequest<EventAnalytics>(`stats/analytics?year=${selectedYear}&tz=${encodeURIComponent(tz)}`)
             ]);
             setYearStats(yearData);
             setExtendedStats(extendedData);
@@ -208,7 +209,8 @@ const Stats: React.FC = () => {
     useEffect(() => {
         if (activeTab === 'effort') {
             setEffortStats(null);
-            privateRequest<EffortStat[]>(`stats/effort?range=${effortRange}`)
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            privateRequest<EffortStat[]>(`stats/effort?range=${effortRange}&tz=${encodeURIComponent(tz)}`)
                 .then(setEffortStats)
                 .catch((err) => console.error('Failed to fetch effort stats:', err));
         }
@@ -459,8 +461,9 @@ const Stats: React.FC = () => {
         }
         try {
             console.log('🔍 [FRONTEND] Fetching routine stats for IDs:', selectedRoutineIds, 'year:', selectedYear);
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const stats = await privateRequest<RoutineStats[]>(
-                `stats/routines/stats?year=${selectedYear}`,
+                `stats/routines/stats?year=${selectedYear}&tz=${encodeURIComponent(tz)}`,
                 'POST',
                 { routine_ids: selectedRoutineIds }
             );

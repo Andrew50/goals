@@ -37,6 +37,13 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
 };
 
+const DEFAULT_PARENT: Goal = {
+    id: 42,
+    name: 'Parent Project',
+    goal_type: 'project',
+    priority: 'medium'
+};
+
 describe('GoalMenu Component', () => {
     // Save original console functionality
     const originalWarn = console.warn;
@@ -142,6 +149,7 @@ describe('GoalMenu Component', () => {
             id: 0, // New goal
             name: '',
             goal_type: 'task',
+            priority: 'medium',
             _tz: 'user'
         };
 
@@ -153,6 +161,7 @@ describe('GoalMenu Component', () => {
                     mode="create"
                     onClose={() => { }}
                     onSuccess={() => { }}
+                    defaultSelectedParents={[DEFAULT_PARENT]}
                 />
             </TestWrapper>
         );
@@ -194,6 +203,8 @@ describe('GoalMenu Component', () => {
             id: 1,
             name: 'Test Goal',
             goal_type: 'task',
+            priority: 'medium',
+            parent_id: 42,
             start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z (13:00 CET)
             end_timestamp: new Date(1672660800000),   // 2023-01-02T12:00:00Z (13:00 CET next day)
             scheduled_timestamp: new Date(1672596000000), // 2023-01-01T18:00:00Z (19:00 CET)
@@ -264,6 +275,7 @@ describe('GoalMenu Component', () => {
             id: 0,
             name: '',
             goal_type: 'task',
+            priority: 'medium',
             _tz: 'user'
         };
 
@@ -275,6 +287,7 @@ describe('GoalMenu Component', () => {
                     mode="create"
                     onClose={() => { }}
                     onSuccess={() => { }}
+                    defaultSelectedParents={[DEFAULT_PARENT]}
                 />
             </TestWrapper>
         );
@@ -313,6 +326,7 @@ describe('GoalMenu Component', () => {
             id: 0,
             name: '',
             goal_type: 'task',
+            priority: 'medium',
             _tz: 'user'
         };
 
@@ -324,6 +338,7 @@ describe('GoalMenu Component', () => {
                     mode="create"
                     onClose={() => { }}
                     onSuccess={() => { }}
+                    defaultSelectedParents={[DEFAULT_PARENT]}
                 />
             </TestWrapper>
         );
@@ -362,6 +377,8 @@ describe('GoalMenu Component', () => {
             id: 1,
             name: 'Original Task Name',
             goal_type: 'task',
+            priority: 'medium',
+            parent_id: 42,
             start_timestamp: new Date(1672574400000), // 2023-01-01T12:00:00Z (13:00 CET)
             end_timestamp: new Date(1672660800000),   // 2023-01-02T12:00:00Z (13:00 CET next day)
             scheduled_timestamp: new Date(1672596000000), // 2023-01-01T18:00:00Z (19:00 CET)
