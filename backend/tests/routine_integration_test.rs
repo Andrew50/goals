@@ -79,6 +79,7 @@ async fn create_test_routine(
         gcal_last_sync: None,
         gcal_sync_direction: None,
         is_gcal_imported: None,
+        updated_at: None,
     };
 
     // Create the routine using the goal creation logic
@@ -1175,6 +1176,7 @@ mod tests {
             gcal_last_sync: None,
             gcal_sync_direction: None,
             is_gcal_imported: None,
+            updated_at: None,
         };
 
         // Create the routine via API (like frontend does)
@@ -1319,11 +1321,11 @@ mod tests {
             priority: Some("medium".to_string()),
             start_timestamp: Some(thursday_timestamp),
             end_timestamp: None,
-            completion_date: None,
             next_timestamp: None,
             scheduled_timestamp: Some(thursday_timestamp), // This would be set from calendar click
             duration: Some(60),
-            completed: Some(false),
+            resolution_status: Some("pending".to_string()),
+            resolved_at: None,
             frequency: Some("1W:1,3,5".to_string()), // Monday, Wednesday, Friday
             routine_type: Some("task".to_string()),
             routine_time: Some(thursday_timestamp), // Set from the click time initially
@@ -1341,6 +1343,7 @@ mod tests {
             gcal_last_sync: None,
             gcal_sync_direction: None,
             is_gcal_imported: None,
+            updated_at: None,
         };
 
         // Create via Goal API (simulates what the frontend does)
@@ -1479,11 +1482,11 @@ mod tests {
             priority: Some("medium".to_string()),
             start_timestamp: Some(thursday_timestamp),
             end_timestamp: None,
-            completion_date: None,
             next_timestamp: None,
             scheduled_timestamp: Some(thursday_timestamp), // From Thursday click
             duration: Some(60),
-            completed: Some(false),
+            resolution_status: Some("pending".to_string()),
+            resolved_at: None,
             frequency: Some("1D".to_string()), // Default when changing to routine
             routine_type: Some("task".to_string()),
             routine_time: Some(thursday_timestamp),
@@ -1501,6 +1504,7 @@ mod tests {
             gcal_last_sync: None,
             gcal_sync_direction: None,
             is_gcal_imported: None,
+            updated_at: None,
         };
 
         println!(
@@ -2279,7 +2283,7 @@ async fn test_recompute_from_cutoff_clears_tombstones_and_recreates_future_occur
     );
 
     // Recompute starting from cutoff; should clear tombstones >= cutoff and recreate deleted_ts
-    recompute_future_for_routine(&graph, routine_id, Some(cutoff_ts))
+    recompute_future_for_routine(&graph, 999, routine_id, Some(cutoff_ts))
         .await
         .expect("recompute_future_for_routine failed");
 

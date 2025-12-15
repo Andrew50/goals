@@ -260,13 +260,58 @@ const Calendar: React.FC = () => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
-    try {
-      calendarRef.current?.getApi().refetchEvents();
-    } catch (err) {
-      console.error('Error triggering initial calendar fetch:', err);
-      setError('Failed to load calendar data. Please try refreshing the page.');
-    }
-  }, [setError]);
+    const triggerInitialLoad = async () => {
+      // Prefer letting FullCalendar drive the load via its `events` callback.
+      // In unit tests we mock `@fullcalendar/react` without a real ref/getApi implementation,
+      // so we fall back to fetching directly to keep behavior testable.
+      try {
+        const api = (calendarRef.current as any)?.getApi?.();
+        if (api?.refetchEvents) {
+          api.refetchEvents();
+          return;
+        }
+      } catch (err) {
+        // If FullCalendar isn't ready yet, fall back below.
+        console.warn('FullCalendar getApi/refetchEvents not available, falling back to direct fetch', err);
+      }
+
+      // Fallback: fetch directly using the current dateRange (useful for tests/mocks)
+      try {
+        const current = stateRef.current;
+        const { start, end } = current.dateRange;
+
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: true,
+          dateRange: { start, end }
+        });
+
+        const data = await fetchCalendarData({ start, end });
+
+        setState({
+          events: data.events,
+          tasks: data.unscheduledTasks,
+          isLoading: false,
+          dateRange: { start, end }
+        });
+      } catch (err) {
+        console.error('Error triggering initial calendar fetch:', err);
+        setError('Failed to load calendar data. Please try refreshing the page.');
+
+        // Best-effort: clear loading state if we had set it
+        const current = stateRef.current;
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: false,
+          dateRange: current.dateRange
+        });
+      }
+    };
+
+    void triggerInitialLoad();
+  }, [setError, setState]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {

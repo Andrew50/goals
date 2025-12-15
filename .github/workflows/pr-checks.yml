@@ -327,6 +327,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           clean: false
 
       - name: Fix workspace permissions and stale node_modules (frontend)
@@ -353,7 +354,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '18'
+          node-version-file: '.nvmrc'
           cache: 'npm'
           cache-dependency-path: './frontend/package-lock.json'
 
@@ -373,9 +374,26 @@ jobs:
         working-directory: ./frontend
         run: npm run build
 
-      - name: Unit tests
+      - name: Unit tests (Jest + coverage; do not stop workflow)
+        id: frontend-unit-tests
         working-directory: ./frontend
-        run: npm run test:ci
+        run: |
+          set +e
+          npm run test:ci
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Coverage gate (global + per-file; fails job at end)
+        id: frontend-coverage-gate
+        if: always()
+        working-directory: ./frontend
+        run: |
+          set +e
+          npm run check:coverage
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Upload test coverage
         uses: actions/upload-artifact@v5
@@ -384,6 +402,20 @@ jobs:
           name: frontend-test-coverage
           path: frontend/coverage/
           retention-days: 30
+
+      - name: Fail if unit tests or coverage gate failed
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_code="${{ steps.frontend-unit-tests.outputs.exit_code }}"
+          cov_code="${{ steps.frontend-coverage-gate.outputs.exit_code }}"
+          echo "Frontend unit test exit_code: ${test_code:-unset}"
+          echo "Frontend coverage gate exit_code: ${cov_code:-unset}"
+          if [ "${test_code:-1}" != "0" ] || [ "${cov_code:-1}" != "0" ]; then
+            echo "Failing job due to unit test or coverage gate failure."
+            exit 1
+          fi
       
   # DEPLOYMENT CHECK
   deploy-ready:

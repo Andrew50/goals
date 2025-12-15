@@ -7,6 +7,30 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINAL_DUMP="${BACKUP_DIR}/neo4j_dump_${TIMESTAMP}.dump"
 TMP_DIR="${BACKUP_DIR}/tmp_${TIMESTAMP}"
 
+# Helper: best-effort wait for Neo4j to become queryable (so the data dir is initialized and SHOW DATABASES works).
+wait_for_neo4j_ready() {
+    local cypher_shell_bin="$1"
+    local bolt_uri="$2"
+    local user="$3"
+    local pass="$4"
+    local attempts="${5:-60}"
+    local sleep_s="${6:-2}"
+
+    if [ -z "${cypher_shell_bin}" ] || [ ! -x "${cypher_shell_bin}" ]; then
+        return 0
+    fi
+
+    local i=1
+    while [ "${i}" -le "${attempts}" ]; do
+        if "${cypher_shell_bin}" -a "${bolt_uri}" -u "${user}" -p "${pass}" "RETURN 1;" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep "${sleep_s}"
+        i=$((i + 1))
+    done
+    return 1
+}
+
 # Determine path to neo4j-admin (works for Neo4j 4.x and 5.x official images)
 NEO4J_ADMIN_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
 if [ ! -x "${NEO4J_ADMIN_BIN}" ]; then
@@ -28,32 +52,39 @@ else
     echo "[$(date)] /data not found; falling back to default data directory"
 fi
 
+# Resolve cypher-shell + credentials early so we can wait for readiness and/or query SHOW DATABASES.
+CYPHER_SHELL_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/cypher-shell"
+if [ ! -x "${CYPHER_SHELL_BIN}" ] && command -v cypher-shell >/dev/null 2>&1; then
+    CYPHER_SHELL_BIN="$(command -v cypher-shell)"
+fi
+
+# Parse credentials from NEO4J_AUTH=user/password if present
+NEO4J_USER="${NEO4J_USER-}"
+NEO4J_PASSWORD="${NEO4J_PASSWORD-}"
+if [ -z "${NEO4J_USER}" ] || [ -z "${NEO4J_PASSWORD}" ]; then
+    if [ -n "${NEO4J_AUTH-}" ] && echo "${NEO4J_AUTH}" | grep -q '/'; then
+        NEO4J_USER="${NEO4J_AUTH%%/*}"
+        NEO4J_PASSWORD="${NEO4J_AUTH#*/}"
+    fi
+fi
+NEO4J_USER="${NEO4J_USER:-neo4j}"
+NEO4J_PASSWORD="${NEO4J_PASSWORD:-password123}"
+NEO4J_BOLT_URI="${NEO4J_BOLT_URI:-bolt://localhost:7687}"
+
+# If we're running inside the Neo4j container right after startup, the TCP port can be open
+# before the database is fully initialized on disk. Wait briefly so dumps can succeed reliably.
+if ! wait_for_neo4j_ready "${CYPHER_SHELL_BIN}" "${NEO4J_BOLT_URI}" "${NEO4J_USER}" "${NEO4J_PASSWORD}" 60 2; then
+    echo "[$(date)] Warning: cypher-shell did not become ready at ${NEO4J_BOLT_URI}; continuing with filesystem-based detection"
+fi
+
 # Resolve database name:
 # - Respect NEO4J_DATABASE if explicitly set
 # - Otherwise prefer asking the running server (SHOW DATABASES) for the default/non-system database
 # - Fallback: auto-detect by looking under the configured data directory's "databases" folder
 DB_NAME="${NEO4J_DATABASE-}"
 if [ -z "${DB_NAME}" ]; then
-    CYPHER_SHELL_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/cypher-shell"
-    if [ ! -x "${CYPHER_SHELL_BIN}" ] && command -v cypher-shell >/dev/null 2>&1; then
-        CYPHER_SHELL_BIN="$(command -v cypher-shell)"
-    fi
-
     # Try to query the running server for the default database
     if [ -x "${CYPHER_SHELL_BIN}" ]; then
-        # Parse credentials from NEO4J_AUTH=user/password if present
-        NEO4J_USER="${NEO4J_USER-}"
-        NEO4J_PASSWORD="${NEO4J_PASSWORD-}"
-        if [ -z "${NEO4J_USER}" ] || [ -z "${NEO4J_PASSWORD}" ]; then
-            if [ -n "${NEO4J_AUTH-}" ] && echo "${NEO4J_AUTH}" | grep -q '/'; then
-                NEO4J_USER="${NEO4J_AUTH%%/*}"
-                NEO4J_PASSWORD="${NEO4J_AUTH#*/}"
-            fi
-        fi
-        NEO4J_USER="${NEO4J_USER:-neo4j}"
-        NEO4J_PASSWORD="${NEO4J_PASSWORD:-password123}"
-        NEO4J_BOLT_URI="${NEO4J_BOLT_URI:-bolt://localhost:7687}"
-
         # Prefer the default database; otherwise pick the first online non-system database.
         DB_NAME="$("${CYPHER_SHELL_BIN}" -a "${NEO4J_BOLT_URI}" -u "${NEO4J_USER}" -p "${NEO4J_PASSWORD}" \
             "SHOW DATABASES YIELD name, default, currentStatus WHERE name <> 'system' AND currentStatus = 'online' RETURN 'DB=' + name AS out ORDER BY default DESC, name ASC LIMIT 1;" 2>/dev/null \
@@ -61,10 +92,20 @@ if [ -z "${DB_NAME}" ]; then
     fi
 
     DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME:-/var/lib/neo4j}/data}"
+    # Some versions can take a moment to create the databases/ directories. Wait briefly before giving up.
+    if [ ! -d "${DATA_DIR}/databases" ] && [ -d "/data/databases" ]; then
+        DATA_DIR="/data"
+    fi
     if [ -d "${DATA_DIR}/databases" ]; then
         if [ -z "${DB_NAME}" ]; then
-            # Pick the first non-system database directory
-            DB_NAME="$(find "${DATA_DIR}/databases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -v '^system$' | head -n 1 || true)"
+            for i in {1..15}; do
+                # Pick the first non-system database directory
+                DB_NAME="$(find "${DATA_DIR}/databases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | grep -v '^system$' | head -n 1 || true)"
+                if [ -n "${DB_NAME}" ]; then
+                    break
+                fi
+                sleep 2
+            done
         fi
     fi
 fi

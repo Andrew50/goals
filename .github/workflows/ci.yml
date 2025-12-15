@@ -90,7 +90,7 @@ jobs:
       
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: '.nvmrc'
           
       - name: Cache npm
         uses: actions/cache@v4
@@ -144,6 +144,20 @@ jobs:
               fi
               sleep 2
             done
+          done
+          echo "Waiting for Neo4j (cypher-shell) to be ready inside goals_db_test..."
+          for i in {1..60}; do
+            if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test \
+              /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" >/dev/null 2>&1; then
+              echo "Neo4j cypher-shell is ready"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Neo4j cypher-shell failed to become ready"
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs goals_db_test
+              exit 1
+            fi
+            sleep 2
           done
           echo "All services are ready"
 

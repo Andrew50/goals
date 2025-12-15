@@ -1,0 +1,19 @@
+{
+  "global": {
+    "statements": 11,
+    "branches": 12,
+    "functions": 8,
+    "lines": 12
+  },
+  "perFile": {
+    "lines": 5
+  },
+  "mode": "changed",
+  "exclude": [
+    "frontend/src/config/",
+    "frontend/src/index.tsx",
+    "frontend/src/App.tsx"
+  ]
+}
+
+
