@@ -39,7 +39,8 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
 
     useEffect(() => {
         setLoading(true);
-        privateRequest<ChildEffortTimeSeries[]>(`stats/effort/${goalId}/children?range=${range}`)
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        privateRequest<ChildEffortTimeSeries[]>(`stats/effort/${goalId}/children?range=${range}&tz=${encodeURIComponent(tz)}`)
             .then(data => {
                 setChildren(data);
                 // Select all children by default

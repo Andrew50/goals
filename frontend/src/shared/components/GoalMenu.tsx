@@ -639,7 +639,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
             if (effortTargetId) {
                 try {
-                    const effortStats = await privateRequest<EffortStat[]>(`stats/effort?range=all`);
+                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                    const effortStats = await privateRequest<EffortStat[]>(`stats/effort?range=all&tz=${encodeURIComponent(tz)}`);
                     const effort = effortStats.find(e => e.goal_id === effortTargetId);
                     if (effort) {
                         stats.weighted_completion_rate = effort.weighted_completion_rate;

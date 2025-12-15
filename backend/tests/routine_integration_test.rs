@@ -53,11 +53,11 @@ async fn create_test_routine(
         priority: Some("medium".to_string()),
         start_timestamp: Some(start_timestamp),
         end_timestamp,
-        completion_date: None,
         next_timestamp: None,
         scheduled_timestamp: None,
         duration: Some(duration),
-        completed: Some(false),
+        resolution_status: Some("pending".to_string()),
+        resolved_at: None,
         frequency: Some(frequency.to_string()),
         routine_type: Some("test".to_string()),
         routine_time,
@@ -100,7 +100,8 @@ async fn get_routine_events(graph: &Graph, routine_id: i64) -> Result<Vec<Goal>,
             user_id: e.user_id,
             priority: e.priority,
             description: e.description,
-            completed: e.completed,
+            resolution_status: e.resolution_status,
+            resolved_at: e.resolved_at,
             is_deleted: e.is_deleted
         } as event
         ORDER BY e.scheduled_timestamp ASC
@@ -277,7 +278,8 @@ async fn generate_events_for_test_routine(
                          user_id: r.user_id,
                          priority: r.priority,
                          description: r.description,
-                         completed: false,
+                         resolution_status: 'pending',
+                         resolved_at: null,
                          is_deleted: false
                      })
                      CREATE (r)-[:HAS_EVENT]->(e)",
@@ -373,7 +375,8 @@ mod tests {
             assert_eq!(event.parent_id, Some(routine_id));
             assert_eq!(event.parent_type, Some("routine".to_string()));
             assert_eq!(event.user_id, Some(999));
-            assert_eq!(event.completed, Some(false));
+            assert_eq!(event.resolution_status, Some("pending".to_string()));
+            assert_eq!(event.resolved_at, None);
             assert_eq!(event.is_deleted, Some(false));
 
             // Verify the scheduled timestamp is within our expected range
@@ -476,7 +479,8 @@ mod tests {
             assert_eq!(event.parent_id, Some(routine_id));
             assert_eq!(event.parent_type, Some("routine".to_string()));
             assert_eq!(event.user_id, Some(999));
-            assert_eq!(event.completed, Some(false));
+            assert_eq!(event.resolution_status, Some("pending".to_string()));
+            assert_eq!(event.resolved_at, None);
             assert_eq!(event.is_deleted, Some(false));
 
             // Verify the scheduled timestamp is within our expected range
@@ -1145,11 +1149,11 @@ mod tests {
             priority: Some("medium".to_string()),
             start_timestamp: Some(base_time.timestamp_millis()),
             end_timestamp: None,
-            completion_date: None,
             next_timestamp: None,
             scheduled_timestamp: Some(thursday_click_timestamp), // This is set from the Thursday click
             duration: Some(60),
-            completed: Some(false),
+            resolution_status: Some("pending".to_string()),
+            resolved_at: None,
             frequency: Some("1W:1,3,5".to_string()), // Final frequency: Monday, Wednesday, Friday
             routine_type: Some("task".to_string()),
             routine_time: Some(thursday_click_timestamp), // This would be set from the click time

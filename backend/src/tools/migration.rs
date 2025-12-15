@@ -310,7 +310,7 @@ async fn create_performance_indexes(
         ("parent_relationship_idx", "CREATE INDEX parent_relationship_idx IF NOT EXISTS FOR (g:Goal) ON (g.parent_id, g.parent_type)"),
         ("routine_instance_idx", "CREATE INDEX routine_instance_idx IF NOT EXISTS FOR (g:Goal) ON (g.routine_instance_id)"),
         ("user_goal_type_idx", "CREATE INDEX user_goal_type_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.goal_type)"),
-        ("event_completion_idx", "CREATE INDEX event_completion_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.completed, g.is_deleted)"),
+        ("event_resolution_idx", "CREATE INDEX event_resolution_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.resolution_status, g.is_deleted)"),
         ("task_date_range_idx", "CREATE INDEX task_date_range_idx IF NOT EXISTS FOR (g:Goal) ON (g.goal_type, g.start_timestamp, g.end_timestamp)"),
         ("calendar_query_idx", "CREATE INDEX calendar_query_idx IF NOT EXISTS FOR (g:Goal) ON (g.user_id, g.goal_type, g.scheduled_timestamp, g.is_deleted)"),
         // EventMove tracking index (moved here for proper ordering)
@@ -1137,7 +1137,7 @@ async fn validate_post_migration_data(graph: &Graph) -> Result<(), String> {
         SHOW INDEXES
         YIELD name
         WHERE name IN ['goal_type_scheduled_idx', 'parent_relationship_idx', 'routine_instance_idx', 
-                       'user_goal_type_idx', 'event_completion_idx', 'task_date_range_idx', 
+                       'user_goal_type_idx', 'event_resolution_idx', 'task_date_range_idx', 
                        'calendar_query_idx', 'event_move_user_time']
         RETURN count(name) as created_indexes
     ";

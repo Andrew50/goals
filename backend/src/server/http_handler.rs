@@ -621,28 +621,31 @@ async fn handle_get_achievements_data(
 async fn handle_get_stats_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_year_stats(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    stats::get_year_stats(graph, user_id, year, tz).await
 }
 
 async fn handle_get_extended_stats(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_extended_stats(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    stats::get_extended_stats(graph, user_id, year, tz).await
 }
 
 async fn handle_get_event_analytics(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_event_analytics(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    stats::get_event_analytics(graph, user_id, year, tz).await
 }
 
 async fn handle_get_effort_stats(
@@ -651,7 +654,8 @@ async fn handle_get_effort_stats(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let range = params.get("range").cloned();
-    stats::get_effort_stats(graph, user_id, range).await
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    stats::get_effort_stats(graph, user_id, range, tz).await
 }
 
 async fn handle_get_goal_children_effort(
@@ -661,7 +665,8 @@ async fn handle_get_goal_children_effort(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let range = params.get("range").cloned();
-    stats::get_goal_children_effort(graph, user_id, id, range).await
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    stats::get_goal_children_effort(graph, user_id, id, range, tz).await
 }
 
 async fn handle_search_routines(
@@ -676,26 +681,28 @@ async fn handle_search_routines(
 async fn handle_get_routine_stats(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
     let routine_ids: Vec<i64> = payload
         .get("routine_ids")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
         .unwrap_or_default();
 
-    stats::get_routine_stats(graph, user_id, routine_ids, year).await
+    stats::get_routine_stats(graph, user_id, routine_ids, year, tz).await
 }
 
 async fn handle_get_rescheduling_stats(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-    Query(params): Query<HashMap<String, i32>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let year = params.get("year").copied();
-    stats::get_rescheduling_stats(graph, user_id, year).await
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    let tz = params.get("tz").cloned().unwrap_or_else(|| "UTC".to_string());
+    stats::get_rescheduling_stats(graph, user_id, year, tz).await
 }
 
 async fn handle_record_event_move(

@@ -433,7 +433,6 @@ export const updateRoutineEventProperties = async (
 export const updateEvent = async (eventId: number, updates: {
     scheduled_timestamp?: Date;
     duration?: number;
-    completed?: boolean;
     resolution_status?: ResolutionStatus;
     move_reason?: string;
 }): Promise<Goal> => {

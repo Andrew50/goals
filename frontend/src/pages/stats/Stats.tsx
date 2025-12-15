@@ -172,11 +172,12 @@ const Stats: React.FC = () => {
     const fetchStats = async () => {
         setLoading(true);
         try {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const [yearData, extendedData, reschedulingData, analyticsData] = await Promise.all([
-                privateRequest<YearStats>(`stats?year=${selectedYear}`),
-                privateRequest<ExtendedStats>(`stats/extended?year=${selectedYear}`),
-                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}`),
-                privateRequest<EventAnalytics>(`stats/analytics?year=${selectedYear}`)
+                privateRequest<YearStats>(`stats?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
+                privateRequest<ExtendedStats>(`stats/extended?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
+                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
+                privateRequest<EventAnalytics>(`stats/analytics?year=${selectedYear}&tz=${encodeURIComponent(tz)}`)
             ]);
             setYearStats(yearData);
             setExtendedStats(extendedData);
@@ -208,7 +209,8 @@ const Stats: React.FC = () => {
     useEffect(() => {
         if (activeTab === 'effort') {
             setEffortStats(null);
-            privateRequest<EffortStat[]>(`stats/effort?range=${effortRange}`)
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            privateRequest<EffortStat[]>(`stats/effort?range=${effortRange}&tz=${encodeURIComponent(tz)}`)
                 .then(setEffortStats)
                 .catch((err) => console.error('Failed to fetch effort stats:', err));
         }
@@ -459,8 +461,9 @@ const Stats: React.FC = () => {
         }
         try {
             console.log('🔍 [FRONTEND] Fetching routine stats for IDs:', selectedRoutineIds, 'year:', selectedYear);
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const stats = await privateRequest<RoutineStats[]>(
-                `stats/routines/stats?year=${selectedYear}`,
+                `stats/routines/stats?year=${selectedYear}&tz=${encodeURIComponent(tz)}`,
                 'POST',
                 { routine_ids: selectedRoutineIds }
             );

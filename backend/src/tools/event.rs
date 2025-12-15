@@ -24,6 +24,8 @@ pub struct UpdateEventRequest {
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub resolution_status: Option<String>, // "pending", "completed", "failed", "skipped"
+    #[serde(default)]
+    pub completed: Option<bool>, // Legacy field for backward compatibility
     pub move_reason: Option<String>,
 }
 
@@ -72,6 +74,8 @@ pub struct TaskEventsResponse {
     pub last_scheduled: Option<i64>,
     pub event_count: i32,
     pub completed_event_count: i32,
+    pub failed_event_count: i32,
+    pub skipped_event_count: i32,
     pub past_uncompleted_count: i32,
     pub future_uncompleted_count: i32,
     pub next_uncompleted_timestamp: Option<i64>,
@@ -527,16 +531,19 @@ pub async fn check_task_completion_status(
         "MATCH (t:Goal)
          WHERE id(t) = $task_id
          AND t.goal_type = 'task'
-         OPTIONAL MATCH (t)-[:HAS_EVENT]->(e:Goal)
+          OPTIONAL MATCH (t)-[:HAS_EVENT]->(e:Goal)
          WHERE e.goal_type = 'event'
          AND (e.is_deleted IS NULL OR e.is_deleted = false)
+         AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
          WITH t, 
               count(e) as total_events,
-              count(CASE WHEN e.resolution_status = 'completed' THEN 1 END) as completed_events
+              count(CASE WHEN COALESCE(e.resolution_status, 'pending') = 'completed' THEN 1 END) as completed_events,
+              count(CASE WHEN COALESCE(e.resolution_status, 'pending') = 'failed' THEN 1 END) as failed_events
          RETURN t.name as task_name,
                 t.resolution_status as task_resolution_status,
                 total_events,
                 completed_events,
+                failed_events,
                 CASE 
                     WHEN total_events = 0 THEN false
                     WHEN completed_events = total_events THEN true
@@ -647,6 +654,7 @@ pub async fn get_task_events_handler(
         WHERE id(t) = $task_id 
         AND e.goal_type = 'event'
         AND (e.is_deleted IS NULL OR e.is_deleted = false)
+        AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         RETURN e
         ORDER BY e.scheduled_timestamp ASC
     ";
@@ -710,6 +718,8 @@ pub async fn get_task_events_handler(
         events.push(event);
     }
 
+    // Past uncompleted = total eligible (non-skipped) - completed - future uncompleted
+    // This includes pending and failed events in the past
     let past_uncompleted_count =
         (event_count - completed_event_count - future_uncompleted_count).max(0);
 
@@ -721,6 +731,8 @@ pub async fn get_task_events_handler(
         last_scheduled,
         event_count,
         completed_event_count,
+        failed_event_count,
+        skipped_event_count,
         past_uncompleted_count,
         future_uncompleted_count,
         next_uncompleted_timestamp,
@@ -835,7 +847,25 @@ pub async fn update_event_handler(
         ));
     }
 
-    if let Some(resolution_status) = &request.resolution_status {
+    // Handle resolution_status (with backward compatibility for completed boolean)
+    let resolution_status = if let Some(status) = &request.resolution_status {
+        Some(status.clone())
+    } else if let Some(completed) = request.completed {
+        // Legacy compatibility: map boolean to resolution_status
+        Some(if completed { "completed".to_string() } else { "pending".to_string() })
+    } else {
+        None
+    };
+
+    if let Some(resolution_status) = &resolution_status {
+        // Validate resolution_status
+        if !["pending", "completed", "failed", "skipped"].contains(&resolution_status.as_str()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped", resolution_status)
+            ));
+        }
+        
         set_clauses.push("e.resolution_status = $resolution_status");
         params.push((
             "resolution_status",

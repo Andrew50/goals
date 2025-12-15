@@ -213,7 +213,8 @@ async fn generate_events_for_routine(
                      user_id: r.user_id,
                      priority: r.priority,
                      description: r.description,
-                     completed: false,
+                     resolution_status: 'pending',
+                     resolved_at: null,
                      is_deleted: false
                  })
                  CREATE (r)-[:HAS_EVENT]->(e)",
@@ -543,7 +544,8 @@ pub async fn recompute_future_for_routine(
                              user_id: r.user_id,
                              priority: r.priority,
                              description: r.description,
-                             completed: false,
+                             resolution_status: 'pending',
+                             resolved_at: null,
                              is_deleted: false
                          })
                          CREATE (r)-[:HAS_EVENT]->(e)",
