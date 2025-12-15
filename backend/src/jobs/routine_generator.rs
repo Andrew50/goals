@@ -401,6 +401,7 @@ pub async fn run_routine_generator(graph: Graph) {
 // Returns (deleted_count, created_count)
 pub async fn recompute_future_for_routine(
     graph: &Graph,
+    user_id: i64,
     routine_id: i64,
     from_timestamp: Option<i64>,
 ) -> Result<(i64, i64), String> {
@@ -409,46 +410,18 @@ pub async fn recompute_future_for_routine(
     let six_months = Duration::days(180).num_milliseconds();
     let horizon = now + six_months;
 
-    // 1) Clear exceptions at-or-after cutoff (so schedule changes can recreate previously skipped/deleted occurrences)
-    let _cleared = routine_exceptions::clear_exceptions_from(graph, routine_id, cutoff)
-        .await
-        .map_err(|e| format!("Failed to clear routine exceptions: {}", e))?;
-
-    // 2) Soft-delete all events for this routine at-or-after cutoff (including completed)
-    let mut del_result = graph
-        .execute(
-            query(
-                "MATCH (r:Goal) WHERE id(r) = $rid AND r.goal_type = 'routine'
-                 OPTIONAL MATCH (r)-[:HAS_EVENT]->(e:Goal)
-                 WHERE e.goal_type = 'event'
-                   AND e.scheduled_timestamp >= $cutoff
-                 WITH e
-                 SET e.is_deleted = true
-                 RETURN count(e) as deleted_count",
-            )
-            .param("rid", routine_id)
-            .param("cutoff", cutoff),
-        )
-        .await
-        .map_err(|e| format!("Failed to soft-delete future events: {}", e))?;
-
-    let deleted_count: i64 = if let Some(row) = del_result
-        .next()
-        .await
-        .map_err(|e| e.to_string())? {
-        row.get("deleted_count").unwrap_or(0)
-    } else {
-        0
-    };
-
-    // 3) Fetch routine
+    // 1) Verify routine ownership + fetch routine up-front.
     let mut fetch_result = graph
         .execute(
             query(
-                "MATCH (r:Goal) WHERE id(r) = $rid AND r.goal_type = 'routine'
+                "MATCH (r:Goal)
+                 WHERE id(r) = $rid
+                   AND r.goal_type = 'routine'
+                   AND r.user_id = $user_id
                  RETURN r",
             )
-            .param("rid", routine_id),
+            .param("rid", routine_id)
+            .param("user_id", user_id),
         )
         .await
         .map_err(|e| format!("Failed to fetch routine for recompute: {}", e))?;
@@ -462,6 +435,43 @@ pub async fn recompute_future_for_routine(
     let routine: Goal = row
         .get("r")
         .map_err(|e| format!("Failed to get routine node: {}", e))?;
+
+    // 2) Clear exceptions at-or-after cutoff (so schedule changes can recreate previously skipped/deleted occurrences)
+    let _cleared = routine_exceptions::clear_exceptions_from(graph, routine_id, cutoff)
+        .await
+        .map_err(|e| format!("Failed to clear routine exceptions: {}", e))?;
+
+    // 3) Soft-delete all events for this routine at-or-after cutoff (including completed)
+    let mut del_result = graph
+        .execute(
+            query(
+                "MATCH (r:Goal)
+                 WHERE id(r) = $rid
+                   AND r.goal_type = 'routine'
+                   AND r.user_id = $user_id
+                 OPTIONAL MATCH (r)-[:HAS_EVENT]->(e:Goal)
+                 WHERE e.goal_type = 'event'
+                   AND e.scheduled_timestamp >= $cutoff
+                 WITH e
+                 SET e.is_deleted = true
+                 RETURN count(e) as deleted_count",
+            )
+            .param("rid", routine_id)
+            .param("user_id", user_id)
+            .param("cutoff", cutoff),
+        )
+        .await
+        .map_err(|e| format!("Failed to soft-delete future events: {}", e))?;
+
+    let deleted_count: i64 = if let Some(row) = del_result
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        row.get("deleted_count").unwrap_or(0)
+    } else {
+        0
+    };
 
     // 4) Respect explicit end date if present
     let effective_until = match routine.end_timestamp {
@@ -508,12 +518,14 @@ pub async fn recompute_future_for_routine(
                 query(
                     "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
                      WHERE id(r) = $routine_id
+                       AND r.user_id = $user_id
                        AND e.goal_type = 'event'
                        AND e.scheduled_timestamp = $timestamp
                      RETURN id(e) as event_id
                      LIMIT 1",
                 )
                 .param("routine_id", routine_id)
+                .param("user_id", user_id)
                 .param("timestamp", scheduled_timestamp),
             )
             .await
@@ -524,8 +536,10 @@ pub async fn recompute_future_for_routine(
             graph
                 .run(
                     query(
-                        "MATCH (r:Goal), (e:Goal)
-                         WHERE id(r) = $routine_id AND id(e) = $event_id
+                        "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+                         WHERE id(r) = $routine_id
+                           AND r.user_id = $user_id
+                           AND id(e) = $event_id
                          SET e.is_deleted = false,
                              e.name = r.name,
                              e.duration = r.duration,
@@ -535,6 +549,7 @@ pub async fn recompute_future_for_routine(
                              e.resolved_at = null",
                     )
                     .param("routine_id", routine_id)
+                    .param("user_id", user_id)
                     .param("event_id", event_id),
                 )
                 .await
@@ -546,6 +561,7 @@ pub async fn recompute_future_for_routine(
                     query(
                         "MATCH (r:Goal)
                          WHERE id(r) = $routine_id
+                           AND r.user_id = $user_id
                          CREATE (e:Goal {
                              name: r.name,
                              goal_type: 'event',
@@ -564,6 +580,7 @@ pub async fn recompute_future_for_routine(
                          CREATE (r)-[:HAS_EVENT]->(e)",
                     )
                     .param("routine_id", routine_id)
+                    .param("user_id", user_id)
                     .param("timestamp", scheduled_timestamp)
                     .param("instance_id", instance_id.clone()),
                 )

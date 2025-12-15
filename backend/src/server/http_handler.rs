@@ -834,6 +834,7 @@ struct RecomputeResult {
 // Recompute handler – soft-delete future events for a routine and regenerate upcoming ones
 async fn handle_recompute_routine_future(
     Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -841,8 +842,10 @@ async fn handle_recompute_routine_future(
         .get("from_timestamp")
         .and_then(|v| v.parse::<i64>().ok());
 
-    match routine_generator::recompute_future_for_routine(&graph, id, from_timestamp).await {
+    match routine_generator::recompute_future_for_routine(&graph, user_id, id, from_timestamp).await
+    {
         Ok((deleted, created)) => Ok((StatusCode::OK, Json(RecomputeResult { deleted, created }))),
+        Err(e) if e == "Routine not found" => Err((StatusCode::NOT_FOUND, e)),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }
