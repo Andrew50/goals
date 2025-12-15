@@ -19,6 +19,21 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FRONTEND_ROOT = path.resolve(REPO_ROOT, 'frontend');
 const COVERAGE_DIR = path.resolve(FRONTEND_ROOT, 'coverage');
 
+const VERBOSE =
+  process.env.COVERAGE_GATE_VERBOSE === '1' ||
+  process.env.COVERAGE_GATE_VERBOSE === 'true' ||
+  process.env.COVERAGE_GATE_VERBOSE === 'yes';
+
+function toIntEnv(name, def) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return def;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : def;
+}
+
+const MAX_FAILURES_TO_PRINT = toIntEnv('COVERAGE_GATE_MAX_FAILURES', 500);
+const TOP_LOWEST_FILES_TO_PRINT = toIntEnv('COVERAGE_GATE_TOP_LOWEST_FILES', 30);
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
@@ -35,6 +50,26 @@ function exists(p) {
 function pct(covered, total) {
   if (!total) return 100;
   return (covered / total) * 100;
+}
+
+function fmtPct(n) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return 'n/a';
+  return `${n.toFixed(2)}%`;
+}
+
+function metricLabel(metric) {
+  switch (metric) {
+    case 'statements':
+      return 'statements';
+    case 'branches':
+      return 'branches';
+    case 'functions':
+      return 'functions';
+    case 'lines':
+      return 'lines';
+    default:
+      return String(metric);
+  }
 }
 
 function normalizeToRepoRelative(fileKey) {
@@ -207,8 +242,18 @@ function main() {
   for (const metric of ['statements', 'branches', 'functions', 'lines']) {
     if (typeof globalReq[metric] !== 'number') continue;
     const actual = globalActual[metric];
-    if (actual + 1e-9 < globalReq[metric]) {
-      globalFailures.push(`${metric}: ${actual.toFixed(2)}% < ${globalReq[metric]}%`);
+    const required = globalReq[metric];
+    if (actual + 1e-9 < required) {
+      globalFailures.push({
+        scope: 'global',
+        file: null,
+        metric,
+        required,
+        actual,
+        covered: globalTotals[metric].covered,
+        total: globalTotals[metric].total,
+        delta: required - actual
+      });
     }
   }
 
@@ -218,6 +263,7 @@ function main() {
   const perFileReq = thresholds.perFile || {};
   const perFileMetric = Object.keys(perFileReq);
   const perFileFailures = [];
+  const allFileLineCoverage = [];
 
   for (const [fileKey, fileCov] of Object.entries(coverageFinal)) {
     const repoRel = normalizeToRepoRelative(fileKey);
@@ -227,27 +273,57 @@ function main() {
 
     const filePct = getCoveragePctForFile(fileCov);
 
+    allFileLineCoverage.push({
+      file: repoRel,
+      linesPct: filePct.lines,
+      covered: filePct.covered.lines,
+      total: filePct.totals.lines
+    });
+
     for (const metric of perFileMetric) {
       const required = perFileReq[metric];
       if (typeof required !== 'number') continue;
       const actual = filePct[metric];
       if (typeof actual !== 'number') continue;
       if (actual + 1e-9 < required) {
-        perFileFailures.push(
-          `${repoRel} :: ${metric} ${actual.toFixed(2)}% < ${required}% (total ${filePct.totals[metric] ?? 'n/a'})`
-        );
-        // Only report first metric failure per file to keep logs readable
-        break;
+        perFileFailures.push({
+          scope: 'file',
+          file: repoRel,
+          metric,
+          required,
+          actual,
+          covered: filePct.covered[metric],
+          total: filePct.totals[metric],
+          delta: required - actual
+        });
       }
     }
   }
 
   if (globalFailures.length === 0 && perFileFailures.length === 0) {
     console.log('[coverage-gate] PASS');
+    console.log('[coverage-gate] Thresholds:');
     console.log(
-      `[coverage-gate] Global coverage: lines ${globalActual.lines.toFixed(2)}%, statements ${globalActual.statements.toFixed(
-        2
-      )}%, branches ${globalActual.branches.toFixed(2)}%, functions ${globalActual.functions.toFixed(2)}%`
+      `[coverage-gate] - global: lines ${fmtPct(globalReq.lines)} statements ${fmtPct(globalReq.statements)} branches ${fmtPct(
+        globalReq.branches
+      )} functions ${fmtPct(globalReq.functions)}`
+    );
+    console.log(
+      `[coverage-gate] - perFile: ${Object.keys(perFileReq)
+        .map((k) => `${metricLabel(k)} ${fmtPct(perFileReq[k])}`)
+        .join(', ') || '(none)'}`
+    );
+    console.log(`[coverage-gate] - mode: ${mode}`);
+    console.log(`[coverage-gate] - exclude: ${(excludeList || []).length ? excludeList.join(', ') : '(none)'}`);
+    console.log('[coverage-gate] Actual global coverage (included files):');
+    console.log(
+      `[coverage-gate] - lines ${fmtPct(globalActual.lines)} (${globalTotals.lines.covered}/${globalTotals.lines.total}), statements ${fmtPct(
+        globalActual.statements
+      )} (${globalTotals.statements.covered}/${globalTotals.statements.total}), branches ${fmtPct(globalActual.branches)} (${
+        globalTotals.branches.covered
+      }/${globalTotals.branches.total}), functions ${fmtPct(globalActual.functions)} (${globalTotals.functions.covered}/${
+        globalTotals.functions.total
+      })`
     );
     if (changed) {
       console.log(`[coverage-gate] Per-file checks applied to ${changed.size} changed frontend/src files`);
@@ -258,22 +334,71 @@ function main() {
   }
 
   console.error('[coverage-gate] FAIL');
+  console.error('[coverage-gate] Thresholds:');
   console.error(
-    `[coverage-gate] Global coverage: lines ${globalActual.lines.toFixed(2)}%, statements ${globalActual.statements.toFixed(
-      2
-    )}%, branches ${globalActual.branches.toFixed(2)}%, functions ${globalActual.functions.toFixed(2)}%`
+    `[coverage-gate] - global: lines ${fmtPct(globalReq.lines)} statements ${fmtPct(globalReq.statements)} branches ${fmtPct(
+      globalReq.branches
+    )} functions ${fmtPct(globalReq.functions)}`
   );
+  console.error(
+    `[coverage-gate] - perFile: ${Object.keys(perFileReq)
+      .map((k) => `${metricLabel(k)} ${fmtPct(perFileReq[k])}`)
+      .join(', ') || '(none)'}`
+  );
+  console.error(`[coverage-gate] - mode: ${mode}`);
+  console.error(`[coverage-gate] - exclude: ${(excludeList || []).length ? excludeList.join(', ') : '(none)'}`);
+  console.error('[coverage-gate] Actual global coverage (included files):');
+  console.error(
+    `[coverage-gate] - lines ${fmtPct(globalActual.lines)} (${globalTotals.lines.covered}/${globalTotals.lines.total}), statements ${fmtPct(
+      globalActual.statements
+    )} (${globalTotals.statements.covered}/${globalTotals.statements.total}), branches ${fmtPct(globalActual.branches)} (${
+      globalTotals.branches.covered
+    }/${globalTotals.branches.total}), functions ${fmtPct(globalActual.functions)} (${globalTotals.functions.covered}/${
+      globalTotals.functions.total
+    })`
+  );
+  if (changed) {
+    console.error(`[coverage-gate] Per-file checks applied to ${changed.size} changed frontend/src files`);
+  } else {
+    console.error('[coverage-gate] Per-file checks applied to all frontend/src files (or changed-files unavailable)');
+  }
 
   if (globalFailures.length) {
     console.error('[coverage-gate] Global threshold failures:');
-    for (const f of globalFailures) console.error(`- ${f}`);
+    for (const f of globalFailures) {
+      console.error(
+        `- ${metricLabel(f.metric)}: actual ${fmtPct(f.actual)} (${f.covered}/${f.total}) < required ${fmtPct(f.required)} (missed by ${fmtPct(
+          f.delta
+        )})`
+      );
+    }
   }
 
   if (perFileFailures.length) {
     console.error('[coverage-gate] Per-file threshold failures:');
-    for (const f of perFileFailures.slice(0, 200)) console.error(`- ${f}`);
-    if (perFileFailures.length > 200) {
-      console.error(`[coverage-gate] ... and ${perFileFailures.length - 200} more`);
+    const sorted = perFileFailures.slice().sort((a, b) => (b.delta || 0) - (a.delta || 0));
+    const limit = Math.min(sorted.length, MAX_FAILURES_TO_PRINT);
+    for (const f of sorted.slice(0, limit)) {
+      console.error(
+        `- ${f.file} :: ${metricLabel(f.metric)} actual ${fmtPct(f.actual)} (${f.covered}/${f.total}) < required ${fmtPct(
+          f.required
+        )} (missed by ${fmtPct(f.delta)})`
+      );
+    }
+    if (sorted.length > limit) console.error(`[coverage-gate] ... and ${sorted.length - limit} more`);
+  }
+
+  if (VERBOSE) {
+    console.error(`[coverage-gate] Verbose diagnostics (COVERAGE_GATE_VERBOSE=1):`);
+    const lineSorted = allFileLineCoverage
+      .slice()
+      .sort((a, b) => (a.linesPct || 0) - (b.linesPct || 0))
+      .slice(0, TOP_LOWEST_FILES_TO_PRINT);
+    if (lineSorted.length) {
+      console.error(`[coverage-gate] Lowest line coverage files (top ${lineSorted.length}):`);
+      for (const f of lineSorted) {
+        console.error(`- ${f.file} :: lines ${fmtPct(f.linesPct)} (${f.covered}/${f.total})`);
+      }
     }
   }
 
