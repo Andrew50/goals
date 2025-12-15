@@ -97,7 +97,6 @@ jest.mock('vis-network/standalone', () => ({
         get = () => this._data;
     },
     Network: class Network {
-        constructor(_container: any, _data: any, _options: any) { }
         destroy = () => { };
         fit = () => { };
         setData = () => { };

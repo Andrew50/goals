@@ -1,5 +1,5 @@
 import { validateGoal, validateRelationship } from './goalValidation';
-import { Goal, RelationshipType } from '../../types/goals';
+import { Goal } from '../../types/goals';
 
 describe('validateGoal', () => {
     test('returns empty array for valid task', () => {

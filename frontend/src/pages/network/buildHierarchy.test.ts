@@ -1,4 +1,4 @@
-import { buildHierarchy, formatEdgesForGraph, calculateNewNodePosition, saveNodePosition, BASE_SPACING } from './buildHierarchy';
+import { buildHierarchy, formatEdgesForGraph, calculateNewNodePosition, saveNodePosition } from './buildHierarchy';
 import { NetworkNode, NetworkEdge } from '../../types/goals';
 
 // Mock dependencies

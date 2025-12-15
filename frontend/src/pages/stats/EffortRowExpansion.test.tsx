@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../../shared/utils/renderWithProviders';
 import EffortRowExpansion from './EffortRowExpansion';
 import { privateRequest } from '../../shared/utils/api';

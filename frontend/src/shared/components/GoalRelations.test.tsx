@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { renderWithProviders } from '../utils/renderWithProviders';
 import GoalRelations from './GoalRelations';

@@ -475,6 +475,9 @@ function main() {
 
   if (globalFailures.length === 0 && perFileFailures.length === 0) {
     if (OUTPUT_FORMAT === 'compact') {
+      // In "auto" mode outside PRs we skip gating; in that case, report the included set.
+      // Otherwise, report the gated set (the same set used for global threshold checks).
+      const globalActual = skipGating ? includedActual : gatedActual;
       console.log(
         `[coverage-gate] PASS global lines ${fmtPct(globalActual.lines)} statements ${fmtPct(globalActual.statements)} branches ${fmtPct(
           globalActual.branches
