@@ -254,9 +254,11 @@ const Day: React.FC = () => {
     };
 
     const getCompletionPercentage = () => {
-        if (events.length === 0) return 0;
-        const completed = events.filter(event => event.resolution_status === 'completed').length;
-        return Math.round((completed / events.length) * 100);
+        // Exclude skipped events from denominator (they don't count toward completion metrics)
+        const eligibleEvents = events.filter(event => event.resolution_status !== 'skipped');
+        if (eligibleEvents.length === 0) return 0;
+        const completed = eligibleEvents.filter(event => event.resolution_status === 'completed').length;
+        return Math.round((completed / eligibleEvents.length) * 100);
     };
 
     // Current time line component
@@ -426,7 +428,10 @@ const Day: React.FC = () => {
                             title={`${getCompletionPercentage()}%`}
                             style={{ margin: '0 8px' }}
                         />
-                        <span> • {resolvedCounts.completed} of {events.length} tasks completed</span>
+                        {(() => {
+                            const eligibleCount = events.filter(e => e.resolution_status !== 'skipped').length;
+                            return <span> • {resolvedCounts.completed} of {eligibleCount} tasks completed</span>;
+                        })()}
                     </Box>
 
                     <Button
