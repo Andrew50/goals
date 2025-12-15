@@ -6,8 +6,9 @@ use std::env;
 
 // Import the modules we need for testing
 use backend::jobs::routine_generator::generate_future_routine_events;
+use backend::jobs::routine_generator::recompute_future_for_routine;
 use backend::tools::goal::{Goal, GoalType};
-use backend::tools::event::delete_event_handler;
+use backend::tools::event::{delete_event_handler, update_routine_event_handler, UpdateRoutineEventRequest};
 
 /// Helper function to create a test database connection
 async fn create_test_graph() -> Result<Graph, neo4rs::Error> {
@@ -31,6 +32,9 @@ async fn clear_test_data(graph: &Graph) -> Result<(), neo4rs::Error> {
     // Clear all existing goals for user_id 999 (test user)
     let clear_query = query("MATCH (g:Goal) WHERE g.user_id = 999 DETACH DELETE g");
     graph.run(clear_query).await?;
+    // Also clear any orphaned routine exception nodes from prior test runs
+    let clear_exceptions_query = query("MATCH (x:RoutineException) DETACH DELETE x");
+    graph.run(clear_exceptions_query).await?;
     Ok(())
 }
 
@@ -763,7 +767,7 @@ mod tests {
         let cutoff_id = cutoff_event.id.unwrap();
 
         // Delete this and future occurrences
-        delete_event_handler(graph.clone(), cutoff_id, true)
+        delete_event_handler(graph.clone(), 999, cutoff_id, true)
             .await
             .expect("delete_event_handler failed");
 
@@ -2092,4 +2096,200 @@ mod tests {
         // Expect exactly 1 event in ~13 months horizon
         assert!(events.len() >= 1 && events.len() <= 2);
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_routine_single_delete_creates_tombstone_and_is_not_regenerated() {
+    let graph = create_test_graph()
+        .await
+        .expect("Failed to create test database connection");
+
+    clear_test_data(&graph)
+        .await
+        .expect("Failed to clear test data");
+
+    let now = Utc::now().timestamp_millis();
+    let routine_id = create_test_routine(
+        &graph,
+        "Tombstone Routine",
+        "1D",
+        now,
+        None,
+        Some(now),
+        30,
+    )
+    .await
+    .expect("Failed to create routine");
+
+    // Generate events
+    generate_future_routine_events(&graph)
+        .await
+        .expect("Failed to generate routine events");
+
+    let events = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events");
+    assert!(events.len() > 15, "Expected routine to have >15 events generated");
+
+    let target = &events[10];
+    let target_ts = target.scheduled_timestamp.unwrap();
+    let target_id = target.id.unwrap();
+
+    // Delete single occurrence (should create skip tombstone)
+    delete_event_handler(graph.clone(), 999, target_id, false)
+        .await
+        .expect("delete_event_handler failed");
+
+    // Run generator again; it should NOT recreate the deleted occurrence
+    generate_future_routine_events(&graph)
+        .await
+        .expect("Failed to generate routine events (second run)");
+
+    let events_after = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events after");
+
+    assert!(
+        !events_after
+            .iter()
+            .any(|e| e.scheduled_timestamp == Some(target_ts)),
+        "Deleted occurrence was regenerated despite tombstone"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_routine_single_reschedule_creates_tombstone_for_old_slot() {
+    let graph = create_test_graph()
+        .await
+        .expect("Failed to create test database connection");
+
+    clear_test_data(&graph)
+        .await
+        .expect("Failed to clear test data");
+
+    let now = Utc::now().timestamp_millis();
+    let routine_id = create_test_routine(
+        &graph,
+        "Reschedule Tombstone Routine",
+        "1D",
+        now,
+        None,
+        Some(now),
+        30,
+    )
+    .await
+    .expect("Failed to create routine");
+
+    generate_future_routine_events(&graph)
+        .await
+        .expect("Failed to generate routine events");
+
+    let events = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events");
+    assert!(events.len() > 5, "Expected routine to have >5 events generated");
+
+    let target = &events[3];
+    let old_ts = target.scheduled_timestamp.unwrap();
+    let target_id = target.id.unwrap();
+    let new_ts = old_ts + 60 * 60 * 1000; // +1h
+
+    update_routine_event_handler(
+        graph.clone(),
+        999,
+        target_id,
+        UpdateRoutineEventRequest {
+            new_timestamp: new_ts,
+            update_scope: "single".to_string(),
+        },
+    )
+    .await
+    .expect("update_routine_event_handler failed");
+
+    // Run generator again; it should NOT backfill the old slot
+    generate_future_routine_events(&graph)
+        .await
+        .expect("Failed to generate routine events (second run)");
+
+    let events_after = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events after");
+
+    assert!(
+        !events_after.iter().any(|e| e.scheduled_timestamp == Some(old_ts)),
+        "Old slot was backfilled despite tombstone"
+    );
+    assert!(
+        events_after.iter().any(|e| e.scheduled_timestamp == Some(new_ts)),
+        "Rescheduled event not found at new timestamp"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_recompute_from_cutoff_clears_tombstones_and_recreates_future_occurrences() {
+    let graph = create_test_graph()
+        .await
+        .expect("Failed to create test database connection");
+
+    clear_test_data(&graph)
+        .await
+        .expect("Failed to clear test data");
+
+    let now = Utc::now().timestamp_millis();
+    let routine_id = create_test_routine(
+        &graph,
+        "Recompute Clears Tombstones Routine",
+        "1D",
+        now,
+        None,
+        Some(now),
+        30,
+    )
+    .await
+    .expect("Failed to create routine");
+
+    generate_future_routine_events(&graph)
+        .await
+        .expect("Failed to generate routine events");
+
+    let events = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events");
+    assert!(events.len() > 12, "Expected routine to have >12 events generated");
+
+    let cutoff_ts = events[5].scheduled_timestamp.unwrap();
+    let deleted_ts = events[10].scheduled_timestamp.unwrap();
+    let deleted_id = events[10].id.unwrap();
+
+    // Delete the +10d occurrence (creates tombstone)
+    delete_event_handler(graph.clone(), 999, deleted_id, false)
+        .await
+        .expect("delete_event_handler failed");
+
+    // Ensure it is gone from non-deleted events
+    let after_delete = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events after delete");
+    assert!(
+        !after_delete.iter().any(|e| e.scheduled_timestamp == Some(deleted_ts)),
+        "Expected deleted occurrence to be absent after delete"
+    );
+
+    // Recompute starting from cutoff; should clear tombstones >= cutoff and recreate deleted_ts
+    recompute_future_for_routine(&graph, routine_id, Some(cutoff_ts))
+        .await
+        .expect("recompute_future_for_routine failed");
+
+    let after_recompute = get_routine_events(&graph, routine_id)
+        .await
+        .expect("Failed to retrieve routine events after recompute");
+    assert!(
+        after_recompute
+            .iter()
+            .any(|e| e.scheduled_timestamp == Some(deleted_ts)),
+        "Expected deleted future occurrence to be recreated after recompute clearing tombstones"
+    );
 }

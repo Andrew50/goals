@@ -264,6 +264,128 @@ test.describe('Calendar Routine Interactions', () => {
             await page.locator('button:has-text("Cancel")').click();
             await waitForDialogToClose(page);
         });
+
+        test('deleted single occurrence should reappear after schedule change (future) and routine generation', async ({ request }) => {
+            const routineName = `Test Routine Tombstone Clear ${Date.now()}`;
+            const createdRoutine = await createTestRoutine(request, routineName);
+            const testToken = generateTestToken(1);
+
+            const now = Date.now();
+            const rangeStart = now - 24 * 60 * 60 * 1000;
+            const rangeEnd = now + 20 * 24 * 60 * 60 * 1000;
+
+            const fetchCalendar = async () => {
+                const resp = await request.get(`${API_URL}/calendar?start_timestamp=${rangeStart}&end_timestamp=${rangeEnd}`, {
+                    headers: { 'Authorization': `Bearer ${testToken}` }
+                });
+                expect(resp.ok()).toBeTruthy();
+                return await resp.json();
+            };
+
+            const cal1 = await fetchCalendar();
+            const routineEvents1 = cal1.events.filter((e: any) => e.parent_id === createdRoutine.id);
+            expect(routineEvents1.length).toBeGreaterThan(10);
+
+            // Choose a cutoff occurrence (~+5d) and a deleted occurrence (~+10d)
+            const cutoffEvent = routineEvents1[5];
+            const deletedEvent = routineEvents1[10];
+            const deletedEventId = deletedEvent.id;
+
+            // Delete single occurrence (creates tombstone)
+            const delResp = await request.delete(`${API_URL}/events/${deletedEventId}/delete?delete_future=false`, {
+                headers: { 'Authorization': `Bearer ${testToken}` }
+            });
+            expect(delResp.ok()).toBeTruthy();
+
+            const calAfterDelete = await fetchCalendar();
+            const routineEventsAfterDelete = calAfterDelete.events.filter((e: any) => e.parent_id === createdRoutine.id);
+            expect(routineEventsAfterDelete.find((e: any) => e.id === deletedEventId)).toBeFalsy();
+
+            // Apply a schedule change from cutoff forward (shift time-of-day by +30m)
+            const newTs = cutoffEvent.scheduled_timestamp + 30 * 60 * 1000;
+            const updateResp = await request.put(
+                `${API_URL}/events/${cutoffEvent.id}/routine-update?new_timestamp=${newTs}&update_scope=future`,
+                {
+                    headers: { 'Authorization': `Bearer ${testToken}`, 'Content-Type': 'application/json' },
+                    data: { new_timestamp: newTs, update_scope: 'future' }
+                }
+            );
+            expect(updateResp.ok()).toBeTruthy();
+
+            // Trigger routine generation (simulates updateRoutines / scheduled job)
+            const endOfWeek = new Date();
+            endOfWeek.setDate(endOfWeek.getDate() + 14);
+            const genResp = await request.post(`${API_URL}/routine/${endOfWeek.getTime()}`, {
+                headers: { 'Authorization': `Bearer ${testToken}` }
+            });
+            expect(genResp.ok()).toBeTruthy();
+
+            const calAfterGen = await fetchCalendar();
+            const routineEventsAfterGen = calAfterGen.events.filter((e: any) => e.parent_id === createdRoutine.id);
+
+            // The previously deleted occurrence should now exist again (possibly at a different timestamp)
+            const deletedDayStart = Math.floor(deletedEvent.scheduled_timestamp / 86400000) * 86400000;
+            const deletedDayEnd = deletedDayStart + 86400000;
+            const recreated = routineEventsAfterGen.find((e: any) => e.scheduled_timestamp >= deletedDayStart && e.scheduled_timestamp < deletedDayEnd);
+            expect(recreated).toBeTruthy();
+        });
+
+        test('deleted single occurrence should NOT reappear after description change (future)', async ({ request }) => {
+            const routineName = `Test Routine Tombstone Persist ${Date.now()}`;
+            const createdRoutine = await createTestRoutine(request, routineName);
+            const testToken = generateTestToken(1);
+
+            const now = Date.now();
+            const rangeStart = now - 24 * 60 * 60 * 1000;
+            const rangeEnd = now + 20 * 24 * 60 * 60 * 1000;
+
+            const fetchCalendar = async () => {
+                const resp = await request.get(`${API_URL}/calendar?start_timestamp=${rangeStart}&end_timestamp=${rangeEnd}`, {
+                    headers: { 'Authorization': `Bearer ${testToken}` }
+                });
+                expect(resp.ok()).toBeTruthy();
+                return await resp.json();
+            };
+
+            const cal1 = await fetchCalendar();
+            const routineEvents1 = cal1.events.filter((e: any) => e.parent_id === createdRoutine.id);
+            expect(routineEvents1.length).toBeGreaterThan(10);
+
+            const cutoffEvent = routineEvents1[5];
+            const deletedEvent = routineEvents1[10];
+            const deletedEventId = deletedEvent.id;
+
+            const delResp = await request.delete(`${API_URL}/events/${deletedEventId}/delete?delete_future=false`, {
+                headers: { 'Authorization': `Bearer ${testToken}` }
+            });
+            expect(delResp.ok()).toBeTruthy();
+
+            // Apply a non-schedule change to future occurrences (description)
+            const propsResp = await request.put(
+                `${API_URL}/events/${cutoffEvent.id}/routine-properties`,
+                {
+                    headers: { 'Authorization': `Bearer ${testToken}`, 'Content-Type': 'application/json' },
+                    data: { update_scope: 'future', description: 'new description from test' }
+                }
+            );
+            expect(propsResp.ok()).toBeTruthy();
+
+            // Trigger routine generation
+            const endOfWeek = new Date();
+            endOfWeek.setDate(endOfWeek.getDate() + 14);
+            const genResp = await request.post(`${API_URL}/routine/${endOfWeek.getTime()}`, {
+                headers: { 'Authorization': `Bearer ${testToken}` }
+            });
+            expect(genResp.ok()).toBeTruthy();
+
+            const calAfterGen = await fetchCalendar();
+            const routineEventsAfterGen = calAfterGen.events.filter((e: any) => e.parent_id === createdRoutine.id);
+
+            const deletedDayStart = Math.floor(deletedEvent.scheduled_timestamp / 86400000) * 86400000;
+            const deletedDayEnd = deletedDayStart + 86400000;
+            const recreated = routineEventsAfterGen.find((e: any) => e.scheduled_timestamp >= deletedDayStart && e.scheduled_timestamp < deletedDayEnd);
+            expect(recreated).toBeFalsy();
+        });
     });
 
     test.describe('Routine Event Editing Tests', () => {

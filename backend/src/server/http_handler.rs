@@ -488,6 +488,7 @@ async fn handle_check_task_completion_status(
 
 async fn handle_delete_event(
     Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
@@ -496,7 +497,7 @@ async fn handle_delete_event(
         .map(|v| v == "true")
         .unwrap_or(false);
 
-    event::delete_event_handler(graph, id, delete_future).await
+    event::delete_event_handler(graph, user_id, id, delete_future).await
 }
 
 // removed split handler; replaced by duplicate goal API at /goals/:id/duplicate
@@ -806,8 +807,13 @@ struct RecomputeResult {
 async fn handle_recompute_routine_future(
     Extension(graph): Extension<Graph>,
     Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    match routine_generator::recompute_future_for_routine(&graph, id).await {
+    let from_timestamp = params
+        .get("from_timestamp")
+        .and_then(|v| v.parse::<i64>().ok());
+
+    match routine_generator::recompute_future_for_routine(&graph, id, from_timestamp).await {
         Ok((deleted, created)) => Ok((StatusCode::OK, Json(RecomputeResult { deleted, created }))),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }

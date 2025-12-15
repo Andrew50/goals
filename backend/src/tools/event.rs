@@ -8,6 +8,7 @@ use std::env;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 
 use crate::tools::goal::{Goal, GoalType};
+use crate::tools::routine_exceptions;
 use crate::tools::stats::EventMove;
 
 #[derive(Debug, Deserialize)]
@@ -589,6 +590,7 @@ pub async fn check_task_completion_status(
 
 pub async fn delete_event_handler(
     graph: Graph,
+    user_id: i64,
     event_id: i64,
     delete_future: bool,
 ) -> Result<StatusCode, (StatusCode, String)> {
@@ -626,16 +628,60 @@ pub async fn delete_event_handler(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     } else {
-        // Soft delete single event
-        let delete_query = query(
-            "MATCH (e:Goal)
-             WHERE id(e) = $event_id
-             SET e.is_deleted = true",
-        )
-        .param("event_id", event_id);
+        // Soft delete single event.
+        //
+        // If it's a routine occurrence, also create a skip exception so the generator
+        // does not recreate it later.
+        let mut fetch_result = graph
+            .execute(
+                query(
+                    "MATCH (e:Goal)
+                     WHERE id(e) = $event_id
+                       AND e.goal_type = 'event'
+                     RETURN e.parent_type as parent_type, e.parent_id as parent_id, e.scheduled_timestamp as ts",
+                )
+                .param("event_id", event_id),
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if let Some(row) = fetch_result
+            .next()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            let parent_type: Option<String> = row.get("parent_type").ok();
+            let parent_id: Option<i64> = row.get("parent_id").ok();
+            let ts: Option<i64> = row.get("ts").ok();
+
+            if parent_type.as_deref() == Some("routine") {
+                if let (Some(routine_id), Some(timestamp)) = (parent_id, ts) {
+                    if let Err(e) = routine_exceptions::create_skip_exception(
+                        &graph,
+                        user_id,
+                        routine_id,
+                        timestamp,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "Warning: failed to create routine skip exception for routine_id={}, ts={}: {}",
+                            routine_id, timestamp, e
+                        );
+                    }
+                }
+            }
+        }
 
         graph
-            .run(delete_query)
+            .run(
+                query(
+                    "MATCH (e:Goal)
+                     WHERE id(e) = $event_id
+                     SET e.is_deleted = true",
+                )
+                .param("event_id", event_id),
+            )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -956,7 +1002,7 @@ pub async fn update_event_handler(
 
 pub async fn update_routine_event_handler(
     graph: Graph,
-    _user_id: i64,
+    user_id: i64,
     event_id: i64,
     request: UpdateRoutineEventRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
@@ -1005,6 +1051,16 @@ pub async fn update_routine_event_handler(
     match request.update_scope.as_str() {
         "single" => {
             println!("🎯 [ROUTINE_UPDATE] Processing single event update");
+            // Create a skip exception for the old slot so the generator doesn't backfill it.
+            if let Err(e) =
+                routine_exceptions::create_skip_exception(&graph, user_id, parent_id, current_timestamp).await
+            {
+                eprintln!(
+                    "Warning: failed to create routine skip exception for routine_id={}, ts={}: {}",
+                    parent_id, current_timestamp, e
+                );
+            }
+
             // Update only this event
             let update_query = query(
                 "MATCH (e:Goal)
@@ -1064,6 +1120,14 @@ pub async fn update_routine_event_handler(
                 .run(update_parent_time_query)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Clear all exceptions for this routine when applying a schedule change to ALL.
+            if let Err(e) = routine_exceptions::clear_all_exceptions(&graph, parent_id).await {
+                eprintln!(
+                    "Warning: failed to clear routine exceptions for routine_id={} (all): {}",
+                    parent_id, e
+                );
+            }
 
             // For "all" scope, update ALL events for this routine to the new time-of-day
             let check_query = query(
@@ -1156,6 +1220,16 @@ pub async fn update_routine_event_handler(
                 .run(update_parent_time_query)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Clear exceptions at-or-after the cutoff for this routine when applying a schedule change to FUTURE.
+            if let Err(e) =
+                routine_exceptions::clear_exceptions_from(&graph, parent_id, current_timestamp).await
+            {
+                eprintln!(
+                    "Warning: failed to clear routine exceptions for routine_id={} from_ts={} (future): {}",
+                    parent_id, current_timestamp, e
+                );
+            }
 
             // For "future" scope, update ALL future events for this routine to the new time-of-day
             let check_query = query(
@@ -1917,7 +1991,7 @@ async fn get_llm_smart_schedule_suggestions(
 
 pub async fn update_routine_event_properties_handler(
     graph: Graph,
-    _user_id: i64,
+    user_id: i64,
     event_id: i64,
     request: UpdateRoutineEventPropertiesRequest,
 ) -> Result<Json<Vec<Goal>>, (StatusCode, String)> {
@@ -1965,6 +2039,26 @@ pub async fn update_routine_event_properties_handler(
     match request.update_scope.as_str() {
         "single" => {
             println!("🎯 [ROUTINE_PROPERTIES] Processing single event property update");
+
+            // If this single update changes the scheduled_timestamp, create a skip exception for the old slot
+            // so the generator doesn't backfill it.
+            if let Some(new_ts) = request.scheduled_timestamp {
+                if new_ts != current_timestamp {
+                    if let Err(e) = routine_exceptions::create_skip_exception(
+                        &graph,
+                        user_id,
+                        parent_id,
+                        current_timestamp,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "Warning: failed to create routine skip exception for routine_id={}, ts={}: {}",
+                            parent_id, current_timestamp, e
+                        );
+                    }
+                }
+            }
 
             // Build the SET clause dynamically based on what properties are provided
             let mut set_clauses = Vec::new();
@@ -2054,6 +2148,31 @@ pub async fn update_routine_event_properties_handler(
                 "🌐 [ROUTINE_PROPERTIES] Processing {} events property update",
                 request.update_scope
             );
+
+            // If this bulk update is changing scheduled_timestamp, it's schedule-affecting.
+            // Clear exceptions so previously deleted occurrences in-range can reappear.
+            if let Some(new_ts) = request.scheduled_timestamp {
+                // If it's the same timestamp, it's not really a schedule change.
+                if new_ts != current_timestamp {
+                    if request.update_scope == "all" {
+                        if let Err(e) = routine_exceptions::clear_all_exceptions(&graph, parent_id).await
+                        {
+                            eprintln!(
+                                "Warning: failed to clear routine exceptions for routine_id={} (all properties): {}",
+                                parent_id, e
+                            );
+                        }
+                    } else {
+                        if let Err(e) = routine_exceptions::clear_exceptions_from(&graph, parent_id, current_timestamp).await
+                        {
+                            eprintln!(
+                                "Warning: failed to clear routine exceptions for routine_id={} from_ts={} (future properties): {}",
+                                parent_id, current_timestamp, e
+                            );
+                        }
+                    }
+                }
+            }
 
             // Build the SET clause dynamically based on what properties are provided
             let mut set_clauses = Vec::new();

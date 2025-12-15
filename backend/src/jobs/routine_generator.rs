@@ -1,6 +1,8 @@
 use crate::tools::goal::Goal;
+use crate::tools::routine_exceptions;
 use chrono::{Datelike, Duration, TimeZone, Utc};
 use neo4rs::{query, Graph};
+use std::collections::HashSet;
 
 pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String> {
     let now = Utc::now().timestamp_millis();
@@ -148,6 +150,17 @@ async fn generate_events_for_routine(
 
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
 
+    // Load skip exceptions for this routine in the generation window (inclusive)
+    let skip_ts: Vec<i64> = routine_exceptions::get_skip_exception_timestamps_in_range(
+        graph,
+        routine_id,
+        start_from.min(until),
+        until,
+    )
+    .await
+    .map_err(|e| format!("Failed to fetch routine exceptions: {}", e))?;
+    let skip_set: HashSet<i64> = skip_ts.into_iter().collect();
+
     // Calculate event timestamps based on frequency
     let mut current_time = start_from;
     let mut event_count = 0;
@@ -167,6 +180,12 @@ async fn generate_events_for_routine(
             current_time
         };
 
+        // If there is a skip exception at this exact timestamp, do not generate.
+        if skip_set.contains(&scheduled_timestamp) {
+            current_time = calculate_next_occurrence(current_time, frequency)?;
+            continue;
+        }
+
         // If the calculated timestamp would exceed the routine's end date (when set), stop generation
         if let Some(end_ts) = routine.end_timestamp {
             if scheduled_timestamp > end_ts {
@@ -174,31 +193,45 @@ async fn generate_events_for_routine(
             }
         }
 
-        // Check if an event already exists at this timestamp for this routine
-        let check_query = query(
-            "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
-             WHERE id(r) = $routine_id
-             AND e.scheduled_timestamp = $timestamp
-             AND (e.is_deleted IS NULL OR e.is_deleted = false)
-             RETURN count(e) as existing_count",
-        )
-        .param("routine_id", routine_id)
-        .param("timestamp", scheduled_timestamp);
-
-        let mut check_result = graph
-            .execute(check_query)
+        // Check if an event already exists at this timestamp for this routine (deleted or not).
+        // If we find a soft-deleted event and there is no skip exception, revive it instead of creating a duplicate.
+        let mut existing_result = graph
+            .execute(
+                query(
+                    "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+                     WHERE id(r) = $routine_id
+                       AND e.goal_type = 'event'
+                       AND e.scheduled_timestamp = $timestamp
+                     RETURN e, id(e) as event_id
+                     LIMIT 1",
+                )
+                .param("routine_id", routine_id)
+                .param("timestamp", scheduled_timestamp),
+            )
             .await
             .map_err(|e| format!("Failed to check existing events: {}", e))?;
 
-        let existing_count: i64 =
-            if let Some(row) = check_result.next().await.map_err(|e| e.to_string())? {
-                row.get("existing_count").unwrap_or(0)
-            } else {
-                0
-            };
+        if let Some(row) = existing_result.next().await.map_err(|e| e.to_string())? {
+            let existing_event: Goal = row.get("e").unwrap_or_default();
+            let event_id: i64 = row.get("event_id").unwrap_or(0);
 
-        // Only create event if none exists at this timestamp
-        if existing_count == 0 {
+            if existing_event.is_deleted.unwrap_or(false) {
+                graph
+                    .run(
+                        query(
+                            "MATCH (e:Goal)
+                             WHERE id(e) = $event_id
+                             SET e.is_deleted = false,
+                                 e.resolution_status = 'pending',
+                                 e.resolved_at = null",
+                        )
+                        .param("event_id", event_id),
+                    )
+                    .await
+                    .map_err(|e| format!("Failed to revive deleted event: {}", e))?;
+                event_count += 1;
+            }
+        } else {
             let create_query = query(
                 "MATCH (r:Goal)
                  WHERE id(r) = $routine_id
@@ -362,33 +395,39 @@ pub async fn run_routine_generator(graph: Graph) {
 }
 
 // Recompute future events for a single routine:
-// - Soft-delete all future events (>= now), including completed ones
+// - Soft-delete all future events (>= cutoff), including completed ones
+// - Clear routine exceptions (tombstones) at-or-after cutoff
 // - Regenerate based on the routine's updated schedule
 // Returns (deleted_count, created_count)
 pub async fn recompute_future_for_routine(
     graph: &Graph,
     routine_id: i64,
-    
+    from_timestamp: Option<i64>,
 ) -> Result<(i64, i64), String> {
     let now = Utc::now().timestamp_millis();
+    let cutoff = from_timestamp.unwrap_or(now);
     let six_months = Duration::days(180).num_milliseconds();
     let horizon = now + six_months;
 
-    // 1) Soft-delete all future events for this routine (including completed)
+    // 1) Clear exceptions at-or-after cutoff (so schedule changes can recreate previously skipped/deleted occurrences)
+    let _cleared = routine_exceptions::clear_exceptions_from(graph, routine_id, cutoff)
+        .await
+        .map_err(|e| format!("Failed to clear routine exceptions: {}", e))?;
+
+    // 2) Soft-delete all events for this routine at-or-after cutoff (including completed)
     let mut del_result = graph
         .execute(
             query(
                 "MATCH (r:Goal) WHERE id(r) = $rid AND r.goal_type = 'routine'
                  OPTIONAL MATCH (r)-[:HAS_EVENT]->(e:Goal)
                  WHERE e.goal_type = 'event'
-                   AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                   AND e.scheduled_timestamp >= $now
-                 WITH r, e
+                   AND e.scheduled_timestamp >= $cutoff
+                 WITH e
                  SET e.is_deleted = true
                  RETURN count(e) as deleted_count",
             )
             .param("rid", routine_id)
-            .param("now", now),
+            .param("cutoff", cutoff),
         )
         .await
         .map_err(|e| format!("Failed to soft-delete future events: {}", e))?;
@@ -402,15 +441,12 @@ pub async fn recompute_future_for_routine(
         0
     };
 
-    // 2) Fetch routine and last remaining non-deleted event time
+    // 3) Fetch routine
     let mut fetch_result = graph
         .execute(
             query(
                 "MATCH (r:Goal) WHERE id(r) = $rid AND r.goal_type = 'routine'
-                 OPTIONAL MATCH (r)-[:HAS_EVENT]->(e:Goal)
-                 WHERE e.goal_type = 'event' AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                 WITH r, max(e.scheduled_timestamp) as last_event_time
-                 RETURN r, last_event_time",
+                 RETURN r",
             )
             .param("rid", routine_id),
         )
@@ -426,47 +462,6 @@ pub async fn recompute_future_for_routine(
     let routine: Goal = row
         .get("r")
         .map_err(|e| format!("Failed to get routine node: {}", e))?;
-    let last_event_time: Option<i64> = row.get("last_event_time").ok();
-
-    // 3) Decide start_from as in the generator
-    let start_from = if let Some(last) = last_event_time {
-        match calculate_next_occurrence(
-            last,
-            routine
-                .frequency
-                .as_ref()
-                .ok_or("Routine missing frequency")?,
-        ) {
-            Ok(next) => next,
-            Err(e) => {
-                eprintln!(
-                    "[routine_generator] Failed to calculate next occurrence from last event during recompute: {}. Falling back to +1 day.",
-                    e
-                );
-                last + 86_400_000
-            }
-        }
-    } else {
-        let mut t = routine.start_timestamp.unwrap_or(now);
-        if let Some(freq) = &routine.frequency {
-            let guard_limit = 10_000; // safety guard
-            let mut guard = 0;
-            while t < now && guard < guard_limit {
-                t = match calculate_next_occurrence(t, freq) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!(
-                            "[routine_generator] Failed to advance to now for routine id {:?}: {}",
-                            routine.id, e
-                        );
-                        break;
-                    }
-                };
-                guard += 1;
-            }
-        }
-        t
-    };
 
     // 4) Respect explicit end date if present
     let effective_until = match routine.end_timestamp {
@@ -474,14 +469,14 @@ pub async fn recompute_future_for_routine(
         _ => horizon,
     };
 
-    // 5) Regenerate, counting creations
+    // 5) Regenerate from cutoff, counting ensured occurrences.
     let frequency = routine
         .frequency
         .as_ref()
         .ok_or("Routine missing frequency")?;
 
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
-    let mut current_time = start_from;
+    let mut current_time = cutoff;
     let mut created_count: i64 = 0;
 
     while current_time <= effective_until {
@@ -502,15 +497,17 @@ pub async fn recompute_future_for_routine(
             }
         }
 
-        // Only create if not already existing (non-deleted) at this timestamp
-        let mut check_result = graph
+        // If an event exists at this timestamp (deleted or not), revive it and reset to routine defaults.
+        // Otherwise, create a new one.
+        let mut existing_result = graph
             .execute(
                 query(
                     "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
                      WHERE id(r) = $routine_id
-                     AND e.scheduled_timestamp = $timestamp
-                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                     RETURN count(e) as existing_count",
+                       AND e.goal_type = 'event'
+                       AND e.scheduled_timestamp = $timestamp
+                     RETURN id(e) as event_id
+                     LIMIT 1",
                 )
                 .param("routine_id", routine_id)
                 .param("timestamp", scheduled_timestamp),
@@ -518,16 +515,28 @@ pub async fn recompute_future_for_routine(
             .await
             .map_err(|e| format!("Failed to check existing events during recompute: {}", e))?;
 
-        let existing_count: i64 = if let Some(row) = check_result
-            .next()
-            .await
-            .map_err(|e| e.to_string())? {
-            row.get("existing_count").unwrap_or(0)
+        if let Some(row) = existing_result.next().await.map_err(|e| e.to_string())? {
+            let event_id: i64 = row.get("event_id").unwrap_or(0);
+            graph
+                .run(
+                    query(
+                        "MATCH (r:Goal), (e:Goal)
+                         WHERE id(r) = $routine_id AND id(e) = $event_id
+                         SET e.is_deleted = false,
+                             e.name = r.name,
+                             e.duration = r.duration,
+                             e.priority = r.priority,
+                             e.description = r.description,
+                             e.resolution_status = 'pending',
+                             e.resolved_at = null",
+                    )
+                    .param("routine_id", routine_id)
+                    .param("event_id", event_id),
+                )
+                .await
+                .map_err(|e| format!("Failed to revive/reset routine event during recompute: {}", e))?;
+            created_count += 1;
         } else {
-            0
-        };
-
-        if existing_count == 0 {
             graph
                 .run(
                     query(

@@ -1606,7 +1606,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         const saved = await updateGoal(ng.id!, ng);
                         // 2) Recompute future occurrences (deletes all future, including completed, then regenerates)
                         try {
-                            await recomputeRoutineFuture(ng.id!);
+                            await recomputeRoutineFuture(ng.id!, new Date());
                         } catch (e) {
                             // Still proceed; surface error in UI
                             console.error('Failed to recompute routine future:', e);
@@ -1980,8 +1980,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         scope: 'single' | 'all' | 'future'
     ) => {
         try {
-            if (updateType === 'scheduled_time' && (scope === 'all' || scope === 'future')) {
-                // Use the routine event update API for scheduled time changes
+            if (updateType === 'scheduled_time') {
+                // Use the routine event update API for scheduled time changes (including single),
+                // so the backend can create a tombstone for the old slot and/or clear tombstones
+                // for schedule changes.
                 const updatedEvents = await updateRoutineEvent(
                     updatedGoal.id!,
                     updatedGoal.scheduled_timestamp!,
@@ -1989,7 +1991,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 );
 
                 // Update the routine's default time as well
-                if (updatedGoal.parent_id) {
+                if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
                     const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
                     if (parentRoutine) {
                         await updateGoal(parentRoutine.id!, {
@@ -4024,11 +4026,39 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             value={routineUpdateDialog.selectedScope}
                             onChange={(e) => setRoutineUpdateDialog({ ...routineUpdateDialog, selectedScope: e.target.value as 'single' | 'all' | 'future' })}
                         >
-                            <FormControlLabel value="single" control={<Radio />} label="Only this occurrence" />
-                            <FormControlLabel value="future" control={<Radio />} label="This and all future occurrences" />
-                            <FormControlLabel value="all" control={<Radio />} label="All occurrences of this routine" />
+                            <FormControlLabel value="single" control={<Radio />} label="Apply to just this occurrence" />
+                            <FormControlLabel value="future" control={<Radio />} label="Apply to this occurrence and beyond" />
+                            <FormControlLabel value="all" control={<Radio />} label="Apply to all occurrences" />
                         </RadioGroup>
                     </FormControl>
+
+                    <Box sx={{ mt: 2 }}>
+                        {routineUpdateDialog.updateType === 'scheduled_time' ? (
+                            routineUpdateDialog.selectedScope === 'single' ? (
+                                <Alert severity="info">
+                                    Only this event will be moved. The old time slot will be remembered as intentionally changed, so it won’t be recreated later.
+                                </Alert>
+                            ) : routineUpdateDialog.selectedScope === 'future' ? (
+                                <Alert severity="warning">
+                                    This event and all future events will be shifted. Any previously deleted/skipped future occurrences starting at this event may reappear on the new schedule.
+                                </Alert>
+                            ) : (
+                                <Alert severity="warning">
+                                    All occurrences will be shifted. Any previously deleted/skipped occurrences may reappear on the new schedule.
+                                </Alert>
+                            )
+                        ) : (
+                            routineUpdateDialog.selectedScope === 'single' ? (
+                                <Alert severity="info">
+                                    Only this event will be updated. Deleted/skipped occurrences stay deleted.
+                                </Alert>
+                            ) : (
+                                <Alert severity="info">
+                                    Existing events will be updated and the routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
+                                </Alert>
+                            )
+                        )}
+                    </Box>
 
                     {routineUpdateDialog.selectedScope !== 'single' && routineChanges.length > 0 && (
                         <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
@@ -4052,7 +4082,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                             ))}
                             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                                This will update the routine itself and {routineUpdateDialog.selectedScope === 'future' ? 'regenerate future' : 'regenerate all'} occurrences.
+                                {routineUpdateDialog.updateType === 'scheduled_time'
+                                    ? 'This will update the routine defaults and shift existing events. Previously deleted/skipped occurrences may reappear in the selected range.'
+                                    : 'This will update the routine defaults and update existing events. Deleted/skipped occurrences will remain deleted.'}
                             </Typography>
                         </Box>
                     )}

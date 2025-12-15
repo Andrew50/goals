@@ -23,7 +23,8 @@ import {
   SelectChangeEvent,
   MenuItem,
   InputLabel,
-  CircularProgress
+  CircularProgress,
+  Alert
 } from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
@@ -1593,20 +1594,36 @@ const Calendar: React.FC = () => {
               <FormControlLabel
                 value="single"
                 control={<Radio />}
-                label="Only this occurrence"
+                label="Apply to just this occurrence"
               />
               <FormControlLabel
                 value="future"
                 control={<Radio />}
-                label="This and all future occurrences"
+                label="Apply to this occurrence and beyond"
               />
               <FormControlLabel
                 value="all"
                 control={<Radio />}
-                label="All occurrences of this routine"
+                label="Apply to all occurrences"
               />
             </RadioGroup>
           </FormControl>
+
+          <Box sx={{ mt: 2 }}>
+            {selectedUpdateScope === 'single' ? (
+              <Alert severity="info">
+                Only this event will be moved. The old time slot will be remembered as intentionally changed, so it won’t be recreated later.
+              </Alert>
+            ) : selectedUpdateScope === 'future' ? (
+              <Alert severity="warning">
+                This event and all future events will be shifted. Any previously deleted/skipped future occurrences starting at this event may reappear on the new schedule.
+              </Alert>
+            ) : (
+              <Alert severity="warning">
+                All occurrences will be shifted. Any previously deleted/skipped occurrences may reappear on the new schedule.
+              </Alert>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineRescheduleCancel}>
@@ -1659,20 +1676,32 @@ const Calendar: React.FC = () => {
               <FormControlLabel
                 value="single"
                 control={<Radio />}
-                label="Only this occurrence"
+                label="Apply to just this occurrence"
               />
               <FormControlLabel
                 value="future"
                 control={<Radio />}
-                label="This and all future occurrences"
+                label="Apply to this occurrence and beyond"
               />
               <FormControlLabel
                 value="all"
                 control={<Radio />}
-                label="All occurrences of this routine"
+                label="Apply to all occurrences"
               />
             </RadioGroup>
           </FormControl>
+
+          <Box sx={{ mt: 2 }}>
+            {selectedResizeScope === 'single' ? (
+              <Alert severity="info">
+                Only this event will be updated. Deleted/skipped occurrences stay deleted.
+              </Alert>
+            ) : (
+              <Alert severity="info">
+                Existing events will be updated and routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
+              </Alert>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineResizeCancel}>
