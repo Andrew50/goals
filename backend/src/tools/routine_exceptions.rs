@@ -1,7 +1,5 @@
 use neo4rs::{query, Graph};
 
-pub const ROUTINE_EXCEPTION_LABEL: &str = "RoutineException";
-
 /// Create (or keep) a skip exception for a given routine occurrence timestamp (ms).
 /// This is used to prevent the routine generator from backfilling a user-deleted/moved occurrence.
 pub async fn create_skip_exception(
@@ -56,33 +54,6 @@ pub async fn get_skip_exception_timestamps_in_range(
         Ok(row.get::<Vec<i64>>("ts").unwrap_or_default())
     } else {
         Ok(vec![])
-    }
-}
-
-pub async fn has_skip_exception(
-    graph: &Graph,
-    routine_id: i64,
-    timestamp: i64,
-) -> Result<bool, neo4rs::Error> {
-    let mut result = graph
-        .execute(
-            query(
-                "MATCH (r:Goal)-[:HAS_EXCEPTION]->(x:RoutineException)
-                 WHERE id(r) = $routine_id
-                   AND x.kind = 'skip'
-                   AND x.timestamp = $timestamp
-                 RETURN count(x) as c",
-            )
-            .param("routine_id", routine_id)
-            .param("timestamp", timestamp),
-        )
-        .await?;
-
-    if let Some(row) = result.next().await? {
-        let c: i64 = row.get("c").unwrap_or(0);
-        Ok(c > 0)
-    } else {
-        Ok(false)
     }
 }
 

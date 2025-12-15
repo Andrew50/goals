@@ -252,7 +252,7 @@ const NetworkView: React.FC = () => {
       });
     } catch {}
     return triangles;
-  }, []);
+  }, [debug]);
 
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -408,7 +408,7 @@ const NetworkView: React.FC = () => {
         triangles: { nodes: triangleNodes, edges: triangleEdges }
       }
     };
-  }, [searchItems, edgeItems, findSccs, findTriangles, showSuggestions]);
+  }, [searchItems, edgeItems, findSccs, findTriangles, showSuggestions, debug]);
 
   // Apply highlights for all issue types (always active)
   useEffect(() => {
@@ -426,7 +426,7 @@ const NetworkView: React.FC = () => {
     } catch (e) {
       debug('applyHighlights selection failed', e);
     }
-  }, [insights]);
+  }, [insights, debug]);
 
   // Helper function to refresh edges for a specific node
   const refreshEdgesForNode = useCallback(async (nodeId: number) => {
@@ -484,7 +484,7 @@ const NetworkView: React.FC = () => {
       // console.error('Failed to refresh edges for node:', nodeId, error);
       debug('Failed to refresh edges for node', { nodeId, error });
     }
-  }, []);
+  }, [debug]);
 
   const wireEdgeItems = useCallback(() => {
     if (!edgesDataSetRef.current) return undefined as unknown as () => void;
@@ -621,7 +621,7 @@ const NetworkView: React.FC = () => {
       // console.error('Failed to refresh full network:', e);
       debug('Failed to refresh full network', e);
     }
-  }, []);
+  }, [debug]);
 
   // Refresh a single node from the server, normalize, update dataset, refresh edges, and redraw
   const refreshNodeById = useCallback(async (nodeId: number) => {
@@ -752,7 +752,7 @@ const NetworkView: React.FC = () => {
         });
       }
     }
-  }, [refreshFullNetwork, refreshNodeById]);
+  }, [refreshFullNetwork, refreshNodeById, debug]);
 
   // Initialize the network once on mount
   useEffect(() => {
@@ -921,7 +921,7 @@ const NetworkView: React.FC = () => {
         try { cleanupEdgeItems(); } catch {}
       }
     };
-  }, [options, handleClick, wireSearchItems, wireEdgeItems]);
+  }, [options, handleClick, wireSearchItems, wireEdgeItems, debug]);
 
   // Listen for relationship changes from other components (e.g., GoalMenu)
   useEffect(() => {
@@ -934,7 +934,7 @@ const NetworkView: React.FC = () => {
     };
     window.addEventListener('network:relationships-changed', handler as EventListener);
     return () => window.removeEventListener('network:relationships-changed', handler as EventListener);
-  }, [refreshFullNetwork]);
+  }, [refreshFullNetwork, debug]);
 
   // Resize observer so the network always fits the container
   useEffect(() => {
@@ -1356,7 +1356,7 @@ const NetworkView: React.FC = () => {
     } as IssueRowCycleGroup));
 
     return ([] as Array<IssueRowNode | IssueRowCycleGroup>).concat(cycleGroupRows, nodeRows);
-  }, [insights]);
+  }, [insights, debug]);
 
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 65px)', overflow: 'hidden' }}>
