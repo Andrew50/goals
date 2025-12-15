@@ -103,6 +103,9 @@ jobs:
           echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
           echo "BACKUP_PATH=/tmp/backups" >> .env
           echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
+          # Silence docker-compose warnings for unused OAuth envs in CI
+          echo "GOOGLE_CLIENT_ID=dummy_google_client_id" >> .env
+          echo "GOOGLE_CLIENT_SECRET=dummy_google_client_secret" >> .env
           echo "JWT_SECRET=test_jwt_secret" >> .env
           echo "JWT_EXPIRATION=86400" >> .env
           echo "UID=$(id -u)" >> .env

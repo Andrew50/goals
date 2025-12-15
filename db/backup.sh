@@ -6,7 +6,6 @@ BACKUP_DIR="/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FINAL_DUMP="${BACKUP_DIR}/neo4j_dump_${TIMESTAMP}.dump"
 TMP_DIR="${BACKUP_DIR}/tmp_${TIMESTAMP}"
-DB_NAME="${NEO4J_DATABASE:-neo4j}"
 
 # Determine path to neo4j-admin (works for Neo4j 4.x and 5.x official images)
 NEO4J_ADMIN_BIN="${NEO4J_HOME:-/var/lib/neo4j}/bin/neo4j-admin"
@@ -28,6 +27,23 @@ if [ -d "${NEO4J_DATA_DIR_CANDIDATE}/databases" ]; then
 else
     echo "[$(date)] /data not found; falling back to default data directory"
 fi
+
+# Resolve database name:
+# - Respect NEO4J_DATABASE if explicitly set
+# - Otherwise auto-detect by looking under the configured data directory's "databases" folder
+DB_NAME="${NEO4J_DATABASE-}"
+if [ -z "${DB_NAME}" ]; then
+    DATA_DIR="${NEO4J_server_directories_data-${NEO4J_HOME:-/var/lib/neo4j}/data}"
+    if [ -d "${DATA_DIR}/databases" ]; then
+        if [ -d "${DATA_DIR}/databases/neo4j" ]; then
+            DB_NAME="neo4j"
+        else
+            # Pick the first non-system database directory
+            DB_NAME="$(find "${DATA_DIR}/databases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -v '^system$' | head -n 1 || true)"
+        fi
+    fi
+fi
+DB_NAME="${DB_NAME:-neo4j}"
 
 echo "----------------------------------------"
 echo "[$(date)] Starting backup process"
@@ -57,15 +73,23 @@ else
 fi
 
 # Move and timestamp the dump file
-if [ -f "${TMP_DIR}/neo4j.dump" ]; then
+DUMP_FILE="${TMP_DIR}/${DB_NAME}.dump"
+if [ ! -f "${DUMP_FILE}" ]; then
+    # Fallback: pick the first *.dump generated (helps if Neo4j changes naming conventions)
+    DUMP_FILE="$(ls -1 "${TMP_DIR}"/*.dump 2>/dev/null | head -n 1 || true)"
+fi
+
+if [ -n "${DUMP_FILE}" ] && [ -f "${DUMP_FILE}" ]; then
     if [ -e "${FINAL_DUMP}" ]; then
         echo "[$(date)] Warning: ${FINAL_DUMP} already exists; appending a suffix to avoid overwrite"
         FINAL_DUMP="${FINAL_DUMP%.dump}_dup_$$.dump"
     fi
-    mv "${TMP_DIR}/neo4j.dump" "${FINAL_DUMP}"
+    mv "${DUMP_FILE}" "${FINAL_DUMP}"
     echo "[$(date)] Moved dump to ${FINAL_DUMP}"
 else
-    echo "[$(date)] Expected dump file not found at ${TMP_DIR}/neo4j.dump"
+    echo "[$(date)] Expected dump file not found in ${TMP_DIR} (looked for ${TMP_DIR}/${DB_NAME}.dump)"
+    echo "[$(date)] Contents of ${TMP_DIR}:"
+    ls -la "${TMP_DIR}" || true
     rm -rf "${TMP_DIR}"
     exit 1
 fi
