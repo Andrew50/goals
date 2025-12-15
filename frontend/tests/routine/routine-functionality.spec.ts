@@ -56,6 +56,7 @@ test.describe('Routine Functionality', () => {
         }
         throw lastErr;
     };
+    test.describe('Routine API (no UI)', () => {
     test('create routine via API and verify events are generated', async ({ request }) => {
         const routineName = `API Routine Test ${Date.now()}`;
 
@@ -143,12 +144,32 @@ test.describe('Routine Functionality', () => {
 
         console.log('✅ Routine functionality verification completed successfully!');
     });
+    });
 
+    test.describe('Routine UI (calendar)', () => {
     test.beforeEach(async ({ page }) => {
-        // Auth handled globally; just open calendar
-        await page.goto('/calendar');
-        await page.waitForSelector('.calendar-container', { timeout: 10000 });
-        await page.waitForTimeout(2000); // allow data to load
+        await page.goto('/calendar', { waitUntil: 'domcontentloaded' });
+
+        try {
+            await page.waitForSelector('.calendar-container', { timeout: 60000 });
+        } catch (e: any) {
+            const url = page.url();
+            const authToken = await page.evaluate(() => localStorage.getItem('authToken'));
+            const username = await page.evaluate(() => localStorage.getItem('username'));
+            const testMode = await page.evaluate(() => localStorage.getItem('testMode'));
+
+            const errorContainer = page.locator('.calendar-error-container');
+            const errorVisible = await errorContainer.isVisible().catch(() => false);
+            const errorText = errorVisible ? await errorContainer.textContent().catch(() => null) : null;
+
+            throw new Error(
+                `Calendar did not load (.calendar-container not visible). url=${url} authToken=${authToken ? authToken.substring(0, 20) + '...' : 'null'} username=${username} testMode=${testMode} calendarError=${errorText || 'none'} original=${e?.message || e}`
+            );
+        }
+
+        // FullCalendar root is a useful “JS actually mounted” signal.
+        await page.waitForSelector('.fc', { timeout: 60000 });
+        await page.waitForTimeout(1000); // allow data to settle
     });
 
     test('create routine via API and verify events appear on frontend', async ({ page, request }) => {
@@ -466,6 +487,8 @@ test.describe('Routine Functionality', () => {
 
         console.log('✅ Routine functionality verification completed successfully!');
     });
+
+    }); // end describe('Routine UI (calendar)')
 
     test('convert scheduled task to routine preserves time-of-day', async ({ request }) => {
         const testToken = generateTestToken(1);

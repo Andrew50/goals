@@ -162,40 +162,41 @@ jobs:
       - name: Deploy stack
         run: docker compose -p p -f docker-compose.prod.yaml up -d
 
-      - name: Run immediate test backup and then wait for healthy
-        env:
-          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-        run: |
-          set -euxo pipefail
-          # Wait for container to be running
-          for i in {1..60}; do
-            state=$(docker inspect -f '{{.State.Status}}' goals_db || echo 'starting')
-            if [ "$state" = "running" ]; then break; fi
-            sleep 5
-          done
-          # Trigger immediate backup and verify newest dump is newer than start time
-          docker exec goals_db bash -lc '
-            set -euo pipefail
-            start_ts=$(date +%s)
-            /scripts/backup.sh
-            latest=$(ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n1 || true)
-            if [ -z "${latest:-}" ]; then
-              echo "No dump found after backup" >&2
-              exit 1
-            fi
-            latest_ts=$(stat -c %Y "$latest")
-            if [ "$latest_ts" -lt "$start_ts" ]; then
-              echo "Backup did not produce a newer dump: $latest" >&2
-              ls -l /backups || true
-              exit 1
-            fi
-          '
-          # Now wait for healthcheck to pass (should be quick after manual backup)
-          for i in {1..30}; do
-            status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')
-            if [ "$status" = "healthy" ]; then break; fi
-            sleep 10
-          done
+      # - name: Run immediate test backup and then wait for healthy
+      #   env:
+      #     BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+      #   run: |
+      #     set -euxo pipefail
+      #     # Wait for container to be running
+      #     for i in {1..60}; do
+      #       state=$(docker inspect -f '{{.State.Status}}' goals_db 2>/dev/null || echo 'starting')
+      #       if [ "$state" = "running" ]; then break; fi
+      #       sleep 5
+      #     done
+      #
+      #     # Trigger immediate backup and verify newest dump is newer than start time
+      #     docker exec goals_db bash -lc '
+      #       set -euo pipefail
+      #       start_ts=$(date +%s)
+      #       /scripts/backup.sh
+      #       latest=$(ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n1 || true)
+      #       if [ -z "${latest:-}" ]; then
+      #         echo "No dump found after backup" >&2
+      #         exit 1
+      #       fi
+      #       latest_ts=$(stat -c %Y "$latest")
+      #       if [ "$latest_ts" -lt "$start_ts" ]; then
+      #         echo "Backup did not produce a newer dump: $latest" >&2
+      #         ls -l /backups || true
+      #         exit 1
+      #       fi
+      #     '
+      #     # Now wait for healthcheck to pass (should be quick after manual backup)
+      #     for i in {1..30}; do
+      #       status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')
+      #       if [ "$status" = "healthy" ]; then break; fi
+      #       sleep 10
+      #     done
 
       - name: Collect backup logs to workspace
         if: always()

@@ -13,7 +13,9 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL:-http://localhost:3031/auth/callback}
       - TEST_MODE=true
-      - JWT_SECRET=default_secret
+      # Keep JWT_SECRET consistent with the repo/.env used by Playwright test token generation.
+      # Falls back to the backend default if not provided.
+      - JWT_SECRET=${JWT_SECRET:-default_secret}
       - RUST_BACKTRACE=1
       - RUST_LOG=info
     volumes: []
