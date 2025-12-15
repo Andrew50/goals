@@ -511,6 +511,7 @@ pub async fn get_goal_children_effort(
     user_id: i64,
     goal_id: i64,
     range: Option<String>,
+    tz: String,
 ) -> Result<Json<Vec<ChildEffortTimeSeries>>, (StatusCode, String)> {
     // Determine lower bound start timestamp from range
     let start_timestamp_opt: Option<i64> = match range.as_deref() {
@@ -601,8 +602,8 @@ pub async fn get_goal_children_effort(
                 let mut weighted_completed = 0.0;
 
                 for event in events {
-                    let timestamp = match event.get("date").and_then(|v| v.as_i64()) {
-                        Some(t) if t > 0 => t,
+                    let date = match event.get("date").and_then(|v| v.as_str()) {
+                        Some(d) if !d.is_empty() => d.to_string(),
                         _ => continue, // Skip null events from OPTIONAL MATCH
                     };
                     let completed = event
@@ -628,11 +629,6 @@ pub async fn get_goal_children_effort(
                         "high" => 3.0,
                         _ => 2.0,
                     };
-
-                    // Date is already a string from Cypher (timezone-aware)
-                    if date.is_empty() {
-                        continue;
-                    }
 
                     total_events += 1;
                     weighted_total += weight;

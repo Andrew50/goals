@@ -672,6 +672,8 @@ pub async fn get_task_events_handler(
     let mut last_scheduled = None;
     let mut event_count = 0i32;
     let mut completed_event_count = 0i32;
+    let mut failed_event_count = 0i32;
+    let mut skipped_event_count = 0i32;
     let mut future_uncompleted_count = 0i32;
     let mut next_uncompleted_timestamp = None;
     let now_ms = Utc::now().timestamp_millis();
@@ -687,9 +689,17 @@ pub async fn get_task_events_handler(
 
         event_count += 1;
 
-        let is_completed = event.resolution_status.as_deref() == Some("completed");
+        let status = event.resolution_status.as_deref().unwrap_or("pending");
+        let is_completed = status == "completed";
+        let is_failed = status == "failed";
+        let is_skipped = status == "skipped";
+        
         if is_completed {
             completed_event_count += 1;
+        } else if is_failed {
+            failed_event_count += 1;
+        } else if is_skipped {
+            skipped_event_count += 1;
         }
 
         if let Some(duration) = event.duration {
@@ -697,7 +707,8 @@ pub async fn get_task_events_handler(
         }
 
         if let Some(scheduled) = event.scheduled_timestamp {
-            if !is_completed && scheduled > now_ms {
+            // Future uncompleted includes pending and failed (but not skipped, which are already excluded)
+            if !is_completed && !is_skipped && scheduled > now_ms {
                 future_uncompleted_count += 1;
                 if next_uncompleted_timestamp
                     .map(|existing| scheduled < existing)
