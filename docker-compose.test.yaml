@@ -56,7 +56,8 @@ services:
       dockerfile: Dockerfile.ci
     # Run Neo4j as a daemon so backups can stop/start the server without killing the container,
     # and keep the container alive by tailing logs.
-    command: ["bash", "-lc", "/var/lib/neo4j/bin/neo4j start && tail -F /logs/neo4j.log"]
+    # IMPORTANT: use the Neo4j image entrypoint so env vars like NEO4J_AUTH are applied.
+    command: ["bash", "-lc", "/startup/docker-entrypoint.sh neo4j start && tail -F /logs/neo4j.log"]
     ports:
       - "7475:7474" # Web UI on a different port to avoid conflicts
       - "7688:7687" # Bolt protocol on a different port

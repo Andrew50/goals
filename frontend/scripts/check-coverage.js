@@ -24,6 +24,8 @@ const VERBOSE =
   process.env.COVERAGE_GATE_VERBOSE === 'true' ||
   process.env.COVERAGE_GATE_VERBOSE === 'yes';
 
+const OUTPUT_FORMAT = (process.env.COVERAGE_GATE_FORMAT || '').toLowerCase(); // "compact" | (default verbose)
+
 function toIntEnv(name, def) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || raw === '') return def;
@@ -195,6 +197,29 @@ function fail(msg) {
   process.exit(2);
 }
 
+function printCompactFailures({ globalFailures, perFileFailures }) {
+  // Only print what failed + actual vs required.
+  if (globalFailures.length) {
+    console.error('[coverage-gate] global:');
+    for (const f of globalFailures) {
+      console.error(
+        `[coverage-gate] - ${metricLabel(f.metric)} required ${fmtPct(f.required)} actual ${fmtPct(f.actual)} (${f.covered}/${f.total})`
+      );
+    }
+  }
+  if (perFileFailures.length) {
+    console.error('[coverage-gate] per-file:');
+    const sorted = perFileFailures.slice().sort((a, b) => (b.delta || 0) - (a.delta || 0));
+    const limit = Math.min(sorted.length, MAX_FAILURES_TO_PRINT);
+    for (const f of sorted.slice(0, limit)) {
+      console.error(
+        `[coverage-gate] - ${f.file} ${metricLabel(f.metric)} required ${fmtPct(f.required)} actual ${fmtPct(f.actual)} (${f.covered}/${f.total})`
+      );
+    }
+    if (sorted.length > limit) console.error(`[coverage-gate] ... and ${sorted.length - limit} more`);
+  }
+}
+
 function main() {
   const thresholds = loadThresholds();
 
@@ -301,6 +326,15 @@ function main() {
   }
 
   if (globalFailures.length === 0 && perFileFailures.length === 0) {
+    if (OUTPUT_FORMAT === 'compact') {
+      console.log(
+        `[coverage-gate] PASS global lines ${fmtPct(globalActual.lines)} statements ${fmtPct(globalActual.statements)} branches ${fmtPct(
+          globalActual.branches
+        )} functions ${fmtPct(globalActual.functions)}`
+      );
+      return;
+    }
+
     console.log('[coverage-gate] PASS');
     console.log('[coverage-gate] Thresholds:');
     console.log(
@@ -334,6 +368,12 @@ function main() {
   }
 
   console.error('[coverage-gate] FAIL');
+
+  if (OUTPUT_FORMAT === 'compact') {
+    printCompactFailures({ globalFailures, perFileFailures });
+    process.exit(2);
+  }
+
   console.error('[coverage-gate] Thresholds:');
   console.error(
     `[coverage-gate] - global: lines ${fmtPct(globalReq.lines)} statements ${fmtPct(globalReq.statements)} branches ${fmtPct(
