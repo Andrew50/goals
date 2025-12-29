@@ -40,14 +40,14 @@ const NavBar: React.FC = () => {
     <AppBar position="static">
       <Toolbar>
         <Box sx={{ flexGrow: 1, display: 'flex', gap: 2 }}>
-          <Button color="inherit" component={Link} to="/">Home</Button>
-          <Button color="inherit" component={Link} to="/network">Network</Button>
-          <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
-          <Button color="inherit" component={Link} to="/list">List</Button>
-          <Button color="inherit" component={Link} to="/day">Day</Button>
-          <Button color="inherit" component={Link} to="/achievements">Achievements</Button>
-          <Button color="inherit" component={Link} to="/stats">Stats</Button>
-          <Button color="inherit" component={Link} to="/query">Query</Button>
+          <Button color="inherit" component={Link} to="/" sx={{ minWidth: 'auto' }}>Home</Button>
+          <Button color="inherit" component={Link} to="/network" sx={{ minWidth: 'auto' }}>Network</Button>
+          <Button color="inherit" component={Link} to="/calendar" sx={{ minWidth: 'auto' }}>Calendar</Button>
+          <Button color="inherit" component={Link} to="/list" sx={{ minWidth: 'auto' }}>List</Button>
+          <Button color="inherit" component={Link} to="/day" sx={{ minWidth: 'auto' }}>Day</Button>
+          <Button color="inherit" component={Link} to="/achievements" sx={{ minWidth: 'auto' }}>Achievements</Button>
+          <Button color="inherit" component={Link} to="/stats" sx={{ minWidth: 'auto' }}>Stats</Button>
+          <Button color="inherit" component={Link} to="/query" sx={{ minWidth: 'auto' }}>Query</Button>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {isAuthenticated ? (

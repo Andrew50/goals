@@ -682,7 +682,9 @@ const Calendar: React.FC = () => {
       // events are generated at the NEW time and (for weekly routines) correct weekday.
       if (selectedUpdateScope !== 'single' && parentRoutine && parentRoutine.goal_type === 'routine') {
         const routineUpdates: Partial<Goal> = {
-          routine_time: routineRescheduleDialog.newTimestamp
+          routine_time: routineRescheduleDialog.newTimestamp,
+          // Update scheduled_timestamp to match the new pattern anchor
+          scheduled_timestamp: routineRescheduleDialog.newTimestamp
         };
 
         if (parentRoutine.frequency && parentRoutine.frequency.includes('W')) {
@@ -748,9 +750,11 @@ const Calendar: React.FC = () => {
         return;
       }
 
+      const existingEvent = state.events.find((e) => e.goal?.id === routineResizeDialog.eventId!);
+      const parentRoutine = existingEvent?.parent;
+
       if (selectedResizeScope === 'single') {
         // For single updates, use regular updateGoal
-        const existingEvent = state.events.find((e) => e.goal?.id === routineResizeDialog.eventId!);
         if (existingEvent?.goal) {
           const updates = {
             ...existingEvent.goal,
@@ -765,6 +769,18 @@ const Calendar: React.FC = () => {
           { duration: routineResizeDialog.newDuration },
           selectedResizeScope
         );
+
+        // Update parent routine defaults so future events get the new duration
+        if (parentRoutine && parentRoutine.goal_type === 'routine') {
+          try {
+            await updateGoal(parentRoutine.id!, {
+              ...parentRoutine,
+              duration: routineResizeDialog.newDuration
+            } as Goal);
+          } catch (postUpdateErr) {
+            console.warn('Failed to update routine default duration', postUpdateErr);
+          }
+        }
       }
 
       // Close dialog and reload data

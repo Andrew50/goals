@@ -1267,8 +1267,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Use the dedicated API for updating routine event properties
         const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
 
-        // For 'all' or 'future' scope, also update the parent routine with the same changes
-        if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
+        // For 'all' scope, also update the parent routine with the same changes
+        // For 'future' scope, only update existing events, not the base routine
+        if (scope === 'all' && updatedGoal.parent_id) {
             const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
             if (parentRoutine) {
                 const routineUpdates: Partial<Goal> = {};

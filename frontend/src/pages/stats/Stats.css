@@ -746,3 +746,118 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* Effort Stats */
+.effort-stats {
+    background-color: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 2rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.section-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin: 0 0 1.5rem 0;
+}
+
+.effort-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.effort-node-container {
+    display: flex;
+    flex-direction: column;
+}
+
+.effort-node-header {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    user-select: none;
+}
+
+.effort-node-header.clickable {
+    cursor: pointer;
+}
+
+.effort-node-header.clickable:hover {
+    background-color: #f0f0f0;
+}
+
+.expand-icon {
+    margin-right: 0.5rem;
+    color: #666;
+    font-size: 0.75rem;
+    width: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.node-name {
+    font-weight: 500;
+    margin-right: 0.5rem;
+    color: #333;
+}
+
+.node-type-badge {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-right: 1rem;
+    text-transform: capitalize;
+    background-color: #eee;
+    color: #666;
+}
+
+.node-type-badge.achievement { background-color: #fff3e0; color: #e65100; }
+.node-type-badge.project { background-color: #e3f2fd; color: #1565c0; }
+.node-type-badge.directive { background-color: #f3e5f5; color: #7b1fa2; }
+.node-type-badge.routine { background-color: #e8f5e9; color: #2e7d32; }
+.node-type-badge.task { background-color: #e0f2f1; color: #00695c; }
+
+.node-stats {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+    font-size: 0.875rem;
+}
+
+.progress-bar-container {
+    width: 100px;
+    height: 8px;
+    background-color: #eee;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background-color: #2563eb;
+    transition: width 0.3s ease;
+}
+
+.stat-text {
+    font-weight: 600;
+    color: #2563eb;
+    min-width: 40px;
+    text-align: right;
+}
+
+.stat-detail {
+    color: #666;
+    font-size: 0.75rem;
+}
+
+.effort-node-children {
+    display: flex;
+    flex-direction: column;
+    margin-top: 2px;
+}

@@ -1,5 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { privateRequest } from '../../shared/utils/api';
+import { Goal, NetworkEdge, ApiGoal, GoalType } from '../../types/goals';
+import { goalToLocal } from '../../shared/utils/time';
 import './Stats.css';
 
 interface DailyStats {
@@ -114,6 +116,65 @@ interface SourceBreakdown {
     avg_priority_weight: number;
 }
 
+interface EffortNode extends Goal {
+    children: EffortNode[];
+    stats: {
+        total_tasks: number;
+        completed_tasks: number;
+        total_routines: number;
+        completion_rate: number;
+    };
+}
+
+const EffortNodeView: React.FC<{
+    node: EffortNode;
+    expandedNodes: Set<number>;
+    onToggle: (id: number) => void;
+    level?: number;
+}> = ({ node, expandedNodes, onToggle, level = 0 }) => {
+    const isExpanded = expandedNodes.has(node.id);
+    const hasChildren = node.children.length > 0;
+
+    return (
+        <div className="effort-node-container">
+            <div 
+                className={`effort-node-header ${hasChildren ? 'clickable' : ''}`} 
+                onClick={() => hasChildren && onToggle(node.id)}
+                style={{ paddingLeft: `${level * 24}px` }}
+            >
+                <span className="expand-icon" style={{ opacity: hasChildren ? 1 : 0 }}>
+                    {isExpanded ? '▼' : '▶'}
+                </span>
+                <span className="node-name">{node.name}</span>
+                <span className={`node-type-badge ${node.goal_type}`}>{node.goal_type}</span>
+                <div className="node-stats">
+                    <div className="progress-bar-container">
+                        <div 
+                            className="progress-bar-fill" 
+                            style={{ width: `${node.stats.completion_rate * 100}%` }}
+                        />
+                    </div>
+                    <span className="stat-text">{(node.stats.completion_rate * 100).toFixed(0)}%</span>
+                    <span className="stat-detail">({node.stats.completed_tasks}/{node.stats.total_tasks})</span>
+                </div>
+            </div>
+            {isExpanded && hasChildren && (
+                <div className="effort-node-children">
+                    {node.children.map(child => (
+                        <EffortNodeView
+                            key={child.id}
+                            node={child}
+                            expandedNodes={expandedNodes}
+                            onToggle={onToggle}
+                            level={level + 1}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const Stats: React.FC = () => {
     const [yearStats, setYearStats] = useState<YearStats | null>(null);
     const [extendedStats, setExtendedStats] = useState<ExtendedStats | null>(null);
@@ -122,7 +183,7 @@ const Stats: React.FC = () => {
     const [hoveredDay, setHoveredDay] = useState<DailyStats | null>(null);
     const [loading, setLoading] = useState(true);
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-    const [activeTab, setActiveTab] = useState<'overview' | 'periods' | 'routines' | 'rescheduling' | 'analytics'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'periods' | 'routines' | 'rescheduling' | 'analytics' | 'effort'>('overview');
 
     // Routine-specific state
     const [routineSearchTerm, setRoutineSearchTerm] = useState('');
@@ -130,6 +191,10 @@ const Stats: React.FC = () => {
     const [selectedRoutineIds, setSelectedRoutineIds] = useState<number[]>([]);
     const [routineStats, setRoutineStats] = useState<RoutineStats[]>([]);
     const [reschedulingStats, setReschedulingStats] = useState<EventReschedulingStats | null>(null);
+
+    // Effort-specific state
+    const [effortTree, setEffortTree] = useState<EffortNode[]>([]);
+    const [expandedNodes, setExpandedNodes] = useState<Set<number>>(new Set());
 
     const fetchStats = async () => {
         setLoading(true);
@@ -144,12 +209,137 @@ const Stats: React.FC = () => {
             setExtendedStats(extendedData);
             setReschedulingStats(reschedulingData);
             setEventAnalytics(analyticsData);
+            
+            if (activeTab === 'effort') {
+                await fetchEffortData();
+            }
         } catch (error) {
             console.error('Failed to fetch stats:', error);
         } finally {
             setLoading(false);
         }
     };
+
+    const fetchEffortData = async () => {
+        try {
+            const networkData = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
+            const nodes = networkData.nodes.map(goalToLocal);
+            const tree = buildEffortTree(nodes, networkData.edges);
+            setEffortTree(tree);
+        } catch (error) {
+            console.error('Failed to fetch effort data:', error);
+        }
+    };
+
+    const buildEffortTree = (nodes: Goal[], edges: NetworkEdge[]): EffortNode[] => {
+        const nodeMap = new Map<number, EffortNode>();
+        
+        // Initialize nodes
+        nodes.forEach(node => {
+            nodeMap.set(node.id, {
+                ...node,
+                children: [],
+                stats: {
+                    total_tasks: 0,
+                    completed_tasks: 0,
+                    total_routines: 0,
+                    completion_rate: 0
+                }
+            });
+        });
+
+        // Build relationships map
+        const childrenMap = new Map<number, number[]>();
+        const childIds = new Set<number>(); // To identify roots
+
+        edges.forEach(edge => {
+            if (edge.relationship_type === 'child') {
+                if (!childrenMap.has(edge.from)) {
+                    childrenMap.set(edge.from, []);
+                }
+                childrenMap.get(edge.from)?.push(edge.to);
+                childIds.add(edge.to);
+            }
+        });
+
+        // Identify roots
+        const roots: EffortNode[] = [];
+        nodeMap.forEach(node => {
+            if (!childIds.has(node.id)) {
+                roots.push(node);
+            }
+        });
+
+        // Process tree and aggregate stats
+        const processNode = (node: EffortNode): boolean => {
+            // Check if relevant (Task/Routine) or has relevant children
+            let isRelevant = node.goal_type === 'task' || node.goal_type === 'routine';
+
+            if (node.goal_type === 'task') {
+                node.stats.total_tasks = 1;
+                if (node.completed) node.stats.completed_tasks = 1;
+            }
+            if (node.goal_type === 'routine') {
+                node.stats.total_routines = 1;
+            }
+
+            const childrenIds = childrenMap.get(node.id) || [];
+            childrenIds.forEach(childId => {
+                const child = nodeMap.get(childId);
+                if (child) {
+                    const childRelevant = processNode(child);
+                    if (childRelevant) {
+                        node.children.push(child);
+                        isRelevant = true;
+                        
+                        // Aggregate stats
+                        node.stats.total_tasks += child.stats.total_tasks;
+                        node.stats.completed_tasks += child.stats.completed_tasks;
+                        node.stats.total_routines += child.stats.total_routines;
+                    }
+                }
+            });
+
+            // Calculate completion rate
+            if (node.stats.total_tasks > 0) {
+                node.stats.completion_rate = node.stats.completed_tasks / node.stats.total_tasks;
+            } else if (node.children.length > 0) {
+                 const totalTasksInChildren = node.children.reduce((acc, c) => acc + c.stats.total_tasks, 0);
+                 if (totalTasksInChildren > 0) {
+                     node.stats.completion_rate = node.children.reduce((acc, c) => acc + c.stats.completed_tasks, 0) / totalTasksInChildren;
+                 }
+            }
+
+            return isRelevant;
+        };
+
+        const processedRoots: EffortNode[] = [];
+        roots.forEach(root => {
+            if (processNode(root)) {
+                processedRoots.push(root);
+            }
+        });
+
+        return processedRoots.sort((a, b) => a.name.localeCompare(b.name));
+    };
+
+    const toggleNodeExpansion = (nodeId: number) => {
+        setExpandedNodes(prev => {
+            const next = new Set(prev);
+            if (next.has(nodeId)) {
+                next.delete(nodeId);
+            } else {
+                next.add(nodeId);
+            }
+            return next;
+        });
+    };
+
+    useEffect(() => {
+        if (activeTab === 'effort') {
+            fetchEffortData();
+        }
+    }, [activeTab]);
 
     useEffect(() => {
         fetchStats();
@@ -405,6 +595,12 @@ const Stats: React.FC = () => {
                         onClick={() => setActiveTab('analytics')}
                     >
                         Analytics
+                    </button>
+                    <button
+                        className={`tab-button ${activeTab === 'effort' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('effort')}
+                    >
+                        Effort
                     </button>
                 </div>
 
@@ -987,6 +1183,26 @@ const Stats: React.FC = () => {
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'effort' && (
+                            <div className="effort-stats">
+                                <h2 className="section-title">Goal Hierarchy & Effort</h2>
+                                {effortTree.length === 0 ? (
+                                    <div className="empty-state">No hierarchy data available or no tasks found.</div>
+                                ) : (
+                                    <div className="effort-tree">
+                                        {effortTree.map(node => (
+                                            <EffortNodeView
+                                                key={node.id}
+                                                node={node}
+                                                expandedNodes={expandedNodes}
+                                                onToggle={toggleNodeExpansion}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </>
