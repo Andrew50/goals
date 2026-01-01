@@ -168,7 +168,7 @@ describe('Calendar Component', () => {
             end_timestamp: 1672578000000,   // 2023-01-01T13:00:00Z
             scheduled_timestamp: 1672574400000, // Same as start
             duration: 60, // 1 hour
-            completed: false,
+            resolution_status: 'pending',
             _tz: 'utc' // Assuming API might provide this
         } as ApiGoal; // Cast ensures the object matches the expected type for goalToLocal
 

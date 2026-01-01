@@ -59,7 +59,7 @@ jobs:
             fi
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           clean: false
 
@@ -90,10 +90,10 @@ jobs:
       
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: '.nvmrc'
           
       - name: Cache npm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
@@ -103,6 +103,9 @@ jobs:
           echo "GOALS_CLOUDFLARED_TOKEN=test_token" > .env
           echo "BACKUP_PATH=/tmp/backups" >> .env
           echo "GOALS_GEMINI_API_KEY=test_api_key" >> .env
+          # Silence docker-compose warnings for unused OAuth envs in CI
+          echo "GOOGLE_CLIENT_ID=dummy_google_client_id" >> .env
+          echo "GOOGLE_CLIENT_SECRET=dummy_google_client_secret" >> .env
           echo "JWT_SECRET=test_jwt_secret" >> .env
           echo "JWT_EXPIRATION=86400" >> .env
           echo "UID=$(id -u)" >> .env
@@ -110,16 +113,34 @@ jobs:
           echo "VAPID_PUBLIC_KEY=dummy_public" >> .env
           echo "VAPID_PRIVATE_KEY=dummy_private" >> .env
           echo "VAPID_SUBJECT=mailto:test@example.com" >> .env
+          # Avoid host-port conflicts from docker-compose.dev.yaml when it is merged with docker-compose.test.yaml.
+          # Using "5059"/"3030" means "publish container port only" (random host port), while docker-compose.test.yaml
+          # still publishes the stable ports needed by the test suite (5057 + 3031).
+          echo "GOALS_BACKEND_PORTS=5059" >> .env
+          echo "GOALS_FRONTEND_PORTS=3030" >> .env
+          # Optional: also avoid conflicts for the unused dev Neo4j service in CI
+          echo "GOALS_DB_HTTP_PORTS=7474" >> .env
+          echo "GOALS_DB_BOLT_PORTS=7687" >> .env
           
       - name: Start test stack
         run: |
-          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
+          # Start only the services needed for CI. Avoid starting the dev Neo4j (`goals_db`)
+          # alongside the test Neo4j (`goals_db_test`) to reduce memory usage and prevent OOM kills.
+          docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build \
+            goals_db_test goals_backend goals_frontend
           
       - name: Wait for services
         shell: bash
         run: |
           echo "Waiting for services to be ready..."
-          for port in 5057 3031 7688; do
+          # Only check the host-published ports the test suite actually needs:
+          # - 5057: backend
+          # - 3031: frontend
+          #
+          # We intentionally do NOT check the host-published Neo4j Bolt port (7688) here because:
+          # - Tests connect to Neo4j over the docker network (bolt://goals_db_test:7687), not via host port
+          # - We already have a stronger readiness check below using cypher-shell inside the container
+          for port in 5057 3031; do
             echo "Checking port $port..."
             for i in {1..60}; do
               if nc -z localhost $port 2>/dev/null; then
@@ -133,6 +154,21 @@ jobs:
               fi
               sleep 2
             done
+          done
+          echo "Waiting for Neo4j (cypher-shell) to be ready inside goals_db_test..."
+          # Neo4j cold start can be slow on some runners; allow up to ~4 minutes.
+          for i in {1..120}; do
+            if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test \
+              bash -lc 'NEO4J_HOME="${NEO4J_HOME:-/var/lib/neo4j}"; "$NEO4J_HOME/bin/cypher-shell" -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;"' >/dev/null 2>&1; then
+              echo "Neo4j cypher-shell is ready"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "Neo4j cypher-shell failed to become ready"
+              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs goals_db_test
+              exit 1
+            fi
+            sleep 2
           done
           echo "All services are ready"
 
@@ -179,7 +215,14 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npx playwright install --with-deps chromium
+          # On self-hosted runners, Playwright's `--with-deps` uses sudo to apt-get dependencies.
+          # If sudo isn't passwordless/non-interactive, the install will fail (no TTY for password).
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            npx playwright install --with-deps chromium
+          else
+            echo "sudo not available/passwordless; installing chromium without OS deps (runner must have Playwright deps preinstalled)"
+            npx playwright install chromium
+          fi
           npx playwright test tests/routine --project=chromium
           
       - name: Dump docker logs on failure
@@ -189,7 +232,7 @@ jobs:
           
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: frontend/playwright-report
@@ -198,7 +241,7 @@ jobs:
           
       - name: Upload Playwright test results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: test-results
           path: frontend/test-results
@@ -235,7 +278,7 @@ jobs:
 
       - name: Upload dev .env artifact
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: dev-env
           path: .env.dev

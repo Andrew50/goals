@@ -17,6 +17,28 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 60
     steps:
+      - name: Pre-deploy backup (required if DB is running)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Backup the *currently running* prod DB before we tear anything down.
+          if docker ps -q -f name='^goals_db$' | grep -q .; then
+            echo "goals_db is running; taking a pre-deploy backup..."
+            before_count=$(docker exec --user neo4j goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            docker exec --user neo4j goals_db bash -lc '/scripts/backup.sh'
+            after_count=$(docker exec --user neo4j goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
+            echo "Backup count before: ${before_count}, after: ${after_count}"
+            if [ "${after_count}" -le "${before_count}" ]; then
+              echo "Pre-deploy backup did not produce a new dump file" >&2
+              docker exec goals_db bash -lc 'ls -la /backups || true'
+              exit 1
+            fi
+            docker exec goals_db bash -lc 'echo "Latest dump:"; ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n 1 || true'
+          else
+            echo "goals_db is not running; skipping pre-deploy backup (first deploy or DB down)."
+          fi
+
       - name: Stop existing Docker Compose stacks (pre-checkout)
         shell: bash
         run: |
@@ -36,6 +58,38 @@ jobs:
           fi
           # Fallback: force remove any containers with expected name prefixes
           docker ps --format '{{.Names}}' | awk '/^(goals_|p_)/{print $1}' | xargs -r docker rm -f || true
+
+      - name: Force-clean workspace (handles root-owned artifacts)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$GITHUB_WORKSPACE" ]; then
+            echo "GITHUB_WORKSPACE does not exist yet; skipping force-clean."
+            exit 0
+          fi
+
+          echo "Force-cleaning workspace to avoid checkout failures from root-owned files..."
+
+          # First try as the current user (best-effort; may fail on root-owned dirs).
+          rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
+
+          # Prefer sudo if available (no password prompts in CI; fall back if not allowed).
+          if command -v sudo >/dev/null 2>&1; then
+            sudo -n env GITHUB_WORKSPACE="$GITHUB_WORKSPACE" bash -lc '
+              set -euo pipefail
+              find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+            ' || true
+          fi
+
+          # If anything is still left (e.g., sudo not permitted), try a Docker-based cleanup.
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null || true)" ]; then
+            echo "Workspace still not empty; attempting Docker-based cleanup..."
+            docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'set -eux; find /ws -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+          fi
+
+          echo "Workspace listing after force-clean:"
+          ls -la "$GITHUB_WORKSPACE" || true
 
       - name: Pre-fix workspace ownership
         shell: bash
@@ -62,7 +116,7 @@ jobs:
             fi
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           clean: true
 
@@ -74,12 +128,16 @@ jobs:
           BACKUP_LOGS_PATH=${{ secrets.BACKUP_LOGS_PATH }}
           GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
           REACT_APP_API_URL=${{ secrets.REACT_APP_API_URL }}
+          REACT_APP_GOOGLE_CLIENT_ID=${{ secrets.REACT_APP_GOOGLE_CLIENT_ID }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           JWT_EXPIRATION=${{ secrets.JWT_EXPIRATION }}
           GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URL=${{ secrets.GOOGLE_REDIRECT_URL }}
           HOST_URL=${{ secrets.HOST_URL }}
+          VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT=${{ secrets.VAPID_SUBJECT }}
           NEO4J_URI=bolt://goals_db:7687
           NEO4J_USERNAME=neo4j
           NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
@@ -92,57 +150,6 @@ jobs:
           BP="${BACKUP_PATH:-/var/lib/goals/backups}"
           docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
           docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
-      #- name: Prepare backup directories (idempotent)
-      #  env:
-      #    BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-      #    BACKUP_LOGS_PATH: ${{ secrets.BACKUP_LOGS_PATH }}
-      #  run: |
-      #    set -euxo pipefail
-      #    : "${BACKUP_PATH:=/var/lib/goals/backups}"
-      #    : "${BACKUP_LOGS_PATH:=/var/lib/goals/backup-logs}"
-      #    sudo mkdir -p "$BACKUP_PATH" "$BACKUP_LOGS_PATH"
-      #    # Set permissive ownership/permissions to avoid container write issues
-      #    sudo chown -R 7474:7474 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
-      #    sudo chmod -R 0775 "$BACKUP_PATH" "$BACKUP_LOGS_PATH" || true
-      #    # Cleanup zero-byte or partial backups from previous runs, retain last 30
-      #    find "$BACKUP_PATH" -type f -name 'neo4j_dump_*.dump' -size 0 -delete || true
-      #    # Retention: keep last 30 dumps, delete older
-      #    ls -1t "$BACKUP_PATH"/neo4j_dump_*.dump 2>/dev/null | tail -n +31 | xargs -r rm -f || true
-
-      # - name: Pre-deploy backup (required)
-      #   env:
-      #     BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-      #   run: |
-      #     set -euxo pipefail
-      #     if docker ps -q -f name=goals_db | grep -q .; then
-      #       echo "goals_db is running; taking a pre-deploy backup (in-place)"
-      #       before_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-      #       # Prefer script (shebang uses bash); fallback to inline dump via sh
-      #       if docker exec goals_db test -x /scripts/backup.sh; then
-      #         docker exec goals_db /scripts/backup.sh
-      #       else
-      #         docker exec goals_db sh -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
-      #       fi
-      #       after_count=$(docker exec goals_db sh -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-      #       if [ "$after_count" -le "$before_count" ]; then
-      #         echo "Pre-deploy backup did not increase backup count" >&2
-      #         exit 1
-      #       fi
-      #     else
-      #       echo "goals_db not running; running one-off backup container to verify backup system"
-      #       before_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
-      #       # Prefer script; fallback to inline dump
-      #       if docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'test -x /scripts/backup.sh' >/dev/null 2>&1; then
-      #         docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint /scripts/backup.sh goals_db
-      #       else
-      #         docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'mkdir -p /backups/tmp_pre && neo4j-admin database dump neo4j --to-path=/backups/tmp_pre --overwrite-destination && mv /backups/tmp_pre/neo4j.dump /backups/neo4j_dump_$(date +%Y%m%d_%H%M%S).dump && rm -rf /backups/tmp_pre'
-      #       fi
-      #       after_count=$(docker compose -p p -f docker-compose.prod.yaml run --rm --entrypoint sh goals_db -c 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l' | tail -n1)
-      #       if [ "${after_count}" -le "${before_count}" ]; then
-      #         echo "Pre-deploy backup (one-off) did not increase backup count" >&2
-      #         exit 1
-      #       fi
-      #     fi
 
       - name: Stop and remove existing containers
         run: |
@@ -155,40 +162,41 @@ jobs:
       - name: Deploy stack
         run: docker compose -p p -f docker-compose.prod.yaml up -d
 
-      - name: Run immediate test backup and then wait for healthy
-        env:
-          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
-        run: |
-          set -euxo pipefail
-          # Wait for container to be running
-          for i in {1..60}; do
-            state=$(docker inspect -f '{{.State.Status}}' goals_db || echo 'starting')
-            if [ "$state" = "running" ]; then break; fi
-            sleep 5
-          done
-          # Trigger immediate backup and verify newest dump is newer than start time
-          docker exec goals_db bash -lc '
-            set -euo pipefail
-            start_ts=$(date +%s)
-            /scripts/backup.sh
-            latest=$(ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n1 || true)
-            if [ -z "${latest:-}" ]; then
-              echo "No dump found after backup" >&2
-              exit 1
-            fi
-            latest_ts=$(stat -c %Y "$latest")
-            if [ "$latest_ts" -lt "$start_ts" ]; then
-              echo "Backup did not produce a newer dump: $latest" >&2
-              ls -l /backups || true
-              exit 1
-            fi
-          '
-          # Now wait for healthcheck to pass (should be quick after manual backup)
-          for i in {1..30}; do
-            status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')
-            if [ "$status" = "healthy" ]; then break; fi
-            sleep 10
-          done
+      # - name: Run immediate test backup and then wait for healthy
+      #   env:
+      #     BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+      #   run: |
+      #     set -euxo pipefail
+      #     # Wait for container to be running
+      #     for i in {1..60}; do
+      #       state=$(docker inspect -f '{{.State.Status}}' goals_db 2>/dev/null || echo 'starting')
+      #       if [ "$state" = "running" ]; then break; fi
+      #       sleep 5
+      #     done
+      #
+      #     # Trigger immediate backup and verify newest dump is newer than start time
+      #     docker exec goals_db bash -lc '
+      #       set -euo pipefail
+      #       start_ts=$(date +%s)
+      #       /scripts/backup.sh
+      #       latest=$(ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n1 || true)
+      #       if [ -z "${latest:-}" ]; then
+      #         echo "No dump found after backup" >&2
+      #         exit 1
+      #       fi
+      #       latest_ts=$(stat -c %Y "$latest")
+      #       if [ "$latest_ts" -lt "$start_ts" ]; then
+      #         echo "Backup did not produce a newer dump: $latest" >&2
+      #         ls -l /backups || true
+      #         exit 1
+      #       fi
+      #     '
+      #     # Now wait for healthcheck to pass (should be quick after manual backup)
+      #     for i in {1..30}; do
+      #       status=$(docker inspect -f '{{.State.Health.Status}}' goals_db || echo 'starting')
+      #       if [ "$status" = "healthy" ]; then break; fi
+      #       sleep 10
+      #     done
 
       - name: Collect backup logs to workspace
         if: always()
@@ -211,7 +219,7 @@ jobs:
 
       - name: Upload backup logs artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: backup-logs
           path: |

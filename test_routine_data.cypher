@@ -18,5 +18,5 @@ AND e.goal_type = 'event'
 RETURN r.name as routine_name, 
        e.name as event_name,
        e.scheduled_timestamp as timestamp,
-       e.completed as completed
+       e.resolution_status as resolution_status
 LIMIT 20; 

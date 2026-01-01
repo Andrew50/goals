@@ -107,7 +107,8 @@ CREATE (e1:Goal {
     user_id: r.user_id,
     priority: r.priority,
     description: r.description,
-    completed: false,
+    resolution_status: 'pending',
+    resolved_at: null,
     is_deleted: false
 })
 CREATE (e2:Goal {
@@ -121,7 +122,8 @@ CREATE (e2:Goal {
     user_id: r.user_id,
     priority: r.priority,
     description: r.description,
-    completed: false,
+    resolution_status: 'pending',
+    resolved_at: null,
     is_deleted: false
 })
 CREATE (r)-[:HAS_EVENT]->(e1)

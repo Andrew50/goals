@@ -9,6 +9,7 @@ interface DailyEffortPoint {
     duration_minutes: number;
     completed_events: number;
     weighted_completion: number;
+    weighted_score: number;
 }
 
 interface ChildEffortTimeSeries {
@@ -19,6 +20,7 @@ interface ChildEffortTimeSeries {
     completed_events: number;
     total_duration_minutes: number;
     weighted_completion_rate: number;
+    children_count: number;
     daily_stats: DailyEffortPoint[];
 }
 
@@ -37,7 +39,8 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
 
     useEffect(() => {
         setLoading(true);
-        privateRequest<ChildEffortTimeSeries[]>(`stats/effort/${goalId}/children?range=${range}`)
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        privateRequest<ChildEffortTimeSeries[]>(`stats/effort/${goalId}/children?range=${range}&tz=${encodeURIComponent(tz)}`)
             .then(data => {
                 setChildren(data);
                 // Select all children by default
@@ -51,6 +54,18 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
         const h = Math.floor(minutes / 60);
         const m = Math.round(minutes % 60);
         return `${h}h ${m}m`;
+    };
+
+    const formatDurationAxisLabel = (minutes: number, maxMinutes: number): string => {
+        if (maxMinutes >= 24 * 60) {
+            const val = parseFloat((minutes / (24 * 60)).toFixed(1));
+            return `${val}d`;
+        }
+        if (maxMinutes >= 60) {
+            const val = parseFloat((minutes / 60).toFixed(1));
+            return `${val}h`;
+        }
+        return `${Math.round(minutes)}m`;
     };
 
     // Generate colors for each child
@@ -87,23 +102,39 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
 
     // Calculate max values for normalization
     const maxValues = useMemo(() => {
-        if (!graphData.length) return { duration: 1, events: 1 };
+        if (!graphData.length) return { duration: 1, events: 1, weighted: 1 };
 
         let maxDuration = 0;
         let maxEvents = 0;
+        let maxWeighted = 0;
 
-        graphData.forEach(d => {
-            d.childPoints.forEach(point => {
-                maxDuration = Math.max(maxDuration, point.duration_minutes);
-                maxEvents = Math.max(maxEvents, point.completed_events);
-            });
-        });
+        // Calculate max cumulative values
+        if (children) {
+            children
+                .filter(c => selectedChildren.has(c.goal_id))
+                .forEach(child => {
+                    let totalWeighted = 0;
+                    let totalDuration = 0;
+                    let totalEvents = 0;
+
+                    child.daily_stats.forEach(s => {
+                        totalWeighted += s.weighted_score || 0;
+                        totalDuration += s.duration_minutes || 0;
+                        totalEvents += s.completed_events || 0;
+                    });
+                    
+                    maxWeighted = Math.max(maxWeighted, totalWeighted);
+                    maxDuration = Math.max(maxDuration, totalDuration);
+                    maxEvents = Math.max(maxEvents, totalEvents);
+                });
+        }
 
         return {
             duration: Math.max(maxDuration, 1),
             events: Math.max(maxEvents, 1),
+            weighted: Math.max(maxWeighted, 1),
         };
-    }, [graphData]);
+    }, [graphData, children, selectedChildren]);
 
     const toggleChild = (childGoalId: number) => {
         setSelectedChildren(prev => {
@@ -126,7 +157,7 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
     if (loading) {
         return (
             <tr className="effort-expansion-row">
-                <td colSpan={5} className="effort-expansion-cell">
+                <td colSpan={6} className="effort-expansion-cell">
                     <div className="effort-expansion-loading">Loading children...</div>
                 </td>
             </tr>
@@ -136,7 +167,7 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
     if (!children || children.length === 0) {
         return (
             <tr className="effort-expansion-row">
-                <td colSpan={5} className="effort-expansion-cell">
+                <td colSpan={6} className="effort-expansion-cell">
                     <div className="effort-expansion-empty">No children found</div>
                 </td>
             </tr>
@@ -145,7 +176,7 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
 
     return (
         <tr className="effort-expansion-row">
-            <td colSpan={5} className="effort-expansion-cell">
+            <td colSpan={6} className="effort-expansion-cell">
                 <div className="effort-expansion-content">
                     <h4 className="effort-expansion-title">Children Effort Breakdown</h4>
 
@@ -154,14 +185,17 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
                         <thead>
                             <tr>
                                 <th className="effort-children-checkbox-col">
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedChildren.size === children.length}
-                                        onChange={toggleAllChildren}
-                                        title="Toggle all"
-                                    />
+                                    <div className="effort-checkbox-wrapper">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedChildren.size === children.length}
+                                            onChange={toggleAllChildren}
+                                            title="Toggle all"
+                                        />
+                                    </div>
                                 </th>
                                 <th>Child</th>
+                                <th>Children</th>
                                 <th>Time Spent</th>
                                 <th>Completed Events</th>
                                 <th>Weighted Completion</th>
@@ -179,15 +213,17 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
                                 return (
                                     <tr key={child.goal_id}>
                                         <td className="effort-children-checkbox-col">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedChildren.has(child.goal_id)}
-                                                onChange={() => toggleChild(child.goal_id)}
-                                            />
-                                            <span
-                                                className="effort-child-color-indicator"
-                                                style={{ background: childColors[child.goal_id] }}
-                                            />
+                                            <div className="effort-checkbox-wrapper">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedChildren.has(child.goal_id)}
+                                                    onChange={() => toggleChild(child.goal_id)}
+                                                />
+                                                <span
+                                                    className="effort-child-color-indicator"
+                                                    style={{ background: childColors[child.goal_id] }}
+                                                />
+                                            </div>
                                         </td>
                                         <td>
                                             <span
@@ -199,6 +235,9 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
                                             >
                                                 {child.goal_name}
                                             </span>
+                                        </td>
+                                        <td className="effort-children-center">
+                                            {child.children_count}
                                         </td>
                                         <td className="effort-children-center">
                                             {formatMinutes(child.total_duration_minutes)}
@@ -266,9 +305,9 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
                                             textAnchor="end"
                                         >
                                             {selectedMetric === 'weighted_completion'
-                                                ? `${pct}%`
+                                                ? Math.round((pct / 100) * maxValues.weighted)
                                                 : selectedMetric === 'time_spent'
-                                                    ? `${Math.round((pct / 100) * maxValues.duration)}m`
+                                                    ? formatDurationAxisLabel((pct / 100) * maxValues.duration, maxValues.duration)
                                                     : Math.round((pct / 100) * maxValues.events)}
                                         </text>
                                     </g>
@@ -298,20 +337,30 @@ const EffortRowExpansion: React.FC<Props> = ({ goalId, range }) => {
                                 {children
                                     .filter(c => selectedChildren.has(c.goal_id))
                                     .map(child => {
+                                        let cumulativeScore = 0;
+                                        let cumulativeDuration = 0;
+                                        let cumulativeEvents = 0;
+
                                         const points = graphData
                                             .map((d, i) => {
                                                 const point = d.childPoints.get(child.goal_id);
-                                                if (!point) return null;
+                                                
+                                                if (point) {
+                                                    cumulativeScore += point.weighted_score || 0;
+                                                    cumulativeDuration += point.duration_minutes || 0;
+                                                    cumulativeEvents += point.completed_events || 0;
+                                                }
 
                                                 const x = 60 + (i / Math.max(graphData.length - 1, 1)) * 720;
                                                 let y: number;
 
                                                 if (selectedMetric === 'time_spent') {
-                                                    y = 180 - (point.duration_minutes / maxValues.duration) * 160;
+                                                    y = 180 - (cumulativeDuration / maxValues.duration) * 160;
                                                 } else if (selectedMetric === 'completed_events') {
-                                                    y = 180 - (point.completed_events / maxValues.events) * 160;
+                                                    y = 180 - (cumulativeEvents / maxValues.events) * 160;
                                                 } else {
-                                                    y = 180 - point.weighted_completion * 160;
+                                                    // Weighted completion is cumulative
+                                                    y = 180 - (cumulativeScore / maxValues.weighted) * 160;
                                                 }
 
                                                 return { x, y };

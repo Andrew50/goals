@@ -60,7 +60,8 @@ const GoalRelations: React.FC<GoalRelationsProps> = ({ goal, onClose, onUpdate }
       arrows: { to: { enabled: true, scaleFactor: 0.5 } }
     })));
     networkRef.current = new VisNetwork(containerRef.current, { nodes: nodesDS, edges: edgesDS }, { physics: false, layout: { hierarchical: false } });
-    networkRef.current.fit();
+    // In tests, the vis-network mock may not implement all methods; avoid crashing.
+    networkRef.current?.fit?.();
     return () => { networkRef.current?.destroy(); };
   }, [networkData]);
 

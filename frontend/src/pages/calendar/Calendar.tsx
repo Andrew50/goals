@@ -23,7 +23,8 @@ import {
   SelectChangeEvent,
   MenuItem,
   InputLabel,
-  CircularProgress
+  CircularProgress,
+  Alert
 } from '@mui/material';
 
 import FullCalendar from '@fullcalendar/react';
@@ -98,18 +99,10 @@ const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
     return date ? date.toLocaleDateString() : 'Not set';
   };
 
-  const getExpandMessage = () => {
-    if (violation.violation_type === 'before_start') {
-      return `This will move the task start date from ${formatDate(taskStartDate)} to ${formatDate(suggestedStartDate)}.`;
-    } else {
-      return `This will move the task end date from ${formatDate(taskEndDate)} to ${formatDate(suggestedEndDate)}.`;
-    }
-  };
-
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ color: 'warning.main' }}>
-        ⚠️ Event Outside Task Date Range
+      <DialogTitle>
+        Expand Task Date Range
       </DialogTitle>
       <DialogContent>
         <Typography variant="body1" sx={{ mb: 2 }}>
@@ -118,41 +111,36 @@ const TaskDateRangeWarningDialog: React.FC<TaskDateRangeWarningDialogProps> = ({
         </Typography>
 
         <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>Current Task Date Range:</Typography>
-          <Typography variant="body2">
-            Start: {formatDate(taskStartDate)}
-            <br />
-            End: {formatDate(taskEndDate)}
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Proposed Change
+          </Typography>
+          <Typography variant="body1" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5 }}>
+            {violation.violation_type === 'before_start' ? (
+              <>
+                Start Date: {formatDate(taskStartDate)} 
+                <Box component="span" sx={{ color: 'text.secondary', mx: 1 }}>&gt;</Box>
+                <strong>{formatDate(suggestedStartDate)}</strong>
+              </>
+            ) : (
+              <>
+                End Date: {formatDate(taskEndDate)}
+                <Box component="span" sx={{ color: 'text.secondary', mx: 1 }}>&gt;</Box>
+                <strong>{formatDate(suggestedEndDate)}</strong>
+              </>
+            )}
           </Typography>
         </Box>
 
-        <Typography variant="body2" sx={{ mb: 2 }}>
-          What would you like to do?
+        <Typography variant="body2" color="text.secondary">
+          Expanding the range will allow this event to be created.
         </Typography>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          <Box>
-            <strong>Option 1: Cancel event creation</strong>
-            <br />
-            <Typography variant="body2" color="text.secondary">
-              Don't create this event and keep the task dates as they are.
-            </Typography>
-          </Box>
-          <Box>
-            <strong>Option 2: Expand task date range</strong>
-            <br />
-            <Typography variant="body2" color="text.secondary">
-              {getExpandMessage()}
-            </Typography>
-          </Box>
-        </Box>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onRevert} color="secondary">
+        <Button onClick={onRevert} color="inherit">
           Cancel Event
         </Button>
         <Button onClick={onExpand} color="primary" variant="contained">
-          Expand Task Dates
+          Expand Range
         </Button>
       </DialogActions>
     </Dialog>
@@ -272,13 +260,58 @@ const Calendar: React.FC = () => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
-    try {
-      calendarRef.current?.getApi().refetchEvents();
-    } catch (err) {
-      console.error('Error triggering initial calendar fetch:', err);
-      setError('Failed to load calendar data. Please try refreshing the page.');
-    }
-  }, [setError]);
+    const triggerInitialLoad = async () => {
+      // Prefer letting FullCalendar drive the load via its `events` callback.
+      // In unit tests we mock `@fullcalendar/react` without a real ref/getApi implementation,
+      // so we fall back to fetching directly to keep behavior testable.
+      try {
+        const api = (calendarRef.current as any)?.getApi?.();
+        if (api?.refetchEvents) {
+          api.refetchEvents();
+          return;
+        }
+      } catch (err) {
+        // If FullCalendar isn't ready yet, fall back below.
+        console.warn('FullCalendar getApi/refetchEvents not available, falling back to direct fetch', err);
+      }
+
+      // Fallback: fetch directly using the current dateRange (useful for tests/mocks)
+      try {
+        const current = stateRef.current;
+        const { start, end } = current.dateRange;
+
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: true,
+          dateRange: { start, end }
+        });
+
+        const data = await fetchCalendarData({ start, end });
+
+        setState({
+          events: data.events,
+          tasks: data.unscheduledTasks,
+          isLoading: false,
+          dateRange: { start, end }
+        });
+      } catch (err) {
+        console.error('Error triggering initial calendar fetch:', err);
+        setError('Failed to load calendar data. Please try refreshing the page.');
+
+        // Best-effort: clear loading state if we had set it
+        const current = stateRef.current;
+        setState({
+          events: current.events,
+          tasks: current.tasks,
+          isLoading: false,
+          dateRange: current.dateRange
+        });
+      }
+    };
+
+    void triggerInitialLoad();
+  }, [setError, setState]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {
@@ -967,6 +1000,7 @@ const Calendar: React.FC = () => {
   };
 
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const overlapSuggestions = useMemo(() => {
     if (!showSuggestions) {
@@ -1484,18 +1518,20 @@ const Calendar: React.FC = () => {
   return (
     <div className="calendar-container">
       <div className="calendar-content">
-        <div className="calendar-sidebar">
-          <TaskList
-            ref={taskListRef}
-            tasks={state.tasks}
-            events={state.events}
-            onAddTask={handleAddTask}
-            onTaskUpdate={handleTaskUpdate}
-            overlapSuggestions={overlapSuggestions}
-            onNavigateDate={gotoDate}
-            onToggleSuggestions={setShowSuggestions}
-          />
-        </div>
+        {!isSidebarCollapsed && (
+          <div className="calendar-sidebar">
+            <TaskList
+              ref={taskListRef}
+              tasks={state.tasks}
+              events={state.events}
+              onAddTask={handleAddTask}
+              onTaskUpdate={handleTaskUpdate}
+              overlapSuggestions={overlapSuggestions}
+              onNavigateDate={gotoDate}
+              onToggleSuggestions={setShowSuggestions}
+            />
+          </div>
+        )}
         <div className="calendar-main" style={{ position: 'relative' }}>
           {state.isLoading && (
             <div className="calendar-loading-indicator page-loading-overlay">
@@ -1516,12 +1552,16 @@ const Calendar: React.FC = () => {
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',
-              right: 'gcalSync dayGridMonth,timeGridWeek,timeGridDay'
+              right: 'gcalSync toggleTasks dayGridMonth,timeGridWeek,timeGridDay'
             }}
             customButtons={{
               gcalSync: {
                 text: '📅 Sync',
                 click: handleGoogleCalendarSync
+              },
+              toggleTasks: {
+                text: isSidebarCollapsed ? 'Show Tasks' : 'Hide Tasks',
+                click: () => setIsSidebarCollapsed((prev) => !prev)
               }
             }}
             height="100%"
@@ -1599,20 +1639,36 @@ const Calendar: React.FC = () => {
               <FormControlLabel
                 value="single"
                 control={<Radio />}
-                label="Only this occurrence"
+                label="Apply to just this occurrence"
               />
               <FormControlLabel
                 value="future"
                 control={<Radio />}
-                label="This and all future occurrences"
+                label="Apply to this occurrence and beyond"
               />
               <FormControlLabel
                 value="all"
                 control={<Radio />}
-                label="All occurrences of this routine"
+                label="Apply to all occurrences"
               />
             </RadioGroup>
           </FormControl>
+
+          <Box sx={{ mt: 2 }}>
+            {selectedUpdateScope === 'single' ? (
+              <Alert severity="info">
+                Only this event will be moved. The old time slot will be remembered as intentionally changed, so it won’t be recreated later.
+              </Alert>
+            ) : selectedUpdateScope === 'future' ? (
+              <Alert severity="warning">
+                This event and all future events will be shifted. Any previously deleted/skipped future occurrences starting at this event may reappear on the new schedule.
+              </Alert>
+            ) : (
+              <Alert severity="warning">
+                All occurrences will be shifted. Any previously deleted/skipped occurrences may reappear on the new schedule.
+              </Alert>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineRescheduleCancel}>
@@ -1665,20 +1721,32 @@ const Calendar: React.FC = () => {
               <FormControlLabel
                 value="single"
                 control={<Radio />}
-                label="Only this occurrence"
+                label="Apply to just this occurrence"
               />
               <FormControlLabel
                 value="future"
                 control={<Radio />}
-                label="This and all future occurrences"
+                label="Apply to this occurrence and beyond"
               />
               <FormControlLabel
                 value="all"
                 control={<Radio />}
-                label="All occurrences of this routine"
+                label="Apply to all occurrences"
               />
             </RadioGroup>
           </FormControl>
+
+          <Box sx={{ mt: 2 }}>
+            {selectedResizeScope === 'single' ? (
+              <Alert severity="info">
+                Only this event will be updated. Deleted/skipped occurrences stay deleted.
+              </Alert>
+            ) : (
+              <Alert severity="info">
+                Existing events will be updated and routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
+              </Alert>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleRoutineResizeCancel}>

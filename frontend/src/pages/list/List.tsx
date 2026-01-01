@@ -8,7 +8,7 @@ import './List.css';
 import '../../shared/styles/badges.css';
 import { SearchBar } from '../../shared/components/SearchBar';
 import { formatFrequency } from '../../shared/utils/frequency';
-import { deleteGoal, duplicateGoal, updateGoal, completeGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
+import { deleteGoal, duplicateGoal, updateGoal, resolveGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
 
 type FieldType = 'text' | 'enum' | 'number' | 'boolean' | 'date';
 type ColumnKey = keyof Goal;
@@ -299,10 +299,11 @@ const List: React.FC = () => {
         const selectedGoals = getSelectedGoals();
         try {
             await Promise.all(selectedGoals.map(async (g) => {
+                const status: ResolutionStatus = completed ? 'completed' : 'pending';
                 if (g.goal_type === 'event') {
-                    await updateEvent(g.id, { completed });
+                    await updateEvent(g.id, { resolution_status: status });
                 } else {
-                    await completeGoal(g.id, completed);
+                    await resolveGoal(g.id, status);
                 }
             }));
             refreshAndClearSelection();
@@ -977,7 +978,7 @@ const List: React.FC = () => {
                                                 )}
                                             </td>
                                             <td className="table-cell">
-                                                <span className={`status-badge ${goal.resolution_status === 'completed' ? 'completed' : goal.resolution_status || 'pending'}`}>
+                                                <span className={`status-badge ${goal.resolution_status === 'completed' ? 'completed' : goal.resolution_status === 'failed' ? 'failed' : goal.resolution_status === 'skipped' ? 'skipped' : 'in-progress'}`}>
                                                     {goal.resolution_status === 'completed' ? 'Completed' : 
                                                      goal.resolution_status === 'failed' ? 'Failed' : 
                                                      goal.resolution_status === 'skipped' ? 'Skipped' : 'In Progress'}

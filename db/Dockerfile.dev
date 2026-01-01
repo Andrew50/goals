@@ -1,6 +1,9 @@
 #FROM postgres:latest
 #ENV POSTGRES_PASSWORD=pass
 #COPY init.sql /docker-entrypoint-initdb.d/init.sql
+# Dev image: keep this on `neo4j:latest` so existing local volumes created by a newer patch keep working.
+# (Neo4j does not support downgrading an existing data directory.)
+# CI/test uses `Dockerfile.ci` to keep builds stable.
 FROM neo4j:latest
 ENV NEO4J_AUTH=neo4j/password123
 

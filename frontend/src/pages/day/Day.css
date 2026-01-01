@@ -112,6 +112,10 @@
     color: #718096;
 }
 
+.column-title.resolved {
+    color: #718096;
+}
+
 .column-count {
     background-color: #edf2f7;
     color: #4a5568;
@@ -131,8 +135,23 @@
     opacity: 0.85;
 }
 
+.tasks-list.resolved {
+    opacity: 0.9;
+}
+
+.resolved-group.not-first {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.task-card.resolved {
+    opacity: 0.9;
+}
 /* Task card styling */
 .task-card {
+    position: relative;
+    overflow: hidden;
     display: flex !important;
     align-items: center;
     justify-content: space-between;
@@ -143,6 +162,14 @@
     gap: 1rem;
     transition: all 0.2s;
     cursor: pointer;
+}
+
+.priority-strip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
 }
 
 .task-card:hover {

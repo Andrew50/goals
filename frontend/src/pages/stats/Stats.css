@@ -894,9 +894,15 @@
 
 .effort-children-checkbox-col {
     width: 60px;
+    vertical-align: middle;
+}
+
+.effort-checkbox-wrapper {
     display: flex;
     align-items: center;
     gap: 8px;
+    width: 100%;
+    justify-content: center;
 }
 
 .effort-child-color-indicator {

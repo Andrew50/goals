@@ -9,5 +9,6 @@ pub mod migration;
 pub mod network;
 pub mod push;
 pub mod routine;
+pub mod routine_exceptions;
 pub mod stats;
 pub mod traversal;

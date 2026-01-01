@@ -190,13 +190,19 @@ async fn create_graph_connection() -> Result<Graph, Box<dyn std::error::Error>> 
     let neo4j_uri = env::var("NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string());
     let neo4j_user = env::var("NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
     let neo4j_password = env::var("NEO4J_PASSWORD").unwrap_or_else(|_| "password".to_string());
+    let max_connections = env::var("NEO4J_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
 
     println!("🔗 Connecting to Neo4j at {}...", neo4j_uri);
+    println!("   Max Connections: {}", max_connections);
 
     let config = ConfigBuilder::default()
         .uri(&neo4j_uri)
         .user(&neo4j_user)
         .password(&neo4j_password)
+        .max_connections(max_connections)
         .db("neo4j")
         .build()?;
 

@@ -48,6 +48,16 @@
     color: #276749;
 }
 
+.status-badge.failed {
+    background-color: #fed7d7;
+    color: #c53030;
+}
+
+.status-badge.skipped {
+    background-color: #edf2f7;
+    color: #718096;
+}
+
 .status-badge.in-progress {
     background-color: #feebc8;
     color: #c05621;
@@ -90,5 +100,3 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
-
-

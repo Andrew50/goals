@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import { Goal, ApiGoal, NetworkEdge } from '../../types/goals';
@@ -19,7 +19,6 @@ const Projects: React.FC = () => {
     const [searchIds, setSearchIds] = useState<Set<number>>(new Set());
     const [parentByChild, setParentByChild] = useState<Map<number, Goal>>(new Map());
     const [projects, setProjects] = useState<Goal[]>([]);
-    const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         // Fetch achievements from the API
@@ -30,7 +29,9 @@ const Projects: React.FC = () => {
     }, [refreshTrigger]);
 
     useEffect(() => {
-        // Fetch network once to build a mapping from achievement -> parent project
+        // Fetch network to build a mapping from achievement -> parent project.
+        // Re-run whenever refreshTrigger changes so newly created or updated goals
+        // are reflected in the projects view without a full page reload.
         (async () => {
             try {
                 const network = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
@@ -59,7 +60,7 @@ const Projects: React.FC = () => {
                 setProjects([]);
             }
         })();
-    }, []);
+    }, [refreshTrigger]);
 
     // Build combined search items (projects + achievements)
     const searchItems = useMemo(() => {
@@ -85,8 +86,9 @@ const Projects: React.FC = () => {
         });
 
         const list = achievements.filter(a => {
-            if (filterCompleted === 'completed') return a.resolution_status === 'completed';
-            if (filterCompleted === 'incomplete') return a.resolution_status !== 'completed';
+            const isCompleted = a.resolution_status && a.resolution_status !== 'pending';
+            if (filterCompleted === 'completed') return isCompleted;
+            if (filterCompleted === 'incomplete') return !isCompleted;
             return true;
         });
 
@@ -100,8 +102,8 @@ const Projects: React.FC = () => {
 
         groups.forEach(g => {
             g.items.sort((a, b) => {
-                const ca = a.resolution_status === 'completed' ? 1 : 0;
-                const cb = b.resolution_status === 'completed' ? 1 : 0;
+                const ca = (a.resolution_status && a.resolution_status !== 'pending') ? 1 : 0;
+                const cb = (b.resolution_status && b.resolution_status !== 'pending') ? 1 : 0;
                 if (ca !== cb) return ca - cb; // incomplete first
                 const ta = a.end_timestamp ? a.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
                 const tb = b.end_timestamp ? b.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
@@ -130,6 +132,12 @@ const Projects: React.FC = () => {
 
             const fa = ga.items[0];
             const fb = gb.items[0];
+            // Respect resolution_status priority:
+            // pending (or unset) should sort above any resolved state (completed/failed/skipped).
+            const aPending = !!fa && (!fa.resolution_status || fa.resolution_status === 'pending');
+            const bPending = !!fb && (!fb.resolution_status || fb.resolution_status === 'pending');
+            if (aPending !== bPending) return aPending ? -1 : 1;
+
             const ta = fa && fa.end_timestamp ? fa.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
             const tb = fb && fb.end_timestamp ? fb.end_timestamp.getTime() : Number.POSITIVE_INFINITY;
             if (ta !== tb) return ta - tb;
@@ -249,10 +257,11 @@ const Projects: React.FC = () => {
         });
         const res = (projects || []).filter(p => {
             if (!p || p.id == null) return false;
-            if (p.resolution_status === 'completed') return false;
+            const projectResolved = p.resolution_status && p.resolution_status !== 'pending';
+            if (projectResolved) return false;
             const achs = byProjectId.get(p.id) || [];
-            // keep if there are no achievements OR all achievements are completed
-            return achs.every(a => a.resolution_status === 'completed');
+            // keep if there are no achievements OR all achievements are resolved (completed/failed/skipped)
+            return achs.every(a => a.resolution_status && a.resolution_status !== 'pending');
         });
         return res.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }, [projects, achievements, parentByChild]);
@@ -391,7 +400,7 @@ const Projects: React.FC = () => {
                     ) : (
                         <div className="projects-list">
                             {projectGroups.map(({ project, items }) => {
-                                const completed = items.filter(i => i.resolution_status === 'completed').length;
+                                const completed = items.filter(i => i.resolution_status && i.resolution_status !== 'pending').length;
                                 const total = items.length;
                                 const value = completed / Math.max(total, 1);
                                 const projectBg = getGoalStyle(project).backgroundColor;
@@ -401,11 +410,13 @@ const Projects: React.FC = () => {
                                             <h2
                                                 className="project-title"
                                                 style={{
+                                                    cursor: 'pointer',
                                                     backgroundColor: projectBg,
                                                     color: '#ffffff',
                                                     borderRadius: '999px',
                                                     padding: '4px 10px'
                                                 }}
+                                                onClick={() => handleProjectClick(project)}
                                             >
                                                 {project.name}
                                             </h2>
@@ -422,10 +433,11 @@ const Projects: React.FC = () => {
                                             {items.map(achievement => {
                                                 const goalStyle = getGoalStyle(achievement);
                                                 const dueDateClass = getDueDateClass(achievement.end_timestamp);
+                                                const isDone = achievement.resolution_status && achievement.resolution_status !== 'pending';
                                                 return (
                                                     <div
                                                         key={achievement.id}
-                                                        className={`achievement-card ${achievement.resolution_status === 'completed' ? 'completed' : ''} ${dueDateClass}`}
+                                                        className={`achievement-card ${isDone ? 'completed' : ''} ${dueDateClass}`}
                                                         onClick={() => handleAchievementClick(achievement)}
                                                         onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
                                                         style={{

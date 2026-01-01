@@ -8,11 +8,17 @@ pub async fn get_achievements_data(
     graph: Graph,
     user_id: i64,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
-    // Query to get all achievement goals ordered by end_timestamp (due date)
+    // Query to get all achievement goals, prioritizing pending above resolved
+    // (completed/failed/skipped), then sorting by due date (end_timestamp).
     let achievements_query = query(&format!(
         "MATCH (g:Goal)
          WHERE g.user_id = $user_id AND g.goal_type = 'achievement'
-         ORDER BY g.end_timestamp ASC
+         ORDER BY
+           CASE
+             WHEN g.resolution_status IS NULL OR g.resolution_status = 'pending' THEN 0
+             ELSE 1
+           END ASC,
+           coalesce(g.end_timestamp, 9223372036854775807) ASC
          {}",
         GOAL_RETURN_QUERY
     ))

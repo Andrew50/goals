@@ -61,7 +61,7 @@ jobs:
               fi
             fi
           fi
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           clean: false
@@ -153,26 +153,81 @@ jobs:
           fi
       - name: Check for previous failures
         id: check-failures
-        run: |
-          # Initialize all outputs to false by default
-          echo "backend_failed=false" >> $GITHUB_OUTPUT
-          echo "frontend_failed=false" >> $GITHUB_OUTPUT
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const workflow_id = "pr-verify.yml";
+            const currentRunId = context.runId;
+            const prHeadSha = context.payload.pull_request?.head?.sha;
 
-          # Get repository in owner/repo format
-          REPO="${GITHUB_REPOSITORY}"
+            core.info(`Checking previous runs for ${owner}/${repo}`);
+            core.info(`Workflow: ${workflow_id}`);
+            core.info(`Current run id: ${currentRunId}`);
+            core.info(`PR head sha: ${prHeadSha || "unknown"}`);
 
-          # Try to get workflow runs with error handling
-          echo "Checking previous runs for $REPO"
+            // Default: do NOT force checks to run (changed-files decides); only flip to true if we detect a prior failure
+            // (or if we truly cannot query the API, in which case we fail-open to avoid incorrect skipping).
+            let backendFailed = false;
+            let frontendFailed = false;
 
-          # Check workflow conclusion (best-effort signal)
-          workflow_status=$(gh api "/repos/${REPO}/actions/workflows/pr-checks.yml/runs" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
-          echo "Previous workflow status: $workflow_status"
-          if [ "$workflow_status" == "failure" ]; then
-            echo "backend_failed=true" >> $GITHUB_OUTPUT
-            echo "frontend_failed=true" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            try {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id,
+                per_page: 50,
+              });
+
+              // Prefer a previous run for the same PR head SHA (exclude this run).
+              let prev = null;
+              if (prHeadSha) {
+                prev = runs.find((r) => r.id !== currentRunId && r.head_sha === prHeadSha);
+              }
+              // Fallback: any previous run (exclude this run).
+              if (!prev) {
+                prev = runs.find((r) => r.id !== currentRunId);
+              }
+
+              if (!prev) {
+                core.info("No previous workflow run found.");
+              } else {
+                const prevConclusion = prev.conclusion ?? "unknown";
+                core.info(`Previous workflow status: ${prevConclusion}`);
+
+                // Treat any non-success terminal conclusion as "previously failed" so we rerun checks.
+                // If conclusion is missing/unknown (API oddities), fail-open so we don't incorrectly skip.
+                const terminalNonSuccess = new Set([
+                  "failure",
+                  "cancelled",
+                  "timed_out",
+                  "action_required",
+                  "stale",
+                  "startup_failure",
+                ]);
+
+                if (terminalNonSuccess.has(prevConclusion)) {
+                  backendFailed = true;
+                  frontendFailed = true;
+                } else if (prevConclusion === "unknown" || prev.conclusion === null) {
+                  backendFailed = true;
+                  frontendFailed = true;
+                  core.warning(
+                    "Unable to determine previous run conclusion; forcing checks to run (fail-open)."
+                  );
+                }
+              }
+            } catch (err) {
+              backendFailed = true;
+              frontendFailed = true;
+              core.warning(
+                `Failed to query previous workflow runs; forcing checks to run (fail-open). Error: ${err?.message || err}`
+              );
+            }
+
+            core.setOutput("backend_failed", String(backendFailed));
+            core.setOutput("frontend_failed", String(frontendFailed));
 
   # BACKEND PIPELINE (lint, build, unit tests)
   backend-verify:
@@ -181,8 +236,6 @@ jobs:
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
     timeout-minutes: 45
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
     steps:
       - name: Pre-fix workspace ownership
         shell: bash
@@ -208,7 +261,14 @@ jobs:
               fi
             fi
           fi
-      - uses: actions/checkout@v5
+
+      - name: Set Cargo target dir (use runner temp)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/cargo-target" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v6
         with:
           clean: false
 
@@ -230,12 +290,12 @@ jobs:
           components: clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
+            ${{ runner.temp }}/cargo-target
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-
@@ -265,8 +325,9 @@ jobs:
       contents: read
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           clean: false
 
       - name: Fix workspace permissions and stale node_modules (frontend)
@@ -293,7 +354,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '18'
+          node-version-file: '.nvmrc'
           cache: 'npm'
           cache-dependency-path: './frontend/package-lock.json'
 
@@ -313,17 +374,78 @@ jobs:
         working-directory: ./frontend
         run: npm run build
 
-      - name: Unit tests
+      - name: Unit tests (Jest + coverage; do not stop workflow)
+        id: frontend-unit-tests
         working-directory: ./frontend
-        run: npm run test:ci
+        run: |
+          set +e
+          npm run test:ci
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Coverage gate (global + per-file; fails job at end)
+        id: frontend-coverage-gate
+        if: always()
+        working-directory: ./frontend
+        env:
+          COVERAGE_GATE_VERBOSE: "1"
+          COVERAGE_GATE_MAX_FAILURES: "800"
+          COVERAGE_GATE_TOP_LOWEST_FILES: "40"
+        run: |
+          set +e
+          echo "::group::Coverage gate config"
+          echo "cwd: $PWD"
+          echo "COVERAGE_GATE_VERBOSE=${COVERAGE_GATE_VERBOSE:-unset}"
+          echo "COVERAGE_GATE_MAX_FAILURES=${COVERAGE_GATE_MAX_FAILURES:-unset}"
+          echo "COVERAGE_GATE_TOP_LOWEST_FILES=${COVERAGE_GATE_TOP_LOWEST_FILES:-unset}"
+          echo "coverage-thresholds.json:"
+          cat coverage-thresholds.json || true
+          echo "::endgroup::"
+          npm run check:coverage
+          code=$?
+          if [ "$code" != "0" ]; then
+            echo "::group::Coverage artifacts (debug)"
+            echo "coverage/ directory listing:"
+            ls -la coverage || true
+            echo ""
+            echo "coverage/ contents (depth 2):"
+            find coverage -maxdepth 2 -type f -printf '%p\n' 2>/dev/null | sort | head -n 200 || true
+            echo "::endgroup::"
+          fi
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Upload test coverage
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: frontend-test-coverage
           path: frontend/coverage/
           retention-days: 30
+
+      - name: Fail if unit tests or coverage gate failed
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_code="${{ steps.frontend-unit-tests.outputs.exit_code }}"
+          cov_code="${{ steps.frontend-coverage-gate.outputs.exit_code }}"
+          echo "Frontend unit test exit_code: ${test_code:-unset}"
+          echo "Frontend coverage gate exit_code: ${cov_code:-unset}"
+          
+          # If the job is going to fail due to the coverage gate, re-print a compact coverage summary
+          # here so it's visible at the very end of the job logs.
+          if [ "${cov_code:-1}" != "0" ]; then
+            echo "::group::Coverage gate (compact summary)"
+            COVERAGE_GATE_FORMAT=compact COVERAGE_GATE_VERBOSE=0 node frontend/scripts/check-coverage.js || true
+            echo "::endgroup::"
+          fi
+
+          if [ "${test_code:-1}" != "0" ] || [ "${cov_code:-1}" != "0" ]; then
+            echo "Failing job due to unit test or coverage gate failure."
+            exit 1
+          fi
       
   # DEPLOYMENT CHECK
   deploy-ready:
