@@ -53,15 +53,40 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
                 }
             }
         } else {
+            // IMPORTANT: `start_timestamp` is stored as a UTC day boundary (midnight UTC) for many routines,
+            // while `routine_time` encodes the time-of-day (also on a UTC basis via modulo arithmetic).
+            //
+            // If we only compare `t < now` (where `t` is midnight), we can incorrectly skip "today"
+            // even when the routine occurrence later in the day is still in the future.
+            //
+            // We instead compare the *scheduled* occurrence (t + routine_time offset) against `now`.
             let mut t = routine.start_timestamp.unwrap_or(now);
             if let Some(freq) = &routine.frequency {
                 let guard_limit = 10_000; // safety guard
                 let mut guard = 0;
-                while t < now && guard < guard_limit {
+                loop {
+                    if guard >= guard_limit {
+                        break;
+                    }
+
+                    // Apply routine_time for the purpose of deciding whether this occurrence is already in the past.
+                    let scheduled_at_t = if let Some(routine_time) = routine.routine_time {
+                        set_time_of_day(t, routine_time)
+                    } else {
+                        t
+                    };
+
+                    if scheduled_at_t >= now {
+                        break;
+                    }
+
                     t = match calculate_next_occurrence(t, freq) {
                         Ok(v) => v,
                         Err(e) => {
-                            eprintln!("[routine_generator] Failed to advance to now for routine id {:?}: {}", routine.id, e);
+                            eprintln!(
+                                "[routine_generator] Failed to advance to now for routine id {:?}: {}",
+                                routine.id, e
+                            );
                             break;
                         }
                     };
