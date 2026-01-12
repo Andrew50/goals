@@ -127,6 +127,7 @@ jobs:
           BACKUP_PATH=${{ secrets.BACKUP_PATH }}
           BACKUP_LOGS_PATH=${{ secrets.BACKUP_LOGS_PATH }}
           GOALS_GEMINI_API_KEY=${{ secrets.GOALS_GEMINI_API_KEY }}
+          OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
           REACT_APP_API_URL=${{ secrets.REACT_APP_API_URL }}
           REACT_APP_GOOGLE_CLIENT_ID=${{ secrets.REACT_APP_GOOGLE_CLIENT_ID }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
