@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::ai::query as ai_query;
+// use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
 use crate::server::auth::{self};
 use crate::server::middleware;
@@ -117,7 +117,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/", get(handle_get_day_tasks))
         .route("/complete/:id", put(handle_toggle_complete_task));
 
-    let query_routes = Router::new().route("/ws", get(ai_query::handle_query_ws));
+    // let query_routes = Router::new().route("/ws", get(ai_query::handle_query_ws));
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
@@ -177,7 +177,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/calendar", calendar_routes)
         .nest("/list", list_routes)
         .nest("/day", day_routes)
-        .nest("/query", query_routes)
+        // .nest("/query", query_routes)
         .nest("/achievements", achievements_routes)
         .nest("/gcal", gcal_routes)
         .nest("/stats", stats_routes)
