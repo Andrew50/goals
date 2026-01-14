@@ -11,6 +11,53 @@ import { Accordion, AccordionSummary, AccordionDetails, Typography, List, ListIt
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import '../../shared/styles/badges.css';
 
+// Match backend weighted-completion logic (see `backend/src/tools/stats.rs`):
+// none=0, low=1, medium=2, high=3, default=2 (medium).
+const getPriorityWeight = (priority: unknown): number => {
+    switch (priority) {
+        case 'none':
+            return 0;
+        case 'low':
+            return 1;
+        case 'medium':
+            return 2;
+        case 'high':
+            return 3;
+        default:
+            return 2;
+    }
+};
+
+const isResolved = (g: Goal): boolean => !!g.resolution_status && g.resolution_status !== 'pending';
+
+const getWeightedCompletionStats = (items: Goal[]) => {
+    const totalCount = items.length;
+    const resolvedCount = items.filter(isResolved).length;
+
+    let weightedTotal = 0;
+    let weightedResolved = 0;
+
+    for (const g of items) {
+        const w = getPriorityWeight(g.priority);
+        weightedTotal += w;
+        if (isResolved(g)) weightedResolved += w;
+    }
+
+    // If everything is explicitly weight=0 (e.g. "none"), fall back to counts
+    // so the bar still behaves sensibly.
+    const effectiveTotal = weightedTotal > 0 ? weightedTotal : totalCount;
+    const effectiveResolved = weightedTotal > 0 ? weightedResolved : resolvedCount;
+
+    return {
+        totalCount,
+        resolvedCount,
+        weightedTotal: effectiveTotal,
+        weightedResolved: effectiveResolved,
+        rawWeightedTotal: weightedTotal,
+        rawWeightedResolved: weightedResolved
+    };
+};
+
 const Projects: React.FC = () => {
     const [achievements, setAchievements] = useState<Goal[]>([]);
     const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -400,9 +447,9 @@ const Projects: React.FC = () => {
                     ) : (
                         <div className="projects-list">
                             {projectGroups.map(({ project, items }) => {
-                                const completed = items.filter(i => i.resolution_status && i.resolution_status !== 'pending').length;
-                                const total = items.length;
-                                const value = completed / Math.max(total, 1);
+                                const stats = getWeightedCompletionStats(items);
+                                const hasTasks = stats.weightedTotal > 0;
+                                const value = hasTasks ? (stats.weightedResolved / stats.weightedTotal) : 0;
                                 const projectBg = getGoalStyle(project).backgroundColor;
                                 return (
                                     <section key={project.id} className="project-section">
@@ -422,12 +469,17 @@ const Projects: React.FC = () => {
                                             </h2>
                                             <CompletionBar
                                                 value={value}
-                                                hasTasks={total > 0}
+                                                hasTasks={hasTasks}
                                                 width={120}
                                                 height={8}
-                                                title={`${completed}/${total}`}
+                                                title={`${stats.weightedResolved}/${stats.weightedTotal} (weighted by priority) — ${stats.resolvedCount}/${stats.totalCount} resolved`}
                                             />
-                                            <span className="project-count">{completed}/{total}</span>
+                                            <span
+                                                className="project-count"
+                                                title={`${stats.weightedResolved}/${stats.weightedTotal} (weighted by priority)`}
+                                            >
+                                                {stats.weightedResolved}/{stats.weightedTotal}
+                                            </span>
                                         </div>
                                         <div className="project-achievements">
                                             {items.map(achievement => {

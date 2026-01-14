@@ -128,7 +128,7 @@
 .tasks-list {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.25rem;
 }
 
 .tasks-list.completed {
@@ -151,7 +151,8 @@
 /* Task card styling */
 .task-card {
     position: relative;
-    overflow: hidden;
+    /* Allow DnD drop-indicator overlays to render "in the gap" between cards without clipping */
+    overflow: visible;
     display: flex !important;
     align-items: center;
     justify-content: space-between;
@@ -174,7 +175,6 @@
 
 .task-card:hover {
     background-color: #edf2f7 !important;
-    transform: translateX(4px);
 }
 
 .task-card.completed {
@@ -235,8 +235,10 @@
 .current-time-line {
     display: flex;
     align-items: center;
-    margin: 0.5rem 0;
+    /* Tighten spacing so the marker doesn't create a big visual "gap" between tasks */
+    margin: -0.25rem 0;
     position: relative;
+    overflow: visible;
 }
 
 .current-time-line-content {
@@ -248,21 +250,21 @@
 
 .current-time-line::before {
     content: '';
-    height: 2px;
+    height: 1px;
     background-color: #e53e3e;
     flex: 1;
 }
 
 .current-time-line::after {
     content: '';
-    height: 2px;
+    height: 1px;
     background-color: #e53e3e;
     flex: 1;
 }
 
 .current-time-circle {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     background-color: #e53e3e;
     border-radius: 50%;
     border: 2px solid white;
@@ -416,4 +418,88 @@
         min-width: 40px;
         min-height: 40px;
     }
+}
+
+/* Drag and drop styles */
+.drag-handle {
+    display: flex;
+    align-items: center;
+    padding: 0.25rem;
+    margin-left: 6px; /* Account for priority-strip width */
+    margin-right: 0.5rem;
+    opacity: 0.4;
+    transition: opacity 0.2s ease;
+    flex-shrink: 0;
+    cursor: grab;
+    z-index: 1;
+    position: relative;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.task-card:hover .drag-handle {
+    opacity: 0.8;
+}
+
+.task-card.dragging {
+    opacity: 0.5;
+    transform: scale(0.98);
+    pointer-events: none;
+}
+
+/* Drag target indicator overlays (do NOT affect layout / flex gap) */
+.task-card.drop-indicator-before::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.125rem; /* center the line within the flex gap above */
+    border-top: 2px solid #2196f3;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.task-card.drop-indicator-after::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -0.125rem; /* center the line within the flex gap below */
+    border-top: 2px solid #2196f3;
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* Current-time hover indicator (can't use ::before/::after because they're used by the red "now" line) */
+.current-time-line .drop-indicator-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 2px solid #2196f3;
+    pointer-events: none;
+    z-index: 3;
+}
+
+.current-time-line .drop-indicator-line--before {
+    top: -0.125rem;
+}
+
+.current-time-line .drop-indicator-line--after {
+    bottom: -0.125rem;
+}
+
+/* Invisible drop targets above/below the current-time line so you can target "before/after now"
+   even when there isn't an event on the other side (e.g. now-line at end of list). */
+.current-time-line .current-time-drop-zone {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0.75rem; /* big enough to hit without being finicky */
+    z-index: 2;
+}
+
+.current-time-line .current-time-drop-zone--after {
+    bottom: -0.75rem;
 }

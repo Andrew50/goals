@@ -649,3 +649,55 @@ export interface CalendarListEntry {
 export const getGoogleCalendars = async (): Promise<CalendarListEntry[]> => {
     return privateRequest<CalendarListEntry[]>('gcal/calendars', 'GET');
 };
+
+// Goal relations API
+export interface GoalRelationsResponse {
+    parents: Goal[];
+    children: Goal[];
+}
+
+export const getGoalRelations = async (goalId: number): Promise<GoalRelationsResponse> => {
+    console.log('[API] getGoalRelations called', { goalId });
+    try {
+        const response = await privateRequest<{ parents: ApiGoal[]; children: ApiGoal[] }>(`goals/${goalId}/relations`, 'GET');
+        console.log('[API] getGoalRelations response', { 
+            parentsCount: response.parents.length, 
+            childrenCount: response.children.length 
+        });
+        return {
+            parents: response.parents.map(processGoalFromAPI),
+            children: response.children.map(processGoalFromAPI),
+        };
+    } catch (error) {
+        console.error('[API] getGoalRelations error', error);
+        throw error;
+    }
+};
+
+// Goal subgraph API (for MiniNetworkGraph)
+export interface GoalSubgraphResponse {
+    nodes: ApiGoal[];
+    edges: Array<{
+        from: number;
+        to: number;
+        relationship_type: string;
+    }>;
+    truncated: boolean;
+}
+
+export const getGoalSubgraph = async (goalId: number): Promise<{
+    nodes: Goal[];
+    edges: Array<{
+        from: number;
+        to: number;
+        relationship_type: string;
+    }>;
+    truncated: boolean;
+}> => {
+    const response = await privateRequest<GoalSubgraphResponse>(`goals/${goalId}/subgraph`, 'GET');
+    return {
+        nodes: response.nodes.map(processGoalFromAPI),
+        edges: response.edges,
+        truncated: response.truncated,
+    };
+};

@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { DataSet, Network as VisNetwork } from 'vis-network/standalone';
-import { privateRequest } from '../utils/api';
-import { goalToLocal } from '../utils/time';
-import { ApiGoal, NetworkEdge, Goal, NetworkNode } from '../../types/goals';
+import { getGoalSubgraph } from '../utils/api';
+import { Goal, NetworkNode } from '../../types/goals';
 import { buildHierarchy } from '../../pages/network/buildHierarchy';
 import { formatNetworkNode } from '../utils/formatNetworkNode';
 
@@ -18,78 +17,6 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
   const nodesDataSetRef = useRef<DataSet<any> | null>(null);
   const edgesDataSetRef = useRef<DataSet<any> | null>(null);
 
-  const computeSubgraph = useCallback((allNodes: ApiGoal[], allEdges: NetworkEdge[]) => {
-    console.log('[MiniNetworkGraph] computeSubgraph:start', {
-      centerId,
-      totalNodes: allNodes?.length,
-      totalEdges: allEdges?.length
-    });
-    if (centerId == null) {
-      console.warn('[MiniNetworkGraph] computeSubgraph: no centerId');
-      return { nodes: [] as ApiGoal[], edges: [] as NetworkEdge[] };
-    }
-
-    const childEdges = allEdges.filter(e => e.relationship_type === 'child');
-    console.log('[MiniNetworkGraph] computeSubgraph: childEdges', { count: childEdges.length });
-
-    // Build adjacency maps
-    const parentsByChild = new Map<number, number[]>();
-    const childrenByParent = new Map<number, number[]>();
-    for (const e of childEdges) {
-      if (!parentsByChild.has(e.to)) parentsByChild.set(e.to, []);
-      parentsByChild.get(e.to)!.push(e.from);
-      if (!childrenByParent.has(e.from)) childrenByParent.set(e.from, []);
-      childrenByParent.get(e.from)!.push(e.to);
-    }
-
-    // BFS for ancestors
-    const ancestors = new Set<number>();
-    const queueUp: number[] = [centerId];
-    const seenUp = new Set<number>([centerId]);
-    while (queueUp.length > 0) {
-      const current = queueUp.shift()!;
-      const parents = parentsByChild.get(current) || [];
-      for (const p of parents) {
-        if (!seenUp.has(p)) {
-          ancestors.add(p);
-          seenUp.add(p);
-          queueUp.push(p);
-        }
-      }
-    }
-
-    // BFS for descendants
-    const descendants = new Set<number>();
-    const queueDown: number[] = [centerId];
-    const seenDown = new Set<number>([centerId]);
-    while (queueDown.length > 0) {
-      const current = queueDown.shift()!;
-      const children = childrenByParent.get(current) || [];
-      for (const c of children) {
-        if (!seenDown.has(c)) {
-          descendants.add(c);
-          seenDown.add(c);
-          queueDown.push(c);
-        }
-      }
-    }
-
-    const idSet = new Set<number>([centerId]);
-    ancestors.forEach(id => idSet.add(id));
-    descendants.forEach(id => idSet.add(id));
-
-    const filteredNodes = allNodes.filter(n => n.id != null && idSet.has(n.id!));
-    const filteredEdges = childEdges.filter(e => idSet.has(e.from) && idSet.has(e.to));
-
-    console.log('[MiniNetworkGraph] computeSubgraph:result', {
-      ancestorCount: ancestors.size,
-      descendantCount: descendants.size,
-      nodeCount: filteredNodes.length,
-      edgeCount: filteredEdges.length
-    });
-
-    return { nodes: filteredNodes, edges: filteredEdges };
-  }, [centerId]);
 
   const renderGraph = useCallback(async () => {
     if (!containerRef.current) {
@@ -97,15 +24,22 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
       return;
     }
 
-    try {
-      console.log('[MiniNetworkGraph] renderGraph: fetching network');
-      const { nodes, edges } = await privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network');
-      console.log('[MiniNetworkGraph] renderGraph: fetched network', { nodes: nodes.length, edges: edges.length });
-      const sub = computeSubgraph(nodes, edges);
-      console.log('[MiniNetworkGraph] renderGraph: subgraph', { nodes: sub.nodes.length, edges: sub.edges.length });
+    if (centerId == null) {
+      console.warn('[MiniNetworkGraph] renderGraph: no centerId');
+      return;
+    }
 
-      // Map to local + vis nodes
-      const formattedNodes: NetworkNode[] = sub.nodes.map(n => formatNetworkNode(goalToLocal(n as ApiGoal) as unknown as Goal));
+    try {
+      console.log('[MiniNetworkGraph] renderGraph: fetching subgraph for centerId', centerId);
+      const subgraph = await getGoalSubgraph(centerId);
+      console.log('[MiniNetworkGraph] renderGraph: fetched subgraph', { 
+        nodes: subgraph.nodes.length, 
+        edges: subgraph.edges.length,
+        truncated: subgraph.truncated
+      });
+
+      // Map to vis nodes
+      const formattedNodes: NetworkNode[] = subgraph.nodes.map(n => formatNetworkNode(n));
       // Ignore any persisted positions for the mini graph so we can compact layout
       const miniNodes: NetworkNode[] = (formattedNodes as any[]).map((n: any) => ({
         ...n,
@@ -114,12 +48,20 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
       }));
       console.log('[MiniNetworkGraph] renderGraph: formattedNodes', { count: formattedNodes.length });
 
+      // Convert edges to NetworkEdge format
+      const networkEdges = subgraph.edges.map(e => ({
+        from: e.from,
+        to: e.to,
+        relationship_type: e.relationship_type as 'child',
+        id: `${e.from}-${e.to}`
+      }));
+
       // Layout with hierarchy (local spacing, do not persist positions)
       const laidOut = await buildHierarchy(
-        { nodes: miniNodes, edges: sub.edges },
+        { nodes: miniNodes, edges: networkEdges },
         { savePositions: false, baseSpacing: 2 }
       );
-      console.log('[MiniNetworkGraph] renderGraph: layout', { nodes: laidOut.nodes?.length, edges: (laidOut.edges || sub.edges)?.length });
+      console.log('[MiniNetworkGraph] renderGraph: layout', { nodes: laidOut.nodes?.length, edges: (laidOut.edges || networkEdges)?.length });
 
       if (!nodesDataSetRef.current) nodesDataSetRef.current = new DataSet([]);
       if (!edgesDataSetRef.current) edgesDataSetRef.current = new DataSet([]);
@@ -128,7 +70,7 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
       nodesDataSetRef.current.clear();
       edgesDataSetRef.current.clear();
       nodesDataSetRef.current.add(laidOut.nodes);
-      const miniEdges = (laidOut.edges || sub.edges).map((e: any) => {
+      const miniEdges = (laidOut.edges || networkEdges).map((e: any) => {
         const currentScale = e?.arrows?.to?.scaleFactor ?? 0.4;
         return {
           ...e,
@@ -242,7 +184,7 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
     } catch (e) {
       console.error('[MiniNetworkGraph] renderGraph: error', e);
     }
-  }, [computeSubgraph, onNodeClick]);
+  }, [centerId, onNodeClick]);
 
   useEffect(() => {
     console.log('[MiniNetworkGraph] effect: renderGraph invoked', { centerId });

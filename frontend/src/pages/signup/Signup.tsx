@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { publicRequest } from "../../shared/utils/api";
+import { getAuthFriendlyErrorMessage } from "../../shared/utils/authErrorMessage";
 import {
   Container,
   Paper,
@@ -38,9 +39,7 @@ const Signup: React.FC = () => {
       setSuccess(response.message);
       setTimeout(() => navigate("/signin"), 0); // Redirect to sign-in after 2 seconds
     } catch (err: any) {
-      // `publicRequest` normalizes errors; prefer its message but keep fallback
-      const message = err?.message || (err.response?.status === 409 ? 'Username already exists' : 'An error occurred during signup');
-      setError(message);
+      setError(getAuthFriendlyErrorMessage(err));
     }
   };
 

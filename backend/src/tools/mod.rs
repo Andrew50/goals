@@ -8,6 +8,7 @@ pub mod list;
 pub mod migration;
 pub mod network;
 pub mod push;
+pub mod relations;
 pub mod routine;
 pub mod routine_exceptions;
 pub mod stats;
