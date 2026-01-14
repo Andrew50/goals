@@ -21,7 +21,7 @@ use crate::server::middleware;
 use crate::tools::{
     achievements, calendar, day, event, gcal_client,
     goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, ResolveGoalRequest, Relationship},
-    list, migration, network, push, stats, traversal,
+    list, migration, network, push, relations, stats, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -76,6 +76,8 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/relationship", delete(handle_delete_relationship))
         .route("/:id/resolve", put(handle_resolve_goal))
         .route("/:id/duplicate", post(handle_duplicate_goal))
+        .route("/:id/relations", get(handle_get_goal_relations))
+        .route("/:id/subgraph", get(handle_get_goal_subgraph))
         .route("/expand-date-range", post(handle_expand_task_date_range));
 
     let event_routes = Router::new()
@@ -416,6 +418,22 @@ async fn handle_resolve_goal(
     Json(request): Json<ResolveGoalRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     goal::resolve_goal_handler(graph, id, request).await
+}
+
+async fn handle_get_goal_relations(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    relations::get_goal_relations(graph, user_id, id).await
+}
+
+async fn handle_get_goal_subgraph(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    relations::get_goal_subgraph(graph, user_id, id).await
 }
 
 // Event handlers

@@ -657,21 +657,11 @@ export interface GoalRelationsResponse {
 }
 
 export const getGoalRelations = async (goalId: number): Promise<GoalRelationsResponse> => {
-    console.log('[API] getGoalRelations called', { goalId });
-    try {
-        const response = await privateRequest<{ parents: ApiGoal[]; children: ApiGoal[] }>(`goals/${goalId}/relations`, 'GET');
-        console.log('[API] getGoalRelations response', { 
-            parentsCount: response.parents.length, 
-            childrenCount: response.children.length 
-        });
-        return {
-            parents: response.parents.map(processGoalFromAPI),
-            children: response.children.map(processGoalFromAPI),
-        };
-    } catch (error) {
-        console.error('[API] getGoalRelations error', error);
-        throw error;
-    }
+    const response = await privateRequest<{ parents: ApiGoal[]; children: ApiGoal[] }>(`goals/${goalId}/relations`, 'GET');
+    return {
+        parents: response.parents.map(processGoalFromAPI),
+        children: response.children.map(processGoalFromAPI),
+    };
 };
 
 // Goal subgraph API (for MiniNetworkGraph)

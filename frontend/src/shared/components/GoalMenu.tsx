@@ -32,7 +32,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent, getGoalRelations } from '../utils/api';
 import { Goal, GoalType, NetworkEdge, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
 import {
     timestampToInputString,
@@ -218,13 +218,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [childrenLoaded, setChildrenLoaded] = useState<boolean>(
         initialMode === 'create' || !processedInitialGoal.id
     );
-    // Cache network edges so we only fetch the network graph once per dialog open
-    const networkEdgesRef = useRef<NetworkEdge[] | null>(null);
-    const networkPromiseRef = useRef<Promise<NetworkEdge[]> | null>(null);
-    const [networkLoading, setNetworkLoading] = useState<boolean>(false);
-    const relationsLoading =
+    const [relationsLoading, setRelationsLoading] = useState<boolean>(false);
+    const actualRelationsLoading =
         state.mode !== 'create' &&
-        (!parentsLoaded || !childrenLoaded || networkLoading);
+        (!parentsLoaded || !childrenLoaded || relationsLoading);
 
     // Task events management
     const [taskEvents, setTaskEvents] = useState<Goal[]>([]);
@@ -440,30 +437,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, []);
 
-    // Load and cache network edges once per dialog open
-    const ensureNetworkEdges = useCallback(async (): Promise<NetworkEdge[]> => {
-        if (networkEdgesRef.current) {
-            return networkEdgesRef.current;
+    // Fetch relations (parents and children) for a goal
+    const fetchRelations = useCallback(async (goalId: number) => {
+        setRelationsLoading(true);
+        try {
+            const relations = await getGoalRelations(goalId);
+            setParentGoals(relations.parents);
+            // Only set children if this goal type can have children (not task, not event)
+            if (state.goal.goal_type !== 'task' && state.goal.goal_type !== 'event') {
+                setChildGoals(relations.children);
+            } else {
+                setChildGoals([]);
+            }
+        } catch (error) {
+            console.error('[GoalMenu] fetchRelations error', error);
+            setParentGoals([]);
+            setChildGoals([]);
+        } finally {
+            setRelationsLoading(false);
+            setParentsLoaded(true);
+            setChildrenLoaded(true);
         }
-        if (!networkPromiseRef.current) {
-            setNetworkLoading(true);
-            networkPromiseRef.current = privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network')
-                .then((networkData) => {
-                    networkEdgesRef.current = networkData.edges;
-                    return networkData.edges;
-                })
-                .catch((error) => {
-                    // On error, allow future retries
-                    networkEdgesRef.current = [];
-                    networkPromiseRef.current = null;
-                    throw error;
-                })
-                .finally(() => {
-                    setNetworkLoading(false);
-                });
-        }
-        return networkPromiseRef.current!;
-    }, []);
+    }, [state.goal.goal_type]);
 
     // Fetch goal stats
     const fetchGoalStats = useCallback(async (goal: Goal) => {
@@ -711,48 +706,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [autoEventAdded, state.goal.goal_type, state.mode, autoCreateEventTimestamp, taskEvents.length]);
 
-    // Fetch parent goals using cached network edges and the global goals list
-    const fetchParentGoals = useCallback(async (goalId: number) => {
-        // Skip fetching for events - they get their parent from the event-specific helper
-        if (state.goal.goal_type === 'event') {
-            setParentsLoaded(true);
-            return;
-        }
-
-        try {
-            const edges = await ensureNetworkEdges();
-            const parentIds = edges
-                .filter(e => e.relationship_type === 'child' && e.to === goalId)
-                .map(e => e.from);
-
-            const parents = allGoals.filter(g => g.id != null && parentIds.includes(g.id!));
-
-            // Always update parentGoals, even if empty to clear stale data
-            setParentGoals(parents);
-        } catch (error) {
-            setParentGoals([]);
-        } finally {
-            setParentsLoaded(true);
-        }
-    }, [allGoals, ensureNetworkEdges, state.goal.goal_type]);
-
-    // Fetch child goals using cached network edges and the global goals list
-    const fetchChildGoals = useCallback(async (goalId: number) => {
-        try {
-            const edges = await ensureNetworkEdges();
-            const childIds = edges
-                .filter(e => e.relationship_type === 'child' && e.from === goalId)
-                .map(e => e.to);
-
-            const children = allGoals.filter(g => g.id != null && childIds.includes(g.id!));
-
-            setChildGoals(children);
-        } catch (error) {
-            setChildGoals([]);
-        } finally {
-            setChildrenLoaded(true);
-        }
-    }, [allGoals, ensureNetworkEdges]);
 
     const open = useCallback((goal: Goal, initialMode: Mode, onSuccess?: (goal: Goal) => void) => {
         //create copy, might need to be date.
@@ -848,28 +801,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // console.log('[GoalMenu] parentGoals updated:', { length: parentGoals.length, parents: parentGoals });
     }, [parentGoals]);
 
-    // Fetch parent and child goals when component mounts or goal changes
+    // Fetch relations when component mounts or goal changes
     useEffect(() => {
         if (state.goal.id && isOpen) {
-            // Skip fetchParentGoals for events - they use their own parent logic
-            if (state.goal.goal_type !== 'event') {
-                setParentsLoaded(false);
-                fetchParentGoals(state.goal.id);
-            } else {
-                setParentsLoaded(true);
-            }
+            setParentsLoaded(false);
             setChildrenLoaded(false);
-            fetchChildGoals(state.goal.id);
+            fetchRelations(state.goal.id);
         } else {
-            // Don't clear parentGoals for events as they have their own parent management
-            if (state.goal.goal_type !== 'event') {
-                setParentGoals([]);
-            }
+            setParentGoals([]);
             setChildGoals([]);
             setParentsLoaded(true);
             setChildrenLoaded(true);
         }
-    }, [state.goal.id, state.goal.goal_type, isOpen, fetchParentGoals, fetchChildGoals]);
+    }, [state.goal.id, state.goal.goal_type, isOpen, fetchRelations]);
 
     // Fetch task events when component mounts or goal changes (for tasks opened directly via props)
     useEffect(() => {
@@ -1112,20 +1056,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         });
     }, [taskEvents]);
 
-    // NEW EFFECT: Automatically populate parentGoals for events once allGoals are available
-    useEffect(() => {
-        if (
-            state.goal.goal_type === 'event' &&
-            state.goal.parent_id &&
-            allGoals.length > 0
-        ) {
-            const parent = allGoals.find(g => g.id === state.goal.parent_id);
-            if (parent) {
-                // Only update if we have not already set the parent
-                setParentGoals(prev => (prev.length === 0 ? [parent] : prev));
-            }
-        }
-    }, [state.goal.goal_type, state.goal.parent_id, allGoals]);
 
     // Create fuzzy search instance
     const fuse = useMemo(() => {
@@ -1455,7 +1385,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Guard: avoid accidental relationship deletion if relations are still loading
-        if (relationsLoading) {
+        if (actualRelationsLoading) {
             setState({ ...state, error: 'Please wait for parents and children to load before saving.' });
             return;
         }
@@ -3831,7 +3761,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {state.error && (
                             <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
                         )}
-                        {relationsLoading && (
+                        {actualRelationsLoading && (
                             <Box sx={{ mb: 2 }}>
                                 <LinearProgress />
                                 <Typography
@@ -3994,7 +3924,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <Button onClick={close} disabled={isBusy}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || relationsLoading}>
+                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || actualRelationsLoading}>
                             {(pendingAction === 'save' || pendingAction === 'create') ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
                             {state.mode === 'create' ? 'Create' : 'Save'}
                         </Button>
