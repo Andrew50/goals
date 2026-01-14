@@ -1,6 +1,5 @@
 use chrono::{Datelike, TimeZone, Utc};
 use neo4rs::{query, Graph};
-use serde_json;
 use std::collections::HashSet;
 use std::env;
 
@@ -164,29 +163,29 @@ fn is_valid_day_for_routine(timestamp: i64, frequency: &str) -> Result<bool, Str
 
                     if selected_days.is_empty() {
                         // If no specific days are selected, all days are valid for weekly
-                        return Ok(true);
+                        Ok(true)
                     } else {
                         // Check if current day is one of the selected days
                         let current_weekday = current_dt.weekday().num_days_from_sunday();
-                        return Ok(selected_days.contains(&current_weekday));
+                        Ok(selected_days.contains(&current_weekday))
                     }
                 } else {
                     // Weekly without specific days - all days are valid
-                    return Ok(true);
+                    Ok(true)
                 }
             }
             "D" | "M" | "Y" => {
                 // For daily, monthly, yearly - all days are valid (the frequency calculation handles the intervals)
-                return Ok(true);
+                Ok(true)
             }
             _ => {
                 // Unknown unit - assume valid
-                return Ok(true);
+                Ok(true)
             }
         }
     } else {
         // No unit found - assume daily, so all days are valid
-        return Ok(true);
+        Ok(true)
     }
 }
 
@@ -205,7 +204,7 @@ async fn generate_events_for_test_routine(
     let routine_row = result
         .next()
         .await?
-        .ok_or_else(|| neo4rs::Error::ConversionError)?;
+        .ok_or(neo4rs::Error::ConversionError)?;
     let routine: Goal = routine_row
         .get("r")
         .map_err(|_| neo4rs::Error::ConversionError)?;
@@ -213,7 +212,7 @@ async fn generate_events_for_test_routine(
     let frequency = routine
         .frequency
         .as_ref()
-        .ok_or_else(|| neo4rs::Error::ConversionError)?;
+        .ok_or(neo4rs::Error::ConversionError)?;
 
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
     let mut current_time = start_timestamp;
@@ -636,7 +635,7 @@ mod tests {
 
         // Verify events were created
         assert!(
-            events.len() > 0,
+            !events.is_empty(),
             "Expected at least one event to be created"
         );
 
@@ -1277,7 +1276,7 @@ mod tests {
         );
 
         // Should have at least some events
-        assert!(events.len() > 0, "No events were generated");
+        assert!(!events.is_empty(), "No events were generated");
 
         println!("✅ Test PASSED: Events correctly placed only on Monday, Wednesday, Friday");
         println!("✅ NO events found on Thursday (click day)");
@@ -1653,7 +1652,7 @@ mod tests {
         );
 
         // Set start date to Saturday (future date)
-        let days_to_saturday = if (6 + 7 - current_weekday) % 7 == 0 {
+        let days_to_saturday = if (6 + 7 - current_weekday).is_multiple_of(7) {
             // If today is Saturday, use next Saturday
             7
         } else {
@@ -2098,7 +2097,7 @@ mod tests {
             .await
             .expect("Failed to retrieve routine events");
         // Expect exactly 1 event in ~13 months horizon
-        assert!(events.len() >= 1 && events.len() <= 2);
+        assert!(!events.is_empty() && events.len() <= 2);
     }
 }
 

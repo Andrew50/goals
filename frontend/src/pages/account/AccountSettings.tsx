@@ -39,7 +39,6 @@ import {
     Sync,
     Send,
     Add,
-    Delete,
     Telegram,
 } from "@mui/icons-material";
 import {

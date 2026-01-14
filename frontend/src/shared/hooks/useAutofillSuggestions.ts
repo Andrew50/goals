@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from 'react';
-import { getAutofillSuggestions, AutofillRequest, AutofillResponse } from '../utils/api';
+import { useState, useCallback } from 'react';
+import { getAutofillSuggestions, AutofillRequest } from '../utils/api';
 
 export interface UseAutofillSuggestionsOptions {
     fieldName: string;

@@ -200,7 +200,6 @@ const Calendar: React.FC = () => {
   const calendarMainRef = useRef<HTMLDivElement>(null);
   const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const rangeSelectShiftHeldRef = useRef<boolean>(false);
   const selectedEventIdsRef = useRef<string[]>([]);
   const selectionAtMouseDownRef = useRef<number>(0);
 

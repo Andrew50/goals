@@ -79,12 +79,11 @@ pub async fn get_goal_relations(
     if goal.goal_type == GoalType::Event {
         // For events: get parent via HAS_EVENT relationship or parent_id fallback
         // Try HAS_EVENT relationship first
-        let has_event_query_str = format!(
-            "MATCH (p:Goal)-[:HAS_EVENT]->(e:Goal)
+        let has_event_query_str = "MATCH (p:Goal)-[:HAS_EVENT]->(e:Goal)
              WHERE id(e) = $event_id 
                AND p.user_id = $user_id 
                AND e.user_id = $user_id
-             RETURN {{
+             RETURN {
                     name: p.name,
                     description: p.description,
                     goal_type: p.goal_type,
@@ -116,8 +115,7 @@ pub async fn get_goal_relations(
                     is_gcal_imported: p.is_gcal_imported,
                     updated_at: p.updated_at,
                     id: id(p)
-                 }} as p"
-        );
+                 } as p".to_string();
         let has_event_query = query(&has_event_query_str)
             .param("event_id", goal_id)
             .param("user_id", user_id);
@@ -141,10 +139,9 @@ pub async fn get_goal_relations(
         if !found_via_relationship {
             if let Some(parent_id) = goal.parent_id {
                 // Now query with user_id filter
-                let parent_id_query_str = format!(
-                    "MATCH (parent:Goal)
+                let parent_id_query_str = "MATCH (parent:Goal)
                      WHERE id(parent) = $parent_id AND parent.user_id = $user_id
-                     RETURN {{
+                     RETURN {
                     name: parent.name,
                     description: parent.description,
                     goal_type: parent.goal_type,
@@ -176,8 +173,7 @@ pub async fn get_goal_relations(
                     is_gcal_imported: parent.is_gcal_imported,
                     updated_at: parent.updated_at,
                     id: id(parent)
-                 }} as parent"
-                );
+                 } as parent".to_string();
                 eprintln!("[relations] Executing parent_id query for parent_id={}", parent_id);
                 let parent_id_query = query(&parent_id_query_str)
                     .param("parent_id", parent_id)
@@ -201,10 +197,9 @@ pub async fn get_goal_relations(
     } else {
         // For non-event goals: get parents and children via CHILD relationships
         // Parents: goals that have this goal as a child
-        let parents_query_str = format!(
-            "MATCH (parent:Goal)-[:CHILD]->(g:Goal)
+        let parents_query_str = "MATCH (parent:Goal)-[:CHILD]->(g:Goal)
              WHERE id(g) = $goal_id AND parent.user_id = $user_id AND g.user_id = $user_id
-             RETURN {{
+             RETURN {
                     name: parent.name,
                     description: parent.description,
                     goal_type: parent.goal_type,
@@ -236,8 +231,7 @@ pub async fn get_goal_relations(
                     is_gcal_imported: parent.is_gcal_imported,
                     updated_at: parent.updated_at,
                     id: id(parent)
-                 }} as parent",
-        );
+                 } as parent".to_string();
         let parents_query = query(&parents_query_str)
             .param("goal_id", goal_id)
             .param("user_id", user_id);
@@ -258,10 +252,9 @@ pub async fn get_goal_relations(
         // Children: goals that have this goal as a parent
         // Skip for tasks (they can't have children)
         if goal.goal_type != GoalType::Task {
-            let children_query_str = format!(
-                "MATCH (g:Goal)-[:CHILD]->(child:Goal)
+            let children_query_str = "MATCH (g:Goal)-[:CHILD]->(child:Goal)
                  WHERE id(g) = $goal_id AND g.user_id = $user_id AND child.user_id = $user_id
-                 RETURN {{
+                 RETURN {
                     name: child.name,
                     description: child.description,
                     goal_type: child.goal_type,
@@ -293,8 +286,7 @@ pub async fn get_goal_relations(
                     is_gcal_imported: child.is_gcal_imported,
                     updated_at: child.updated_at,
                     id: id(child)
-                 }} as child",
-            );
+                 } as child".to_string();
             let children_query = query(&children_query_str)
                 .param("goal_id", goal_id)
                 .param("user_id", user_id);

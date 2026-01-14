@@ -33,7 +33,7 @@ import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent, getGoalRelations } from '../utils/api';
-import { Goal, GoalType, NetworkEdge, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
+import { Goal, GoalType, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
 import {
     timestampToInputString,
     inputStringToTimestamp,
@@ -284,7 +284,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [autoEventAdded, setAutoEventAdded] = useState<boolean>(false);
 
     // Smart schedule dialog management
-    const [smartScheduleOpen, setSmartScheduleOpen] = useState<boolean>(false);
     const [smartScheduleContext, setSmartScheduleContext] = useState<{
         type: 'event' | 'new-task-event';
         duration: number;
@@ -1128,7 +1127,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setTaskEvents([]);
             setTotalDuration(0);
             setAutoEventAdded(false);
-            setSmartScheduleOpen(false);
             setSmartScheduleContext(null);
             setGoalStats(null);
             setStatsLoading(false);
@@ -1692,18 +1690,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             // We need to create a NEW goal (the state).
                             
                             // 1. Create State Goal
-                            const stateGoal: Goal = {
-                                ...ng,
-                                id: 0,
-                                name: ng.name,
-                                goal_type: 'routine', // State is stored as routine node
-                                parent_id: undefined, // Linked via HAS_STATE, not parent_id field?
-                                start_timestamp: rangeStart,
-                                end_timestamp: rangeEnd,
-                                // ensure routine_time is set
-                                routine_time: ng.routine_time
-                            };
-                            
                             // We need to manually create the state node and link it.
                             // Since we don't have a dedicated endpoint for this specific workflow, 
                             // we can try to use `createGoal` + `createRelationship`.
@@ -1747,7 +1733,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             const saved = await updateGoal(ng.id!, ng);
                             
                             // 2) Recompute
-                            const recomputeFrom = scope === 'all' ? undefined : new Date(); // undefined = start of routine? No, recomputeRoutineFuture(id, undefined) defaults to NOW.
                             // We want 'all' to be from start.
                             // recomputeRoutineFuture takes `fromTimestamp`.
                             // If scope is 'all', we should probably pass the routine's start_timestamp.
@@ -3352,16 +3337,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                                 {!isViewOnly && (
                                     <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-                                        {/* Smart Schedule commented out per AI suggestions plan
-                                        <Button
-                                            size="small"
-                                            onClick={() => handleSmartSchedule('new-task-event', 60, state.goal.name)}
-                                            variant="outlined"
-                                            color="secondary"
-                                        >
-                                            Smart Schedule
-                                        </Button>
-                                        */}
                                         <IconButton
                                             size="small"
                                             onClick={addTempEvent}
@@ -3514,16 +3489,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {scheduleField}
                         {!isViewOnly && (
                             <Box sx={{ mt: 1, mb: 2, display: 'flex', gap: 1 }}>
-                                {/* Smart Schedule commented out per AI suggestions plan
-                                <Button
-                                    onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
-                                    variant="outlined"
-                                    color="secondary"
-                                    size="small"
-                                >
-                                    Smart Schedule
-                                </Button>
-                                */}
                             </Box>
                         )}
                         {durationField}
@@ -3875,92 +3840,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             mode: 'edit'
         });
         setTitle('Edit Goal');
-    };
-
-    const handleSmartSchedule = (type: 'event' | 'new-task-event', duration: number, eventName?: string, currentScheduledTime?: Date) => {
-        setSmartScheduleContext({ type, duration, eventName, currentScheduledTime });
-        setSmartScheduleOpen(true);
-    };
-
-    const handleSmartScheduleSuccess = (timestamp: Date) => {
-        if (!smartScheduleContext) return;
-
-        const executeScheduleUpdate = async () => {
-            if (smartScheduleContext.type === 'event') {
-                // For existing events, update their scheduled timestamp
-                if (state.goal.id && state.goal.goal_type === 'event') {
-                    // If this event belongs to a routine, open scope dialog instead of immediate update
-                    if (isRoutineParentEvent) {
-                        const originalGoal = state.goal;
-                        const updatedGoal = { ...state.goal, scheduled_timestamp: timestamp } as Goal;
-                        setSmartScheduleOpen(false);
-                        setSmartScheduleContext(null);
-                        setRoutineUpdateDialog({
-                            isOpen: true,
-                            updateType: 'scheduled_time',
-                            originalGoal,
-                            updatedGoal,
-                            selectedScope: 'single',
-                            rangeStart: null,
-                            rangeEnd: null,
-                            onConfirm: async (scope: 'single' | 'all' | 'future' | 'range', rangeStart?: Date, rangeEnd?: Date) => {
-                                await handleRoutineEventUpdate(originalGoal, updatedGoal, 'scheduled_time', scope, rangeStart, rangeEnd);
-                            }
-                        });
-                        return;
-                    }
-
-                    const updatedEvent = await updateEvent(state.goal.id, {
-                        scheduled_timestamp: timestamp,
-                        move_reason: 'Smart scheduled'
-                    });
-                    setState({
-                        ...state,
-                        goal: updatedEvent
-                    });
-                    if (onSuccess) {
-                        onSuccess(updatedEvent);
-                    }
-                }
-            } else if (smartScheduleContext.type === 'new-task-event') {
-                // For tasks: if task already exists, create the event immediately via API
-                if (state.goal.goal_type === 'task' && state.goal.id) {
-                    const newEvent = makeTempEvent(timestamp, smartScheduleContext.duration);
-                    await createEventForExistingTask(newEvent, state.goal.id);
-                } else {
-                    // For unsaved tasks, add a new temporary event with the smart scheduled time
-                    const tempEvent = makeTempEvent(timestamp, smartScheduleContext.duration);
-                    setTaskEvents(prev => [...prev, tempEvent]);
-                    setTotalDuration(prev => prev + smartScheduleContext.duration);
-                }
-            }
-
-            // Close smart schedule dialog only if we didn't branch into routine scope dialog above
-            setSmartScheduleOpen(false);
-            setSmartScheduleContext(null);
-        };
-
-        executeScheduleUpdate().catch((error: any) => {
-            // console.error('Failed to smart schedule event:', error);
-
-            // Check if it's a task date validation error
-            if (isTaskDateValidationError(error)) {
-                const validationError: TaskDateValidationError = typeof error === 'string' ? JSON.parse(error) : error;
-                const eventName = smartScheduleContext.eventName || state.goal.name || 'Event';
-                showTaskDateWarning(validationError, eventName, executeScheduleUpdate);
-                return;
-            }
-
-            setState({
-                ...state,
-                error: 'Failed to update event schedule'
-            });
-        });
-    };
-
-    const handleSmartScheduleClose = () => {
-        setSmartScheduleOpen(false);
-        setSmartScheduleContext(null);
     };
 
     // This logic should now be handled in the parent component
@@ -4397,19 +4276,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             </DialogActions>
             {/* ---- Nested Dialogs ---- */}
             {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
-            {/* Smart Schedule Dialog commented out per AI suggestions plan
-            {smartScheduleOpen && smartScheduleContext && (
-                <SmartScheduleDialog
-                    open={smartScheduleOpen}
-                    duration={smartScheduleContext.duration}
-                    eventName={smartScheduleContext.eventName}
-                    eventDescription={state.goal.description}
-                    currentScheduledTime={smartScheduleContext.currentScheduledTime}
-                    onClose={handleSmartScheduleClose}
-                    onSelect={handleSmartScheduleSuccess}
-                />
-            )}
-            */}
             {/* Routine Update Scope Dialog */}
             <Dialog
                 open={routineUpdateDialog.isOpen}

@@ -193,7 +193,7 @@ const Day: React.FC = () => {
     };
 
     // Compute new scheduled timestamp based on drop position
-    const computeNewTimestamp = (
+    const computeNewTimestamp = useCallback((
         draggedEvent: DayEvent,
         anchorType: 'event' | 'now',
         anchorEvent: DayEvent | null,
@@ -225,7 +225,6 @@ const Day: React.FC = () => {
             return currentTimeMs;
         }
 
-        const anchorStartMs = getEventStartMs(anchorEvent);
         const anchorEndMs = getEventEndMs(anchorEvent);
 
         if (position === 'after') {
@@ -246,7 +245,7 @@ const Day: React.FC = () => {
                 return getDayBounds(currentDate).start.getTime();
             }
         }
-    };
+    }, [currentTime, currentDate]);
 
     // Helper to check if error is a task date range violation
     const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
@@ -372,7 +371,7 @@ const Day: React.FC = () => {
             // Refresh anyway to get back to correct state
             fetchEventsForDate(currentDate);
         }
-    }, [events, currentDate, fetchEventsForDate, currentTime]);
+    }, [events, currentDate, fetchEventsForDate, currentTime, computeNewTimestamp]);
 
     const handleEventClick = (event: DayEvent) => {
         // Convert event to Goal format for GoalMenu
@@ -823,8 +822,6 @@ const Day: React.FC = () => {
                                                 const allResolved = [...organized.resolved.completed, ...organized.resolved.skipped, ...organized.resolved.failed];
                                                 const sortedResolved = allResolved.sort((a, b) => getEventStartMs(a) - getEventStartMs(b));
                                                 const eventIndex = sortedResolved.findIndex(e => e.id === event.id);
-                                                const previousEvent = eventIndex > 0 ? sortedResolved[eventIndex - 1] : null;
-                                                const nextEvent = eventIndex < sortedResolved.length - 1 ? sortedResolved[eventIndex + 1] : null;
                                                 return renderResolvedEvent(event, eventIndex, sortedResolved);
                                             })}
                                         </div>
