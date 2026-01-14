@@ -20,7 +20,7 @@ TIMEOUT = int(os.environ.get("GOALS_MONITOR_TIMEOUT_SECONDS", "10"))
 RETENTION_DAYS = int(os.environ.get("GOALS_MONITOR_RETENTION_DAYS", "30"))
 
 # Paths
-BASE_DIR = "/var/lib/goals/monitor"
+BASE_DIR = os.environ.get("GOALS_MONITOR_BASE_DIR", "/var/lib/goals/monitor")
 SAMPLES_FILE = os.path.join(BASE_DIR, "samples.jsonl")
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 
