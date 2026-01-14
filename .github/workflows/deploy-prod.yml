@@ -39,6 +39,10 @@ jobs:
             echo "goals_db is not running; skipping pre-deploy backup (first deploy or DB down)."
           fi
 
+      - name: Stop monitor service (pre-checkout)
+        shell: bash
+        run: sudo systemctl stop goals-monitor.service || true
+
       - name: Stop existing Docker Compose stacks (pre-checkout)
         shell: bash
         run: |
@@ -152,6 +156,24 @@ jobs:
           docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
           docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
 
+      - name: Install/Update monitor service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /opt/goals/monitor /var/lib/goals/monitor /etc/goals
+          sudo cp ops/monitor/goals_monitor.py /opt/goals/monitor/
+          sudo chmod +x /opt/goals/monitor/goals_monitor.py
+          sudo cp ops/monitor/goals-monitor.service /etc/systemd/system/
+          
+          # Create monitor environment file
+          cat << EOF | sudo tee /etc/goals/monitor.env > /dev/null
+          HOST_URL=${{ secrets.HOST_URL }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GOALS_SERVER_TELEGRAM_CHAT_ID=${{ secrets.GOALS_SERVER_TELEGRAM_CHAT_ID }}
+          EOF
+          
+          sudo systemctl daemon-reload
+
       - name: Stop and remove existing containers
         run: |
           docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
@@ -226,3 +248,10 @@ jobs:
           path: |
             ${{ github.workspace }}/backup-artifacts/backup.log
             ${{ github.workspace }}/.env
+
+      - name: Start monitor service
+        if: always()
+        shell: bash
+        run: |
+          sudo systemctl enable goals-monitor.service || true
+          sudo systemctl start goals-monitor.service || true

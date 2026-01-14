@@ -1,0 +1,16 @@
+[Unit]
+Description=Goals Prod Uptime and Resource Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/goals/monitor
+EnvironmentFile=/etc/goals/monitor.env
+ExecStart=/usr/bin/python3 /opt/goals/monitor/goals_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+

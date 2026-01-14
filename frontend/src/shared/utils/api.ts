@@ -667,13 +667,63 @@ export const getGoogleCalendars = async (): Promise<CalendarListEntry[]> => {
     return privateRequest<CalendarListEntry[]>('gcal/calendars', 'GET');
 };
 
+// Telegram API
+export interface TelegramSettings {
+    chat_id: string | null;
+    bot_token?: string;
+    has_bot_token?: boolean;
+}
+
+export const getTelegramSettings = async (): Promise<TelegramSettings> => {
+    return privateRequest<TelegramSettings>('telegram/settings', 'GET');
+};
+
+export const updateTelegramSettings = async (settings: TelegramSettings): Promise<void> => {
+    await privateRequest('telegram/settings', 'PUT', settings);
+};
+
+export const sendTelegramTest = async (): Promise<void> => {
+    await privateRequest('telegram/test', 'POST');
+};
+
+// Notification Settings API
+export interface NotificationSettings {
+    notifications_enabled: boolean;
+    notify_via_push: boolean;
+    notify_via_telegram: boolean;
+    notify_high_priority_events: boolean;
+    notify_event_reminders: boolean;
+    reminder_offsets_minutes: number[];
+}
+
+export const getNotificationSettings = async (): Promise<NotificationSettings> => {
+    return privateRequest<NotificationSettings>('notifications/settings', 'GET');
+};
+
+export const updateNotificationSettings = async (settings: NotificationSettings): Promise<void> => {
+    await privateRequest('notifications/settings', 'PUT', settings);
+};
+
 // Autofill API
 export interface GoalContext {
     name?: string;
     description?: string;
     goal_type?: string;
     start_timestamp?: number;
+    end_timestamp?: number;
     scheduled_timestamp?: number;
+    duration?: number;
+    priority?: string;
+    resolution_status?: string;
+    frequency?: string;
+    routine_time?: number;
+    routine_type?: string;
+}
+
+export interface AllowedGoal {
+    id: number;
+    name: string;
+    goal_type: string;
 }
 
 export interface AutofillRequest {
@@ -682,6 +732,8 @@ export interface AutofillRequest {
     goal_context: GoalContext;
     parent_ids?: number[];
     child_ids?: number[];
+    allowed_values?: string[];
+    allowed_goals?: AllowedGoal[];
 }
 
 export interface AutofillResponse {
@@ -689,7 +741,7 @@ export interface AutofillResponse {
 }
 
 export const getAutofillSuggestions = async (request: AutofillRequest): Promise<AutofillResponse> => {
-    return privateRequest<AutofillResponse>('goals/autofill', 'POST', request);
+    return privateRequest<AutofillResponse>('autofill', 'POST', request);
 };
 
 // Goal relations API

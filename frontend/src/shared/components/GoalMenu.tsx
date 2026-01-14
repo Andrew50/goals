@@ -43,7 +43,6 @@ import {
 import { validateGoal, validateRelationship } from '../utils/goalValidation'
 import { formatFrequency } from '../utils/frequency';
 import GoalRelations from "./GoalRelations";
-import SmartScheduleDialog from "./SmartScheduleDialog";
 import MiniNetworkGraph from './MiniNetworkGraph';
 import CompletionBar from './CompletionBar';
 import ResolutionStatusToggle from './ResolutionStatusToggle';
@@ -53,6 +52,9 @@ import { privateRequest } from '../utils/api';
 import Fuse from 'fuse.js';
 import '../styles/badges.css';
 import { showSnackbar } from './Toaster';
+import { useAutofillSuggestions } from '../hooks/useAutofillSuggestions';
+import AiSuggestionsRow from './AiSuggestionsRow';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 
 type Mode = 'create' | 'edit' | 'view';
 
@@ -213,6 +215,56 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [relationshipType, setRelationshipType] = useState<'child'>(defaultRelationshipType || 'child');
     const [selectedChildren, setSelectedChildren] = useState<Goal[]>([]);
     const [childSearchQuery, setChildSearchQuery] = useState('');
+
+    // Create fuzzy search instance
+    const fuse = useMemo(() => {
+        return new Fuse(allGoals, {
+            keys: ['name', 'description'],
+            threshold: 0.3
+        });
+    }, [allGoals]);
+
+    // Helper function to infer default goal type for new parent goals
+    const inferParentType = useCallback((child: Goal, relationshipType: 'child'): GoalType => {
+        if (child.goal_type === 'event') return 'task';     // routine also allowed—user can change later
+        return 'project';                                    // sensible general default
+    }, []);
+
+    // Open nested create dialog for new parent goal
+    const openNestedCreateDialog = useCallback((name: string, goalType: GoalType) => {
+        GoalMenuWithStatic.open(
+            { name, goal_type: goalType } as Goal,
+            'create',
+            (created) => {
+                // 1. make it selectable
+                setAllGoals(prev => [...prev, created]);
+                setSelectedParents(prev => [...prev, created]);
+            }
+        );
+    }, []);
+
+    // Infer reasonable default child type based on current goal (parent)
+    const inferChildType = useCallback((parent: Goal): GoalType => {
+        let inferred: GoalType = (parent.goal_type === 'routine') ? 'routine' : 'task';
+        const tempChild = { id: -1, name: '', goal_type: inferred } as Goal;
+        const err = validateRelationship(parent, tempChild, 'child');
+        if (err) {
+            inferred = 'project';
+        }
+        return inferred;
+    }, []);
+
+    // Open nested create dialog for new child goal
+    const openNestedCreateChildDialog = useCallback((name: string, goalType: GoalType) => {
+        GoalMenuWithStatic.open(
+            { name, goal_type: goalType } as Goal,
+            'create',
+            (created) => {
+                setAllGoals(prev => [...prev, created]);
+                setSelectedChildren(prev => [...prev, created]);
+            }
+        );
+    }, []);
 
     // Relationship loading guards
     const [parentsLoaded, setParentsLoaded] = useState<boolean>(
@@ -395,6 +447,214 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
         return false;
     }, [state.goal, selectedParents, allGoals, parentGoals]);
+
+    // Get filtered parent options based on search and validation
+    const getParentOptions = useCallback(() => {
+        if (!state.goal.goal_type) return [];
+
+        // Filter out invalid parent options based on goal type
+        let validGoals = allGoals.filter(g => {
+            // Can't be parent of itself
+            if (g.id === state.goal.id) return false;
+
+            // Special handling for events - only tasks and routines can be parents
+            if (state.goal.goal_type === 'event') {
+                return g.goal_type === 'task' || g.goal_type === 'routine';
+            }
+
+            // For non-events, validate the relationship
+            const error = validateRelationship(g, state.goal, relationshipType);
+            return !error;
+        });
+
+        // Apply fuzzy search if there's a query
+        if (parentSearchQuery) {
+            const results = fuse.search(parentSearchQuery);
+            const resultIds = new Set(results.map(r => r.item.id));
+            validGoals = validGoals.filter(g => resultIds.has(g.id));
+        }
+
+        // Add "Create new goal" option if there's a search query
+        let options: (Goal | CreateNewPlaceholder)[] = validGoals;
+        if (parentSearchQuery.trim()) {
+            const placeholder: CreateNewPlaceholder = {
+                id: CREATE_NEW_SENTINEL_ID,
+                name: `Create new goal "${parentSearchQuery.trim()}"`,
+                goal_type: '__create__'
+            };
+            options = [placeholder, ...options];
+        }
+
+        // Ensure selected parents are always in the options to avoid Autocomplete warnings
+        // This is critical because MUI Autocomplete complains if 'value' items are not in 'options'
+        // Use a Set for O(1) lookup of existing option IDs
+        const optionIds = new Set(options.map(o => o.id));
+        const selectedButMissing = selectedParents.filter(p => !optionIds.has(p.id));
+        
+        if (selectedButMissing.length > 0) {
+            options = [...options, ...selectedButMissing];
+        }
+
+        return options.slice(0, 11 + selectedButMissing.length); // Limit results but include selections
+    }, [allGoals, state.goal, parentSearchQuery, fuse, relationshipType, selectedParents]);
+
+    // Get filtered child options based on search and validation
+    const getChildOptions = useCallback(() => {
+        if (!state.goal.goal_type) return [];
+
+        // Filter out invalid child options based on relationship validation
+        let validGoals = allGoals.filter(g => {
+            // Can't select itself
+            if (g.id === state.goal.id) return false;
+            // Relationship must be valid child
+            const error = validateRelationship(state.goal, g, 'child');
+            return !error;
+        });
+
+        // Apply fuzzy search if there's a query
+        if (childSearchQuery) {
+            const results = fuse.search(childSearchQuery);
+            const resultIds = new Set(results.map(r => r.item.id));
+            validGoals = validGoals.filter(g => resultIds.has(g.id));
+        }
+
+        // Add "Create new goal" option if there's a search query
+        let options: (Goal | CreateNewPlaceholder)[] = validGoals;
+        if (childSearchQuery.trim()) {
+            const placeholder: CreateNewPlaceholder = {
+                id: CREATE_NEW_SENTINEL_ID,
+                name: `Create new goal "${childSearchQuery.trim()}"`,
+                goal_type: '__create__'
+            };
+            options = [placeholder, ...options];
+        }
+
+        // Ensure selected children are always in the options to avoid Autocomplete warnings
+        const optionIds = new Set(options.map(o => o.id));
+        const selectedButMissing = selectedChildren.filter(c => !optionIds.has(c.id));
+        
+        if (selectedButMissing.length > 0) {
+            options = [...options, ...selectedButMissing];
+        }
+
+        return options.slice(0, 11 + selectedButMissing.length);
+    }, [allGoals, state.goal, childSearchQuery, fuse, selectedChildren]);
+
+    // AI Suggestions Context
+    const getGoalContext = useCallback(() => ({
+        ...state.goal,
+        parent_ids: selectedParents.map(p => p.id!).filter(Boolean),
+        child_ids: selectedChildren.map(c => c.id!).filter(Boolean),
+    }), [state.goal, selectedParents, selectedChildren]);
+
+    const nameSuggestions = useAutofillSuggestions({
+        fieldName: 'name',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, name: v })
+    });
+
+    const descriptionSuggestions = useAutofillSuggestions({
+        fieldName: 'description',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, description: v })
+    });
+
+    const prioritySuggestions = useAutofillSuggestions({
+        fieldName: 'priority',
+        getContext: getGoalContext,
+        allowedValues: ['high', 'medium', 'low'],
+        onApply: (v) => handleChange({ ...state.goal, priority: v as 'high' | 'medium' | 'low' })
+    });
+
+    const goalTypeSuggestions = useAutofillSuggestions({
+        fieldName: 'goal_type',
+        getContext: getGoalContext,
+        allowedValues: ['directive', 'project', 'achievement', 'routine', 'task', 'event'],
+        onApply: (v) => handleChange({ ...state.goal, goal_type: v as GoalType })
+    });
+
+    const startDateSuggestions = useAutofillSuggestions({
+        fieldName: 'start_date',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, start_timestamp: new Date(v) })
+    });
+
+    const endDateSuggestions = useAutofillSuggestions({
+        fieldName: 'end_date',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, end_timestamp: inputStringToTimestamp(v, 'end-date') })
+    });
+
+    const scheduledDateTimeSuggestions = useAutofillSuggestions({
+        fieldName: 'scheduled_datetime',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, scheduled_timestamp: new Date(v) })
+    });
+
+    const durationSuggestions = useAutofillSuggestions({
+        fieldName: 'duration_minutes',
+        getContext: getGoalContext,
+        onApply: (v) => {
+            const mins = parseInt(v, 10);
+            if (!isNaN(mins)) {
+                handleChange({ ...state.goal, duration: mins });
+                setDurationHoursInput(String(Math.floor(mins / 60)));
+                setDurationMinutesInput(String(mins % 60));
+            }
+        }
+    });
+
+    const frequencySuggestions = useAutofillSuggestions({
+        fieldName: 'frequency',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, frequency: v })
+    });
+
+    const routineTimeSuggestions = useAutofillSuggestions({
+        fieldName: 'routine_time',
+        getContext: getGoalContext,
+        onApply: (v) => handleChange({ ...state.goal, routine_time: inputStringToTimestamp(v, 'time') })
+    });
+
+    const parentSuggestions = useAutofillSuggestions({
+        fieldName: 'parents',
+        getContext: getGoalContext,
+        allowedGoals: getParentOptions().filter(o => !isCreatePlaceholder(o)) as Goal[],
+        onApply: (v) => {
+            const id = parseInt(v, 10);
+            const goal = allGoals.find(g => g.id === id);
+            if (goal && !selectedParents.find(p => p.id === id)) {
+                setSelectedParents(prev => [...prev, goal]);
+            }
+        }
+    });
+
+    const childSuggestions = useAutofillSuggestions({
+        fieldName: 'children',
+        getContext: getGoalContext,
+        allowedGoals: getChildOptions().filter(o => !isCreatePlaceholder(o)) as Goal[],
+        onApply: (v) => {
+            const id = parseInt(v, 10);
+            const goal = allGoals.find(g => g.id === id);
+            if (goal && !selectedChildren.find(c => c.id === id)) {
+                setSelectedChildren(prev => [...prev, goal]);
+            }
+        }
+    });
+
+    const gcalSyncDirectionSuggestions = useAutofillSuggestions({
+        fieldName: 'gcal_sync_direction',
+        getContext: getGoalContext,
+        allowedValues: ['bidirectional', 'to_gcal', 'from_gcal'],
+        onApply: (v) => handleChange({ ...state.goal, gcal_sync_direction: v as any })
+    });
+
+    const gcalCalendarSuggestions = useAutofillSuggestions({
+        fieldName: 'gcal_calendar_id',
+        getContext: getGoalContext,
+        allowedValues: gcalCalendars.map(c => c.id),
+        onApply: (v) => handleChange({ ...state.goal, gcal_calendar_id: v })
+    });
 
     // Ensure the error at the top is visible by resetting scroll to top when errors appear
     const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1061,148 +1321,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         });
     }, [taskEvents]);
 
-
-    // Create fuzzy search instance
-    const fuse = useMemo(() => {
-        return new Fuse(allGoals, {
-            keys: ['name', 'description'],
-            threshold: 0.3
-        });
-    }, [allGoals]);
-
-    // Helper function to infer default goal type for new parent goals
-    const inferParentType = useCallback((child: Goal, relationshipType: 'child'): GoalType => {
-        if (child.goal_type === 'event') return 'task';     // routine also allowed—user can change later
-        return 'project';                                    // sensible general default
-    }, []);
-
-    // Open nested create dialog for new parent goal
-    const openNestedCreateDialog = useCallback((name: string, goalType: GoalType) => {
-        GoalMenuWithStatic.open(
-            { name, goal_type: goalType } as Goal,
-            'create',
-            (created) => {
-                // 1. make it selectable
-                setAllGoals(prev => [...prev, created]);
-                setSelectedParents(prev => [...prev, created]);
-            }
-        );
-    }, []);
-
-    // Get filtered parent options based on search and validation
-    const getParentOptions = useCallback(() => {
-        if (!state.goal.goal_type) return [];
-
-        // Filter out invalid parent options based on goal type
-        let validGoals = allGoals.filter(g => {
-            // Can't be parent of itself
-            if (g.id === state.goal.id) return false;
-
-            // Special handling for events - only tasks and routines can be parents
-            if (state.goal.goal_type === 'event') {
-                return g.goal_type === 'task' || g.goal_type === 'routine';
-            }
-
-            // For non-events, validate the relationship
-            const error = validateRelationship(g, state.goal, relationshipType);
-            return !error;
-        });
-
-        // Apply fuzzy search if there's a query
-        if (parentSearchQuery) {
-            const results = fuse.search(parentSearchQuery);
-            const resultIds = new Set(results.map(r => r.item.id));
-            validGoals = validGoals.filter(g => resultIds.has(g.id));
-        }
-
-        // Add "Create new goal" option if there's a search query
-        let options: (Goal | CreateNewPlaceholder)[] = validGoals;
-        if (parentSearchQuery.trim()) {
-            const placeholder: CreateNewPlaceholder = {
-                id: CREATE_NEW_SENTINEL_ID,
-                name: `Create new goal "${parentSearchQuery.trim()}"`,
-                goal_type: '__create__'
-            };
-            options = [placeholder, ...options];
-        }
-
-        // Ensure selected parents are always in the options to avoid Autocomplete warnings
-        // This is critical because MUI Autocomplete complains if 'value' items are not in 'options'
-        // Use a Set for O(1) lookup of existing option IDs
-        const optionIds = new Set(options.map(o => o.id));
-        const selectedButMissing = selectedParents.filter(p => !optionIds.has(p.id));
-        
-        if (selectedButMissing.length > 0) {
-            options = [...options, ...selectedButMissing];
-        }
-
-        return options.slice(0, 11 + selectedButMissing.length); // Limit results but include selections
-    }, [allGoals, state.goal, parentSearchQuery, fuse, relationshipType, selectedParents]);
-
-    // Infer reasonable default child type based on current goal (parent)
-    const inferChildType = useCallback((parent: Goal): GoalType => {
-        let inferred: GoalType = (parent.goal_type === 'routine') ? 'routine' : 'task';
-        const tempChild = { id: -1, name: '', goal_type: inferred } as Goal;
-        const err = validateRelationship(parent, tempChild, 'child');
-        if (err) {
-            inferred = 'project';
-        }
-        return inferred;
-    }, []);
-
-    // Open nested create dialog for new child goal
-    const openNestedCreateChildDialog = useCallback((name: string, goalType: GoalType) => {
-        GoalMenuWithStatic.open(
-            { name, goal_type: goalType } as Goal,
-            'create',
-            (created) => {
-                setAllGoals(prev => [...prev, created]);
-                setSelectedChildren(prev => [...prev, created]);
-            }
-        );
-    }, []);
-
-    // Get filtered child options based on search and validation
-    const getChildOptions = useCallback(() => {
-        if (!state.goal.goal_type) return [];
-
-        // Filter out invalid child options based on relationship validation
-        let validGoals = allGoals.filter(g => {
-            // Can't select itself
-            if (g.id === state.goal.id) return false;
-            // Relationship must be valid child
-            const error = validateRelationship(state.goal, g, 'child');
-            return !error;
-        });
-
-        // Apply fuzzy search if there's a query
-        if (childSearchQuery) {
-            const results = fuse.search(childSearchQuery);
-            const resultIds = new Set(results.map(r => r.item.id));
-            validGoals = validGoals.filter(g => resultIds.has(g.id));
-        }
-
-        // Add "Create new goal" option if there's a search query
-        let options: (Goal | CreateNewPlaceholder)[] = validGoals;
-        if (childSearchQuery.trim()) {
-            const placeholder: CreateNewPlaceholder = {
-                id: CREATE_NEW_SENTINEL_ID,
-                name: `Create new goal "${childSearchQuery.trim()}"`,
-                goal_type: '__create__'
-            };
-            options = [placeholder, ...options];
-        }
-
-        // Ensure selected children are always in the options to avoid Autocomplete warnings
-        const optionIds = new Set(options.map(o => o.id));
-        const selectedButMissing = selectedChildren.filter(c => !optionIds.has(c.id));
-        
-        if (selectedButMissing.length > 0) {
-            options = [...options, ...selectedButMissing];
-        }
-
-        return options.slice(0, 11 + selectedButMissing.length);
-    }, [allGoals, state.goal, childSearchQuery, fuse, selectedChildren]);
 
     const handleResolutionChange = useCallback(async (newStatus: ResolutionStatus) => {
         try {
@@ -2235,30 +2353,58 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 : 'Not set'}
         </Box>
     ) : (
-        <TextField
-            label="Priority"
-            select
-            value={state.goal.priority || ''}
-            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-                handleChange({
-                    ...state.goal,
-                    priority:
-                        e.target.value === ''
-                            ? undefined
-                            : (e.target.value as 'high' | 'medium' | 'low'),
-                })
-            }
-            fullWidth
-            margin="dense"
-            disabled={isViewOnly}
-        >
-            <MenuItem value="" disabled>
-                Select priority
-            </MenuItem>
-            <MenuItem value="high">High</MenuItem>
-            <MenuItem value="medium">Medium</MenuItem>
-            <MenuItem value="low">Low</MenuItem>
-        </TextField>
+        <Box>
+            <TextField
+                label="Priority"
+                select
+                value={state.goal.priority || ''}
+                onFocus={() => prioritySuggestions.fetchSuggestions(state.goal.priority)}
+                onBlur={() => setTimeout(() => prioritySuggestions.clearSuggestions(), 200)}
+                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+                    handleChange({
+                        ...state.goal,
+                        priority:
+                            e.target.value === ''
+                                ? undefined
+                                : (e.target.value as 'high' | 'medium' | 'low'),
+                    })
+                }
+                fullWidth
+                margin="dense"
+                disabled={isViewOnly}
+                SelectProps={{
+                    onClose: () => setTimeout(() => prioritySuggestions.clearSuggestions(), 200),
+                    renderValue: (value) => (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {String(value).charAt(0).toUpperCase() + String(value).slice(1)}
+                            {prioritySuggestions.suggestions[0] === value && (
+                                <Tooltip title="AI Recommended">
+                                    <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
+                                </Tooltip>
+                            )}
+                        </Box>
+                    )
+                }}
+            >
+                <MenuItem value="" disabled>
+                    Select priority
+                </MenuItem>
+                <MenuItem value="high" sx={{ bgcolor: prioritySuggestions.suggestions[0] === 'high' ? 'action.hover' : 'inherit' }}>
+                    High {prioritySuggestions.suggestions[0] === 'high' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="medium" sx={{ bgcolor: prioritySuggestions.suggestions[0] === 'medium' ? 'action.hover' : 'inherit' }}>
+                    Medium {prioritySuggestions.suggestions[0] === 'medium' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="low" sx={{ bgcolor: prioritySuggestions.suggestions[0] === 'low' ? 'action.hover' : 'inherit' }}>
+                    Low {prioritySuggestions.suggestions[0] === 'low' && '(Suggested)'}
+                </MenuItem>
+            </TextField>
+            <AiSuggestionsRow 
+                suggestions={prioritySuggestions.suggestions} 
+                isLoading={prioritySuggestions.isLoading} 
+                onSelect={prioritySuggestions.applySuggestion} 
+            />
+        </Box>
     );
     const durationField = isViewOnly ? (
         <Box sx={{ mb: 2 }}>
@@ -2304,66 +2450,80 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 label="All Day"
             />
             {state.goal.duration !== 1440 && (
-                <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
-                    <TextField
-                        label="Hours"
-                        type="text"
-                        value={durationHoursInput}
-                        onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                            const raw = (e.target.value || '').replace(/\D/g, '');
-                            setDurationHoursInput(raw);
-                        }}
-                        onBlur={() => {
-                            setHoursTouched(true);
-                            commitDuration();
-                        }}
-                        onKeyDown={(e) => {
-                            if ((e as any).key === 'Enter') {
+                <Box>
+                    <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                        <TextField
+                            label="Hours"
+                            type="text"
+                            value={durationHoursInput}
+                            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                                const raw = (e.target.value || '').replace(/\D/g, '');
+                                setDurationHoursInput(raw);
+                            }}
+                            onFocus={() => durationSuggestions.fetchSuggestions(String(state.goal.duration))}
+                            onBlur={() => {
                                 setHoursTouched(true);
+                                commitDuration();
+                                setTimeout(() => durationSuggestions.clearSuggestions(), 200);
+                            }}
+                            onKeyDown={(e) => {
+                                if ((e as any).key === 'Enter') {
+                                    setHoursTouched(true);
+                                    setMinutesTouched(true);
+                                    commitDuration();
+                                }
+                                durationSuggestions.handleKeyDown(e);
+                            }}
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            error={hoursTouched && durationHoursInput === ''}
+                            helperText={hoursTouched && durationHoursInput === '' ? 'Required' : ''}
+                            inputProps={{
+                                inputMode: 'numeric',
+                                pattern: '[0-9]*'
+                            }}
+                            disabled={isViewOnly}
+                            sx={{ width: '50%' }}
+                        />
+                        <TextField
+                            label="Minutes"
+                            type="text"
+                            value={durationMinutesInput}
+                            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                                const raw = (e.target.value || '').replace(/\D/g, '');
+                                setDurationMinutesInput(raw);
+                            }}
+                            onFocus={() => durationSuggestions.fetchSuggestions(String(state.goal.duration))}
+                            onBlur={() => {
                                 setMinutesTouched(true);
                                 commitDuration();
-                            }
-                        }}
-                        margin="dense"
-                        InputLabelProps={{ shrink: true }}
-                        error={hoursTouched && durationHoursInput === ''}
-                        helperText={hoursTouched && durationHoursInput === '' ? 'Required' : ''}
-                        inputProps={{
-                            inputMode: 'numeric',
-                            pattern: '[0-9]*'
-                        }}
-                        disabled={isViewOnly}
-                        sx={{ width: '50%' }}
-                    />
-                    <TextField
-                        label="Minutes"
-                        type="text"
-                        value={durationMinutesInput}
-                        onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                            const raw = (e.target.value || '').replace(/\D/g, '');
-                            setDurationMinutesInput(raw);
-                        }}
-                        onBlur={() => {
-                            setMinutesTouched(true);
-                            commitDuration();
-                        }}
-                        onKeyDown={(e) => {
-                            if ((e as any).key === 'Enter') {
-                                setHoursTouched(true);
-                                setMinutesTouched(true);
-                                commitDuration();
-                            }
-                        }}
-                        margin="dense"
-                        InputLabelProps={{ shrink: true }}
-                        error={minutesTouched && durationMinutesInput === ''}
-                        helperText={minutesTouched && durationMinutesInput === '' ? 'Required' : ''}
-                        inputProps={{
-                            inputMode: 'numeric',
-                            pattern: '[0-9]*'
-                        }}
-                        disabled={isViewOnly}
-                        sx={{ width: '50%' }}
+                                setTimeout(() => durationSuggestions.clearSuggestions(), 200);
+                            }}
+                            onKeyDown={(e) => {
+                                if ((e as any).key === 'Enter') {
+                                    setHoursTouched(true);
+                                    setMinutesTouched(true);
+                                    commitDuration();
+                                }
+                                durationSuggestions.handleKeyDown(e);
+                            }}
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            error={minutesTouched && durationMinutesInput === ''}
+                            helperText={minutesTouched && durationMinutesInput === '' ? 'Required' : ''}
+                            inputProps={{
+                                inputMode: 'numeric',
+                                pattern: '[0-9]*'
+                            }}
+                            disabled={isViewOnly}
+                            sx={{ width: '50%' }}
+                        />
+                    </Box>
+                    <AiSuggestionsRow 
+                        suggestions={durationSuggestions.suggestions} 
+                        isLoading={durationSuggestions.isLoading} 
+                        onSelect={durationSuggestions.applySuggestion} 
+                        label="Duration (mins)"
                     />
                 </Box>
             )}
@@ -2419,49 +2579,59 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
         </Box>
     ) : (
-        <TextField
-            label="Schedule Date"
-            type="datetime-local"
-            value={(() => {
-                const rawTimestamp = state.goal.scheduled_timestamp;
-                // console.log(`[GoalMenu.tsx] scheduleField render: Raw timestamp=${rawTimestamp}, _tz=${state.goal._tz}`);
-                const converted = timestampToInputString(rawTimestamp, 'datetime');
-                // console.log(`[GoalMenu.tsx] scheduleField render: Converted to input string=${converted}`);
-                return converted;
-            })()}
-            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                const inputValue = e.target.value;
-                const newTimestamp = inputStringToTimestamp(inputValue, 'datetime');
-                //console.log('Schedule date changed:',
-                //  'Input value:', inputValue,
-                //  'Converted timestamp:', newTimestamp);
-                handleChange({
-                    ...state.goal,
-                    scheduled_timestamp: newTimestamp
-                });
-            }}
-            fullWidth
-            margin="dense"
-            InputLabelProps={{ shrink: true }}
-            InputProps={{
-                endAdornment: (
-                    <InputAdornment position="end">
-                        <Tooltip title="Move to now">
-                            <span>
-                                <IconButton
-                                    size="small"
-                                    onClick={handleMoveToNow}
-                                    aria-label="Move to now"
-                                >
-                                    <GpsFixedIcon fontSize="small" />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
-                    </InputAdornment>
-                )
-            }}
-            disabled={isViewOnly}
-        />
+        <Box>
+            <TextField
+                label="Schedule Date"
+                type="datetime-local"
+                value={(() => {
+                    const rawTimestamp = state.goal.scheduled_timestamp;
+                    // console.log(`[GoalMenu.tsx] scheduleField render: Raw timestamp=${rawTimestamp}, _tz=${state.goal._tz}`);
+                    const converted = timestampToInputString(rawTimestamp, 'datetime');
+                    // console.log(`[GoalMenu.tsx] scheduleField render: Converted to input string=${converted}`);
+                    return converted;
+                })()}
+                onFocus={() => scheduledDateTimeSuggestions.fetchSuggestions(timestampToInputString(state.goal.scheduled_timestamp, 'datetime'))}
+                onBlur={() => setTimeout(() => scheduledDateTimeSuggestions.clearSuggestions(), 200)}
+                onKeyDown={scheduledDateTimeSuggestions.handleKeyDown}
+                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                    const inputValue = e.target.value;
+                    const newTimestamp = inputStringToTimestamp(inputValue, 'datetime');
+                    //console.log('Schedule date changed:',
+                    //  'Input value:', inputValue,
+                    //  'Converted timestamp:', newTimestamp);
+                    handleChange({
+                        ...state.goal,
+                        scheduled_timestamp: newTimestamp
+                    });
+                }}
+                fullWidth
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                InputProps={{
+                    endAdornment: (
+                        <InputAdornment position="end">
+                            <Tooltip title="Move to now">
+                                <span>
+                                    <IconButton
+                                        size="small"
+                                        onClick={handleMoveToNow}
+                                        aria-label="Move to now"
+                                    >
+                                        <GpsFixedIcon fontSize="small" />
+                                    </IconButton>
+                                </span>
+                            </Tooltip>
+                        </InputAdornment>
+                    )
+                }}
+                disabled={isViewOnly}
+            />
+            <AiSuggestionsRow 
+                suggestions={scheduledDateTimeSuggestions.suggestions} 
+                isLoading={scheduledDateTimeSuggestions.isLoading} 
+                onSelect={scheduledDateTimeSuggestions.applySuggestion} 
+            />
+        </Box>
     );
 
     const dateFields = isViewOnly ? (
@@ -2479,6 +2649,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 label="Start Date"
                 type="date"
                 value={timestampToInputString(state.goal.start_timestamp, 'date')}
+                onFocus={() => startDateSuggestions.fetchSuggestions(timestampToInputString(state.goal.start_timestamp, 'date'))}
+                onBlur={() => setTimeout(() => startDateSuggestions.clearSuggestions(), 200)}
+                onKeyDown={startDateSuggestions.handleKeyDown}
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                     const inputValue = e.target.value;
                     const convertedDate = inputStringToTimestamp(inputValue, "date");
@@ -2493,10 +2666,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 InputLabelProps={{ shrink: true }}
                 disabled={isViewOnly}
             />
+            <AiSuggestionsRow 
+                suggestions={startDateSuggestions.suggestions} 
+                isLoading={startDateSuggestions.isLoading} 
+                onSelect={startDateSuggestions.applySuggestion} 
+            />
             <TextField
                 label="End Date"
                 type="date"
                 value={timestampToInputString(state.goal.end_timestamp, 'date')}
+                onFocus={() => endDateSuggestions.fetchSuggestions(timestampToInputString(state.goal.end_timestamp, 'date'))}
+                onBlur={() => setTimeout(() => endDateSuggestions.clearSuggestions(), 200)}
+                onKeyDown={endDateSuggestions.handleKeyDown}
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                     handleChange({
                         ...state.goal,
@@ -2507,6 +2688,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
                 disabled={isViewOnly}
+            />
+            <AiSuggestionsRow 
+                suggestions={endDateSuggestions.suggestions} 
+                isLoading={endDateSuggestions.isLoading} 
+                onSelect={endDateSuggestions.applySuggestion} 
             />
         </>
     );
@@ -2552,6 +2738,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         const match = state.goal.frequency?.match(/^(\d+)[DWMY]/);
                         return match ? match[1] : '1';
                     })()}
+                    onFocus={() => frequencySuggestions.fetchSuggestions(state.goal.frequency)}
+                    onBlur={() => setTimeout(() => frequencySuggestions.clearSuggestions(), 200)}
                     onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
                         const value = e.target.value;
                         const unit = state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D';
@@ -2578,6 +2766,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 <TextField
                     select
                     value={state.goal.frequency?.match(/[DWMY]/)?.[0] || 'D'}
+                    onFocus={() => frequencySuggestions.fetchSuggestions(state.goal.frequency)}
+                    onBlur={() => setTimeout(() => frequencySuggestions.clearSuggestions(), 200)}
                     onChange={(e: ChangeEvent<{ value: unknown }>) => {
                         const interval = state.goal.frequency?.match(/^\d+/)?.[0] || '1';
 
@@ -2612,6 +2802,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <MenuItem value="Y">year</MenuItem>
                 </TextField>
             </Box>
+            <AiSuggestionsRow 
+                suggestions={frequencySuggestions.suggestions} 
+                isLoading={frequencySuggestions.isLoading} 
+                onSelect={frequencySuggestions.applySuggestion} 
+            />
 
             {state.goal.frequency?.includes('W') && (
                 <Box>
@@ -2705,6 +2900,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 label="Name"
                 value={state.goal.name || ''}
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({ ...state.goal, name: e.target.value })}
+                onFocus={() => nameSuggestions.fetchSuggestions(state.goal.name)}
+                onBlur={() => setTimeout(() => nameSuggestions.clearSuggestions(), 200)}
+                onKeyDown={nameSuggestions.handleKeyDown}
                 fullWidth
                 margin="dense"
                 autoFocus
@@ -2718,9 +2916,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     autoComplete: 'off'
                 }}
             />
+            <AiSuggestionsRow 
+                suggestions={nameSuggestions.suggestions} 
+                isLoading={nameSuggestions.isLoading} 
+                onSelect={nameSuggestions.applySuggestion} 
+            />
             <TextField
                 label="Goal Type"
                 value={state.goal.goal_type || ''}
+                onFocus={() => goalTypeSuggestions.fetchSuggestions(state.goal.goal_type)}
+                onBlur={() => setTimeout(() => goalTypeSuggestions.clearSuggestions(), 200)}
                 onChange={(e: ChangeEvent<{ value: unknown }>) => {
                     const newGoalType = e.target.value as GoalType;
                     const updates: Partial<Goal> = {
@@ -2762,18 +2967,51 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 margin="dense"
                 required
                 disabled={isViewOnly || state.goal.goal_type === 'event'}
+                SelectProps={{
+                    onClose: () => setTimeout(() => goalTypeSuggestions.clearSuggestions(), 200),
+                    renderValue: (value) => (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {String(value)}
+                            {goalTypeSuggestions.suggestions[0] === value && (
+                                <Tooltip title="AI Recommended">
+                                    <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
+                                </Tooltip>
+                            )}
+                        </Box>
+                    )
+                }}
             >
-                <MenuItem value="directive">Directive</MenuItem>
-                <MenuItem value="project">Project</MenuItem>
-                <MenuItem value="achievement">Achievement</MenuItem>
-                <MenuItem value="routine">Routine</MenuItem>
-                <MenuItem value="task">Task</MenuItem>
-                <MenuItem value="event">Event</MenuItem>
+                <MenuItem value="directive" sx={{ bgcolor: goalTypeSuggestions.suggestions[0] === 'directive' ? 'action.hover' : 'inherit' }}>
+                    Directive {goalTypeSuggestions.suggestions[0] === 'directive' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="project" sx={{ bgcolor: goalTypeSuggestions.suggestions[0] === 'project' ? 'action.hover' : 'inherit' }}>
+                    Project {goalTypeSuggestions.suggestions[0] === 'project' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="achievement" sx={{ bgcolor: goalTypeSuggestions.suggestions[0] === 'achievement' ? 'action.hover' : 'inherit' }}>
+                    Achievement {goalTypeSuggestions.suggestions[0] === 'achievement' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="routine" sx={{ bgcolor: goalTypeSuggestions.suggestions[0] === 'routine' ? 'action.hover' : 'inherit' }}>
+                    Routine {goalTypeSuggestions.suggestions[0] === 'routine' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="task" sx={{ bgcolor: goalTypeSuggestions.suggestions[0] === 'task' ? 'action.hover' : 'inherit' }}>
+                    Task {goalTypeSuggestions.suggestions[0] === 'task' && '(Suggested)'}
+                </MenuItem>
+                <MenuItem value="event" sx={{ bgcolor: goalTypeSuggestions.suggestions[0] === 'event' ? 'action.hover' : 'inherit' }}>
+                    Event {goalTypeSuggestions.suggestions[0] === 'event' && '(Suggested)'}
+                </MenuItem>
             </TextField>
+            <AiSuggestionsRow 
+                suggestions={goalTypeSuggestions.suggestions} 
+                isLoading={goalTypeSuggestions.isLoading} 
+                onSelect={goalTypeSuggestions.applySuggestion} 
+            />
             <TextField
                 label="Description"
                 value={state.goal.description || ''}
                 onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({ ...state.goal, description: e.target.value })}
+                onFocus={() => descriptionSuggestions.fetchSuggestions(state.goal.description)}
+                onBlur={() => setTimeout(() => descriptionSuggestions.clearSuggestions(), 200)}
+                onKeyDown={descriptionSuggestions.handleKeyDown}
                 fullWidth
                 margin="dense"
                 multiline
@@ -2783,6 +3021,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     // Explicitly allow all characters
                     autoComplete: 'off'
                 }}
+            />
+            <AiSuggestionsRow 
+                suggestions={descriptionSuggestions.suggestions} 
+                isLoading={descriptionSuggestions.isLoading} 
+                onSelect={descriptionSuggestions.applySuggestion} 
             />
             {priorityField}
         </>
@@ -2795,6 +3038,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 multiple
                 value={selectedParents}
                 isOptionEqualToValue={(option, value) => option.id === value.id}
+                onOpen={() => parentSuggestions.fetchSuggestions()}
+                onClose={() => setTimeout(() => parentSuggestions.clearSuggestions(), 200)}
                 onChange={(event, newValue) => {
                     // Did user click the create-new item?
                     const createIdx = newValue.findIndex(isCreatePlaceholder);
@@ -2825,8 +3070,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             </Box>
                         );
                     }
+                    const isSuggested = parentSuggestions.suggestions.includes(String(option.id));
                     return (
-                        <Box component="li" key={key} {...liProps}>
+                        <Box component="li" key={key} {...liProps} sx={{ bgcolor: isSuggested ? 'action.hover' : 'inherit' }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                                 {(() => {
                                     const style = getGoalStyle(option);
@@ -2845,6 +3091,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 <Typography variant="body2" sx={{ flexGrow: 1 }}>
                                     {option.name}
                                 </Typography>
+                                {isSuggested && (
+                                    <Tooltip title="AI Recommended">
+                                        <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
+                                    </Tooltip>
+                                )}
                             </Box>
                         </Box>
                     );
@@ -2896,6 +3147,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 handleHomeEndKeys
                 freeSolo={false}
             />
+            <AiSuggestionsRow 
+                suggestions={parentSuggestions.suggestions.map((id: string) => allGoals.find(g => String(g.id) === id)?.name || id)} 
+                isLoading={parentSuggestions.isLoading} 
+                onSelect={parentSuggestions.applySuggestion} 
+                label="Suggested Parents"
+            />
         </Box>
     ) : null;
 
@@ -2906,6 +3163,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 multiple
                 value={selectedChildren}
                 isOptionEqualToValue={(option, value) => option.id === value.id}
+                onOpen={() => childSuggestions.fetchSuggestions()}
+                onClose={() => setTimeout(() => childSuggestions.clearSuggestions(), 200)}
                 onChange={(event, newValue) => {
                     // Did user click the create-new item?
                     const createIdx = newValue.findIndex(isCreatePlaceholder);
@@ -2936,8 +3195,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             </Box>
                         );
                     }
+                    const isSuggested = childSuggestions.suggestions.includes(String(option.id));
                     return (
-                        <Box component="li" key={key} {...liProps}>
+                        <Box component="li" key={key} {...liProps} sx={{ bgcolor: isSuggested ? 'action.hover' : 'inherit' }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                                 {(() => {
                                     const style = getGoalStyle(option);
@@ -2956,6 +3216,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 <Typography variant="body2" sx={{ flexGrow: 1 }}>
                                     {option.name}
                                 </Typography>
+                                {isSuggested && (
+                                    <Tooltip title="AI Recommended">
+                                        <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
+                                    </Tooltip>
+                                )}
                             </Box>
                         </Box>
                     );
@@ -2995,6 +3260,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 handleHomeEndKeys
                 freeSolo={false}
             />
+            <AiSuggestionsRow 
+                suggestions={childSuggestions.suggestions.map((id: string) => allGoals.find(g => String(g.id) === id)?.name || id)} 
+                isLoading={childSuggestions.isLoading} 
+                onSelect={childSuggestions.applySuggestion} 
+                label="Suggested Children"
+            />
         </Box>
     ) : null;
 
@@ -3011,22 +3282,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         <>
             {durationField}
             {state.goal.duration !== 1440 && (
-                <TextField
-                    label="Scheduled Time"
-                    type="time"
-                    value={timestampToInputString(state.goal.routine_time, 'time')}
-                    onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-                        handleChange({
-                            ...state.goal,
-                            routine_time: inputStringToTimestamp(e.target.value, 'time')
-                        });
-                    }}
-                    fullWidth
-                    margin="dense"
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ step: 300 }}
-                    disabled={isViewOnly}
-                />
+                <Box>
+                    <TextField
+                        label="Scheduled Time"
+                        type="time"
+                        value={timestampToInputString(state.goal.routine_time, 'time')}
+                        onFocus={() => routineTimeSuggestions.fetchSuggestions(timestampToInputString(state.goal.routine_time, 'time'))}
+                        onBlur={() => setTimeout(() => routineTimeSuggestions.clearSuggestions(), 200)}
+                        onKeyDown={routineTimeSuggestions.handleKeyDown}
+                        onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                            handleChange({
+                                ...state.goal,
+                                routine_time: inputStringToTimestamp(e.target.value, 'time')
+                            });
+                        }}
+                        fullWidth
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ step: 300 }}
+                        disabled={isViewOnly}
+                    />
+                    <AiSuggestionsRow 
+                        suggestions={routineTimeSuggestions.suggestions} 
+                        isLoading={routineTimeSuggestions.isLoading} 
+                        onSelect={routineTimeSuggestions.applySuggestion} 
+                    />
+                </Box>
             )}
         </>
     );
@@ -3071,6 +3352,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                                 {!isViewOnly && (
                                     <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+                                        {/* Smart Schedule commented out per AI suggestions plan
                                         <Button
                                             size="small"
                                             onClick={() => handleSmartSchedule('new-task-event', 60, state.goal.name)}
@@ -3079,6 +3361,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         >
                                             Smart Schedule
                                         </Button>
+                                        */}
                                         <IconButton
                                             size="small"
                                             onClick={addTempEvent}
@@ -3104,91 +3387,109 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                             borderRadius: 1,
                                             bgcolor: 'background.paper'
                                         }}>
-                                            <TextField
-                                                type="datetime-local"
-                                                value={timestampToInputString(event.scheduled_timestamp, 'datetime')}
-                                                onChange={(e) => {
-                                                    const newTimestamp = inputStringToTimestamp(e.target.value, 'datetime');
-                                                    setTaskEvents(prev => prev.map((evt, idx) =>
-                                                        idx === index ? { ...evt, scheduled_timestamp: newTimestamp } : evt
-                                                    ));
-                                                }}
-                                                size="small"
-                                                InputLabelProps={{ shrink: true }}
-                                                disabled={isViewOnly}
-                                                sx={{ flex: 1 }}
-                                            />
-                                            <TextField
-                                                label="H"
-                                                type="text"
-                                                value={taskEventInputs[index]?.hours ?? String(Math.floor((event.duration || 0) / 60))}
-                                                onChange={(e) => {
-                                                    const raw = (e.target.value || '').replace(/\D/g, '');
-                                                    setTaskEventInputs(prev => {
-                                                        const next = [...prev];
-                                                        const current = next[index] || { hours: '', minutes: '' };
-                                                        next[index] = { ...current, hours: raw };
-                                                        return next;
-                                                    });
-                                                    const hours = raw === '' ? 0 : parseInt(raw, 10);
-                                                    const minutesStr = taskEventInputs[index]?.minutes;
-                                                    const minutes = minutesStr === undefined || minutesStr === '' ? ((event.duration || 0) % 60) : Math.min(59, parseInt(minutesStr, 10) || 0);
-                                                    const newDuration = hours * 60 + minutes;
-                                                    const oldDuration = event.duration || 0;
-                                                    setTaskEvents(prev => prev.map((evt, idx) =>
-                                                        idx === index ? { ...evt, duration: newDuration } : evt
-                                                    ));
-                                                    setTotalDuration(prev => prev - oldDuration + newDuration);
-                                                }}
-                                                onBlur={() => {
-                                                    setTaskEventInputs(prev => {
-                                                        const next = [...prev];
-                                                        const current = next[index] || { hours: '', minutes: '' };
-                                                        if (current.hours === '') next[index] = { ...current, hours: '0' };
-                                                        return next;
-                                                    });
-                                                }}
-                                                size="small"
-                                                inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
-                                                disabled={isViewOnly}
-                                                sx={{ width: 60 }}
-                                            />
-                                            <TextField
-                                                label="M"
-                                                type="text"
-                                                value={taskEventInputs[index]?.minutes ?? String((event.duration || 0) % 60)}
-                                                onChange={(e) => {
-                                                    const raw = (e.target.value || '').replace(/\D/g, '');
-                                                    const clamped = raw === '' ? '' : String(Math.min(59, parseInt(raw, 10) || 0));
-                                                    setTaskEventInputs(prev => {
-                                                        const next = [...prev];
-                                                        const current = next[index] || { hours: '', minutes: '' };
-                                                        next[index] = { ...current, minutes: clamped };
-                                                        return next;
-                                                    });
-                                                    const minutes = clamped === '' ? 0 : parseInt(clamped, 10);
-                                                    const hoursStr = taskEventInputs[index]?.hours;
-                                                    const hours = hoursStr === undefined || hoursStr === '' ? Math.floor((event.duration || 0) / 60) : parseInt(hoursStr, 10) || 0;
-                                                    const newDuration = hours * 60 + minutes;
-                                                    const oldDuration = event.duration || 0;
-                                                    setTaskEvents(prev => prev.map((evt, idx) =>
-                                                        idx === index ? { ...evt, duration: newDuration } : evt
-                                                    ));
-                                                    setTotalDuration(prev => prev - oldDuration + newDuration);
-                                                }}
-                                                onBlur={() => {
-                                                    setTaskEventInputs(prev => {
-                                                        const next = [...prev];
-                                                        const current = next[index] || { hours: '', minutes: '' };
-                                                        if (current.minutes === '') next[index] = { ...current, minutes: '0' };
-                                                        return next;
-                                                    });
-                                                }}
-                                                size="small"
-                                                inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
-                                                disabled={isViewOnly}
-                                                sx={{ width: 60 }}
-                                            />
+                                            <Box sx={{ flex: 1 }}>
+                                                <TextField
+                                                    type="datetime-local"
+                                                    value={timestampToInputString(event.scheduled_timestamp, 'datetime')}
+                                                    onFocus={() => scheduledDateTimeSuggestions.fetchSuggestions(timestampToInputString(event.scheduled_timestamp, 'datetime'))}
+                                                    onChange={(e) => {
+                                                        const newTimestamp = inputStringToTimestamp(e.target.value, 'datetime');
+                                                        setTaskEvents(prev => prev.map((evt, idx) =>
+                                                            idx === index ? { ...evt, scheduled_timestamp: newTimestamp } : evt
+                                                        ));
+                                                    }}
+                                                    size="small"
+                                                    InputLabelProps={{ shrink: true }}
+                                                    disabled={isViewOnly}
+                                                    sx={{ width: '100%' }}
+                                                />
+                                                <AiSuggestionsRow 
+                                                    suggestions={scheduledDateTimeSuggestions.suggestions} 
+                                                    isLoading={scheduledDateTimeSuggestions.isLoading} 
+                                                    onSelect={(v) => {
+                                                        setTaskEvents(prev => prev.map((evt, idx) =>
+                                                            idx === index ? { ...evt, scheduled_timestamp: new Date(v) } : evt
+                                                        ));
+                                                    }} 
+                                                />
+                                            </Box>
+                                            <Box sx={{ width: 60 }}>
+                                                <TextField
+                                                    label="H"
+                                                    type="text"
+                                                    value={taskEventInputs[index]?.hours ?? String(Math.floor((event.duration || 0) / 60))}
+                                                    onFocus={() => durationSuggestions.fetchSuggestions(String(event.duration))}
+                                                    onChange={(e) => {
+                                                        const raw = (e.target.value || '').replace(/\D/g, '');
+                                                        setTaskEventInputs(prev => {
+                                                            const next = [...prev];
+                                                            const current = next[index] || { hours: '', minutes: '' };
+                                                            next[index] = { ...current, hours: raw };
+                                                            return next;
+                                                        });
+                                                        const hours = raw === '' ? 0 : parseInt(raw, 10);
+                                                        const minutesStr = taskEventInputs[index]?.minutes;
+                                                        const minutes = minutesStr === undefined || minutesStr === '' ? ((event.duration || 0) % 60) : Math.min(59, parseInt(minutesStr, 10) || 0);
+                                                        const newDuration = hours * 60 + minutes;
+                                                        const oldDuration = event.duration || 0;
+                                                        setTaskEvents(prev => prev.map((evt, idx) =>
+                                                            idx === index ? { ...evt, duration: newDuration } : evt
+                                                        ));
+                                                        setTotalDuration(prev => prev - oldDuration + newDuration);
+                                                    }}
+                                                    onBlur={() => {
+                                                        setTaskEventInputs(prev => {
+                                                            const next = [...prev];
+                                                            const current = next[index] || { hours: '', minutes: '' };
+                                                            if (current.hours === '') next[index] = { ...current, hours: '0' };
+                                                            return next;
+                                                        });
+                                                    }}
+                                                    size="small"
+                                                    inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
+                                                    disabled={isViewOnly}
+                                                    sx={{ width: '100%' }}
+                                                />
+                                            </Box>
+                                            <Box sx={{ width: 60 }}>
+                                                <TextField
+                                                    label="M"
+                                                    type="text"
+                                                    value={taskEventInputs[index]?.minutes ?? String((event.duration || 0) % 60)}
+                                                    onFocus={() => durationSuggestions.fetchSuggestions(String(event.duration))}
+                                                    onChange={(e) => {
+                                                        const raw = (e.target.value || '').replace(/\D/g, '');
+                                                        const clamped = raw === '' ? '' : String(Math.min(59, parseInt(raw, 10) || 0));
+                                                        setTaskEventInputs(prev => {
+                                                            const next = [...prev];
+                                                            const current = next[index] || { hours: '', minutes: '' };
+                                                            next[index] = { ...current, minutes: clamped };
+                                                            return next;
+                                                        });
+                                                        const minutes = clamped === '' ? 0 : parseInt(clamped, 10);
+                                                        const hoursStr = taskEventInputs[index]?.hours;
+                                                        const hours = hoursStr === undefined || hoursStr === '' ? Math.floor((event.duration || 0) / 60) : parseInt(hoursStr, 10) || 0;
+                                                        const newDuration = hours * 60 + minutes;
+                                                        const oldDuration = event.duration || 0;
+                                                        setTaskEvents(prev => prev.map((evt, idx) =>
+                                                            idx === index ? { ...evt, duration: newDuration } : evt
+                                                        ));
+                                                        setTotalDuration(prev => prev - oldDuration + newDuration);
+                                                    }}
+                                                    onBlur={() => {
+                                                        setTaskEventInputs(prev => {
+                                                            const next = [...prev];
+                                                            const current = next[index] || { hours: '', minutes: '' };
+                                                            if (current.minutes === '') next[index] = { ...current, minutes: '0' };
+                                                            return next;
+                                                        });
+                                                    }}
+                                                    size="small"
+                                                    inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
+                                                    disabled={isViewOnly}
+                                                    sx={{ width: '100%' }}
+                                                />
+                                            </Box>
                                             {!isViewOnly && (
                                                 <IconButton
                                                     size="small"
@@ -3213,6 +3514,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {scheduleField}
                         {!isViewOnly && (
                             <Box sx={{ mt: 1, mb: 2, display: 'flex', gap: 1 }}>
+                                {/* Smart Schedule commented out per AI suggestions plan
                                 <Button
                                     onClick={() => handleSmartSchedule('event', state.goal.duration || 60, state.goal.name, state.goal.scheduled_timestamp)}
                                     variant="outlined"
@@ -3221,6 +3523,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 >
                                     Smart Schedule
                                 </Button>
+                                */}
                             </Box>
                         )}
                         {durationField}
@@ -3253,6 +3556,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         label="Sync Direction"
                                         select
                                         value={state.goal.gcal_sync_direction || 'bidirectional'}
+                                        onFocus={() => gcalSyncDirectionSuggestions.fetchSuggestions(state.goal.gcal_sync_direction)}
+                                        onBlur={() => setTimeout(() => gcalSyncDirectionSuggestions.clearSuggestions(), 200)}
                                         onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
                                             ...state.goal,
                                             gcal_sync_direction: e.target.value as 'bidirectional' | 'to_gcal' | 'from_gcal'
@@ -3261,33 +3566,86 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                         margin="dense"
                                         size="small"
                                         disabled={isViewOnly}
+                                        SelectProps={{
+                                            onClose: () => setTimeout(() => gcalSyncDirectionSuggestions.clearSuggestions(), 200),
+                                            renderValue: (value) => (
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    {String(value)}
+                                                    {gcalSyncDirectionSuggestions.suggestions[0] === value && (
+                                                        <Tooltip title="AI Recommended">
+                                                            <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
+                                                        </Tooltip>
+                                                    )}
+                                                </Box>
+                                            )
+                                        }}
                                     >
-                                        <MenuItem value="bidirectional">Bidirectional (both ways)</MenuItem>
-                                        <MenuItem value="to_gcal">To Google Calendar only</MenuItem>
-                                        <MenuItem value="from_gcal">From Google Calendar only</MenuItem>
+                                        <MenuItem value="bidirectional" sx={{ bgcolor: gcalSyncDirectionSuggestions.suggestions[0] === 'bidirectional' ? 'action.hover' : 'inherit' }}>
+                                            Bidirectional (both ways) {gcalSyncDirectionSuggestions.suggestions[0] === 'bidirectional' && '(Suggested)'}
+                                        </MenuItem>
+                                        <MenuItem value="to_gcal" sx={{ bgcolor: gcalSyncDirectionSuggestions.suggestions[0] === 'to_gcal' ? 'action.hover' : 'inherit' }}>
+                                            To Google Calendar only {gcalSyncDirectionSuggestions.suggestions[0] === 'to_gcal' && '(Suggested)'}
+                                        </MenuItem>
+                                        <MenuItem value="from_gcal" sx={{ bgcolor: gcalSyncDirectionSuggestions.suggestions[0] === 'from_gcal' ? 'action.hover' : 'inherit' }}>
+                                            From Google Calendar only {gcalSyncDirectionSuggestions.suggestions[0] === 'from_gcal' && '(Suggested)'}
+                                        </MenuItem>
                                     </TextField>
+                                    <AiSuggestionsRow 
+                                        suggestions={gcalSyncDirectionSuggestions.suggestions} 
+                                        isLoading={gcalSyncDirectionSuggestions.isLoading} 
+                                        onSelect={gcalSyncDirectionSuggestions.applySuggestion} 
+                                    />
 
                                     {/* Calendar selector */}
                                     {gcalCalendars.length > 0 && (
-                                        <TextField
-                                            label="Target Calendar"
-                                            select
-                                            value={state.goal.gcal_calendar_id || 'primary'}
-                                            onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
-                                                ...state.goal,
-                                                gcal_calendar_id: e.target.value
-                                            })}
-                                            fullWidth
-                                            margin="dense"
-                                            size="small"
-                                            disabled={isViewOnly}
-                                        >
-                                            {gcalCalendars.map(cal => (
-                                                <MenuItem key={cal.id} value={cal.id}>
-                                                    {cal.summary} {cal.primary && '(Primary)'}
-                                                </MenuItem>
-                                            ))}
-                                        </TextField>
+                                        <Box>
+                                            <TextField
+                                                label="Target Calendar"
+                                                select
+                                                value={state.goal.gcal_calendar_id || 'primary'}
+                                                onFocus={() => gcalCalendarSuggestions.fetchSuggestions(state.goal.gcal_calendar_id)}
+                                                onBlur={() => setTimeout(() => gcalCalendarSuggestions.clearSuggestions(), 200)}
+                                                onChange={(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange({
+                                                    ...state.goal,
+                                                    gcal_calendar_id: e.target.value
+                                                })}
+                                                fullWidth
+                                                margin="dense"
+                                                size="small"
+                                                disabled={isViewOnly}
+                                                SelectProps={{
+                                                    onClose: () => setTimeout(() => gcalCalendarSuggestions.clearSuggestions(), 200),
+                                                    renderValue: (value) => {
+                                                        const cal = gcalCalendars.find(c => c.id === value);
+                                                        return (
+                                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                                {cal ? cal.summary : String(value)}
+                                                                {gcalCalendarSuggestions.suggestions[0] === value && (
+                                                                    <Tooltip title="AI Recommended">
+                                                                        <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
+                                                                    </Tooltip>
+                                                                )}
+                                                            </Box>
+                                                        );
+                                                    }
+                                                }}
+                                            >
+                                                {gcalCalendars.map(cal => (
+                                                    <MenuItem 
+                                                        key={cal.id} 
+                                                        value={cal.id}
+                                                        sx={{ bgcolor: gcalCalendarSuggestions.suggestions[0] === cal.id ? 'action.hover' : 'inherit' }}
+                                                    >
+                                                        {cal.summary} {cal.primary && '(Primary)'} {gcalCalendarSuggestions.suggestions[0] === cal.id && '(Suggested)'}
+                                                    </MenuItem>
+                                                ))}
+                                            </TextField>
+                                            <AiSuggestionsRow 
+                                                suggestions={gcalCalendarSuggestions.suggestions.map((id: string) => gcalCalendars.find(c => c.id === id)?.summary || id)} 
+                                                isLoading={gcalCalendarSuggestions.isLoading} 
+                                                onSelect={gcalCalendarSuggestions.applySuggestion} 
+                                            />
+                                        </Box>
                                     )}
 
                                     {state.goal.gcal_event_id && (
@@ -4039,6 +4397,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             </DialogActions>
             {/* ---- Nested Dialogs ---- */}
             {relationsOpen && <GoalRelations goal={state.goal} onClose={() => setRelationsOpen(false)} />}
+            {/* Smart Schedule Dialog commented out per AI suggestions plan
             {smartScheduleOpen && smartScheduleContext && (
                 <SmartScheduleDialog
                     open={smartScheduleOpen}
@@ -4050,6 +4409,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     onSelect={handleSmartScheduleSuccess}
                 />
             )}
+            */}
             {/* Routine Update Scope Dialog */}
             <Dialog
                 open={routineUpdateDialog.isOpen}

@@ -25,6 +25,7 @@ import Day from './pages/day/Day';
 // import Query from './pages/query/Query';
 import Projects from './pages/projects/Projects';
 import Stats from './pages/stats/Stats';
+import AccountSettings from './pages/account/AccountSettings';
 import GoogleCallback from './pages/auth/GoogleCallback';
 
 const NavBar: React.FC = () => {
@@ -39,13 +40,14 @@ const NavBar: React.FC = () => {
   return (
     <AppBar position="static">
       <Toolbar sx={{ flexWrap: 'nowrap' }}>
-        <Box sx={{ flexGrow: 1, display: 'flex', gap: 2, minWidth: 0 }}>
+        <Box sx={{ flexGrow: 1, display: 'flex', gap: 1.25, minWidth: 0 }}>
           <Button color="inherit" component={Link} to="/day">Day</Button>
           <Button color="inherit" component={Link} to="/calendar">Calendar</Button>
           <Button color="inherit" component={Link} to="/network">Network</Button>
           <Button color="inherit" component={Link} to="/projects">Projects</Button>
           <Button color="inherit" component={Link} to="/stats">Stats</Button>
           <Button color="inherit" component={Link} to="/list">List</Button>
+          <Button color="inherit" component={Link} to="/settings">Settings</Button>
           {/* <Button color="inherit" component={Link} to="/query">Query</Button> */}
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -128,6 +130,11 @@ const App: React.FC = () => {
                         <Route path="/stats" element={
                           <ProtectedRoute>
                             <Stats />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/settings" element={
+                          <ProtectedRoute>
+                            <AccountSettings />
                           </ProtectedRoute>
                         } />
                         {/* <Route path="/query" element={

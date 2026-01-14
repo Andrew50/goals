@@ -11,6 +11,15 @@ pub struct AutofillRequest {
     pub goal_context: PartialGoalContext,
     pub parent_ids: Option<Vec<i64>>,
     pub child_ids: Option<Vec<i64>>,
+    pub allowed_values: Option<Vec<String>>,
+    pub allowed_goals: Option<Vec<AllowedGoal>>,
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+pub struct AllowedGoal {
+    pub id: i64,
+    pub name: String,
+    pub goal_type: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -19,7 +28,14 @@ pub struct PartialGoalContext {
     pub description: Option<String>,
     pub goal_type: Option<GoalType>,
     pub start_timestamp: Option<i64>,
+    pub end_timestamp: Option<i64>,
     pub scheduled_timestamp: Option<i64>,
+    pub duration: Option<i32>,
+    pub priority: Option<String>,
+    pub resolution_status: Option<String>,
+    pub frequency: Option<String>,
+    pub routine_time: Option<i64>,
+    pub routine_type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -143,6 +159,33 @@ pub async fn get_autofill_suggestions(
     }
     if let Some(gt) = request.goal_context.goal_type {
         context_parts.push(format!("Goal Type: {:?}", gt));
+    }
+    if let Some(priority) = &request.goal_context.priority {
+        context_parts.push(format!("Priority: {}", priority));
+    }
+    if let Some(status) = &request.goal_context.resolution_status {
+        context_parts.push(format!("Resolution Status: {}", status));
+    }
+    if let Some(duration) = request.goal_context.duration {
+        context_parts.push(format!("Duration: {} minutes", duration));
+    }
+    if let Some(freq) = &request.goal_context.frequency {
+        context_parts.push(format!("Frequency: {}", freq));
+    }
+
+    // Allowed options
+    if let Some(allowed) = &request.allowed_values {
+        if !allowed.is_empty() {
+            context_parts.push(format!("Allowed values for this field: {:?}", allowed));
+        }
+    }
+    if let Some(allowed_goals) = &request.allowed_goals {
+        if !allowed_goals.is_empty() {
+            context_parts.push("Selectable goals for this field:".to_string());
+            for g in allowed_goals {
+                context_parts.push(format!("ID: {}, Name: {}, Type: {}", g.id, g.name, g.goal_type));
+            }
+        }
     }
 
     // Related Goals
