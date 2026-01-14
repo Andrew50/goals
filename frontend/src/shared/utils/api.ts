@@ -344,34 +344,45 @@ export const getTaskEvents = async (taskId: number): Promise<{
 export const updateRoutineEvent = async (
     eventId: number,
     newTimestamp: Date,
-    updateScope: 'single' | 'all' | 'future'
+    updateScope: 'single' | 'all' | 'future' | 'range',
+    rangeStart?: Date,
+    rangeEnd?: Date
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEvent called with:', {
         eventId,
         newTimestamp: newTimestamp.toISOString(),
         newTimestampMs: newTimestamp.getTime(),
-        updateScope
+        updateScope,
+        rangeStart,
+        rangeEnd
     });
 
-    // Build query parameters in case the backend expects them in the URL. Send them in the body as well for backward-compat.
-    const query = `new_timestamp=${newTimestamp.getTime()}&update_scope=${updateScope}`;
-    const url = `events/${eventId}/routine-update?${query}`;
-
-    console.log('📡 [API] Making request to:', url);
-    console.log('📦 [API] Request body:', {
+    const requestData: any = {
         new_timestamp: newTimestamp.getTime(),
         update_scope: updateScope
-    });
+    };
+
+    if (rangeStart) requestData.range_start = rangeStart.getTime();
+    if (rangeEnd) requestData.range_end = rangeEnd.getTime();
+
+    // Build query parameters in case the backend expects them in the URL.
+    const queryParts = [
+        `new_timestamp=${newTimestamp.getTime()}`,
+        `update_scope=${updateScope}`
+    ];
+    if (rangeStart) queryParts.push(`range_start=${rangeStart.getTime()}`);
+    if (rangeEnd) queryParts.push(`range_end=${rangeEnd.getTime()}`);
+    
+    const url = `events/${eventId}/routine-update?${queryParts.join('&')}`;
+
+    console.log('📡 [API] Making request to:', url);
+    console.log('📦 [API] Request body:', requestData);
 
     try {
         const response = await privateRequest<ApiGoal[]>(
             url,
             'PUT',
-            {
-                // Keep the body payload to maintain compatibility with older backend versions
-                new_timestamp: newTimestamp.getTime(),
-                update_scope: updateScope
-            }
+            requestData
         );
 
         console.log('✅ [API] updateRoutineEvent response:', response);
@@ -393,21 +404,27 @@ export const updateRoutineEventProperties = async (
         priority?: string;
         scheduled_timestamp?: Date;
     },
-    updateScope: 'single' | 'all' | 'future'
+    updateScope: 'single' | 'all' | 'future' | 'range',
+    rangeStart?: Date,
+    rangeEnd?: Date
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEventProperties called with:', {
         eventId,
         updates,
-        updateScope
+        updateScope,
+        rangeStart,
+        rangeEnd
     });
 
-    const requestData = {
+    const requestData: any = {
         update_scope: updateScope,
         duration: updates.duration,
         name: updates.name,
         description: updates.description,
         priority: updates.priority,
-        scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined
+        scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined,
+        range_start: rangeStart ? rangeStart.getTime() : undefined,
+        range_end: rangeEnd ? rangeEnd.getTime() : undefined
     };
 
     console.log('📡 [API] Making request to:', `events/${eventId}/routine-properties`);
