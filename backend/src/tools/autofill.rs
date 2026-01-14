@@ -1,9 +1,8 @@
 use crate::ai::openrouter::call_openrouter;
-use crate::tools::goal::{Goal, GoalType};
+use crate::tools::goal::GoalType;
 use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 #[derive(Deserialize, Debug)]
 pub struct AutofillRequest {
@@ -23,7 +22,7 @@ pub struct PartialGoalContext {
     pub scheduled_timestamp: Option<i64>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AutofillResponse {
     pub suggestions: Vec<String>,
 }

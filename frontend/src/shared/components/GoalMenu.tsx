@@ -344,7 +344,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         
         if (shouldLoadCalendars) {
             getGoogleCalendars()
-                .then(calendars => setGcalCalendars(calendars))
+                .then((calendars: CalendarListEntry[]) => setGcalCalendars(calendars))
                 .catch(() => setGcalCalendars([]));
         }
     }, [state.goal.gcal_sync_enabled, state.goal.goal_type, gcalCalendars.length]);
@@ -654,7 +654,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 try {
                     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
                     const effortStats = await privateRequest<EffortStat[]>(`stats/effort?range=all&tz=${encodeURIComponent(tz)}`);
-                    const effort = effortStats.find(e => e.goal_id === effortTargetId);
+                    const effort = effortStats.find((e: EffortStat) => e.goal_id === effortTargetId);
                     if (effort) {
                         stats.weighted_completion_rate = effort.weighted_completion_rate;
                         stats.total_duration_minutes = effort.total_duration_minutes;
@@ -1023,9 +1023,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // Fetch all goals when dialog opens
     useEffect(() => {
         if (isOpen) {
-            privateRequest<ApiGoal[]>('list').then(res => {
+            privateRequest<ApiGoal[]>('list').then((res: ApiGoal[]) => {
                 setAllGoals(res.map(goalToLocal));
-            }).catch(error => {
+            }).catch((error: any) => {
                 console.error('Failed to fetch goals:', error);
             });
         }
@@ -1576,7 +1576,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             // 1. Create State Goal
                             const stateGoal: Goal = {
                                 ...ng,
-                                id: undefined,
+                                id: 0,
                                 name: ng.name,
                                 goal_type: 'routine', // State is stored as routine node
                                 parent_id: undefined, // Linked via HAS_STATE, not parent_id field?
@@ -2000,7 +2000,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }
         }
 
-        const currentEvent = updatedEvents.find(event => event.id === updatedGoal.id);
+        const currentEvent = updatedEvents.find((event: Goal) => event.id === updatedGoal.id);
         if (currentEvent) {
             setState({ ...state, goal: currentEvent });
         }
@@ -4113,7 +4113,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     Existing events will be updated and the routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
                                 </Alert>
                             )
-                        )}
+                        ))}
                     </Box>
 
                     {routineUpdateDialog.selectedScope === 'range' && (

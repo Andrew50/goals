@@ -661,7 +661,7 @@ async fn handle_toggle_complete_task(
 async fn handle_get_achievements_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-|) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     achievements::get_achievements_data(graph, user_id).await
 }
 
@@ -1095,8 +1095,8 @@ async fn handle_check_notifications(
 
 async fn handle_autofill_suggestions(
     Extension(graph): Extension<Graph>,
-    Extension(claims): Extension<auth::Claims>,
+    Extension(user_id): Extension<i64>,
     Json(request): Json<autofill::AutofillRequest>,
 ) -> Result<Json<autofill::AutofillResponse>, (StatusCode, String)> {
-    autofill::get_autofill_suggestions(graph, claims.user_id, request).await
+    autofill::get_autofill_suggestions(graph, user_id, request).await
 }
