@@ -46,6 +46,7 @@ pub struct UpdateRoutineEventPropertiesRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub priority: Option<String>,
+    #[allow(dead_code)]
     pub frequency: Option<String>,
     pub range_start: Option<i64>,
     pub range_end: Option<i64>,

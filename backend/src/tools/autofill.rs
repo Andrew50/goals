@@ -28,13 +28,16 @@ pub struct PartialGoalContext {
     pub description: Option<String>,
     pub goal_type: Option<GoalType>,
     pub start_timestamp: Option<i64>,
+    #[allow(dead_code)]
     pub end_timestamp: Option<i64>,
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub priority: Option<String>,
     pub resolution_status: Option<String>,
     pub frequency: Option<String>,
+    #[allow(dead_code)]
     pub routine_time: Option<i64>,
+    #[allow(dead_code)]
     pub routine_type: Option<String>,
 }
 

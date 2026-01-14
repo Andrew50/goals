@@ -178,7 +178,7 @@ pub async fn get_goal_relations(
                     id: id(parent)
                  }} as parent"
                 );
-                eprintln!("[relations] Executing parent_id query: parent_id={}, user_id={}", parent_id, user_id);
+                eprintln!("[relations] Executing parent_id query for parent_id={}", parent_id);
                 let parent_id_query = query(&parent_id_query_str)
                     .param("parent_id", parent_id)
                     .param("user_id", user_id);

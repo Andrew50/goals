@@ -1,7 +1,6 @@
 use neo4rs::{query, Graph};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::env;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TelegramSettings {
@@ -15,41 +14,6 @@ struct TelegramMessage {
     chat_id: String,
     text: String,
     parse_mode: String,
-}
-
-fn get_bot_token() -> Result<String, String> {
-    env::var("TELEGRAM_BOT_TOKEN")
-        .map_err(|_| "TELEGRAM_BOT_TOKEN not set in environment".to_string())
-}
-
-pub async fn send_telegram_message(chat_id: &str, text: &str) -> Result<(), String> {
-    let token = get_bot_token()?;
-    let client = Client::new();
-    let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-
-    let message = TelegramMessage {
-        chat_id: chat_id.to_string(),
-        text: text.to_string(),
-        parse_mode: "Markdown".to_string(),
-    };
-
-    let response = client
-        .post(&url)
-        .json(&message)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to send Telegram request: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(format!("Telegram API error ({}): {}", status, text));
-    }
-
-    Ok(())
 }
 
 pub async fn save_telegram_settings(

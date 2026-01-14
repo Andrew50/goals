@@ -2200,13 +2200,15 @@ async fn test_routine_single_reschedule_creates_tombstone_for_old_slot() {
     let target_id = target.id.unwrap();
     let new_ts = old_ts + 60 * 60 * 1000; // +1h
 
-    update_routine_event_handler(
+    let _ = update_routine_event_handler(
         graph.clone(),
         999,
         target_id,
         UpdateRoutineEventRequest {
             new_timestamp: new_ts,
             update_scope: "single".to_string(),
+            range_start: None,
+            range_end: None,
         },
     )
     .await
