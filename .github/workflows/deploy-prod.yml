@@ -39,9 +39,10 @@ jobs:
             echo "goals_db is not running; skipping pre-deploy backup (first deploy or DB down)."
           fi
 
-      - name: Stop monitor service (pre-checkout)
+      - name: Stop monitor (pre-checkout)
         shell: bash
-        run: sudo -n systemctl stop goals-monitor.service || true
+        run: |
+          pkill -f goals_monitor.py || true
 
       - name: Stop existing Docker Compose stacks (pre-checkout)
         shell: bash
@@ -156,23 +157,21 @@ jobs:
           docker run --rm -v "$BP:/b" alpine sh -lc 'mkdir -p /b && chmod 0777 /b || true'
           docker run --rm -v "/var/lib/goals/backup-logs:/l" alpine sh -lc 'mkdir -p /l && chmod 0777 /l || true'
 
-      - name: Install/Update monitor service
+      - name: Install/Update monitor
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n mkdir -p /opt/goals/monitor /var/lib/goals/monitor /etc/goals
-          sudo -n cp ops/monitor/goals_monitor.py /opt/goals/monitor/
-          sudo -n chmod +x /opt/goals/monitor/goals_monitor.py
-          sudo -n cp ops/monitor/goals-monitor.service /etc/systemd/system/
+          mkdir -p $HOME/goals-monitor
+          cp ops/monitor/goals_monitor.py $HOME/goals-monitor/
+          chmod +x $HOME/goals-monitor/goals_monitor.py
           
-          # Create monitor environment file
-          cat << EOF | sudo -n tee /etc/goals/monitor.env > /dev/null
+          # Create monitor environment file locally
+          cat << EOF > $HOME/goals-monitor/monitor.env
           HOST_URL=${{ secrets.HOST_URL }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           GOALS_SERVER_TELEGRAM_CHAT_ID=${{ secrets.GOALS_SERVER_TELEGRAM_CHAT_ID }}
+          GOALS_MONITOR_BASE_DIR=$HOME/goals-monitor
           EOF
-          
-          sudo -n systemctl daemon-reload
 
       - name: Stop and remove existing containers
         run: |
@@ -249,9 +248,15 @@ jobs:
             ${{ github.workspace }}/backup-artifacts/backup.log
             ${{ github.workspace }}/.env
 
-      - name: Start monitor service
+      - name: Start monitor
         if: always()
         shell: bash
         run: |
-          sudo -n systemctl enable goals-monitor.service || true
-          sudo -n systemctl start goals-monitor.service || true
+          set -euo pipefail
+          pkill -f goals_monitor.py || true
+          cd $HOME/goals-monitor
+          # Export env vars and run in background
+          set -a
+          source monitor.env
+          set +a
+          nohup python3 goals_monitor.py > monitor.log 2>&1 &
