@@ -245,7 +245,7 @@ const Day: React.FC = () => {
                 return getDayBounds(currentDate).start.getTime();
             }
         }
-    }, [currentTime, currentDate, getEventEndMs, getEventStartMs, getDayBounds, getEventDurationMs]);
+    }, [currentTime, currentDate]);
 
     // Helper to check if error is a task date range violation
     const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
