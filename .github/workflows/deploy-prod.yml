@@ -41,7 +41,7 @@ jobs:
 
       - name: Stop monitor service (pre-checkout)
         shell: bash
-        run: sudo systemctl stop goals-monitor.service || true
+        run: sudo -n systemctl stop goals-monitor.service || true
 
       - name: Stop existing Docker Compose stacks (pre-checkout)
         shell: bash
@@ -103,7 +103,7 @@ jobs:
           if [ -d "$GITHUB_WORKSPACE" ]; then
             chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
             if command -v sudo >/dev/null 2>&1; then
-              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+              sudo -n chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
             else
               docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
             fi
@@ -112,7 +112,7 @@ jobs:
               rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
               if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
                 if command -v sudo >/dev/null 2>&1; then
-                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
+                  sudo -n rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
                 else
                   docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
                 fi
@@ -160,19 +160,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo mkdir -p /opt/goals/monitor /var/lib/goals/monitor /etc/goals
-          sudo cp ops/monitor/goals_monitor.py /opt/goals/monitor/
-          sudo chmod +x /opt/goals/monitor/goals_monitor.py
-          sudo cp ops/monitor/goals-monitor.service /etc/systemd/system/
+          sudo -n mkdir -p /opt/goals/monitor /var/lib/goals/monitor /etc/goals
+          sudo -n cp ops/monitor/goals_monitor.py /opt/goals/monitor/
+          sudo -n chmod +x /opt/goals/monitor/goals_monitor.py
+          sudo -n cp ops/monitor/goals-monitor.service /etc/systemd/system/
           
           # Create monitor environment file
-          cat << EOF | sudo tee /etc/goals/monitor.env > /dev/null
+          cat << EOF | sudo -n tee /etc/goals/monitor.env > /dev/null
           HOST_URL=${{ secrets.HOST_URL }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           GOALS_SERVER_TELEGRAM_CHAT_ID=${{ secrets.GOALS_SERVER_TELEGRAM_CHAT_ID }}
           EOF
           
-          sudo systemctl daemon-reload
+          sudo -n systemctl daemon-reload
 
       - name: Stop and remove existing containers
         run: |
@@ -238,7 +238,7 @@ jobs:
           echo '===== goals_db container logs ====='
           docker logs goals_db || true
           echo '===== cron/backup.log (host bind) ====='
-          sudo tail -n 200 "$BACKUP_LOGS_PATH/backup.log" || true
+          sudo -n tail -n 200 "$BACKUP_LOGS_PATH/backup.log" || true
 
       - name: Upload backup logs artifact
         if: always()
@@ -253,5 +253,5 @@ jobs:
         if: always()
         shell: bash
         run: |
-          sudo systemctl enable goals-monitor.service || true
-          sudo systemctl start goals-monitor.service || true
+          sudo -n systemctl enable goals-monitor.service || true
+          sudo -n systemctl start goals-monitor.service || true
