@@ -1,6 +1,6 @@
 use chrono::Utc;
 use neo4rs::{query, Graph};
-use crate::tools::push;
+use crate::tools::{push, telegram};
 
 /// Check for upcoming high priority events and send notifications
 pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), String> {
@@ -21,7 +21,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         AND (g.notification_sent IS NULL OR g.notification_sent = false)
         AND (g.is_deleted IS NULL OR g.is_deleted = false)
         AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
-        RETURN g, id(g) as event_id, u.user_id as user_id, id(u) as user_node_id
+        RETURN g, id(g) as event_id, u.user_id as user_id, id(u) as user_node_id, u.telegram_chat_id as telegram_chat_id
     ";
     
     let mut result = graph
@@ -43,6 +43,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
     {
         let event_id: i64 = row.get("event_id").map_err(|e| format!("Failed to get event_id: {}", e))?;
         let user_node_id: i64 = row.get("user_node_id").map_err(|e| format!("Failed to get user_node_id: {}", e))?;
+        let telegram_chat_id: Option<String> = row.get("telegram_chat_id").ok();
         
         // Get event details
         let event_name: String = row.get::<neo4rs::Node>("g")
@@ -71,7 +72,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         
         let payload = push::PushPayload {
             title: "⚡ High Priority Event".to_string(),
-            body: notification_body,
+            body: notification_body.clone(),
             icon: Some("/logo192.png".to_string()),
             badge: Some("/logo192.png".to_string()),
             tag: Some(format!("event-{}", event_id)),
@@ -102,36 +103,63 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         };
         
         // Send notification
+        let mut sent = false;
+        
+        // Try Push
         match push::send_notification_to_user(graph, user_node_id, &payload).await {
             Ok(_) => {
-                notification_count += 1;
+                sent = true;
                 println!(
                     "✅ [NOTIFICATION] Sent high priority notification for event '{}' (ID: {}) to user {}",
                     event_name, event_id, user_node_id
                 );
-                
-                // Mark event as notified
-                let mark_notified_query = query(
-                    "MATCH (g:Goal)
-                     WHERE id(g) = $event_id
-                     SET g.notification_sent = true,
-                         g.notification_sent_at = $sent_at
-                     RETURN g"
-                )
-                .param("event_id", event_id)
-                .param("sent_at", now);
-                
-                if let Err(e) = graph.run(mark_notified_query).await {
-                    eprintln!("⚠️ [NOTIFICATION] Failed to mark event {} as notified: {}", event_id, e);
-                }
             }
             Err(e) => {
-                failed_count += 1;
                 eprintln!(
-                    "❌ [NOTIFICATION] Failed to send notification for event '{}' (ID: {}): {}",
+                    "❌ [NOTIFICATION] Failed to send push notification for event '{}' (ID: {}): {}",
                     event_name, event_id, e
                 );
             }
+        }
+
+        // Try Telegram
+        if let Some(chat_id) = telegram_chat_id {
+            let msg = format!("⚡ *High Priority Event*\n\n{}", notification_body);
+            match telegram::send_telegram_message(&chat_id, &msg).await {
+                Ok(_) => {
+                    sent = true;
+                    println!(
+                        "✅ [NOTIFICATION] Sent Telegram message for event '{}' (ID: {})",
+                        event_name, event_id
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "❌ [NOTIFICATION] Failed to send Telegram message for event '{}' (ID: {}): {}",
+                        event_name, event_id, e
+                    );
+                }
+            }
+        }
+        
+        if sent {
+            notification_count += 1;
+            // Mark event as notified
+            let mark_notified_query = query(
+                "MATCH (g:Goal)
+                 WHERE id(g) = $event_id
+                 SET g.notification_sent = true,
+                 g.notification_sent_at = $sent_at
+                 RETURN g"
+            )
+            .param("event_id", event_id)
+            .param("sent_at", now);
+            
+            if let Err(e) = graph.run(mark_notified_query).await {
+                eprintln!("⚠️ [NOTIFICATION] Failed to mark event {} as notified: {}", event_id, e);
+            }
+        } else {
+            failed_count += 1;
         }
     }
     
@@ -169,7 +197,7 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
             AND (g.is_deleted IS NULL OR g.is_deleted = false)
             AND (g.resolution_status IS NULL OR g.resolution_status = 'pending')
             AND g.send_reminders = true
-            RETURN g, id(g) as event_id, id(u) as user_id
+            RETURN g, id(g) as event_id, id(u) as user_id, u.telegram_chat_id as telegram_chat_id
         ";
         
         let reminder_key = format!("reminder_{}", reminder_offset);
@@ -187,6 +215,7 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
         while let Some(row) = result.next().await.map_err(|e| e.to_string())? {
             let event_id: i64 = row.get("event_id").unwrap_or(0);
             let user_id: i64 = row.get("user_id").unwrap_or(0);
+            let telegram_chat_id: Option<String> = row.get("telegram_chat_id").ok();
             
             let event_name: String = row.get::<neo4rs::Node>("g")
                 .ok()
@@ -229,7 +258,21 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                 timestamp: Some(now),
             };
             
+            let mut sent = false;
+
             if push::send_notification_to_user(graph, user_id, &payload).await.is_ok() {
+                sent = true;
+            }
+
+            // Send Telegram if available
+            if let Some(chat_id) = telegram_chat_id {
+                let msg = format!("⏰ *Reminder: {}*\n\n'{}' is coming up", reminder_text, event_name);
+                if telegram::send_telegram_message(&chat_id, &msg).await.is_ok() {
+                    sent = true;
+                }
+            }
+            
+            if sent {
                 // Mark this reminder as sent
                 let mark_query = query(
                     "MATCH (g:Goal)

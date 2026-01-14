@@ -19,7 +19,7 @@ use crate::jobs::routine_generator;
 use crate::server::auth::{self};
 use crate::server::middleware;
 use crate::tools::{
-    achievements, calendar, day, event, gcal_client,
+    achievements, autofill, calendar, day, event, gcal_client,
     goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, ResolveGoalRequest, Relationship},
     list, migration, network, push, relations, stats, traversal,
 };
@@ -187,6 +187,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/routine", routine_generation_routes)
         .nest("/push", push_routes)
         .nest("/auth", auth_protected_routes)
+        .route("/autofill", post(handle_autofill_suggestions))
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -660,7 +661,7 @@ async fn handle_toggle_complete_task(
 async fn handle_get_achievements_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+|) -> Result<impl IntoResponse, (StatusCode, String)> {
     achievements::get_achievements_data(graph, user_id).await
 }
 
@@ -1090,4 +1091,12 @@ async fn handle_check_notifications(
     }
 
     Ok(StatusCode::OK)
+}
+
+async fn handle_autofill_suggestions(
+    Extension(graph): Extension<Graph>,
+    Extension(claims): Extension<auth::Claims>,
+    Json(request): Json<autofill::AutofillRequest>,
+) -> Result<Json<autofill::AutofillResponse>, (StatusCode, String)> {
+    autofill::get_autofill_suggestions(graph, claims.user_id, request).await
 }

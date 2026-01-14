@@ -168,11 +168,6 @@ async fn generate_events_for_routine(
     start_from: i64,
     until: i64,
 ) -> Result<(), String> {
-    let frequency = routine
-        .frequency
-        .as_ref()
-        .ok_or("Routine missing frequency")?;
-
     let instance_id = format!("{}-{}", routine_id, Utc::now().timestamp_millis());
 
     // Load skip exceptions for this routine in the generation window (inclusive)
@@ -186,20 +181,57 @@ async fn generate_events_for_routine(
     .map_err(|e| format!("Failed to fetch routine exceptions: {}", e))?;
     let skip_set: HashSet<i64> = skip_ts.into_iter().collect();
 
-    // Calculate event timestamps based on frequency
+    // Fetch routine states (overrides)
+    // We fetch ID as well to implement "latest edit wins" policy for overlaps
+    let states_query = query(
+        "MATCH (r:Goal)-[:HAS_STATE]->(s:Goal) 
+         WHERE id(r) = $routine_id 
+         AND s.goal_type = 'routine'
+         RETURN s, id(s) as state_id"
+    )
+    .param("routine_id", routine_id);
+
+    let mut states_result = graph.execute(states_query)
+        .await
+        .map_err(|e| format!("Failed to fetch routine states: {}", e))?;
+    
+    let mut states: Vec<(i64, Goal)> = Vec::new();
+    while let Some(row) = states_result.next().await.map_err(|e| e.to_string())? {
+        if let (Ok(state), Ok(id)) = (row.get("s"), row.get("state_id")) {
+            states.push((id, state));
+        }
+    }
+
+    // Calculate event timestamps
     let mut current_time = start_from;
     let mut event_count = 0;
 
     while current_time <= until {
+        // Determine effective routine state for current_time
+        // Filter for states covering this time, then pick the one with highest ID (latest created)
+        let effective_routine = states.iter()
+            .filter(|(_, s)| {
+                let start = s.start_timestamp.unwrap_or(0);
+                let end = s.end_timestamp.unwrap_or(i64::MAX);
+                current_time >= start && current_time <= end
+            })
+            .max_by_key(|(id, _)| id)
+            .map(|(_, s)| s)
+            .unwrap_or(routine);
+
+        let frequency = effective_routine
+            .frequency
+            .as_ref()
+            .ok_or_else(|| format!("Routine missing frequency (ID: {:?})", effective_routine.id))?;
+
         // Check if this day is valid for the routine's frequency pattern
         if !is_valid_day_for_routine(current_time, frequency)? {
-            // Skip to next occurrence if this day doesn't match the pattern
             current_time = calculate_next_occurrence(current_time, frequency)?;
             continue;
         }
 
         // Apply routine_time to the current timestamp
-        let scheduled_timestamp = if let Some(routine_time) = routine.routine_time {
+        let scheduled_timestamp = if let Some(routine_time) = effective_routine.routine_time {
             set_time_of_day(current_time, routine_time)
         } else {
             current_time
@@ -211,15 +243,15 @@ async fn generate_events_for_routine(
             continue;
         }
 
-        // If the calculated timestamp would exceed the routine's end date (when set), stop generation
+        // If the calculated timestamp would exceed the GLOBAL routine's end date, stop generation.
+        // We always respect the parent routine's end date as the master stop signal.
         if let Some(end_ts) = routine.end_timestamp {
             if scheduled_timestamp > end_ts {
                 break;
             }
         }
 
-        // Check if an event already exists at this timestamp for this routine (deleted or not).
-        // If we find a soft-deleted event and there is no skip exception, revive it instead of creating a duplicate.
+        // Check/Create/Revive event
         let mut existing_result = graph
             .execute(
                 query(
@@ -241,19 +273,27 @@ async fn generate_events_for_routine(
             let event_id: i64 = row.get("event_id").unwrap_or(0);
 
             if existing_event.is_deleted.unwrap_or(false) {
-                graph
-                    .run(
-                        query(
-                            "MATCH (e:Goal)
-                             WHERE id(e) = $event_id
-                             SET e.is_deleted = false,
-                                 e.resolution_status = 'pending',
-                                 e.resolved_at = null",
-                        )
-                        .param("event_id", event_id),
+                // Revive and update properties to match effective routine
+                graph.run(
+                    query(
+                        "MATCH (e:Goal)
+                         WHERE id(e) = $event_id
+                         SET e.is_deleted = false,
+                             e.resolution_status = 'pending',
+                             e.resolved_at = null,
+                             e.name = $name,
+                             e.duration = $duration,
+                             e.priority = $priority,
+                             e.description = $desc"
                     )
-                    .await
-                    .map_err(|e| format!("Failed to revive deleted event: {}", e))?;
+                    .param("event_id", event_id)
+                    .param("name", effective_routine.name.clone())
+                    .param("duration", effective_routine.duration.unwrap_or(60))
+                    .param("priority", effective_routine.priority.clone().unwrap_or_default())
+                    .param("desc", effective_routine.description.clone().unwrap_or_default())
+                )
+                .await
+                .map_err(|e| format!("Failed to revive deleted event: {}", e))?;
                 event_count += 1;
             }
         } else {
@@ -261,16 +301,16 @@ async fn generate_events_for_routine(
                 "MATCH (r:Goal)
                  WHERE id(r) = $routine_id
                  CREATE (e:Goal {
-                     name: r.name,
+                     name: $name,
                      goal_type: 'event',
                      scheduled_timestamp: $timestamp,
-                     duration: r.duration,
+                     duration: $duration,
                      parent_id: id(r),
                      parent_type: 'routine',
                      routine_instance_id: $instance_id,
                      user_id: r.user_id,
-                     priority: r.priority,
-                     description: r.description,
+                     priority: $priority,
+                     description: $desc,
                      resolution_status: 'pending',
                      resolved_at: null,
                      is_deleted: false
@@ -279,7 +319,11 @@ async fn generate_events_for_routine(
             )
             .param("routine_id", routine_id)
             .param("timestamp", scheduled_timestamp)
-            .param("instance_id", instance_id.clone());
+            .param("instance_id", instance_id.clone())
+            .param("name", effective_routine.name.clone())
+            .param("duration", effective_routine.duration.unwrap_or(60))
+            .param("priority", effective_routine.priority.clone().unwrap_or_default())
+            .param("desc", effective_routine.description.clone().unwrap_or_default());
 
             graph
                 .run(create_query)
@@ -290,7 +334,20 @@ async fn generate_events_for_routine(
         }
 
         // Calculate next occurrence based on frequency
-        current_time = calculate_next_occurrence(current_time, frequency)?;
+        let calculated_next = calculate_next_occurrence(current_time, frequency)?;
+        
+        // Peek ahead: if a state override starts BEFORE calculated_next, we must land on it
+        // to evaluate it properly.
+        let next_state_start = states.iter()
+            .map(|(_, s)| s.start_timestamp.unwrap_or(0))
+            .filter(|&start| start > current_time && start < calculated_next)
+            .min();
+            
+        if let Some(start) = next_state_start {
+            current_time = start;
+        } else {
+            current_time = calculated_next;
+        }
     }
 
     if event_count > 0 {
