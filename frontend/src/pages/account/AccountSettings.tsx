@@ -37,8 +37,28 @@ import {
     CheckCircle,
     CalendarMonth,
     Sync,
+    Send,
+    Add,
+    Telegram,
 } from "@mui/icons-material";
-import { privateRequest, getGoogleStatus, getGCalSettings, updateGCalSettings, getGoogleCalendars, unlinkGoogleAccount, CalendarListEntry, GoogleStatusResponse, GCalSettingsResponse } from "../../shared/utils/api";
+import {
+    privateRequest,
+    getGoogleStatus,
+    getGCalSettings,
+    updateGCalSettings,
+    getGoogleCalendars,
+    unlinkGoogleAccount,
+    getTelegramSettings,
+    updateTelegramSettings,
+    sendTelegramTest,
+    getNotificationSettings,
+    updateNotificationSettings,
+    TelegramSettings,
+    NotificationSettings,
+    CalendarListEntry,
+    GoogleStatusResponse,
+    GCalSettingsResponse
+} from "../../shared/utils/api";
 import { usePushNotifications, useInstallPrompt } from "../../shared/hooks/usePushNotifications";
 
 interface AuthMethod {
@@ -76,6 +96,16 @@ const AccountSettings: React.FC = () => {
     const [calendars, setCalendars] = useState<CalendarListEntry[]>([]);
     const [gcalLoading, setGcalLoading] = useState(false);
 
+    // Telegram state
+    const [telegramSettings, setTelegramSettings] = useState<TelegramSettings | null>(null);
+    const [telegramBotToken, setTelegramBotToken] = useState("");
+    const [telegramLoading, setTelegramLoading] = useState(false);
+
+    // Notification Settings state
+    const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
+    const [notificationSettingsLoading, setNotificationSettingsLoading] = useState(false);
+    const [newOffset, setNewOffset] = useState("");
+
     const loadAccountInfo = async () => {
         try {
             setLoading(true);
@@ -91,6 +121,8 @@ const AccountSettings: React.FC = () => {
     useEffect(() => {
         loadAccountInfo();
         loadGoogleCalendarSettings();
+        loadTelegramSettings();
+        loadNotificationSettings();
     }, []);
 
     const loadGoogleCalendarSettings = async () => {
@@ -117,6 +149,104 @@ const AccountSettings: React.FC = () => {
             console.error('Failed to load Google Calendar settings:', err);
         } finally {
             setGcalLoading(false);
+        }
+    };
+
+    const loadTelegramSettings = async () => {
+        try {
+            setTelegramLoading(true);
+            const settings = await getTelegramSettings();
+            setTelegramSettings(settings);
+        } catch (err) {
+            console.error('Failed to load Telegram settings:', err);
+        } finally {
+            setTelegramLoading(false);
+        }
+    };
+
+    const loadNotificationSettings = async () => {
+        try {
+            setNotificationSettingsLoading(true);
+            const settings = await getNotificationSettings();
+            setNotificationSettings(settings);
+        } catch (err) {
+            console.error('Failed to load notification settings:', err);
+        } finally {
+            setNotificationSettingsLoading(false);
+        }
+    };
+
+    const handleTelegramSave = async () => {
+        if (!telegramSettings) return;
+        try {
+            setTelegramLoading(true);
+            await updateTelegramSettings({
+                chat_id: telegramSettings.chat_id,
+                bot_token: telegramBotToken || undefined,
+            });
+            setTelegramBotToken("");
+            setSnackbarMessage('Telegram settings saved');
+            loadTelegramSettings();
+        } catch (err) {
+            setError('Failed to save Telegram settings');
+        } finally {
+            setTelegramLoading(false);
+        }
+    };
+
+    const handleTelegramTest = async () => {
+        try {
+            await sendTelegramTest();
+            setSnackbarMessage('Test Telegram message sent!');
+        } catch (err: any) {
+            setError(err.response?.data || 'Failed to send test Telegram message');
+        }
+    };
+
+    const handleNotificationSettingChange = async (key: keyof NotificationSettings, value: any) => {
+        if (!notificationSettings) return;
+        const updated = { ...notificationSettings, [key]: value };
+        try {
+            await updateNotificationSettings(updated);
+            setNotificationSettings(updated);
+            setSnackbarMessage('Notification settings updated');
+        } catch (err) {
+            setError('Failed to update notification settings');
+        }
+    };
+
+    const handleAddOffset = async () => {
+        if (!notificationSettings || !newOffset) return;
+        const offset = parseInt(newOffset, 10);
+        if (isNaN(offset)) return;
+        if (notificationSettings.reminder_offsets_minutes.includes(offset)) return;
+
+        const updated = {
+            ...notificationSettings,
+            reminder_offsets_minutes: [...notificationSettings.reminder_offsets_minutes, offset].sort((a, b) => a - b)
+        };
+        try {
+            await updateNotificationSettings(updated);
+            setNotificationSettings(updated);
+            setNewOffset("");
+            setSnackbarMessage('Reminder offset added');
+        } catch (err) {
+            setError('Failed to add reminder offset');
+        }
+    };
+
+    const handleRemoveOffset = async (offset: number) => {
+        if (!notificationSettings) return;
+        const updated = {
+            ...notificationSettings,
+            reminder_offsets_minutes: notificationSettings.reminder_offsets_minutes.filter(o => o !== offset)
+        };
+        try {
+            await updateNotificationSettings(updated);
+            setNotificationSettings(updated);
+            setSnackbarMessage('Reminder offset removed');
+        } catch (err) {
+            setError('Failed to remove reminder offset');
         }
     };
 
@@ -228,7 +358,7 @@ const AccountSettings: React.FC = () => {
             <Box sx={{ mt: 4 }}>
                 <Paper elevation={3} sx={{ p: 4 }}>
                     <Typography variant="h4" component="h1" gutterBottom>
-                        Account Settings
+                        Settings
                     </Typography>
 
                     {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -375,6 +505,177 @@ const AccountSettings: React.FC = () => {
 
                             <Divider sx={{ mb: 4 }} />
 
+                            {/* Notification Preferences Section */}
+                            <Box sx={{ mb: 4 }}>
+                                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <NotificationsActive />
+                                    Notification Preferences
+                                </Typography>
+
+                                {notificationSettingsLoading ? (
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                                        <CircularProgress size={24} />
+                                    </Box>
+                                ) : notificationSettings ? (
+                                    <Card sx={{ mb: 2 }}>
+                                        <CardContent>
+                                            <FormControlLabel
+                                                control={
+                                                    <Switch
+                                                        checked={notificationSettings.notifications_enabled}
+                                                        onChange={(e) => handleNotificationSettingChange('notifications_enabled', e.target.checked)}
+                                                    />
+                                                }
+                                                label="Enable all notifications"
+                                                sx={{ mb: 2 }}
+                                            />
+
+                                            <Divider sx={{ my: 2 }} />
+
+                                            <Typography variant="subtitle2" gutterBottom>Channels</Typography>
+                                            <Box sx={{ display: 'flex', gap: 4, mb: 3 }}>
+                                                <FormControlLabel
+                                                    control={
+                                                        <Switch
+                                                            checked={notificationSettings.notify_via_push}
+                                                            onChange={(e) => handleNotificationSettingChange('notify_via_push', e.target.checked)}
+                                                            disabled={!notificationSettings.notifications_enabled}
+                                                        />
+                                                    }
+                                                    label="Push"
+                                                />
+                                                <FormControlLabel
+                                                    control={
+                                                        <Switch
+                                                            checked={notificationSettings.notify_via_telegram}
+                                                            onChange={(e) => handleNotificationSettingChange('notify_via_telegram', e.target.checked)}
+                                                            disabled={!notificationSettings.notifications_enabled}
+                                                        />
+                                                    }
+                                                    label="Telegram"
+                                                />
+                                            </Box>
+
+                                            <Typography variant="subtitle2" gutterBottom>What to notify on</Typography>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 3 }}>
+                                                <FormControlLabel
+                                                    control={
+                                                        <Switch
+                                                            checked={notificationSettings.notify_high_priority_events}
+                                                            onChange={(e) => handleNotificationSettingChange('notify_high_priority_events', e.target.checked)}
+                                                            disabled={!notificationSettings.notifications_enabled}
+                                                        />
+                                                    }
+                                                    label="High priority events (starting soon)"
+                                                />
+                                                <FormControlLabel
+                                                    control={
+                                                        <Switch
+                                                            checked={notificationSettings.notify_event_reminders}
+                                                            onChange={(e) => handleNotificationSettingChange('notify_event_reminders', e.target.checked)}
+                                                            disabled={!notificationSettings.notifications_enabled}
+                                                        />
+                                                    }
+                                                    label="Event reminders"
+                                                />
+                                            </Box>
+
+                                            <Typography variant="subtitle2" gutterBottom>Reminder offsets (minutes before)</Typography>
+                                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                                                {notificationSettings.reminder_offsets_minutes.map(offset => (
+                                                    <Chip
+                                                        key={offset}
+                                                        label={offset >= 1440 ? `${offset / 1440}d (${offset}m)` : offset >= 60 ? `${offset / 60}h (${offset}m)` : `${offset}m`}
+                                                        onDelete={() => handleRemoveOffset(offset)}
+                                                        disabled={!notificationSettings.notifications_enabled}
+                                                    />
+                                                ))}
+                                            </Box>
+                                            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                                <TextField
+                                                    size="small"
+                                                    label="Add offset (min)"
+                                                    type="number"
+                                                    value={newOffset}
+                                                    onChange={(e) => setNewOffset(e.target.value)}
+                                                    disabled={!notificationSettings.notifications_enabled}
+                                                />
+                                                <IconButton 
+                                                    onClick={handleAddOffset} 
+                                                    disabled={!newOffset || !notificationSettings.notifications_enabled}
+                                                    color="primary"
+                                                >
+                                                    <Add />
+                                                </IconButton>
+                                            </Box>
+                                        </CardContent>
+                                    </Card>
+                                ) : (
+                                    <Typography color="text.secondary">Failed to load notification settings</Typography>
+                                )}
+                            </Box>
+
+                            <Divider sx={{ mb: 4 }} />
+
+                            {/* Telegram Section */}
+                            <Box sx={{ mb: 4 }}>
+                                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Telegram />
+                                    Telegram Bot Config
+                                </Typography>
+
+                                {telegramLoading ? (
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                                        <CircularProgress size={24} />
+                                    </Box>
+                                ) : telegramSettings ? (
+                                    <Card sx={{ mb: 2 }}>
+                                        <CardContent>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                                <TextField
+                                                    fullWidth
+                                                    label="Telegram Chat ID"
+                                                    value={telegramSettings.chat_id || ""}
+                                                    onChange={(e) => setTelegramSettings({ ...telegramSettings, chat_id: e.target.value })}
+                                                    placeholder="e.g. 123456789"
+                                                    helperText="Use @userinfobot or similar to find your ID"
+                                                />
+                                                <TextField
+                                                    fullWidth
+                                                    label="Telegram Bot Token"
+                                                    type="password"
+                                                    value={telegramBotToken}
+                                                    onChange={(e) => setTelegramBotToken(e.target.value)}
+                                                    placeholder={telegramSettings.has_bot_token ? "•••••••••••• (saved)" : "Your bot token from @BotFather"}
+                                                    helperText={telegramSettings.has_bot_token ? "Leave blank to keep existing token" : "Enter the API token for your personal bot"}
+                                                />
+                                                <Box sx={{ display: 'flex', gap: 2 }}>
+                                                    <Button
+                                                        variant="contained"
+                                                        onClick={handleTelegramSave}
+                                                        disabled={telegramLoading}
+                                                    >
+                                                        Save Telegram Config
+                                                    </Button>
+                                                    <Button
+                                                        variant="outlined"
+                                                        startIcon={<Send />}
+                                                        onClick={handleTelegramTest}
+                                                        disabled={!telegramSettings.has_bot_token && !telegramBotToken}
+                                                    >
+                                                        Send Test Message
+                                                    </Button>
+                                                </Box>
+                                            </Box>
+                                        </CardContent>
+                                    </Card>
+                                ) : (
+                                    <Typography color="text.secondary">Failed to load Telegram settings</Typography>
+                                )}
+                            </Box>
+
+                            <Divider sx={{ mb: 4 }} />
+                            
                             {/* Push Notifications Section */}
                             <Box sx={{ mb: 4 }}>
                                 <Typography variant="h6" gutterBottom>

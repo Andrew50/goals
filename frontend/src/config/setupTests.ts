@@ -71,9 +71,12 @@ if (typeof global.structuredClone === 'undefined') {
 
 // Mock react-dnd modules
 jest.mock('react-dnd', () => {
+    // Use plain functions (not jest.fn) so global `jest.resetAllMocks()` in other tests
+    // doesn't wipe the implementation and cause destructuring failures.
+    const noopRef = (_node?: any) => { };
     return {
-        useDrop: jest.fn().mockReturnValue([{}, jest.fn()]),
-        useDrag: jest.fn().mockReturnValue([{}, jest.fn()]),
+        useDrop: () => [{}, noopRef],
+        useDrag: () => [{}, noopRef, noopRef],
         DndProvider: ({ children }: { children: any }) => children
     };
 });

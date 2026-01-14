@@ -197,7 +197,11 @@ const Calendar: React.FC = () => {
   const [selectedResizeScope, setSelectedResizeScope] = useState<'single' | 'all' | 'future'>('single');
   const calendarRef = useRef<FullCalendar | null>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
+  const calendarMainRef = useRef<HTMLDivElement>(null);
   const dataLoadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const selectedEventIdsRef = useRef<string[]>([]);
+  const selectionAtMouseDownRef = useRef<number>(0);
 
   // Task date range warning dialog state
   const [taskDateWarningDialog, setTaskDateWarningDialog] = useState<{
@@ -235,8 +239,12 @@ const Calendar: React.FC = () => {
     loadingCalendars: false
   });
 
-  // Multi-select state for calendar events
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    console.log('[Calendar][RefSync] Updating selectedEventIdsRef. New count:', selectedEventIds.length);
+    selectedEventIdsRef.current = selectedEventIds;
+  }, [selectedEventIds]);
 
   // Queue for multi-move routine reschedule dialogs
   const [routineRescheduleQueue, setRoutineRescheduleQueue] = useState<
@@ -393,6 +401,34 @@ const Calendar: React.FC = () => {
     };
   }, [debugMode]);
 
+  // Handle immediate selection clearing on new non-shift drag
+  useEffect(() => {
+    const calendarEl = calendarMainRef.current;
+    if (!calendarEl) return;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      // Record selection state at start of click
+      selectionAtMouseDownRef.current = selectedEventIdsRef.current.length;
+      
+      console.log('[Calendar][handleMouseDown] Selection count:', selectionAtMouseDownRef.current);
+      
+      if ((e.target as HTMLElement).closest('.fc-event, .fc-more-link, .fc-popover')) {
+        return;
+      }
+
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        if (selectionAtMouseDownRef.current > 0) {
+          console.log('[Calendar][handleMouseDown] Clearing selection for visual feedback.');
+          selectedEventIdsRef.current = []; 
+          setSelectedEventIds([]);
+        }
+      }
+    };
+
+    calendarEl.addEventListener('mousedown', handleMouseDown, true);
+    return () => calendarEl.removeEventListener('mousedown', handleMouseDown, true);
+  }, []); // Stable container, no need for complex dependencies
+
   // Drive routine reschedule dialogs from queue (multi-move scenarios)
   useEffect(() => {
     if (routineRescheduleDialog.isOpen) return;
@@ -436,7 +472,28 @@ const Calendar: React.FC = () => {
   };
 
   const handleDateClick = (arg: any) => {
-    console.log('[Calendar] Date clicked:', arg);
+    const jsEvent = arg.jsEvent as MouseEvent;
+    console.log('[Calendar][handleDateClick] Triggered. Selections at mousedown:', selectionAtMouseDownRef.current);
+
+    // 1. If shift/ctrl/meta is held on background, do absolutely nothing (no menu, no deselect)
+    if (jsEvent?.shiftKey || jsEvent?.ctrlKey || jsEvent?.metaKey) {
+      console.log('[Calendar][handleDateClick] Modifier held, ignoring.');
+      return;
+    }
+
+    // 2. If events were selected when the user started this click, this click 
+    // should only deselect (which is handled by FC or mousedown), not open the menu.
+    if (selectionAtMouseDownRef.current > 0) {
+      console.log('[Calendar][handleDateClick] Selection existed at start of click, suppressing menu.');
+      // Ensure we clear selection if it's still there for some reason
+      if (selectedEventIdsRef.current.length > 0) {
+        setSelectedEventIds([]);
+        selectedEventIdsRef.current = [];
+      }
+      return;
+    }
+
+    console.log('[Calendar][handleDateClick] No selection existed at start, opening goal menu.');
     const clickedDate = arg.date instanceof Date ? arg.date : new Date(arg.date);
     console.log('[Calendar] Parsed date:', clickedDate);
 
@@ -489,12 +546,13 @@ const Calendar: React.FC = () => {
   };
 
   const handleRangeSelect = (selectInfo: any) => {
+    const isShift = !!selectInfo.jsEvent?.shiftKey;
     const rangeStart =
       selectInfo.start instanceof Date ? selectInfo.start : new Date(selectInfo.start);
     const rangeEnd =
       selectInfo.end instanceof Date ? selectInfo.end : new Date(selectInfo.end);
 
-    const eventsToSelect = (state.events || []).filter((evt) => {
+    const eventsInRange = (state.events || []).filter((evt) => {
       if (!evt?.start || !evt?.end) return false;
 
       // Exclude all-day events from drag selection
@@ -507,8 +565,24 @@ const Calendar: React.FC = () => {
       return rangesOverlap(start, end, rangeStart, rangeEnd);
     });
 
-    const ids = eventsToSelect.map((evt) => String(evt.id));
-    setSelectedEventIds(ids);
+    const idsInRange = eventsInRange.map((evt) => String(evt.id));
+
+    if (isShift) {
+      setSelectedEventIds((prev) => {
+        const next = [...prev];
+        idsInRange.forEach((id) => {
+          if (next.includes(id)) {
+            const idx = next.indexOf(id);
+            next.splice(idx, 1);
+          } else {
+            next.push(id);
+          }
+        });
+        return next;
+      });
+    } else {
+      setSelectedEventIds(idsInRange);
+    }
 
     // Remove the visual selection block but keep the selected events
     try {
@@ -518,8 +592,15 @@ const Calendar: React.FC = () => {
     }
   };
 
-  const handleCalendarUnselect = () => {
-    // Intentionally no-op so keyboard/auto unselect does not clear multi-selection
+  const handleCalendarUnselect = (arg: any) => {
+    console.log('[Calendar][handleCalendarUnselect] Triggered. Selections in ref:', selectedEventIdsRef.current.length);
+    // If the user clicked the background to unselect the current time range
+    // AND we have events selected, we want to make sure we don't open the menu.
+    if (arg?.jsEvent && selectedEventIdsRef.current.length > 0) {
+      console.log('[Calendar][handleCalendarUnselect] Clearing selections.');
+      setSelectedEventIds([]);
+      selectedEventIdsRef.current = [];
+    }
   };
 
   const handleEventDidMount = (info: any) => {
@@ -1532,7 +1613,7 @@ const Calendar: React.FC = () => {
             />
           </div>
         )}
-        <div className="calendar-main" style={{ position: 'relative' }}>
+        <div className="calendar-main" ref={calendarMainRef} style={{ position: 'relative' }}>
           {state.isLoading && (
             <div className="calendar-loading-indicator page-loading-overlay">
               <div className="loading-spinner" />

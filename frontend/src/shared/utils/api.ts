@@ -344,34 +344,45 @@ export const getTaskEvents = async (taskId: number): Promise<{
 export const updateRoutineEvent = async (
     eventId: number,
     newTimestamp: Date,
-    updateScope: 'single' | 'all' | 'future'
+    updateScope: 'single' | 'all' | 'future' | 'range',
+    rangeStart?: Date,
+    rangeEnd?: Date
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEvent called with:', {
         eventId,
         newTimestamp: newTimestamp.toISOString(),
         newTimestampMs: newTimestamp.getTime(),
-        updateScope
+        updateScope,
+        rangeStart,
+        rangeEnd
     });
 
-    // Build query parameters in case the backend expects them in the URL. Send them in the body as well for backward-compat.
-    const query = `new_timestamp=${newTimestamp.getTime()}&update_scope=${updateScope}`;
-    const url = `events/${eventId}/routine-update?${query}`;
-
-    console.log('📡 [API] Making request to:', url);
-    console.log('📦 [API] Request body:', {
+    const requestData: any = {
         new_timestamp: newTimestamp.getTime(),
         update_scope: updateScope
-    });
+    };
+
+    if (rangeStart) requestData.range_start = rangeStart.getTime();
+    if (rangeEnd) requestData.range_end = rangeEnd.getTime();
+
+    // Build query parameters in case the backend expects them in the URL.
+    const queryParts = [
+        `new_timestamp=${newTimestamp.getTime()}`,
+        `update_scope=${updateScope}`
+    ];
+    if (rangeStart) queryParts.push(`range_start=${rangeStart.getTime()}`);
+    if (rangeEnd) queryParts.push(`range_end=${rangeEnd.getTime()}`);
+    
+    const url = `events/${eventId}/routine-update?${queryParts.join('&')}`;
+
+    console.log('📡 [API] Making request to:', url);
+    console.log('📦 [API] Request body:', requestData);
 
     try {
         const response = await privateRequest<ApiGoal[]>(
             url,
             'PUT',
-            {
-                // Keep the body payload to maintain compatibility with older backend versions
-                new_timestamp: newTimestamp.getTime(),
-                update_scope: updateScope
-            }
+            requestData
         );
 
         console.log('✅ [API] updateRoutineEvent response:', response);
@@ -393,21 +404,27 @@ export const updateRoutineEventProperties = async (
         priority?: string;
         scheduled_timestamp?: Date;
     },
-    updateScope: 'single' | 'all' | 'future'
+    updateScope: 'single' | 'all' | 'future' | 'range',
+    rangeStart?: Date,
+    rangeEnd?: Date
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEventProperties called with:', {
         eventId,
         updates,
-        updateScope
+        updateScope,
+        rangeStart,
+        rangeEnd
     });
 
-    const requestData = {
+    const requestData: any = {
         update_scope: updateScope,
         duration: updates.duration,
         name: updates.name,
         description: updates.description,
         priority: updates.priority,
-        scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined
+        scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined,
+        range_start: rangeStart ? rangeStart.getTime() : undefined,
+        range_end: rangeEnd ? rangeEnd.getTime() : undefined
     };
 
     console.log('📡 [API] Making request to:', `events/${eventId}/routine-properties`);
@@ -648,4 +665,133 @@ export interface CalendarListEntry {
 
 export const getGoogleCalendars = async (): Promise<CalendarListEntry[]> => {
     return privateRequest<CalendarListEntry[]>('gcal/calendars', 'GET');
+};
+
+// Telegram API
+export interface TelegramSettings {
+    chat_id: string | null;
+    bot_token?: string;
+    has_bot_token?: boolean;
+}
+
+export const getTelegramSettings = async (): Promise<TelegramSettings> => {
+    return privateRequest<TelegramSettings>('telegram/settings', 'GET');
+};
+
+export const updateTelegramSettings = async (settings: TelegramSettings): Promise<void> => {
+    await privateRequest('telegram/settings', 'PUT', settings);
+};
+
+export const sendTelegramTest = async (): Promise<void> => {
+    await privateRequest('telegram/test', 'POST');
+};
+
+// Notification Settings API
+export interface NotificationSettings {
+    notifications_enabled: boolean;
+    notify_via_push: boolean;
+    notify_via_telegram: boolean;
+    notify_high_priority_events: boolean;
+    notify_event_reminders: boolean;
+    reminder_offsets_minutes: number[];
+}
+
+export const getNotificationSettings = async (): Promise<NotificationSettings> => {
+    return privateRequest<NotificationSettings>('notifications/settings', 'GET');
+};
+
+export const updateNotificationSettings = async (settings: NotificationSettings): Promise<void> => {
+    await privateRequest('notifications/settings', 'PUT', settings);
+};
+
+// Autofill API
+export interface GoalContext {
+    name?: string;
+    description?: string;
+    goal_type?: string;
+    start_timestamp?: number;
+    end_timestamp?: number;
+    scheduled_timestamp?: number;
+    duration?: number;
+    priority?: string;
+    resolution_status?: string;
+    frequency?: string;
+    routine_time?: number;
+    routine_type?: string;
+}
+
+export interface AllowedGoal {
+    id: number;
+    name: string;
+    goal_type: string;
+}
+
+export interface AutofillRequest {
+    field_name: string;
+    current_value?: string;
+    goal_context: GoalContext;
+    parent_ids?: number[];
+    child_ids?: number[];
+    allowed_values?: string[];
+    allowed_goals?: AllowedGoal[];
+}
+
+export interface AutofillResponse {
+    suggestions: string[];
+}
+
+export const getAutofillSuggestions = async (request: AutofillRequest): Promise<AutofillResponse> => {
+    return privateRequest<AutofillResponse>('autofill', 'POST', request);
+};
+
+// Goal relations API
+export interface GoalRelationsResponse {
+    parents: Goal[];
+    children: Goal[];
+}
+
+export const getGoalRelations = async (goalId: number): Promise<GoalRelationsResponse> => {
+    console.log('[API] getGoalRelations called', { goalId });
+    try {
+        const response = await privateRequest<{ parents: ApiGoal[]; children: ApiGoal[] }>(`goals/${goalId}/relations`, 'GET');
+        console.log('[API] getGoalRelations response', { 
+            parentsCount: response.parents.length, 
+            childrenCount: response.children.length 
+        });
+        return {
+            parents: response.parents.map(processGoalFromAPI),
+            children: response.children.map(processGoalFromAPI),
+        };
+    } catch (error) {
+        console.error('[API] getGoalRelations error', error);
+        throw error;
+    }
+};
+
+// Goal subgraph API (for MiniNetworkGraph)
+export interface GoalSubgraphResponse {
+    nodes: ApiGoal[];
+    edges: Array<{
+        from: number;
+        to: number;
+        relationship_type: string;
+    }>;
+    truncated: boolean;
+}
+
+export const getGoalSubgraph = async (goalId: number): Promise<{
+    nodes: Goal[];
+    edges: Array<{
+        from: number;
+        to: number;
+        relationship_type: string;
+    }>;
+    truncated: boolean;
+}> => {
+    const response = await privateRequest<GoalSubgraphResponse>(`goals/${goalId}/subgraph`, 'GET');
+    return {
+        nodes: response.nodes.map(processGoalFromAPI),
+        edges: response.edges,
+        truncated: response.truncated,
+    };
 };

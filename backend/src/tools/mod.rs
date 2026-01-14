@@ -1,4 +1,5 @@
 pub mod achievements;
+pub mod autofill;
 pub mod calendar;
 pub mod day;
 pub mod event;
@@ -7,8 +8,11 @@ pub mod goal;
 pub mod list;
 pub mod migration;
 pub mod network;
+pub mod notification_settings;
 pub mod push;
+pub mod relations;
 pub mod routine;
 pub mod routine_exceptions;
 pub mod stats;
+pub mod telegram;
 pub mod traversal;

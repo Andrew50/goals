@@ -1,6 +1,6 @@
-import { privateRequest, updateEvent } from '../../shared/utils/api';
+import { privateRequest, updateEvent, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
 import { timestampToDisplayString } from '../../shared/utils/time';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
@@ -8,12 +8,14 @@ import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import TodayIcon from '@mui/icons-material/Today';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import './Day.css';
 import '../../shared/styles/badges.css';
 import { useSearchParams } from 'react-router-dom';
 import CompletionBar from '../../shared/components/CompletionBar';
 import { ResolutionStatus } from '../../types/goals';
 import ResolutionStatusToggle from '../../shared/components/ResolutionStatusToggle';
+import { useDrag, useDrop } from 'react-dnd';
 
 // Event type returned from the day endpoint
 interface DayEvent {
@@ -32,58 +34,66 @@ interface DayEvent {
     routine_instance_id?: number;
 }
 
+// Default duration for events without duration (60 minutes)
+const DEFAULT_DURATION_MINUTES = 60;
+
+// Helper functions for event timing
+const getEventStartMs = (event: DayEvent) => event.scheduled_timestamp;
+const getEventDurationMs = (event: DayEvent) => (event.duration ?? DEFAULT_DURATION_MINUTES) * 60_000;
+const getEventEndMs = (event: DayEvent) => getEventStartMs(event) + getEventDurationMs(event);
+
+// Helper function to get start and end of a given date
+const getDayBounds = (date: Date) => {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+};
+
+// Helper function to check if a date is today
+const isToday = (date: Date) => {
+    const today = new Date();
+    return date.toDateString() === today.toDateString();
+};
+
+// Helper function to format date for display
+const formatDateForDisplay = (date: Date) => {
+    if (isToday(date)) {
+        return "Today's Tasks";
+    }
+
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (date.toDateString() === yesterday.toDateString()) {
+        return "Yesterday's Tasks";
+    }
+
+    if (date.toDateString() === tomorrow.toDateString()) {
+        return "Tomorrow's Tasks";
+    }
+
+    return date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
+    });
+};
+
+// Determine if an event is an all-day task
+const isAllDay = (event: DayEvent) => event.duration === 1440;
+
 const Day: React.FC = () => {
     const { openGoalMenu } = useGoalMenu();
     const [searchParams] = useSearchParams();
     const [events, setEvents] = useState<DayEvent[]>([]);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
     const [currentTime, setCurrentTime] = useState<Date>(new Date());
-
-    // Determine if an event is an all-day task
-    const isAllDay = (event: DayEvent) => event.duration === 1440;
-
-    // Helper function to get start and end of a given date
-    const getDayBounds = (date: Date) => {
-        const start = new Date(date);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(date);
-        end.setHours(23, 59, 59, 999);
-        return { start, end };
-    };
-
-    // Helper function to check if a date is today
-    const isToday = (date: Date) => {
-        const today = new Date();
-        return date.toDateString() === today.toDateString();
-    };
-
-    // Helper function to format date for display
-    const formatDateForDisplay = (date: Date) => {
-        if (isToday(date)) {
-            return "Today's Tasks";
-        }
-
-        const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
-        if (date.toDateString() === yesterday.toDateString()) {
-            return "Yesterday's Tasks";
-        }
-
-        if (date.toDateString() === tomorrow.toDateString()) {
-            return "Tomorrow's Tasks";
-        }
-
-        return date.toLocaleDateString('en-US', {
-            weekday: 'long',
-            month: 'long',
-            day: 'numeric',
-            year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
-        });
-    };
 
     // Function to fetch events for a specific date
     const fetchEventsForDate = useCallback((date: Date) => {
@@ -182,6 +192,187 @@ const Day: React.FC = () => {
         });
     };
 
+    // Compute new scheduled timestamp based on drop position
+    const computeNewTimestamp = useCallback((
+        draggedEvent: DayEvent,
+        anchorType: 'event' | 'now',
+        anchorEvent: DayEvent | null,
+        position: 'before' | 'after',
+        allEvents: DayEvent[]
+    ): number => {
+        const draggedDurationMs = getEventDurationMs(draggedEvent);
+        const currentTimeMs = currentTime.getTime();
+
+        if (anchorType === 'now') {
+            // Dropped relative to current time
+            if (position === 'after') {
+                return currentTimeMs;
+            } else {
+                // before: schedule so it ends at now
+                return currentTimeMs - draggedDurationMs;
+            }
+        }
+
+        // anchorType === 'event'
+        if (!anchorEvent) {
+            // End of list: find the last event and schedule after it
+            const sortedEvents = [...allEvents].sort((a, b) => getEventStartMs(a) - getEventStartMs(b));
+            if (sortedEvents.length > 0) {
+                const lastEvent = sortedEvents[sortedEvents.length - 1];
+                return getEventEndMs(lastEvent);
+            }
+            // Fallback: use current time
+            return currentTimeMs;
+        }
+
+        const anchorEndMs = getEventEndMs(anchorEvent);
+
+        if (position === 'after') {
+            // Schedule after the anchor event ends
+            return anchorEndMs;
+        } else {
+            // before: prefer placing in the gap by anchoring to the *previous* event's end time,
+            // rather than calculating "before this event" by subtracting duration.
+            const sortedEvents = [...allEvents].sort((a, b) => getEventStartMs(a) - getEventStartMs(b));
+            const anchorIndex = sortedEvents.findIndex(e => e.id === anchorEvent.id);
+            
+            if (anchorIndex > 0) {
+                // There's a previous event - default to after previous (per plan rule)
+                const previousEvent = sortedEvents[anchorIndex - 1];
+                return getEventEndMs(previousEvent);
+            } else {
+                // No previous event - snap to the start of the day
+                return getDayBounds(currentDate).start.getTime();
+            }
+        }
+    }, [currentTime, currentDate]);
+
+    // Helper to check if error is a task date range violation
+    const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
+        try {
+            // Check if it's already a parsed object
+            if (error?.response?.data?.error_type === 'task_date_range_violation') {
+                return true;
+            }
+            // Check if it's a JSON string that needs parsing
+            if (typeof error?.response?.data === 'string') {
+                try {
+                    const parsed = JSON.parse(error.response.data);
+                    return parsed?.error_type === 'task_date_range_violation';
+                } catch {
+                    // If parsing fails, check if the string contains the error type
+                    return error.response.data.includes('task_date_range_violation');
+                }
+            }
+            // Check if axios already parsed it but it's nested
+            if (error?.response?.data && typeof error.response.data === 'object') {
+                return error.response.data.error_type === 'task_date_range_violation';
+            }
+            return false;
+        } catch {
+            return false;
+        }
+    };
+
+    // Helper to extract validation error
+    const extractValidationError = (error: any): TaskDateValidationError | null => {
+        try {
+            // Check if it's already a parsed object
+            if (error?.response?.data?.error_type === 'task_date_range_violation') {
+                return error.response.data;
+            }
+            // Check if it's a JSON string that needs parsing
+            if (typeof error?.response?.data === 'string') {
+                try {
+                    const parsed = JSON.parse(error.response.data);
+                    if (parsed?.error_type === 'task_date_range_violation') {
+                        return parsed;
+                    }
+                } catch (parseError) {
+                    console.warn('Failed to parse error response:', parseError);
+                }
+            }
+            // Check if axios already parsed it but it's nested
+            if (error?.response?.data && typeof error.response.data === 'object') {
+                if (error.response.data.error_type === 'task_date_range_violation') {
+                    return error.response.data;
+                }
+            }
+            return null;
+        } catch (e) {
+            console.warn('Error extracting validation error:', e);
+            return null;
+        }
+    };
+
+    // Handle drop to reschedule event
+    const handleDrop = useCallback(async (
+        draggedEvent: DayEvent,
+        anchorType: 'event' | 'now',
+        anchorEvent: DayEvent | null,
+        position: 'before' | 'after'
+    ) => {
+        const newTimestampMs = computeNewTimestamp(draggedEvent, anchorType, anchorEvent, position, events);
+        const newTimestamp = new Date(newTimestampMs);
+
+        try {
+            await updateEvent(draggedEvent.id, {
+                scheduled_timestamp: newTimestamp,
+                move_reason: 'Reordered in Day view'
+            });
+            // Refresh events
+            fetchEventsForDate(currentDate);
+        } catch (error: any) {
+            console.log('Drop error caught:', error);
+            console.log('Error response data:', error?.response?.data);
+            console.log('Error response status:', error?.response?.status);
+            
+            // Check if it's a task date range violation
+            if (isTaskDateValidationError(error)) {
+                console.log('Detected task date range violation');
+                const validationError = extractValidationError(error);
+                console.log('Extracted validation error:', validationError);
+                
+                if (validationError && draggedEvent.parent_id) {
+                    try {
+                        console.log('Attempting to expand task date range for task:', draggedEvent.parent_id);
+                        // Automatically expand the task date range
+                        await expandTaskDateRange({
+                            task_id: draggedEvent.parent_id,
+                            new_start_timestamp: validationError.violation.suggested_task_start
+                                ? new Date(validationError.violation.suggested_task_start)
+                                : undefined,
+                            new_end_timestamp: validationError.violation.suggested_task_end
+                                ? new Date(validationError.violation.suggested_task_end)
+                                : undefined,
+                        });
+                        console.log('Task date range expanded, retrying update');
+                        // Retry the update
+                        await updateEvent(draggedEvent.id, {
+                            scheduled_timestamp: newTimestamp,
+                            move_reason: 'Reordered in Day view'
+                        });
+                        // Refresh events
+                        fetchEventsForDate(currentDate);
+                        return;
+                    } catch (expandError) {
+                        console.error('Error expanding task date range:', expandError);
+                        // Fall through to show error message
+                    }
+                } else {
+                    console.warn('No validation error or parent_id:', { validationError, parent_id: draggedEvent.parent_id });
+                }
+                // Show user-friendly error message
+                const errorMessage = validationError?.message || 'Event cannot be moved outside the task\'s date range.';
+                alert(errorMessage);
+            } else {
+                console.error('Error rescheduling event (not a date range violation):', error);
+            }
+            // Refresh anyway to get back to correct state
+            fetchEventsForDate(currentDate);
+        }
+    }, [events, currentDate, fetchEventsForDate, computeNewTimestamp]);
+
     const handleEventClick = (event: DayEvent) => {
         // Convert event to Goal format for GoalMenu
         const eventGoal = {
@@ -261,18 +452,152 @@ const Day: React.FC = () => {
         return Math.round((completed / eligibleEvents.length) * 100);
     };
 
-    // Current time line component
-    const CurrentTimeLine = () => {
+    // Draggable event component
+    const DraggableEvent: React.FC<{
+        event: DayEvent;
+        isResolved?: boolean;
+        onDrop: (draggedEvent: DayEvent, anchorType: 'event' | 'now', anchorEvent: DayEvent | null, position: 'before' | 'after') => void;
+    }> = ({ event, isResolved = false, onDrop }) => {
+        const cardRef = useRef<HTMLDivElement | null>(null);
+        const [hoverPosition, setHoverPosition] = useState<'before' | 'after' | null>(null);
+
+        const [{ isDragging }, drag, dragPreview] = useDrag({
+            type: 'day-event',
+            item: { event },
+            collect: (monitor) => ({
+                isDragging: monitor.isDragging()
+            })
+        });
+
+        const [{ isOver }, drop] = useDrop({
+            accept: 'day-event',
+            drop: (item: { event: DayEvent }) => {
+                if (item.event.id === event.id) return; // Don't drop on itself
+                // Determine position based on hover
+                const position = hoverPosition || 'after';
+                onDrop(item.event, 'event', event, position);
+            },
+            hover: (item, monitor) => {
+                if (item.event.id === event.id) return;
+                // Determine if we're in top or bottom half of the event
+                const clientOffset = monitor.getClientOffset();
+                if (clientOffset && cardRef.current) {
+                    const rect = cardRef.current.getBoundingClientRect();
+                    const relativeY = clientOffset.y - rect.top;
+                    const midPoint = rect.height / 2;
+                    setHoverPosition(relativeY < midPoint ? 'before' : 'after');
+                }
+            },
+            collect: (monitor) => ({
+                isOver: monitor.isOver()
+            })
+        });
+
+        const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
+        const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
+        const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
+        const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
+        const isCompleted = event.resolution_status === 'completed';
+
+        return (
+            <>
+                <Paper
+                    ref={(node) => {
+                        if (node) {
+                            (cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+                        }
+                        dragPreview(node);
+                        drop(node);
+                    }}
+                    className={`task-card ${isResolved ? 'resolved' : ''} ${isDragging ? 'dragging' : ''} ${
+                        isOver && hoverPosition === 'before' ? 'drop-indicator-before' : ''
+                    } ${
+                        isOver && hoverPosition === 'after' ? 'drop-indicator-after' : ''
+                    }`}
+                    style={{ opacity: isDragging ? 0.5 : 1 }}
+                >
+                    <div
+                        ref={drag}
+                        className="drag-handle"
+                        style={{ cursor: 'grab' }}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                    >
+                        <DragIndicatorIcon style={{ fontSize: '20px', color: '#718096' }} />
+                    </div>
+                    <div
+                        className="priority-strip"
+                        style={{ backgroundColor: goalStyle.borderColor }}
+                    />
+                    <div
+                        className="task-content"
+                        onClick={() => handleEventClick(event)}
+                        onContextMenu={(e) => handleEventContextMenu(e, event)}
+                    >
+                        <div className="task-header">
+                            <Typography variant="body1" className={`task-name ${isCompleted ? 'completed' : ''}`}>
+                                {event.name}
+                            </Typography>
+                            {timeString && (
+                                <span className="task-time">{timeString}</span>
+                            )}
+                        </div>
+                        {!isResolved && event.description && (
+                            <Typography variant="body2" className="task-description">
+                                {event.description}
+                            </Typography>
+                        )}
+                    </div>
+
+                    <Box onClick={(e) => e.stopPropagation()}>
+                        <ResolutionStatusToggle
+                            value={event.resolution_status}
+                            onChange={(status) => handleStatusChange(event, status)}
+                            ariaLabel="Set event status"
+                            dense
+                        />
+                    </Box>
+                </Paper>
+            </>
+        );
+    };
+
+    // Current time line component with built-in drop zones (before/after) without affecting layout
+    const CurrentTimeLine: React.FC<{
+        onDrop: (draggedEvent: DayEvent, anchorType: 'event' | 'now', anchorEvent: DayEvent | null, position: 'before' | 'after') => void;
+    }> = ({ onDrop }) => {
+        // Single explicit hitbox so "after now" is always targetable (including end-of-list).
+        // Current-time behaves like a zero-duration "event" at the current time for dropping.
+        const [{ isOverAfter }, dropAfter] = useDrop({
+            accept: 'day-event',
+            drop: (item: { event: DayEvent }) => {
+                onDrop(item.event, 'now', null, 'after');
+            },
+            collect: (monitor) => ({
+                isOverAfter: monitor.isOver()
+            })
+        });
+
         const timeString = currentTime.toLocaleTimeString('en-US', {
             hour: 'numeric',
             minute: '2-digit',
             hour12: true
         });
 
+        const showDropAfter = isOverAfter;
+
         return (
-            <div className="current-time-line">
-                <div className="current-time-circle"></div>
-                <div className="current-time-text">{timeString}</div>
+            <div
+                className="current-time-line"
+            >
+                    <div
+                        ref={dropAfter}
+                        className="current-time-drop-zone current-time-drop-zone--after"
+                        aria-hidden="true"
+                    />
+                    {showDropAfter && <div className="drop-indicator-line drop-indicator-line--after" />}
+                    <div className="current-time-circle"></div>
+                    <div className="current-time-text">{timeString}</div>
             </div>
         );
     };
@@ -329,46 +654,14 @@ const Day: React.FC = () => {
     };
     const resolvedTotalCount = resolvedCounts.completed + resolvedCounts.skipped + resolvedCounts.failed;
 
-    const renderResolvedEvent = (event: DayEvent) => {
-        const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
-        const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
-        const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
-        const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
-        const isCompleted = event.resolution_status === 'completed';
-
+    const renderResolvedEvent = (event: DayEvent, index: number, allEvents: DayEvent[]) => {
         return (
-            <Paper
+            <DraggableEvent
                 key={event.id}
-                className="task-card resolved"
-            >
-                <div
-                    className="priority-strip"
-                    style={{ backgroundColor: goalStyle.borderColor }}
-                />
-                <div
-                    className="task-content"
-                    onClick={() => handleEventClick(event)}
-                    onContextMenu={(e) => handleEventContextMenu(e, event)}
-                >
-                    <div className="task-header">
-                        <Typography variant="body1" className={`task-name ${isCompleted ? 'completed' : ''}`}>
-                            {event.name}
-                        </Typography>
-                        {timeString && (
-                            <span className="task-time">{timeString}</span>
-                        )}
-                    </div>
-                </div>
-
-                <Box onClick={(e) => e.stopPropagation()}>
-                    <ResolutionStatusToggle
-                        value={event.resolution_status}
-                        onChange={(status) => handleStatusChange(event, status)}
-                        ariaLabel="Set event status"
-                        dense
-                    />
-                </Box>
-            </Paper>
+                event={event}
+                isResolved={true}
+                onDrop={handleDrop}
+            />
         );
     };
 
@@ -377,6 +670,7 @@ const Day: React.FC = () => {
         { status: 'skipped', items: organized.resolved.skipped },
         { status: 'failed', items: organized.resolved.failed },
     ];
+    const nonEmptyResolvedGroups = resolvedGroups.filter(group => group.items.length > 0);
 
     return (
         <Box className="day-container">
@@ -455,7 +749,11 @@ const Day: React.FC = () => {
                         <div className="tasks-list">
                             {organized.todo.length === 0 ? (
                                 <>
-                                    {isToday(currentDate) && <CurrentTimeLine />}
+                                    {isToday(currentDate) && (
+                                        <CurrentTimeLine
+                                            onDrop={handleDrop}
+                                        />
+                                    )}
                                     <div className="empty-state">
                                         <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -475,52 +773,22 @@ const Day: React.FC = () => {
                             ) : (
                                 insertCurrentTimeLine(organized.todo).map((item, index) => {
                                     if (item.type === 'current-time') {
-                                        return <CurrentTimeLine key={`current-time-todo-${index}`} />;
+                                        return (
+                                            <CurrentTimeLine
+                                                key={`current-time-todo-${index}`}
+                                                onDrop={handleDrop}
+                                            />
+                                        );
                                     }
 
                                     const event = item.event!;
-                                    const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
-                                    const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
-                                    const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
-                                    const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
                                     return (
-                                        <Paper
+                                        <DraggableEvent
                                             key={event.id}
-                                            className="task-card"
-                                        >
-                                            <div 
-                                                className="priority-strip" 
-                                                style={{ backgroundColor: goalStyle.borderColor }}
-                                            />
-                                            <div
-                                                className="task-content"
-                                                onClick={() => handleEventClick(event)}
-                                                onContextMenu={(e) => handleEventContextMenu(e, event)}
-                                            >
-                                                <div className="task-header">
-                                                    <Typography variant="body1" className="task-name">
-                                                        {event.name}
-                                                    </Typography>
-                                                    {timeString && (
-                                                        <span className="task-time">{timeString}</span>
-                                                    )}
-                                                </div>
-                                                {event.description && (
-                                                    <Typography variant="body2" className="task-description">
-                                                        {event.description}
-                                                    </Typography>
-                                                )}
-                                            </div>
-
-                                            <Box onClick={(e) => e.stopPropagation()}>
-                                                <ResolutionStatusToggle
-                                                    value={event.resolution_status}
-                                                    onChange={(status) => handleStatusChange(event, status)}
-                                                    ariaLabel="Set event status"
-                                                    dense
-                                                />
-                                            </Box>
-                                        </Paper>
+                                            event={event}
+                                            isResolved={false}
+                                            onDrop={handleDrop}
+                                        />
                                     );
                                 })
                             )}
@@ -543,17 +811,23 @@ const Day: React.FC = () => {
                                     <p className="empty-state-text">No resolved tasks yet</p>
                                 </div>
                             ) : (
-                                resolvedGroups.map((group, groupIndex) => {
-                                    if (group.items.length === 0) return null;
+                                <>
+                                    {                                nonEmptyResolvedGroups.map((group, groupIndex) => {
                                     return (
                                         <div
                                             key={group.status}
                                             className={`resolved-group ${groupIndex > 0 ? 'not-first' : ''}`}
                                         >
-                                            {group.items.map(renderResolvedEvent)}
+                                            {group.items.map((event, index) => {
+                                                const allResolved = [...organized.resolved.completed, ...organized.resolved.skipped, ...organized.resolved.failed];
+                                                const sortedResolved = allResolved.sort((a, b) => getEventStartMs(a) - getEventStartMs(b));
+                                                const eventIndex = sortedResolved.findIndex(e => e.id === event.id);
+                                                return renderResolvedEvent(event, eventIndex, sortedResolved);
+                                            })}
                                         </div>
                                     );
-                                })
+                                })}
+                                </>
                             )}
                         </div>
                     </Box>

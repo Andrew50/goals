@@ -27,23 +27,23 @@ const GoalRelations: React.FC<GoalRelationsProps> = ({ goal, onClose, onUpdate }
 
   // Fetch all goals for fuzzy search
   useEffect(() => {
-    privateRequest<ApiGoal[]>('list').then(res => {
+    privateRequest<ApiGoal[]>('list').then((res: ApiGoal[]) => {
       setAllGoals(res.map(goalToLocal));
     });
   }, []);
 
   // Fetch network data and filter relatives
   useEffect(() => {
-    privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network').then(res => {
-      const nodes = res.nodes.map(g => {
+    privateRequest<{ nodes: ApiGoal[]; edges: NetworkEdge[] }>('network').then((res: { nodes: ApiGoal[]; edges: NetworkEdge[] }) => {
+      const nodes = res.nodes.map((g: ApiGoal) => {
         const local = goalToLocal(g);
         return { ...local, label: local.name, color: getGoalStyle(local).backgroundColor } as NetworkNode;
       });
-      const edges = res.edges.map(e => ({ ...e, id: `${e.from}-${e.to}` }));
-      const relatedEdges = edges.filter(e => e.from === goal.id || e.to === goal.id);
+      const edges = res.edges.map((e: NetworkEdge) => ({ ...e, id: `${e.from}-${e.to}` }));
+      const relatedEdges = edges.filter((e: NetworkEdge) => e.from === goal.id || e.to === goal.id);
       const ids = new Set<number>();
-      relatedEdges.forEach(e => { ids.add(e.from); ids.add(e.to); });
-      const relatedNodes = nodes.filter(n => ids.has(n.id));
+      relatedEdges.forEach((e: NetworkEdge) => { ids.add(e.from); ids.add(e.to); });
+      const relatedNodes = nodes.filter((n: NetworkNode) => ids.has(n.id));
       setNetworkData({ nodes: relatedNodes, edges: relatedEdges });
     });
   }, [goal.id]);

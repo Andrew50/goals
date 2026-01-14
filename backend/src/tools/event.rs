@@ -33,17 +33,23 @@ pub struct UpdateEventRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateRoutineEventRequest {
     pub new_timestamp: i64,
-    pub update_scope: String, // "single", "all", or "future"
+    pub update_scope: String, // "single", "all", "future", or "range"
+    pub range_start: Option<i64>,
+    pub range_end: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateRoutineEventPropertiesRequest {
-    pub update_scope: String, // "single", "all", or "future"
+    pub update_scope: String, // "single", "all", "future", or "range"
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub priority: Option<String>,
+    #[allow(dead_code)]
+    pub frequency: Option<String>,
+    pub range_start: Option<i64>,
+    pub range_end: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1361,6 +1367,90 @@ pub async fn update_routine_event_handler(
                 Ok(Json(vec![]))
             }
         }
+        "range" => {
+            println!("📅 [ROUTINE_UPDATE] Processing range update");
+            let range_start = request
+                .range_start
+                .ok_or((StatusCode::BAD_REQUEST, "Missing range_start".to_string()))?;
+            let range_end = request
+                .range_end
+                .ok_or((StatusCode::BAD_REQUEST, "Missing range_end".to_string()))?;
+
+            // Fetch parent routine to copy base properties
+            let parent_query = query("MATCH (r:Goal) WHERE id(r) = $parent_id RETURN r")
+                .param("parent_id", parent_id);
+            let mut parent_result = graph
+                .execute(parent_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let parent_routine: Goal = parent_result
+                .next()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+                .ok_or((StatusCode::NOT_FOUND, "Parent routine not found".to_string()))?
+                .get("r")
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Calculate time of day from new_timestamp
+            let day_in_ms: i64 = 24 * 60 * 60 * 1000;
+            let new_time_of_day = request.new_timestamp % day_in_ms;
+
+            // Create RoutineState node (inheriting from parent, overriding time and range)
+            let mut state_node = parent_routine.clone();
+            state_node.id = None;
+            state_node.routine_time = Some(new_time_of_day);
+            state_node.start_timestamp = Some(range_start);
+            state_node.end_timestamp = Some(range_end);
+            state_node.goal_type = GoalType::Routine; // It's a routine state, modeled as a routine node
+
+            // Create the state node
+            let created_state = state_node
+                .create_goal(&graph)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Link to parent with HAS_STATE
+            let link_query = query(
+                "MATCH (r:Goal), (s:Goal) WHERE id(r) = $rid AND id(s) = $sid CREATE (r)-[:HAS_STATE]->(s)",
+            )
+            .param("rid", parent_id)
+            .param("sid", created_state.id.unwrap());
+            graph
+                .run(link_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Soft-delete existing events in range to force regeneration
+            // Note: We only delete 'pending' or 'failed' events usually, but for a hard schedule change we might want to wipe 'completed' ones too?
+            // The plan says "Delete existing future/pending events".
+            // If the user changes history, we probably shouldn't delete completed events unless they really want to.
+            // But for "future" scope we delete completed ones too in `recompute_future_for_routine`.
+            // Let's stick to deleting non-deleted events.
+            let delete_query = query(
+                "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+                 WHERE id(r) = $rid
+                 AND e.goal_type = 'event'
+                 AND e.scheduled_timestamp >= $start
+                 AND e.scheduled_timestamp <= $end
+                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 SET e.is_deleted = true
+                 RETURN count(e) as count",
+            )
+            .param("rid", parent_id)
+            .param("start", range_start)
+            .param("end", range_end);
+            
+            graph
+                .run(delete_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            println!("✅ [ROUTINE_UPDATE] Range update applied. RoutineState created. Events invalidated.");
+            
+            // Return empty list as we haven't regenerated yet. 
+            // The frontend will likely trigger a refresh or we can trigger generation here.
+            Ok(Json(vec![]))
+        }
         _ => {
             println!(
                 "❌ [ROUTINE_UPDATE] Invalid update_scope: {}",
@@ -2210,7 +2300,7 @@ pub async fn update_routine_event_properties_handler(
                 ))
             }
         }
-        "all" | "future" => {
+        "all" |         "future" => {
             println!(
                 "🌐 [ROUTINE_PROPERTIES] Processing {} events property update",
                 request.update_scope
@@ -2412,6 +2502,97 @@ pub async fn update_routine_event_properties_handler(
                 println!("⚠️  [ROUTINE_PROPERTIES] No events returned from update query");
                 Ok(Json(vec![]))
             }
+        }
+        "range" => {
+            println!("📅 [ROUTINE_PROPERTIES] Processing range update");
+            let range_start = request
+                .range_start
+                .ok_or((StatusCode::BAD_REQUEST, "Missing range_start".to_string()))?;
+            let range_end = request
+                .range_end
+                .ok_or((StatusCode::BAD_REQUEST, "Missing range_end".to_string()))?;
+
+            // Fetch parent routine to copy base properties
+            let parent_query = query("MATCH (r:Goal) WHERE id(r) = $parent_id RETURN r")
+                .param("parent_id", parent_id);
+            let mut parent_result = graph
+                .execute(parent_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let parent_routine: Goal = parent_result
+                .next()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+                .ok_or((StatusCode::NOT_FOUND, "Parent routine not found".to_string()))?
+                .get("r")
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Create RoutineState node (inheriting from parent, overriding properties and range)
+            let mut state_node = parent_routine.clone();
+            state_node.id = None;
+            state_node.start_timestamp = Some(range_start);
+            state_node.end_timestamp = Some(range_end);
+            state_node.goal_type = GoalType::Routine;
+
+            // Apply property overrides
+            if let Some(timestamp) = request.scheduled_timestamp {
+                let day_in_ms: i64 = 24 * 60 * 60 * 1000;
+                let new_time_of_day = timestamp % day_in_ms;
+                state_node.routine_time = Some(new_time_of_day);
+            }
+            if let Some(duration) = request.duration {
+                state_node.duration = Some(duration);
+            }
+            if let Some(name) = &request.name {
+                state_node.name = name.clone();
+            }
+            if let Some(description) = &request.description {
+                state_node.description = Some(description.clone());
+            }
+            if let Some(priority) = &request.priority {
+                state_node.priority = Some(priority.clone());
+            }
+
+            // Create the state node
+            let created_state = state_node
+                .create_goal(&graph)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Link to parent with HAS_STATE
+            let link_query = query(
+                "MATCH (r:Goal), (s:Goal) WHERE id(r) = $rid AND id(s) = $sid CREATE (r)-[:HAS_STATE]->(s)",
+            )
+            .param("rid", parent_id)
+            .param("sid", created_state.id.unwrap());
+            graph
+                .run(link_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            // Soft-delete existing events in range
+            let delete_query = query(
+                "MATCH (r:Goal)-[:HAS_EVENT]->(e:Goal)
+                 WHERE id(r) = $rid
+                 AND e.goal_type = 'event'
+                 AND e.scheduled_timestamp >= $start
+                 AND e.scheduled_timestamp <= $end
+                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 SET e.is_deleted = true
+                 RETURN count(e) as count",
+            )
+            .param("rid", parent_id)
+            .param("start", range_start)
+            .param("end", range_end);
+            
+            graph
+                .run(delete_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            println!("✅ [ROUTINE_PROPERTIES] Range update applied. RoutineState created. Events invalidated.");
+            
+            Ok(Json(vec![]))
         }
         _ => {
             println!(

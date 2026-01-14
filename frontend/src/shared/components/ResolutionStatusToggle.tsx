@@ -91,11 +91,6 @@ const ResolutionStatusToggle: React.FC<ResolutionStatusToggleProps> = ({
           <RadioButtonUncheckedIcon />
         </ToggleButton>
       </Tooltip>
-      <Tooltip title="Completed" arrow>
-        <ToggleButton value="completed" aria-label="Mark as completed" sx={buttonSx('completed')}>
-          <CheckCircleIcon />
-        </ToggleButton>
-      </Tooltip>
       <Tooltip title="Skipped" arrow>
         <ToggleButton value="skipped" aria-label="Mark as skipped" sx={buttonSx('skipped')}>
           <BlockIcon />
@@ -104,6 +99,11 @@ const ResolutionStatusToggle: React.FC<ResolutionStatusToggleProps> = ({
       <Tooltip title="Failed" arrow>
         <ToggleButton value="failed" aria-label="Mark as failed" sx={buttonSx('failed')}>
           <CancelIcon />
+        </ToggleButton>
+      </Tooltip>
+      <Tooltip title="Completed" arrow>
+        <ToggleButton value="completed" aria-label="Mark as completed" sx={buttonSx('completed')}>
+          <CheckCircleIcon />
         </ToggleButton>
       </Tooltip>
     </ToggleButtonGroup>

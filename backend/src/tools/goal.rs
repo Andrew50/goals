@@ -448,7 +448,7 @@ pub async fn update_goal_handler(
     graph: Graph,
     id: i64,
     goal: Goal,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<(StatusCode, Json<Goal>), (StatusCode, String)> {
     // Build the SET clause dynamically based on provided fields
     // Always set updated_at on any update for conflict detection
     let mut set_clauses = vec!["g.name = $name", "g.goal_type = $goal_type", "g.updated_at = timestamp()"];
@@ -460,6 +460,87 @@ pub async fn update_goal_handler(
         ("name", goal.name.into()),
         ("goal_type", goal.goal_type.as_str().into()),
     ];
+
+    // ---------------------------
+    // Resolution semantics (mirror /goals/:id/resolve)
+    // ---------------------------
+    // If the client includes a resolution_status, we treat it as an intent to "resolve"
+    // and manage resolved_at consistently on the server (rather than trusting client-provided resolved_at).
+    //
+    // This prevents a common mismatch where resolution_status changes are sent without resolved_at,
+    // and also avoids unintentionally overwriting resolved_at when the status hasn't changed.
+    if let Some(status_raw) = &goal.resolution_status {
+        let desired = status_raw.trim().to_lowercase();
+        if !["pending", "completed", "failed", "skipped"].contains(&desired.as_str()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped",
+                    status_raw
+                ),
+            ));
+        }
+
+        // Load current status so we only update resolved_at when it actually changes (or is missing).
+        let check_query = query(
+            "MATCH (g:Goal)
+             WHERE id(g) = $id
+             RETURN g.goal_type as goal_type,
+                    coalesce(g.resolution_status, 'pending') as current_status,
+                    g.resolved_at as current_resolved_at",
+        )
+        .param("id", id);
+
+        let mut check_result = graph.execute(check_query).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database error checking goal resolution state: {}", e),
+            )
+        })?;
+
+        let row = check_result
+            .next()
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error reading goal resolution state: {}", e),
+                )
+            })?
+            .ok_or((StatusCode::NOT_FOUND, "Goal not found".to_string()))?;
+
+        let current_goal_type: String = row.get("goal_type").unwrap_or_else(|_| "unknown".to_string());
+        if current_goal_type == "routine" || current_goal_type == "directive" {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Cannot resolve goals of type: directive or routine".to_string(),
+            ));
+        }
+
+        let current_status: String = row
+            .get("current_status")
+            .unwrap_or_else(|_| "pending".to_string());
+        let current_resolved_at: Option<i64> = row.get("current_resolved_at").ok();
+
+        // Always set resolution_status if provided.
+        set_clauses.push("g.resolution_status = $resolution_status");
+        params.push(("resolution_status", desired.clone().into()));
+
+        // resolved_at logic:
+        // - pending => clear resolved_at
+        // - non-pending => set resolved_at only if status changed or resolved_at is missing
+        if desired == "pending" {
+            set_clauses.push("g.resolved_at = null");
+        } else if current_status != desired || current_resolved_at.is_none() {
+            let now = chrono::Utc::now().timestamp_millis();
+            set_clauses.push("g.resolved_at = $resolved_at");
+            params.push(("resolved_at", now.into()));
+        }
+    } else if let Some(resolved_at) = goal.resolved_at {
+        // Only accept direct resolved_at updates when no resolution_status is being set.
+        set_clauses.push("g.resolved_at = $resolved_at");
+        params.push(("resolved_at", resolved_at.into()));
+    }
 
     // Optional fields
     if let Some(desc) = &goal.description {
@@ -489,14 +570,6 @@ pub async fn update_goal_handler(
     if let Some(duration) = goal.duration {
         set_clauses.push("g.duration = $duration");
         params.push(("duration", duration.into()));
-    }
-    if let Some(resolution_status) = &goal.resolution_status {
-        set_clauses.push("g.resolution_status = $resolution_status");
-        params.push(("resolution_status", resolution_status.clone().into()));
-    }
-    if let Some(resolved_at) = goal.resolved_at {
-        set_clauses.push("g.resolved_at = $resolved_at");
-        params.push(("resolved_at", resolved_at.into()));
     }
     if let Some(frequency) = &goal.frequency {
         set_clauses.push("g.frequency = $frequency");
@@ -615,8 +688,9 @@ pub async fn update_goal_handler(
     }
 
     let query_str = format!(
-        "MATCH (g:Goal) WHERE id(g) = $id SET {}",
-        set_clauses.join(", ")
+        "MATCH (g:Goal) WHERE id(g) = $id SET {} {}",
+        set_clauses.join(", "),
+        GOAL_RETURN_QUERY
     );
 
     println!("Final query string: {}", query_str);
@@ -624,15 +698,36 @@ pub async fn update_goal_handler(
 
     let query = query(&query_str).params(params);
 
-    match graph.run(query).await {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => {
-            eprintln!("Error updating goal: {}", e);
-            Err((
+    let mut result = graph.execute(query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Error updating goal: {}", e),
+        )
+    })?;
+
+    if let Some(row) = result.next().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Error reading updated goal: {}", e),
+        )
+    })? {
+        let goal_data: serde_json::Value = row.get("g").map_err(|e| {
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Error updating goal: {}", e),
-            ))
-        }
+                format!("Error getting updated goal data: {}", e),
+            )
+        })?;
+
+        let updated_goal: Goal = serde_json::from_value(goal_data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error parsing updated goal data: {}", e),
+            )
+        })?;
+
+        Ok((StatusCode::OK, Json(updated_goal)))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Goal not found after update".to_string()))
     }
 }
 

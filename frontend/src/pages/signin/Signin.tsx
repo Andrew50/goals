@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Container, Box, Paper, Typography, TextField, Button, Alert, Divider } from "@mui/material";
 import { useAuth } from "../../shared/contexts/AuthContext";
+import { getAuthFriendlyErrorMessage } from "../../shared/utils/authErrorMessage";
 
 const Signin: React.FC = () => {
   const { login, googleLogin, isAuthenticated } = useAuth();
@@ -9,7 +10,7 @@ const Signin: React.FC = () => {
   const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | React.ReactNode | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,34 +30,7 @@ const Signin: React.FC = () => {
       setSuccess(message);
       navigate("/day");
     } catch (err: any) {
-      const status = err?.status || err?.response?.status;
-      let errorMessage = err?.message || "An error occurred during sign in";
-      if (status === 401) {
-        errorMessage = "Invalid username or password";
-      } else if (status === 404) {
-        errorMessage = "Service unavailable. Please try again.";
-      }
-
-      // Check for specific error messages and provide helpful guidance
-      if (errorMessage.includes("Google sign-in")) {
-        setError(
-          <div>
-            {errorMessage}
-            <br />
-            <br />
-            <Button
-              variant="outlined"
-              startIcon={<img src="https://developers.google.com/identity/images/g-logo.png" alt="Google" style={{ width: 16, height: 16 }} />}
-              onClick={handleGoogleSignin}
-              sx={{ mt: 1 }}
-            >
-              Sign in with Google instead
-            </Button>
-          </div>
-        );
-      } else {
-        setError(errorMessage);
-      }
+      setError(getAuthFriendlyErrorMessage(err));
     }
   };
 
@@ -68,7 +42,7 @@ const Signin: React.FC = () => {
       await googleLogin("");
       // The googleLogin function will redirect to Google, so we won't reach here normally
     } catch (err: any) {
-      setError(err.message || "An error occurred during Google sign in");
+      setError(getAuthFriendlyErrorMessage(err));
     }
   };
 
@@ -87,7 +61,6 @@ const Signin: React.FC = () => {
             Sign In
           </Typography>
 
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
           <form onSubmit={handleSignin}>
@@ -145,6 +118,8 @@ const Signin: React.FC = () => {
             />
             Sign in with Google
           </Button>
+
+          {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
         </Paper>
       </Box>
     </Container>

@@ -74,7 +74,7 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
 
             // Debug print the raw suggestions
             try {
-                const debug = result.suggestions.map(s => ({
+                const debug = result.suggestions.map((s: ScheduleOption) => ({
                     timestampMs: s.timestamp.getTime(),
                     iso: s.timestamp.toISOString(),
                     score: s.score,
@@ -86,8 +86,8 @@ const SmartScheduleDialog: React.FC<SmartScheduleDialogProps> = ({
             if (additionalDays) {
                 // Add to existing suggestions, removing duplicates
                 setSuggestions(prev => {
-                    const existingTimestamps = new Set(prev.map(s => s.timestamp.getTime()));
-                    const newSuggestions = result.suggestions.filter(s => !existingTimestamps.has(s.timestamp.getTime()));
+                    const existingTimestamps = new Set(prev.map((s: ScheduleOption) => s.timestamp.getTime()));
+                    const newSuggestions = result.suggestions.filter((s: ScheduleOption) => !existingTimestamps.has(s.timestamp.getTime()));
                     return [...prev, ...newSuggestions];
                 });
                 console.log('[SmartScheduleDialog] Appended suggestions, new total:', suggestions.length);

@@ -11,6 +11,7 @@ services:
           - goals_db
         environment:
           - GOALS_GEMINI_API_KEY=${GOALS_GEMINI_API_KEY}
+          - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
           - JWT_SECRET=${JWT_SECRET}
           - JWT_EXPIRATION=${JWT_EXPIRATION}
           - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}

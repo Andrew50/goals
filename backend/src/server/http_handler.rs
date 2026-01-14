@@ -14,14 +14,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::ai::query as ai_query;
+// use crate::ai::query as ai_query;
 use crate::jobs::routine_generator;
 use crate::server::auth::{self};
 use crate::server::middleware;
 use crate::tools::{
-    achievements, calendar, day, event, gcal_client,
+    achievements, autofill, calendar, day, event, gcal_client,
     goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, ResolveGoalRequest, Relationship},
-    list, migration, network, push, stats, traversal,
+    list, migration, network, notification_settings, push, relations, stats, telegram, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -76,6 +76,8 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/relationship", delete(handle_delete_relationship))
         .route("/:id/resolve", put(handle_resolve_goal))
         .route("/:id/duplicate", post(handle_duplicate_goal))
+        .route("/:id/relations", get(handle_get_goal_relations))
+        .route("/:id/subgraph", get(handle_get_goal_subgraph))
         .route("/expand-date-range", post(handle_expand_task_date_range));
 
     let event_routes = Router::new()
@@ -117,7 +119,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/", get(handle_get_day_tasks))
         .route("/complete/:id", put(handle_toggle_complete_task));
 
-    let query_routes = Router::new().route("/ws", get(ai_query::handle_query_ws));
+    // let query_routes = Router::new().route("/ws", get(ai_query::handle_query_ws));
 
     let achievements_routes = Router::new().route("/", get(handle_get_achievements_data));
 
@@ -167,6 +169,20 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/test", post(handle_push_test))
         .route("/check-notifications", post(handle_check_notifications));
 
+    let telegram_routes = Router::new()
+        .route("/settings", get(handle_get_telegram_settings))
+        .route("/settings", put(handle_update_telegram_settings))
+        .route("/test", post(handle_telegram_test));
+
+    let notification_settings_routes = Router::new()
+        .route("/settings", get(handle_get_notification_settings))
+        .route("/settings", put(handle_update_notification_settings));
+
+    let account_routes = Router::new()
+        .route("/", get(handle_get_account))
+        .route("/set-password", post(handle_set_password))
+        .route("/unlink-google", post(handle_unlink_google_account));
+
     // Protected routes with auth middleware
     let protected_routes = Router::new()
         .nest("/goals", goal_routes)
@@ -177,14 +193,18 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/calendar", calendar_routes)
         .nest("/list", list_routes)
         .nest("/day", day_routes)
-        .nest("/query", query_routes)
+        // .nest("/query", query_routes)
         .nest("/achievements", achievements_routes)
         .nest("/gcal", gcal_routes)
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
         .nest("/routine", routine_generation_routes)
         .nest("/push", push_routes)
+        .nest("/telegram", telegram_routes)
+        .nest("/notifications", notification_settings_routes)
+        .nest("/account", account_routes)
         .nest("/auth", auth_protected_routes)
+        .route("/autofill", post(handle_autofill_suggestions))
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -416,6 +436,22 @@ async fn handle_resolve_goal(
     Json(request): Json<ResolveGoalRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     goal::resolve_goal_handler(graph, id, request).await
+}
+
+async fn handle_get_goal_relations(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    relations::get_goal_relations(graph, user_id, id).await
+}
+
+async fn handle_get_goal_subgraph(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    relations::get_goal_subgraph(graph, user_id, id).await
 }
 
 // Event handlers
@@ -1072,4 +1108,95 @@ async fn handle_check_notifications(
     }
 
     Ok(StatusCode::OK)
+}
+
+// Telegram settings handlers
+async fn handle_get_telegram_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<Json<telegram::TelegramSettings>, (StatusCode, String)> {
+    telegram::get_telegram_settings(&graph, user_id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn handle_update_telegram_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(settings): Json<telegram::TelegramSettings>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    telegram::save_telegram_settings(&graph, user_id, settings)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn handle_telegram_test(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    telegram::send_test_message(&graph, user_id)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+// Notification settings handlers
+async fn handle_get_notification_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<Json<notification_settings::NotificationSettings>, (StatusCode, String)> {
+    notification_settings::get_notification_settings(&graph, user_id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn handle_update_notification_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(settings): Json<notification_settings::NotificationSettings>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    notification_settings::update_notification_settings(&graph, user_id, settings)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+// Account handlers
+async fn handle_get_account(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<Json<auth::UserAccount>, (StatusCode, String)> {
+    auth::get_user_account(&graph, user_id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn handle_set_password(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(payload): Json<auth::SetPasswordPayload>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    auth::set_password_for_user(&graph, user_id, payload.password)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn handle_unlink_google_account(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    auth::unlink_google_account(&graph, user_id).await
+}
+
+async fn handle_autofill_suggestions(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(request): Json<autofill::AutofillRequest>,
+) -> Result<Json<autofill::AutofillResponse>, (StatusCode, String)> {
+    autofill::get_autofill_suggestions(graph, user_id, request).await
 }

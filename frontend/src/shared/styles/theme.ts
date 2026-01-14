@@ -60,6 +60,8 @@ export const theme = createTheme({
       styleOverrides: {
         root: {
           '& .MuiButton-root': {
+            minWidth: 0,
+            padding: '6px 12px',
             color: '#4a5568',
             '&:hover': {
               backgroundColor: '#f7fafc',

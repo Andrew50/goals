@@ -57,8 +57,8 @@ const RescheduleDialog: React.FC<RescheduleDialogProps> = ({
 
             if (additionalDays) {
                 // Add to existing suggestions, removing duplicates
-                const existingTimestamps = new Set(suggestions.map(s => s.timestamp.getTime()));
-                const newSuggestions = result.suggestions.filter(s => !existingTimestamps.has(s.timestamp.getTime()));
+                const existingTimestamps = new Set(suggestions.map((s: RescheduleOption) => s.timestamp.getTime()));
+                const newSuggestions = result.suggestions.filter((s: RescheduleOption) => !existingTimestamps.has(s.timestamp.getTime()));
                 setSuggestions(prev => [...prev, ...newSuggestions]);
                 setLookAheadDays(days);
             } else {

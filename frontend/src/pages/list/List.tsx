@@ -400,10 +400,18 @@ const List: React.FC = () => {
     };
 
     const handleSort = (key: keyof Goal) => {
-        setSortConfig(prevConfig => ({
-            key,
-            direction: prevConfig.key === key && prevConfig.direction === 'asc' ? 'desc' : 'asc'
-        }));
+        setSortConfig(prevConfig => {
+            // If clicking a different column, start with ascending
+            if (prevConfig.key !== key) {
+                return { key, direction: 'asc' };
+            }
+            // If clicking the same column, cycle: asc -> desc -> no sort
+            if (prevConfig.direction === 'asc') {
+                return { key, direction: 'desc' };
+            }
+            // If currently descending, reset to no sort
+            return { key: null, direction: 'asc' };
+        });
     };
 
     const renderFilterControl = (cfg: FieldConfig) => {
