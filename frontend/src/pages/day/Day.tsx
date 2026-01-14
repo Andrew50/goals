@@ -34,66 +34,66 @@ interface DayEvent {
     routine_instance_id?: number;
 }
 
+// Default duration for events without duration (60 minutes)
+const DEFAULT_DURATION_MINUTES = 60;
+
+// Helper functions for event timing
+const getEventStartMs = (event: DayEvent) => event.scheduled_timestamp;
+const getEventDurationMs = (event: DayEvent) => (event.duration ?? DEFAULT_DURATION_MINUTES) * 60_000;
+const getEventEndMs = (event: DayEvent) => getEventStartMs(event) + getEventDurationMs(event);
+
+// Helper function to get start and end of a given date
+const getDayBounds = (date: Date) => {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+};
+
+// Helper function to check if a date is today
+const isToday = (date: Date) => {
+    const today = new Date();
+    return date.toDateString() === today.toDateString();
+};
+
+// Helper function to format date for display
+const formatDateForDisplay = (date: Date) => {
+    if (isToday(date)) {
+        return "Today's Tasks";
+    }
+
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (date.toDateString() === yesterday.toDateString()) {
+        return "Yesterday's Tasks";
+    }
+
+    if (date.toDateString() === tomorrow.toDateString()) {
+        return "Tomorrow's Tasks";
+    }
+
+    return date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
+    });
+};
+
+// Determine if an event is an all-day task
+const isAllDay = (event: DayEvent) => event.duration === 1440;
+
 const Day: React.FC = () => {
     const { openGoalMenu } = useGoalMenu();
     const [searchParams] = useSearchParams();
     const [events, setEvents] = useState<DayEvent[]>([]);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
     const [currentTime, setCurrentTime] = useState<Date>(new Date());
-
-    // Determine if an event is an all-day task
-    const isAllDay = (event: DayEvent) => event.duration === 1440;
-
-    // Default duration for events without duration (60 minutes)
-    const DEFAULT_DURATION_MINUTES = 60;
-
-    // Helper functions for event timing
-    const getEventStartMs = (event: DayEvent) => event.scheduled_timestamp;
-    const getEventDurationMs = (event: DayEvent) => (event.duration ?? DEFAULT_DURATION_MINUTES) * 60_000;
-    const getEventEndMs = (event: DayEvent) => getEventStartMs(event) + getEventDurationMs(event);
-
-    // Helper function to get start and end of a given date
-    const getDayBounds = (date: Date) => {
-        const start = new Date(date);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(date);
-        end.setHours(23, 59, 59, 999);
-        return { start, end };
-    };
-
-    // Helper function to check if a date is today
-    const isToday = (date: Date) => {
-        const today = new Date();
-        return date.toDateString() === today.toDateString();
-    };
-
-    // Helper function to format date for display
-    const formatDateForDisplay = (date: Date) => {
-        if (isToday(date)) {
-            return "Today's Tasks";
-        }
-
-        const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
-        if (date.toDateString() === yesterday.toDateString()) {
-            return "Yesterday's Tasks";
-        }
-
-        if (date.toDateString() === tomorrow.toDateString()) {
-            return "Tomorrow's Tasks";
-        }
-
-        return date.toLocaleDateString('en-US', {
-            weekday: 'long',
-            month: 'long',
-            day: 'numeric',
-            year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined
-        });
-    };
 
     // Function to fetch events for a specific date
     const fetchEventsForDate = useCallback((date: Date) => {
@@ -245,7 +245,7 @@ const Day: React.FC = () => {
                 return getDayBounds(currentDate).start.getTime();
             }
         }
-    }, [currentTime, currentDate]);
+    }, [currentTime, currentDate, getEventEndMs, getEventStartMs, getDayBounds, getEventDurationMs]);
 
     // Helper to check if error is a task date range violation
     const isTaskDateValidationError = (error: any): error is TaskDateValidationError => {
@@ -371,7 +371,7 @@ const Day: React.FC = () => {
             // Refresh anyway to get back to correct state
             fetchEventsForDate(currentDate);
         }
-    }, [events, currentDate, fetchEventsForDate, currentTime, computeNewTimestamp]);
+    }, [events, currentDate, fetchEventsForDate, computeNewTimestamp]);
 
     const handleEventClick = (event: DayEvent) => {
         // Convert event to Goal format for GoalMenu

@@ -283,14 +283,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [totalDuration, setTotalDuration] = useState<number>(0);
     const [autoEventAdded, setAutoEventAdded] = useState<boolean>(false);
 
-    // Smart schedule dialog management
-    const [smartScheduleContext, setSmartScheduleContext] = useState<{
-        type: 'event' | 'new-task-event';
-        duration: number;
-        eventName?: string;
-        currentScheduledTime?: Date;
-    } | null>(null);
-
     // Stats management
     const [goalStats, setGoalStats] = useState<BasicGoalStats | null>(null);
     const [statsLoading, setStatsLoading] = useState<boolean>(false);
@@ -1127,7 +1119,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             setTaskEvents([]);
             setTotalDuration(0);
             setAutoEventAdded(false);
-            setSmartScheduleContext(null);
             setGoalStats(null);
             setStatsLoading(false);
             setChildGoals([]);
