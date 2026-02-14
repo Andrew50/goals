@@ -689,7 +689,6 @@ export const sendTelegramTest = async (): Promise<void> => {
 // Notification Settings API
 export interface NotificationSettings {
     notifications_enabled: boolean;
-    notify_via_push: boolean;
     notify_via_telegram: boolean;
     notify_high_priority_events: boolean;
     notify_event_reminders: boolean;

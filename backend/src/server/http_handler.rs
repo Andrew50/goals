@@ -21,7 +21,7 @@ use crate::server::middleware;
 use crate::tools::{
     achievements, autofill, calendar, day, event, gcal_client,
     goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, ResolveGoalRequest, Relationship},
-    list, migration, network, notification_settings, push, relations, stats, telegram, traversal,
+    list, migration, network, notification_settings, relations, stats, telegram, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -163,12 +163,6 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/:id/recompute-future", post(handle_recompute_routine_future));
 
     // Push notification routes
-    let push_routes = Router::new()
-        .route("/subscribe", post(handle_push_subscribe))
-        .route("/unsubscribe", post(handle_push_unsubscribe))
-        .route("/test", post(handle_push_test))
-        .route("/check-notifications", post(handle_check_notifications));
-
     let telegram_routes = Router::new()
         .route("/settings", get(handle_get_telegram_settings))
         .route("/settings", put(handle_update_telegram_settings))
@@ -199,7 +193,6 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/stats", stats_routes)
         .nest("/migration", migration_routes)
         .nest("/routine", routine_generation_routes)
-        .nest("/push", push_routes)
         .nest("/telegram", telegram_routes)
         .nest("/notifications", notification_settings_routes)
         .nest("/account", account_routes)
@@ -1065,51 +1058,6 @@ async fn handle_update_gcal_settings(
 }
 
 // Push notification handlers
-async fn handle_push_subscribe(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Json(payload): Json<serde_json::Value>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    push::save_subscription(graph, user_id, payload).await
-}
-
-async fn handle_push_unsubscribe(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-    Json(payload): Json<serde_json::Value>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    push::remove_subscription(graph, user_id, payload).await
-}
-
-async fn handle_push_test(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    push::send_test_notification(graph, user_id).await
-}
-
-async fn handle_check_notifications(
-    Extension(graph): Extension<Graph>,
-    Extension(_user_id): Extension<i64>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    // Manually trigger notification check (useful for testing)
-    println!("📢 [PUSH] Manual notification check triggered");
-
-    // Import the notification scheduler
-    use crate::jobs::notification_scheduler;
-
-    // Run the notification checks
-    if let Err(e) = notification_scheduler::check_and_send_event_notifications(&graph).await {
-        eprintln!("❌ [PUSH] Error during manual notification check: {}", e);
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Notification check failed: {}", e),
-        ));
-    }
-
-    Ok(StatusCode::OK)
-}
-
 // Telegram settings handlers
 async fn handle_get_telegram_settings(
     Extension(graph): Extension<Graph>,

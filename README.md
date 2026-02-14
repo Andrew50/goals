@@ -18,7 +18,7 @@ The Goals system is designed to bridge the gap between long-term vision and dail
 - **Network Visualization**: Interactive graph view using `vis-network` to explore and manage goal dependencies.
 - **Unified Calendar**: Merges singular tasks, automated routines, and bidirectional Google Calendar sync.
 - **Intelligent Routines**: Automated event generation (up to 6 months) with flexible recurrence patterns.
-- **Ecosystem Integration**: Web Push notifications, Telegram bot integration, and AI-powered suggestions via OpenRouter/Gemini.
+- **Ecosystem Integration**: Telegram bot integration, and AI-powered suggestions via OpenRouter/Gemini.
 
 ## Tech Stack
 
@@ -62,10 +62,7 @@ graph TD
    ./scripts/setup.sh
    ```
 
-3. **Configure environment:**
-   Copy `backend/vapid.env.example` to `backend/vapid.env` and fill in your secrets.
-
-4. **Start the development environment:**
+3. **Start the development environment:**
    ```bash
    ./scripts/manage-compose.sh dev
    ```

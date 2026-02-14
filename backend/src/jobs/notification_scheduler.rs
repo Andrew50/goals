@@ -1,6 +1,6 @@
 use chrono::Utc;
 use neo4rs::{query, Graph};
-use crate::tools::{push, telegram};
+use crate::tools::telegram;
 
 /// Check for upcoming high priority events and send notifications
 pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), String> {
@@ -26,7 +26,6 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         AND COALESCE(u.notify_high_priority_events, true) = true
         RETURN g, id(g) as event_id, u.user_id as user_id, id(u) as user_node_id, 
                u.telegram_chat_id as telegram_chat_id, u.telegram_bot_token as telegram_bot_token,
-               COALESCE(u.notify_via_push, true) as notify_via_push,
                COALESCE(u.notify_via_telegram, true) as notify_via_telegram
     ";
     
@@ -51,7 +50,6 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         let user_node_id: i64 = row.get("user_node_id").map_err(|e| format!("Failed to get user_node_id: {}", e))?;
         let telegram_chat_id: Option<String> = row.get("telegram_chat_id").ok();
         let telegram_bot_token: Option<String> = row.get("telegram_bot_token").ok();
-        let notify_via_push: bool = row.get("notify_via_push").unwrap_or(true);
         let notify_via_telegram: bool = row.get("notify_via_telegram").unwrap_or(true);
         
         // Get event details
@@ -79,60 +77,9 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
             format!("High priority: '{}' starts in {} minutes", event_name, minutes_until)
         };
         
-        let payload = push::PushPayload {
-            title: "⚡ High Priority Event".to_string(),
-            body: notification_body.clone(),
-            icon: Some("/logo192.png".to_string()),
-            badge: Some("/logo192.png".to_string()),
-            tag: Some(format!("event-{}", event_id)),
-            data: Some(serde_json::json!({
-                "url": format!("/calendar?event={}", event_id),
-                "event_id": event_id,
-                "event_name": event_name,
-                "event_time": scheduled_timestamp,
-                "type": "high_priority_event",
-                "priority": "high"
-            })),
-            actions: Some(vec![
-                push::NotificationAction {
-                    action: "view".to_string(),
-                    title: "View Event".to_string(),
-                    icon: None,
-                },
-                push::NotificationAction {
-                    action: "snooze".to_string(),
-                    title: "Snooze 5 min".to_string(),
-                    icon: None,
-                },
-            ]),
-            require_interaction: Some(true), // High priority events require interaction
-            renotify: Some(true),
-            silent: Some(false),
-            timestamp: Some(scheduled_timestamp),
-        };
-        
         // Send notification
         let mut sent = false;
         
-        // Try Push
-        if notify_via_push {
-            match push::send_notification_to_user(graph, user_node_id, &payload).await {
-                Ok(_) => {
-                    sent = true;
-                    println!(
-                        "✅ [NOTIFICATION] Sent high priority notification for event '{}' (ID: {}) to user {}",
-                        event_name, event_id, user_node_id
-                    );
-                }
-                Err(e) => {
-                    eprintln!(
-                        "❌ [NOTIFICATION] Failed to send push notification for event '{}' (ID: {}): {}",
-                        event_name, event_id, e
-                    );
-                }
-            }
-        }
-
         // Try Telegram
         if notify_via_telegram {
             if let (Some(chat_id), Some(bot_token)) = (telegram_chat_id, telegram_bot_token) {
@@ -202,7 +149,6 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                COALESCE(u.reminder_offsets_minutes, [15, 60, 1440]) as offsets,
                u.telegram_chat_id as telegram_chat_id,
                u.telegram_bot_token as telegram_bot_token,
-               COALESCE(u.notify_via_push, true) as notify_via_push,
                COALESCE(u.notify_via_telegram, true) as notify_via_telegram
     ";
 
@@ -213,7 +159,6 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
         let offsets: Vec<i64> = user_row.get("offsets").unwrap_or_else(|_| vec![15, 60, 1440]);
         let telegram_chat_id: Option<String> = user_row.get("telegram_chat_id").ok();
         let telegram_bot_token: Option<String> = user_row.get("telegram_bot_token").ok();
-        let notify_via_push: bool = user_row.get("notify_via_push").unwrap_or(true);
         let notify_via_telegram: bool = user_row.get("notify_via_telegram").unwrap_or(true);
 
         for offset_min in offsets {
@@ -267,38 +212,6 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                     .unwrap_or(now);
 
                 let mut sent = false;
-
-                if notify_via_push {
-                    let payload = push::PushPayload {
-                        title: format!("⏰ Reminder: {}", reminder_text),
-                        body: format!("'{}' is coming up", event_name),
-                        icon: Some("/logo192.png".to_string()),
-                        badge: Some("/logo192.png".to_string()),
-                        tag: Some(format!("reminder-{}-{}", event_id, reminder_offset)),
-                        data: Some(serde_json::json!({
-                            "url": format!("/calendar?event={}", event_id),
-                            "event_id": event_id,
-                            "event_time": scheduled_timestamp,
-                            "type": "event_reminder",
-                            "reminder_type": reminder_text
-                        })),
-                        actions: Some(vec![
-                            push::NotificationAction {
-                                action: "view".to_string(),
-                                title: "View Event".to_string(),
-                                icon: None,
-                            },
-                        ]),
-                        require_interaction: Some(priority == Some("high".to_string())),
-                        renotify: Some(false),
-                        silent: Some(false),
-                        timestamp: Some(now),
-                    };
-
-                    if push::send_notification_to_user(graph, user_node_id, &payload).await.is_ok() {
-                        sent = true;
-                    }
-                }
 
                 if notify_via_telegram {
                     if let (Some(chat_id), Some(bot_token)) = (&telegram_chat_id, &telegram_bot_token) {
