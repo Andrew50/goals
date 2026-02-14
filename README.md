@@ -38,7 +38,7 @@ graph TD
     Backend --> GCal[Google Calendar API]
     Backend --> AI[AI Engine - Gemini/OpenRouter]
     Backend --> Jobs[Background Jobs - Cron]
-    Jobs --> Notify[Web Push / Telegram]
+    Jobs --> Notify[Telegram]
 ```
 
 ## Getting Started
@@ -80,6 +80,27 @@ The application will be available at:
 - `router/`: Nginx configuration for unifying the stack.
 - `docs/`: Technical documentation and assets.
 - `scripts/`: Utility scripts for environment management and testing.
+- `ops/`: Monitoring and operational scripts.
+
+## Deployment
+
+The system is deployed on a **bare metal Linux server** using a Docker-based architecture for maximum reliability and ease of updates.
+
+### CI/CD Pipeline
+
+Deployments are fully automated through **GitHub Actions**:
+- **Triggers**: A push to the `prod` branch or a manual trigger starts the deployment.
+- **Pre-deploy Safety**: The pipeline automatically takes a backup of the Neo4j database before any changes are applied.
+- **Build & Deploy**: The production stack is built from source using `docker-compose.prod.yaml` on a self-hosted runner.
+- **Monitoring Integration**: The deployment process ensures the custom monitoring daemon is updated and running.
+
+### Monitoring & Health
+
+A custom Python-based monitoring service (`ops/monitor/goals_monitor.py`) runs in the background to ensure high availability:
+- **Proactive Probing**: Checks frontend and backend health every 60 seconds.
+- **Resource Tracking**: Monitors CPU, memory, and disk usage on the host.
+- **Instant Alerts**: Sends downtime notifications immediately via a **Telegram Bot**.
+- **Performance Summaries**: Delivers a daily uptime and latency report to stay on top of system performance.
 
 ---
 
