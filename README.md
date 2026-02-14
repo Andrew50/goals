@@ -8,7 +8,7 @@ A sophisticated goal management system with graph-based visualization, temporal 
 ![Calendar View](docs/assets/calendar-view.png)
 *Unified scheduling for tasks, routines, and Google Calendar events.*
 
-## 🚀 Overview
+## Overview
 
 The Goals system is designed to bridge the gap between long-term vision and daily execution. By representing goals as a directed graph, users can see exactly how their daily tasks contribute to high-level life directives.
 
@@ -20,14 +20,14 @@ The Goals system is designed to bridge the gap between long-term vision and dail
 - **Intelligent Routines**: Automated event generation (up to 6 months) with flexible recurrence patterns.
 - **Ecosystem Integration**: Web Push notifications, Telegram bot integration, and AI-powered suggestions via OpenRouter/Gemini.
 
-## 🛠 Tech Stack
+## Tech Stack
 
 - **Backend**: Rust ([Axum](https://github.com/tokio-rs/axum)) - High-performance, type-safe API.
 - **Frontend**: React 18, TypeScript, [Material-UI](https://mui.com/) - Modern and responsive UI.
 - **Database**: [Neo4j](https://neo4j.com/) - Graph database for complex relationship mapping.
 - **Infrastructure**: Docker Compose, Nginx (Router), Cloudflare Tunnel.
 
-## 🏗 Architecture
+## Architecture
 
 ```mermaid
 graph TD
@@ -41,7 +41,7 @@ graph TD
     Jobs --> Notify[Web Push / Telegram]
 ```
 
-## 🚦 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -75,7 +75,7 @@ The application will be available at:
 - **Backend**: http://localhost:5059
 - **Neo4j**: http://localhost:7474
 
-## 📂 Project Structure
+## Project Structure
 
 - `backend/`: Rust source code and API implementation.
 - `frontend/`: React source code and UI components.
@@ -86,7 +86,7 @@ The application will be available at:
 
 ---
 
-## 🧪 Testing
+## Testing
 
 Run the full test suite (Integration + E2E):
 ```bash
