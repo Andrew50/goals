@@ -102,13 +102,31 @@ A custom Python-based monitoring service (`ops/monitor/goals_monitor.py`) runs i
 - **Instant Alerts**: Sends downtime notifications immediately via a **Telegram Bot**.
 - **Performance Summaries**: Delivers a daily uptime and latency report to stay on top of system performance.
 
----
-
 ## Testing
 
-Run the full test suite (Integration + E2E):
+The project maintains a comprehensive testing suite covering both backend logic and frontend user flows.
+
+### Test Runner
+A unified test runner is provided to manage the environment and execute all tests:
 ```bash
 ./scripts/run-tests.sh
 ```
+This script automates the creation of a clean test stack (Docker), builds the services, waits for health checks, and runs both backend and frontend suites.
 
-For more details on timezone testing, see [Timezone Testing Guide](docs/development/timezone-testing.md).
+### Backend Integration Tests
+Located in `backend/tests/`, these tests validate:
+- **Routine Generation**: Complex recurrence logic and event creation patterns.
+- **Database Integrity**: Graph relationship creation and constraints.
+- **Neo4j Interaction**: Real database tests using a dedicated test container.
+
+### Frontend E2E Tests
+Located in `frontend/tests/`, using **Playwright**:
+- **Critical Paths**: Calendar interactions, goal creation, and list management.
+- **Parallel Execution**: A custom parallel environment (`scripts/start-parallel-test-env.sh`) allows running tests across multiple isolated worker containers to minimize CI time.
+- **Auth Simulation**: Shared global setup for consistent authentication state across test workers.
+
+### Specialized Testing
+- **Timezone Testing**: Dedicated guides and tests (`docs/development/timezone-testing.md`) to ensure consistent behavior across different system timezones and DST transitions.
+- **CI/CD Validation**: GitHub Actions (`test-integration-e2e.yml`) automatically runs the full suite on every Pull Request.
+
+---
