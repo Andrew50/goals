@@ -46,3 +46,7 @@ node_modules
 
 .target/
 vapid.env
+.env.backup
+*.tmp
+*.bak
+docker-compose.worker-*.yaml
