@@ -41,15 +41,15 @@ export const getGoalColor = (goal: Goal): string => {
 // Priority-based border styling
 export type Priority = 'high' | 'medium' | 'low';
 
-const priorityBorders: Record<Priority, string> = {
-    high: '2px solid #C45B5B',     // Muted brick red
-    medium: '2px solid #B8834A',   // Soft amber
-    low: '2px solid #7A8A9A'       // Steel gray
-};
-
 export const getPriorityBorder = (priority?: Priority): string => {
     // NOTE: Priority border highlighting is disabled (returns transparent)
-    // To re-enable, change to: return priority ? priorityBorders[priority] : 'none';
+    // To re-enable with priority-based borders:
+    // const borders: Record<Priority, string> = {
+    //     high: '2px solid #C45B5B',     // Muted brick red
+    //     medium: '2px solid #B8834A',   // Soft amber
+    //     low: '2px solid #7A8A9A'       // Steel gray
+    // };
+    // return priority ? borders[priority] : 'none';
     return '2px solid transparent';
 };
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
-import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, GCalSyncConflict, getGoogleCalendars, CalendarListEntry, resolveGCalConflict, resetGCalSyncState } from '../../shared/utils/api';
+import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, GCalSyncConflict, CalendarListEntry, resolveGCalConflict, resetGCalSyncState } from '../../shared/utils/api';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { fetchCalendarData } from './calendarData';
@@ -1081,7 +1081,8 @@ const Calendar: React.FC = () => {
   };
 
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  // Sidebar collapse state - functionality currently disabled
+  const isSidebarCollapsed = false;
 
   const overlapSuggestions = useMemo(() => {
     if (!showSuggestions) {
@@ -1324,33 +1325,6 @@ const Calendar: React.FC = () => {
   };
 
   
-
-  // Google Calendar sync handlers
-  const handleGoogleCalendarSync = async () => {
-    setGcalSyncDialog({
-      ...gcalSyncDialog,
-      isOpen: true,
-      loadingCalendars: true
-    });
-
-    try {
-      const calendars = await getGoogleCalendars();
-      setGcalSyncDialog(prev => ({
-        ...prev,
-        calendars,
-        loadingCalendars: false,
-        // Set primary calendar as default if available
-        calendarId: calendars.find(c => c.primary)?.id || calendars[0]?.id || 'primary'
-      }));
-    } catch (error) {
-      console.error('Failed to load calendars:', error);
-      setGcalSyncDialog(prev => ({
-        ...prev,
-        loadingCalendars: false,
-        calendars: []
-      }));
-    }
-  };
 
   const handleGcalSyncConfirm = async () => {
     setGcalSyncDialog({

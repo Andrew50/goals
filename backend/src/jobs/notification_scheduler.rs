@@ -47,7 +47,7 @@ pub async fn check_and_send_event_notifications(graph: &Graph) -> Result<(), Str
         .map_err(|e| format!("Error fetching row: {}", e))?
     {
         let event_id: i64 = row.get("event_id").map_err(|e| format!("Failed to get event_id: {}", e))?;
-        let user_node_id: i64 = row.get("user_node_id").map_err(|e| format!("Failed to get user_node_id: {}", e))?;
+        let _user_node_id: i64 = row.get("user_node_id").map_err(|e| format!("Failed to get user_node_id: {}", e))?;
         let telegram_chat_id: Option<String> = row.get("telegram_chat_id").ok();
         let telegram_bot_token: Option<String> = row.get("telegram_bot_token").ok();
         let notify_via_telegram: bool = row.get("notify_via_telegram").unwrap_or(true);
@@ -202,11 +202,11 @@ pub async fn check_and_send_reminder_notifications(graph: &Graph) -> Result<(), 
                     .and_then(|node| node.get::<String>("name").ok())
                     .unwrap_or_else(|| "Event".to_string());
                 
-                let priority: Option<String> = event_row.get::<neo4rs::Node>("g")
+                let _priority: Option<String> = event_row.get::<neo4rs::Node>("g")
                     .ok()
                     .and_then(|node| node.get::<String>("priority").ok());
-                
-                let scheduled_timestamp: i64 = event_row.get::<neo4rs::Node>("g")
+
+                let _scheduled_timestamp: i64 = event_row.get::<neo4rs::Node>("g")
                     .ok()
                     .and_then(|node| node.get::<i64>("scheduled_timestamp").ok())
                     .unwrap_or(now);

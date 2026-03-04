@@ -1231,10 +1231,10 @@ pub async fn update_routine_event_handler(
             }
 
             // Update ALL events to the new time-of-day (preserve their dates, change only time)
-            let mut set_clauses = vec!["e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day"];
-            
+            let set_clauses = ["e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day"];
+
             // If resolution_status is provided, apply it ONLY to the target event_id
-            let update_query_str = if let Some(status) = &request.resolution_status {
+            let update_query_str = if request.resolution_status.is_some() {
                 format!(
                     "MATCH (e:Goal)
                      WHERE e.goal_type = 'event'
@@ -1367,9 +1367,9 @@ pub async fn update_routine_event_handler(
             }
 
             // Update ALL future events to the new time-of-day (preserve their dates, change only time)
-            let mut set_clauses = vec!["e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day"];
-            
-            let update_query_str = if let Some(status) = &request.resolution_status {
+            let set_clauses = ["e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day"];
+
+            let update_query_str = if request.resolution_status.is_some() {
                 format!(
                     "MATCH (e:Goal)
                      WHERE e.goal_type = 'event'
@@ -2483,11 +2483,11 @@ pub async fn update_routine_event_properties_handler(
                 neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(user_id)),
             ));
 
-            if request.duration.is_some() {
+            if let Some(duration) = request.duration {
                 routine_set_clauses.push("r.duration = $r_duration");
                 routine_params.push((
                     "r_duration".to_string(),
-                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(request.duration.unwrap() as i64)),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(duration as i64)),
                 ));
             }
             if let Some(name) = &request.name {

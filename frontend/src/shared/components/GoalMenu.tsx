@@ -20,7 +20,6 @@ import {
     RadioGroup,
     Radio,
     CircularProgress,
-    LinearProgress,
     Tooltip,
     Skeleton,
     InputAdornment,
