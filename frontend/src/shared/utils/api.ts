@@ -799,3 +799,16 @@ export const getGoalSubgraph = async (goalId: number): Promise<{
         truncated: response.truncated,
     };
 };
+
+// Theme Settings API
+export interface ThemeSettings {
+  theme_name: 'light' | 'dark' | 'green' | 'blue' | 'orange' | 'purple';
+}
+
+export const getThemeSettings = async (): Promise<ThemeSettings> => {
+    return privateRequest<ThemeSettings>('theme/settings', 'GET');
+};
+
+export const updateThemeSettings = async (settings: ThemeSettings): Promise<void> => {
+    await privateRequest('theme/settings', 'PUT', settings);
+};

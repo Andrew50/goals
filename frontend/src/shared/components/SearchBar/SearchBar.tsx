@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Fuse from 'fuse.js';
 import { Goal } from '../../../types/goals';
+import SearchIcon from '@mui/icons-material/Search';
 import './SearchBar.css';
 
 type SearchBarSize = 'sm' | 'md' | 'lg';
@@ -33,7 +34,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   onResults,
   keys = ['name', 'description'],
   debounceMs = 200,
-  placeholder = 'Search goals…',
+  placeholder = '',
   size = 'md',
   fullWidth = true,
   className,
@@ -129,12 +130,18 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   };
 
   const showClear = (query || '').length > 0;
+  const showSearchIcon = (query || '').length === 0;
 
   if (useLegacyListStyles) {
     // Render with List.tsx's original classes for identical appearance
     return (
       <div className={["search-section", className || ''].filter(Boolean).join(' ')}>
-        <div className="search-input-wrapper">
+        <div className={`search-input-wrapper ${showSearchIcon ? 'has-search-icon' : ''}`}>
+          {showSearchIcon && (
+            <span className="searchbar-search-icon" aria-hidden="true">
+              <SearchIcon sx={{ fontSize: { sm: 18, md: 20, lg: 22 } }} />
+            </span>
+          )}
           <input
             ref={inputRef}
             type="text"
@@ -144,6 +151,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             onChange={onInputChange}
             spellCheck={false}
             autoComplete="off"
+            aria-label="Search"
             {...inputProps}
           />
           {showClear && (
@@ -186,7 +194,12 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 
   return (
     <div className={classes}>
-      <div className="searchbar-input-wrap">
+      <div className={`searchbar-input-wrap ${showSearchIcon ? 'has-search-icon' : ''}`}>
+        {showSearchIcon && (
+          <span className="searchbar-search-icon" aria-hidden="true">
+            <SearchIcon sx={{ fontSize: size === 'sm' ? 18 : size === 'lg' ? 22 : 20 }} />
+          </span>
+        )}
         <input
           ref={inputRef}
           type="text"
@@ -196,6 +209,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           onChange={onInputChange}
           spellCheck={false}
           autoComplete="off"
+          aria-label="Search"
           {...inputProps}
         />
         {showClear && (

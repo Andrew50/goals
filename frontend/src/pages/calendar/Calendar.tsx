@@ -1144,10 +1144,10 @@ const Calendar: React.FC = () => {
     }
   }, [state.events, showSuggestions]);
 
-  const handleAddTask = () => {
+  const handleAddTask = (name?: string) => {
     const tempGoal: Goal = {
       ...({} as Goal),
-      name: '',
+      name: name?.trim() || '',
       goal_type: 'task',
       description: ''
     };
@@ -1633,17 +1633,17 @@ const Calendar: React.FC = () => {
             headerToolbar={{
               left: 'prev,next today',
               center: 'title',
-              right: 'gcalSync toggleTasks dayGridMonth,timeGridWeek,timeGridDay'
+              right: 'dayGridMonth,timeGridWeek,timeGridDay'
             }}
             customButtons={{
-              gcalSync: {
-                text: '📅 Sync',
-                click: handleGoogleCalendarSync
-              },
-              toggleTasks: {
-                text: isSidebarCollapsed ? 'Show Tasks' : 'Hide Tasks',
-                click: () => setIsSidebarCollapsed((prev) => !prev)
-              }
+              // gcalSync: {
+              //   text: '📅 Sync',
+              //   click: handleGoogleCalendarSync
+              // },
+              // toggleTasks: {
+              //   text: isSidebarCollapsed ? 'Show Tasks' : 'Hide Tasks',
+              //   click: () => setIsSidebarCollapsed((prev) => !prev)
+              // }
             }}
             height="100%"
             allDaySlot={true}

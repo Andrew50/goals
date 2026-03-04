@@ -27,8 +27,8 @@ describe('List', () => {
         });
 
         await waitFor(() => {
-            // Look for search bar or table headers
-            expect(screen.getByPlaceholderText(/search/i)).toBeInTheDocument();
+            // Look for search bar by aria-label or table headers
+            expect(screen.getByLabelText(/search/i)).toBeInTheDocument();
         });
     });
 });

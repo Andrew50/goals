@@ -6,6 +6,7 @@ import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { SearchBar } from '../../shared/components/SearchBar';
 import CompletionBar from '../../shared/components/CompletionBar';
+import NewButton from '../../shared/components/NewButton';
 import './Projects.css';
 import { Accordion, AccordionSummary, AccordionDetails, Typography, List, ListItem } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -324,7 +325,6 @@ const Projects: React.FC = () => {
                             value={searchQuery}
                             onChange={setSearchQuery}
                             onResults={(_, ids) => setSearchIds(new Set(ids))}
-                            placeholder="Search projects & achievements…"
                             size="md"
                             fullWidth={false}
                         />
@@ -348,15 +348,7 @@ const Projects: React.FC = () => {
                                 Completed
                             </button>
                         </div>
-                        <button
-                            onClick={handleCreateAchievement}
-                            className="new-achievement-button"
-                        >
-                            <svg className="new-achievement-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                            <span>Create Goal</span>
-                        </button>
+                        <NewButton onClick={handleCreateAchievement} />
                     </div>
                 </div>
 
@@ -368,10 +360,10 @@ const Projects: React.FC = () => {
                                 minHeight: 'auto',
                                 px: '0.75rem',
                                 py: '0.5rem',
-                                border: '1px solid #d1d5db',
+                                border: '1px solid var(--color-border-main, #d1d5db)',
                                 borderRadius: '0.375rem',
-                                background: '#ffffff',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                background: 'var(--color-bg-paper, #ffffff)',
+                                boxShadow: '0 1px 2px rgba(var(--shadow-color, 0,0,0), 0.04)',
                                 '& .MuiAccordionSummary-content': { margin: 0, alignItems: 'center' }
                             }}
                         >
@@ -440,9 +432,7 @@ const Projects: React.FC = () => {
                     {projectGroups.length === 0 ? (
                         <div className="empty-state">
                             <p>No projects found</p>
-                            <button onClick={handleCreateAchievement} className="create-first-button">
-                                Create your first achievement
-                            </button>
+                            <NewButton onClick={handleCreateAchievement} />
                         </div>
                     ) : (
                         <div className="projects-list">

@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
+import NewButton from '../../shared/components/NewButton';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import TodayIcon from '@mui/icons-material/Today';
@@ -60,7 +60,7 @@ const isToday = (date: Date) => {
 // Helper function to format date for display
 const formatDateForDisplay = (date: Date) => {
     if (isToday(date)) {
-        return "Today's Tasks";
+        return "Today";
     }
 
     const today = new Date();
@@ -70,11 +70,11 @@ const formatDateForDisplay = (date: Date) => {
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     if (date.toDateString() === yesterday.toDateString()) {
-        return "Yesterday's Tasks";
+        return "Yesterday";
     }
 
     if (date.toDateString() === tomorrow.toDateString()) {
-        return "Tomorrow's Tasks";
+        return "Tomorrow";
     }
 
     return date.toLocaleDateString('en-US', {
@@ -712,6 +712,8 @@ const Day: React.FC = () => {
                         </IconButton>
                     </div>
 
+                    <Box className="header-actions-row">
+                    <NewButton onClick={handleCreateGoal} className="create-task-button" />
                     <Box className="completion-status">
                         <span>{getCompletionPercentage()}% complete</span>
                         <CompletionBar
@@ -727,17 +729,7 @@ const Day: React.FC = () => {
                             return <span> • {resolvedCounts.completed} of {eligibleCount} tasks completed</span>;
                         })()}
                     </Box>
-
-                    <Button
-                        variant="contained"
-                        color="primary"
-                        onClick={handleCreateGoal}
-                        startIcon={<AddIcon />}
-                        className="create-task-button"
-                        size="medium"
-                    >
-                        Create New
-                    </Button>
+                </Box>
                 </div>
 
                 <Box className="columns-container">
@@ -759,15 +751,7 @@ const Day: React.FC = () => {
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                                         </svg>
                                         <p className="empty-state-text">No tasks for today</p>
-                                        <Button
-                                            variant="contained"
-                                            color="primary"
-                                            onClick={handleCreateGoal}
-                                            startIcon={<AddIcon />}
-                                            size="small"
-                                        >
-                                            Add Task
-                                        </Button>
+                                        <NewButton onClick={handleCreateGoal} size="small" />
                                     </div>
                                 </>
                             ) : (

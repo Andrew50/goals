@@ -7,12 +7,13 @@ import { fetchCalendarData } from './calendarData';
 import { timestampToDisplayString } from '../../shared/utils/time';
 import { SearchBar } from '../../shared/components/SearchBar';
 import { List, ListItem } from '@mui/material';
+import NewButton from '../../shared/components/NewButton';
 import { getTaskEvents } from '../../shared/utils/api';
 
 export interface TaskListProps {
   tasks: CalendarTask[];
   events: CalendarEvent[];
-  onAddTask: () => void;
+  onAddTask: (name?: string) => void;
   onTaskUpdate: (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => void;
   overlapSuggestions?: Array<{
     dateKey: string;
@@ -431,9 +432,9 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             style={{
               padding: '8px 10px',
               borderRadius: '6px',
-              border: activeTab === 'tasks' ? '2px solid #2196f3' : '1px solid #c1c1c1',
-              background: activeTab === 'tasks' ? '#e3f2fd' : '#f3f3f3',
-              color: '#333333',
+              border: activeTab === 'tasks' ? '2px solid var(--color-primary-main, #2196f3)' : '1px solid var(--color-border-dark, #c1c1c1)',
+              background: activeTab === 'tasks' ? 'rgba(var(--color-primary-main-rgb, 33, 150, 243), 0.1)' : 'var(--color-bg-elevated, #f3f3f3)',
+              color: 'var(--color-text-primary, #333333)',
               fontWeight: 600,
               cursor: 'pointer'
             }}
@@ -451,9 +452,9 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
             style={{
               padding: '8px 10px',
               borderRadius: '6px',
-              border: activeTab === 'suggestions' ? '2px solid #2196f3' : '1px solid #c1c1c1',
-              background: activeTab === 'suggestions' ? '#e3f2fd' : '#f3f3f3',
-              color: '#333333',
+              border: activeTab === 'suggestions' ? '2px solid var(--color-primary-main, #2196f3)' : '1px solid var(--color-border-dark, #c1c1c1)',
+              background: activeTab === 'suggestions' ? 'rgba(var(--color-primary-main-rgb, 33, 150, 243), 0.1)' : 'var(--color-bg-elevated, #f3f3f3)',
+              color: 'var(--color-text-primary, #333333)',
               fontWeight: 600,
               cursor: 'pointer'
             }}
@@ -464,36 +465,16 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
         </div>
 
         {activeTab === 'tasks' && (
-          <div style={{ marginBottom: '12px' }}>
+          <div style={{ marginBottom: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
             <SearchBar
               items={tasks.map(t => t.goal).filter(Boolean) as Goal[]}
               value={searchQuery}
               onChange={setSearchQuery}
               onResults={(_, ids) => setSearchIds(new Set(ids))}
-              placeholder="Search tasks…"
               size="md"
-              fullWidth
             />
+            <NewButton onClick={() => onAddTask(searchQuery)} />
           </div>
-        )}
-
-        {activeTab === 'tasks' && (
-          <button
-            onClick={onAddTask}
-            style={{
-              padding: '12px',
-              backgroundColor: '#2196f3',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: 500,
-              marginBottom: '16px'
-            }}
-          >
-            Create Goal
-          </button>
         )}
 
         <div
@@ -509,7 +490,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
               <div
                 style={{
                   textAlign: 'center',
-                  color: 'rgba(255, 255, 255, 0.7)',
+                  color: 'var(--color-text-muted, #718096)',
                   fontSize: '14px'
                 }}
               >
@@ -527,7 +508,7 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
           ) : (
             <div>
               {(!overlapSuggestions || overlapSuggestions.length === 0) ? (
-                <div style={{ color: 'rgba(255, 255, 255, 0.9)' }}>No overlaps today or upcoming</div>
+                <div style={{ color: 'var(--color-text-secondary, #4a5568)' }}>No overlaps today or upcoming</div>
               ) : (
                 <List dense style={{ padding: 0 }}>
                   {overlapSuggestions.map(row => {
@@ -547,7 +528,8 @@ const TaskList = React.forwardRef<HTMLDivElement, TaskListProps>(
                                 display: 'inline-block',
                                 padding: '2px 8px',
                                 borderRadius: '999px',
-                                backgroundColor: '#f5f5f5',
+                                backgroundColor: 'var(--color-bg-elevated, #f5f5f5)',
+                                color: 'var(--color-text-primary, #333333)',
                                 fontWeight: 600,
                                 maxWidth: '100%',
                                 whiteSpace: 'nowrap',

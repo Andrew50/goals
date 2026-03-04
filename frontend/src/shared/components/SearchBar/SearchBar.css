@@ -141,6 +141,41 @@
   height: 16px;
 }
 
+/* Search icon shown when input is empty */
+.searchbar-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 0.75rem;
+  transform: translateY(-48%);
+  color: #9ca3af; /* gray-400 */
+  pointer-events: none;
+  transition: opacity 0.15s ease-in-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.searchbar.size-sm .searchbar-search-icon {
+  left: 0.5rem;
+}
+
+.searchbar.size-lg .searchbar-search-icon {
+  left: 0.875rem;
+}
+
+/* When search icon is present, add left padding to input */
+.searchbar-input-wrap.has-search-icon .searchbar-input {
+  padding-left: 2.25rem;
+}
+
+.searchbar.size-sm .searchbar-input-wrap.has-search-icon .searchbar-input {
+  padding-left: 2rem;
+}
+
+.searchbar.size-lg .searchbar-input-wrap.has-search-icon .searchbar-input {
+  padding-left: 2.5rem;
+}
+
 /* Legacy List.tsx aesthetics */
 .search-section .search-input-wrapper {
   position: relative;
@@ -148,6 +183,15 @@
 
 .search-section .search-input-wrapper .search-input {
   padding-right: 2.75rem; /* ensure room for the clear button */
+}
+
+/* Search icon for legacy styles */
+.search-section .search-input-wrapper.has-search-icon .searchbar-search-icon {
+  left: 0.75rem;
+}
+
+.search-section .search-input-wrapper.has-search-icon .search-input {
+  padding-left: 2.5rem;
 }
 
 .search-section .search-clear-btn {

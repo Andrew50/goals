@@ -14,4 +14,5 @@ pub mod routine;
 pub mod routine_exceptions;
 pub mod stats;
 pub mod telegram;
+pub mod theme_settings;
 pub mod traversal;

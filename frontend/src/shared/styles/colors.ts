@@ -1,12 +1,12 @@
 import { Goal, GoalType } from '../../types/goals';
 
 const baseColors: Record<GoalType, string> = {
-    directive: '#9370DB',  // purple
-    project: '#4682B4',    // steel blue
-    achievement: '#CD5C5C', // indian red
-    routine: '#DAA520',    // goldenrod
-    task: '#81c784',       // lighter green
-    event: '#FF8C00'       // dark orange
+    directive: '#8B7CB3',   // muted lavender
+    project: '#5B8BA0',     // soft slate blue
+    achievement: '#B87A7A', // muted rose
+    routine: '#B8A06D',     // soft gold/amber
+    task: '#7A9A7A',        // muted sage green
+    event: '#B88D6D'        // soft copper
 };
 
 export const getBaseColor = (goalType: GoalType): string => {
@@ -42,23 +42,25 @@ export const getGoalColor = (goal: Goal): string => {
 export type Priority = 'high' | 'medium' | 'low';
 
 const priorityBorders: Record<Priority, string> = {
-    high: '2px solid #d32f2f',     // Red, uniform border weight
-    medium: '2px solid #ffa726',   // Orange for medium priority
-    low: '2px solid #9e9e9e'       // Gray for low priority
+    high: '2px solid #C45B5B',     // Muted brick red
+    medium: '2px solid #B8834A',   // Soft amber
+    low: '2px solid #7A8A9A'       // Steel gray
 };
 
 export const getPriorityBorder = (priority?: Priority): string => {
-    return priority ? priorityBorders[priority] : 'none';
+    // NOTE: Priority border highlighting is disabled (returns transparent)
+    // To re-enable, change to: return priority ? priorityBorders[priority] : 'none';
+    return '2px solid transparent';
 };
 
 // Helper to get the priority border color (just the color, not the full border style)
 export const getPriorityBorderColor = (priority?: Priority): string => {
     const priorityColors: Record<Priority, string> = {
-        high: '#d32f2f',     // Red for highest priority
-        medium: '#ffa726',   // Orange for medium priority
-        low: '#9e9e9e'       // Gray for low priority
+        high: '#C45B5B',     // Muted brick red
+        medium: '#B8834A',   // Soft amber
+        low: '#7A8A9A'       // Steel gray
     };
-    return priority ? priorityColors[priority] : '#e0e0e0'; // Default light gray
+    return priority ? priorityColors[priority] : '#9AA0A8'; // Default neutral gray
 };
 
 // Combined styling helper that provides comprehensive styling for calendar events

@@ -25,13 +25,18 @@ import {
     Skeleton,
     InputAdornment,
     Alert,
+    CssBaseline,
 } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
+import { createAppTheme } from '../styles/theme';
+import { getCachedTheme } from '../styles/injectThemeVariables';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
+import SearchIcon from '@mui/icons-material/Search';
 import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent, getGoalRelations } from '../utils/api';
 import { Goal, GoalType, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
 import {
@@ -3172,7 +3177,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     ? "Parent Goals (Required)"
                                     : "Parent Goals (Optional)")
                         }
-                        placeholder="Search for parent goals..."
+                        placeholder=""
                         helperText={
                             state.goal.goal_type === 'event'
                                 ? "Events must be associated with one task or routine"
@@ -3180,6 +3185,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         }
                         required={state.goal.goal_type === 'event' || state.goal.goal_type !== 'directive'}
                         error={(state.goal.goal_type === 'event' || state.goal.goal_type !== 'directive') && selectedParents.length === 0}
+                        InputProps={{
+                            ...params.InputProps,
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <SearchIcon fontSize="small" color="action" />
+                                </InputAdornment>
+                            ),
+                        }}
                     />
                 )}
                 fullWidth
@@ -3291,8 +3304,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <TextField
                         {...params}
                         label="Child Goals (Optional)"
-                        placeholder="Search for child goals..."
+                        placeholder=""
                         helperText="Select child goals to create relationships"
+                        InputProps={{
+                            ...params.InputProps,
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <SearchIcon fontSize="small" color="action" />
+                                </InputAdornment>
+                            ),
+                        }}
                     />
                 )}
                 fullWidth
@@ -3711,9 +3732,32 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             return (
                 <Box ref={statsContainerRef} sx={{ mt: 2 }} aria-busy={true}>
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 1 }}>
-                        {[0, 1, 2, 3].map((idx) => (
-                            <Box key={idx} sx={{ p: 1, borderRadius: 1, bgcolor: 'action.hover', minHeight: 56 }}>
-                                <Skeleton variant="rectangular" height={56} />
+                        {[0, 1, 2].map((idx) => (
+                            <Box key={idx} sx={{
+                                p: 1,
+                                borderRadius: 1,
+                                bgcolor: 'action.hover',
+                                display: 'grid',
+                                gridTemplateColumns: '24px 1fr',
+                                alignItems: 'center',
+                                columnGap: 1,
+                                minHeight: 56
+                            }}>
+                                <Box sx={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    bgcolor: 'background.paper',
+                                    borderRadius: '8px',
+                                    width: 24,
+                                    height: 24
+                                }}>
+                                    <Skeleton variant="circular" width={16} height={16} />
+                                </Box>
+                                <Box>
+                                    <Skeleton variant="text" width="60%" height={20} />
+                                    <Skeleton variant="text" width="40%" height={14} sx={{ mt: 0.5 }} />
+                                </Box>
                             </Box>
                         ))}
                     </Box>
@@ -4132,8 +4176,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
                 close();
             }}
-            maxWidth="sm"
+            maxWidth="md"
             fullWidth
+            PaperProps={{
+                sx: {
+                    borderRadius: '0.75rem',
+                    bgcolor: 'background.paper',
+                }
+            }}
             onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>) => {
                 if (event.key === 'Enter' && !event.shiftKey && !isViewOnly) {
                     event.preventDefault();
@@ -4158,6 +4208,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {state.error && (
                             <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
                         )}
+                        {/* Loading relationships indicator - commented out to reduce visual noise
                         {actualRelationsLoading && (
                             <Box sx={{ mb: 2 }}>
                                 <LinearProgress />
@@ -4170,6 +4221,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Typography>
                             </Box>
                         )}
+                        */}
                         {commonFields}
                         {parentSelectorField}
                         {childSelectorField}
@@ -4191,10 +4243,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                 key={parent.id}
                                                 sx={{
                                                     ...getGoalStyle(parent),
-                                                    color: 'white',
+                                                    color: 'text.inverse',
                                                     px: 1.5,
                                                     py: 0.75,
-                                                    borderRadius: '16px',
+                                                    borderRadius: 2,
                                                     fontSize: '0.875rem',
                                                     fontWeight: 500,
                                                     cursor: 'pointer',
@@ -4228,10 +4280,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                 key={child.id}
                                                 sx={{
                                                     ...getGoalStyle(child),
-                                                    color: 'white',
+                                                    color: 'text.inverse',
                                                     px: 1.5,
                                                     py: 0.75,
-                                                    borderRadius: '16px',
+                                                    borderRadius: 2,
                                                     fontSize: '0.875rem',
                                                     fontWeight: 500,
                                                     cursor: 'pointer',
@@ -4277,34 +4329,40 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 </Box>
             </DialogContent>
             {/* ---- Dialog Actions ---- */}
-            <DialogActions sx={{ justifyContent: 'space-between', px: 2 }}>
-                <Box sx={{ display: 'flex', gap: 1 }}>
+            <DialogActions sx={{ justifyContent: 'space-between', px: 2, py: 1.5 }}>
+                <Box sx={{
+                    display: 'flex',
+                    gap: 1,
+                    bgcolor: 'action.hover',
+                    borderRadius: 1.5,
+                    p: 0.75
+                }}>
                     {state.mode === 'view' && (
                         <>
                             {state.goal.goal_type !== 'event' && (
                                 <>
-                                    <Button onClick={handleCreateChild} color="secondary" disabled={isBusy}>Create Child</Button>
-                                    <Button onClick={handleEdit} color="primary" disabled={isBusy}>Edit</Button>
-                                    <Button onClick={handleDuplicate} color="secondary" disabled={isBusy}>
-                                        {pendingAction === 'duplicate' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                    <Button onClick={handleCreateChild} color="secondary" disabled={isBusy} size="small">Create Child</Button>
+                                    <Button onClick={handleEdit} color="primary" disabled={isBusy} size="small">Edit</Button>
+                                    <Button onClick={handleDuplicate} color="secondary" disabled={isBusy} size="small">
+                                        {pendingAction === 'duplicate' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                                         Duplicate
                                     </Button>
-                                    <Button onClick={handleDelete} color="error" disabled={isBusy}>
-                                        {pendingAction === 'delete' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                    <Button onClick={handleDelete} color="error" disabled={isBusy} size="small">
+                                        {pendingAction === 'delete' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                                         Delete
                                     </Button>
-                                    {/* <Button onClick={handleRelations} color="secondary">Relationships</Button> */}
+                                    {/* <Button onClick={handleRelations} color="secondary" size="small">Relationships</Button> */}
                                 </>
                             )}
                             {state.goal.goal_type === 'event' && (
                                 <>
-                                    <Button onClick={handleEdit} color="primary" disabled={isBusy}>Edit</Button>
-                                    <Button onClick={handleDuplicate} color="secondary" disabled={isBusy}>
-                                        {pendingAction === 'duplicate' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                    <Button onClick={handleEdit} color="primary" disabled={isBusy} size="small">Edit</Button>
+                                    <Button onClick={handleDuplicate} color="secondary" disabled={isBusy} size="small">
+                                        {pendingAction === 'duplicate' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                                         Duplicate
                                     </Button>
-                                    <Button onClick={handleDelete} color="error" disabled={isBusy}>
-                                        {pendingAction === 'delete' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                                    <Button onClick={handleDelete} color="error" disabled={isBusy} size="small">
+                                        {pendingAction === 'delete' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                                         Delete
                                     </Button>
                                 </>
@@ -4312,22 +4370,28 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         </>
                     )}
                     {state.mode === 'edit' && (
-                        <Button onClick={handleDelete} color="error" disabled={isBusy}>
-                            {pendingAction === 'delete' ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                        <Button onClick={handleDelete} color="error" disabled={isBusy} size="small">
+                            {pendingAction === 'delete' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                             Delete
                         </Button>
                     )}
                 </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button onClick={close} disabled={isBusy}>{isViewOnly ? 'Close' : 'Cancel'}</Button>
+                <Box sx={{
+                    display: 'flex',
+                    gap: 1,
+                    bgcolor: 'action.hover',
+                    borderRadius: 1.5,
+                    p: 0.75
+                }}>
+                    <Button onClick={close} disabled={isBusy} size="small">{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || actualRelationsLoading}>
-                            {(pendingAction === 'save' || pendingAction === 'create') ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}
+                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || actualRelationsLoading} size="small">
+                            {(pendingAction === 'save' || pendingAction === 'create') ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                             {state.mode === 'create' ? 'Create' : 'Save'}
                         </Button>
                     )}
                     {state.mode === 'create' && (
-                        <Button onClick={() => handleSubmit(true)} color="primary" disabled={isBusy}>Create Another</Button>
+                        <Button onClick={() => handleSubmit(true)} color="primary" disabled={isBusy} size="small">Create Another</Button>
                     )}
                 </Box>
             </DialogActions>
@@ -4649,21 +4713,28 @@ GoalMenuWithStatic.open = (goal: Goal, initialMode: Mode, onSuccess?: (goal: Goa
 
     currentInstance = cleanup;
 
+    // Get current theme from cache
+    const currentThemeName = getCachedTheme() || 'light';
+    const theme = createAppTheme(currentThemeName);
+
     currentRoot = createRoot(container);
     currentRoot.render(
-        <GoalMenuBase
-            goal={goal}
-            mode={initialMode}
-            onClose={cleanup}
-            onSuccess={(updatedGoal: Goal) => {
-                if (onSuccess) {
-                    onSuccess(updatedGoal);
-                }
-            }}
-            defaultSelectedParents={options?.defaultSelectedParents}
-            defaultRelationshipType={options?.defaultRelationshipType}
-            autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
-        />
+        <ThemeProvider theme={theme}>
+            <CssBaseline />
+            <GoalMenuBase
+                goal={goal}
+                mode={initialMode}
+                onClose={cleanup}
+                onSuccess={(updatedGoal: Goal) => {
+                    if (onSuccess) {
+                        onSuccess(updatedGoal);
+                    }
+                }}
+                defaultSelectedParents={options?.defaultSelectedParents}
+                defaultRelationshipType={options?.defaultRelationshipType}
+                autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
+            />
+        </ThemeProvider>
     );
 
     console.log('[GoalMenu.open] Goal menu rendered');
@@ -4691,20 +4762,27 @@ GoalMenuWithStatic.openWithSubmitOverride = (goal: Goal, initialMode: Mode, subm
 
     currentInstance = cleanup;
 
+    // Get current theme from cache
+    const currentThemeName = getCachedTheme() || 'light';
+    const theme = createAppTheme(currentThemeName);
+
     currentRoot = createRoot(container);
     currentRoot.render(
-        <GoalMenuBase
-            goal={goal}
-            mode={initialMode}
-            onClose={cleanup}
-            onSuccess={(updatedGoal: Goal) => {
-                if (onSuccess) onSuccess(updatedGoal);
-            }}
-            submitOverride={submit}
-            defaultSelectedParents={options?.defaultSelectedParents}
-            defaultRelationshipType={options?.defaultRelationshipType}
-            autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
-        />
+        <ThemeProvider theme={theme}>
+            <CssBaseline />
+            <GoalMenuBase
+                goal={goal}
+                mode={initialMode}
+                onClose={cleanup}
+                onSuccess={(updatedGoal: Goal) => {
+                    if (onSuccess) onSuccess(updatedGoal);
+                }}
+                submitOverride={submit}
+                defaultSelectedParents={options?.defaultSelectedParents}
+                defaultRelationshipType={options?.defaultRelationshipType}
+                autoCreateEventTimestamp={options?.autoCreateEventTimestamp}
+            />
+        </ThemeProvider>
     );
 };
 

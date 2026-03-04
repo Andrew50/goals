@@ -1,12 +1,12 @@
 import React from 'react';
 import { BrowserRouter as Router, Route, Routes, Link, useNavigate } from 'react-router-dom';
-import { ThemeProvider, AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
-import { theme } from './shared/styles/theme';
+import { AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { HotkeysProvider } from 'react-hotkeys-hook';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
+import { ThemeProvider } from './shared/contexts/ThemeContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 import { GoalMenuProvider } from './shared/contexts/GoalMenuContext';
 
@@ -73,7 +73,7 @@ const App: React.FC = () => {
     <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID || ''}>
       <AuthProvider>
         <GoalMenuProvider>
-          <ThemeProvider theme={theme}>
+          <ThemeProvider>
             <CssBaseline />
             <DndProvider backend={HTML5Backend}>
               <HotkeysProvider>

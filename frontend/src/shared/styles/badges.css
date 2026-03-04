@@ -20,18 +20,18 @@
 }
 
 .priority-badge[data-priority="high"] {
-    background-color: #fed7d7;
-    color: #c53030;
+    background-color: rgba(var(--color-priority-high-rgb, 229, 62, 62), 0.15);
+    color: var(--color-priority-high, #c53030);
 }
 
 .priority-badge[data-priority="medium"] {
-    background-color: #feebc8;
-    color: #c05621;
+    background-color: rgba(var(--color-priority-medium-rgb, 221, 107, 32), 0.15);
+    color: var(--color-priority-medium, #c05621);
 }
 
 .priority-badge[data-priority="low"] {
-    background-color: #c6f6d5;
-    color: #276749;
+    background-color: rgba(var(--color-priority-low-rgb, 113, 128, 150), 0.15);
+    color: var(--color-priority-low, #276749);
 }
 
 .status-badge {
@@ -44,23 +44,23 @@
 }
 
 .status-badge.completed {
-    background-color: #c6f6d5;
-    color: #276749;
+    background-color: rgba(var(--color-status-completed-rgb, 72, 187, 120), 0.15);
+    color: var(--color-status-completed, #276749);
 }
 
 .status-badge.failed {
-    background-color: #fed7d7;
-    color: #c53030;
+    background-color: rgba(var(--color-status-failed-rgb, 229, 62, 62), 0.15);
+    color: var(--color-status-failed, #c53030);
 }
 
 .status-badge.skipped {
-    background-color: #edf2f7;
-    color: #718096;
+    background-color: var(--color-border-light, #edf2f7);
+    color: var(--color-text-muted, #718096);
 }
 
 .status-badge.in-progress {
-    background-color: #feebc8;
-    color: #c05621;
+    background-color: rgba(var(--color-status-inprogress-rgb, 237, 137, 54), 0.15);
+    color: var(--color-status-inprogress, #c05621);
 }
 
 .frequency-badge {
@@ -68,8 +68,8 @@
     align-items: center;
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
-    background-color: #dbeafe;
-    color: #1e40af;
+    background-color: rgba(var(--color-primary-main-rgb, 66, 153, 225), 0.15);
+    color: var(--color-primary-dark, #1e40af);
     font-size: 0.75rem;
     font-weight: 600;
 }
@@ -79,8 +79,8 @@
     align-items: center;
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
-    background-color: #e0e7ff;
-    color: #4338ca;
+    background-color: rgba(var(--color-secondary-main-rgb, 113, 128, 150), 0.15);
+    color: var(--color-secondary-dark, #4338ca);
     font-size: 0.75rem;
     font-weight: 600;
 }
@@ -91,8 +91,8 @@
     align-items: center;
     padding: 0.25rem 0.5rem;
     border-radius: 9999px;
-    background-color: #edf2f7; /* neutral light */
-    color: #4a5568; /* slate text */
+    background-color: var(--color-border-light, #edf2f7);
+    color: var(--color-text-secondary, #4a5568);
     font-size: 0.75rem;
     font-weight: 500;
     max-width: 100%;

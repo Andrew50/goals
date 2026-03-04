@@ -21,7 +21,7 @@ use crate::server::middleware;
 use crate::tools::{
     achievements, autofill, calendar, day, event, gcal_client,
     goal::{self, DuplicateOptions, ExpandTaskDateRangeRequest, Goal, ResolveGoalRequest, Relationship},
-    list, migration, network, notification_settings, relations, stats, telegram, traversal,
+    list, migration, network, notification_settings, relations, stats, telegram, theme_settings, traversal,
 };
 
 // Type alias for user locks that's used in routine processing
@@ -172,6 +172,10 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/settings", get(handle_get_notification_settings))
         .route("/settings", put(handle_update_notification_settings));
 
+    let theme_settings_routes = Router::new()
+        .route("/settings", get(handle_get_theme_settings))
+        .route("/settings", put(handle_update_theme_settings));
+
     let account_routes = Router::new()
         .route("/", get(handle_get_account))
         .route("/set-password", post(handle_set_password))
@@ -195,6 +199,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/routine", routine_generation_routes)
         .nest("/telegram", telegram_routes)
         .nest("/notifications", notification_settings_routes)
+        .nest("/theme", theme_settings_routes)
         .nest("/account", account_routes)
         .nest("/auth", auth_protected_routes)
         .route("/autofill", post(handle_autofill_suggestions))
@@ -1107,6 +1112,28 @@ async fn handle_update_notification_settings(
     Json(settings): Json<notification_settings::NotificationSettings>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     notification_settings::update_notification_settings(&graph, user_id, settings)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+// Theme settings handlers
+async fn handle_get_theme_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<Json<theme_settings::ThemeSettings>, (StatusCode, String)> {
+    theme_settings::get_theme_settings(&graph, user_id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn handle_update_theme_settings(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+    Json(settings): Json<theme_settings::ThemeSettings>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    theme_settings::update_theme_settings(&graph, user_id, settings)
         .await
         .map(|_| StatusCode::OK)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
