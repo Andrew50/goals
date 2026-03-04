@@ -90,6 +90,8 @@
     padding: 1.5rem;
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
     min-height: 400px;
+    display: flex;
+    flex-direction: column;
 }
 
 .column-header {
@@ -129,6 +131,29 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    scroll-behavior: smooth;
+}
+
+/* Custom scrollbar for better UX */
+.tasks-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tasks-list::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.tasks-list::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+.tasks-list::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
 }
 
 .tasks-list.completed {

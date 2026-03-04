@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NotificationSettings {
-    6|    pub notifications_enabled: bool,
-    7|    pub notify_via_telegram: bool,
-    8|    pub notify_high_priority_events: bool,
-    9|    pub notify_event_reminders: bool,
-    10|    pub reminder_offsets_minutes: Vec<i64>,
-    11|}
+    pub notifications_enabled: bool,
+    pub notify_via_telegram: bool,
+    pub notify_high_priority_events: bool,
+    pub notify_event_reminders: bool,
+    pub reminder_offsets_minutes: Vec<i64>,
+}
 
 impl Default for NotificationSettings {
     fn default() -> Self {

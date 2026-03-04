@@ -256,7 +256,7 @@ const Projects: React.FC = () => {
         });
     };
 
-    const formatDueDate = (timestamp: Date | undefined) => {
+    const formatDueDate = (timestamp: Date | null | undefined) => {
         if (!timestamp) return 'No due date';
         const date = new Date(timestamp);
         const now = new Date();
@@ -280,7 +280,7 @@ const Projects: React.FC = () => {
         }
     };
 
-    const getDueDateClass = (timestamp: Date | undefined) => {
+    const getDueDateClass = (timestamp: Date | null | undefined) => {
         if (!timestamp) return '';
         const now = new Date();
         const diffTime = new Date(timestamp).getTime() - now.getTime();

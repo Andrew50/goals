@@ -127,7 +127,7 @@ interface EffortStat {
 interface RoutineUpdateDialogState {
     isOpen: boolean;
     isParentEdit?: boolean;
-    updateType: 'scheduled_time' | 'duration' | 'other';
+    updateType: 'scheduled_time' | 'duration' | 'other' | 'resolution';
     originalGoal: Goal | null;
     updatedGoal: Goal | null;
     selectedScope: 'single' | 'all' | 'future' | 'range';
@@ -215,6 +215,10 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [relationshipType, setRelationshipType] = useState<'child'>(defaultRelationshipType || 'child');
     const [selectedChildren, setSelectedChildren] = useState<Goal[]>([]);
     const [childSearchQuery, setChildSearchQuery] = useState('');
+
+    // Refs to store AI suggestions for ranking (avoid circular dependency)
+    const parentSuggestionsRef = useRef<string[]>([]);
+    const childSuggestionsRef = useRef<string[]>([]);
 
     // Create fuzzy search instance
     const fuse = useMemo(() => {
@@ -463,6 +467,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const results = fuse.search(parentSearchQuery);
             const resultIds = new Set(results.map(r => r.item.id));
             validGoals = validGoals.filter(g => resultIds.has(g.id));
+        } else {
+            // No search query: rank AI-suggested items at the top
+            const suggestedIds = new Set(parentSuggestionsRef.current);
+            validGoals = validGoals.sort((a, b) => {
+                const aIsSuggested = suggestedIds.has(String(a.id));
+                const bIsSuggested = suggestedIds.has(String(b.id));
+                if (aIsSuggested && !bIsSuggested) return -1;
+                if (!aIsSuggested && bIsSuggested) return 1;
+                return 0;
+            });
         }
 
         // Add "Create new goal" option if there's a search query
@@ -481,7 +495,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Use a Set for O(1) lookup of existing option IDs
         const optionIds = new Set(options.map(o => o.id));
         const selectedButMissing = selectedParents.filter(p => !optionIds.has(p.id));
-        
+
         if (selectedButMissing.length > 0) {
             options = [...options, ...selectedButMissing];
         }
@@ -507,6 +521,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             const results = fuse.search(childSearchQuery);
             const resultIds = new Set(results.map(r => r.item.id));
             validGoals = validGoals.filter(g => resultIds.has(g.id));
+        } else {
+            // No search query: rank AI-suggested items at the top
+            const suggestedIds = new Set(childSuggestionsRef.current);
+            validGoals = validGoals.sort((a, b) => {
+                const aIsSuggested = suggestedIds.has(String(a.id));
+                const bIsSuggested = suggestedIds.has(String(b.id));
+                if (aIsSuggested && !bIsSuggested) return -1;
+                if (!aIsSuggested && bIsSuggested) return 1;
+                return 0;
+            });
         }
 
         // Add "Create new goal" option if there's a search query
@@ -523,7 +547,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         // Ensure selected children are always in the options to avoid Autocomplete warnings
         const optionIds = new Set(options.map(o => o.id));
         const selectedButMissing = selectedChildren.filter(c => !optionIds.has(c.id));
-        
+
         if (selectedButMissing.length > 0) {
             options = [...options, ...selectedButMissing];
         }
@@ -567,7 +591,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const startDateSuggestions = useAutofillSuggestions({
         fieldName: 'start_date',
         getContext: getGoalContext,
-        onApply: (v) => handleChange({ ...state.goal, start_timestamp: new Date(v) })
+        onApply: (v) => handleChange({ ...state.goal, start_timestamp: inputStringToTimestamp(v, 'date') })
     });
 
     const endDateSuggestions = useAutofillSuggestions({
@@ -579,7 +603,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const scheduledDateTimeSuggestions = useAutofillSuggestions({
         fieldName: 'scheduled_datetime',
         getContext: getGoalContext,
-        onApply: (v) => handleChange({ ...state.goal, scheduled_timestamp: new Date(v) })
+        onApply: (v) => handleChange({ ...state.goal, scheduled_timestamp: inputStringToTimestamp(v, 'datetime') })
     });
 
     const durationSuggestions = useAutofillSuggestions({
@@ -646,6 +670,15 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         allowedValues: gcalCalendars.map(c => c.id),
         onApply: (v) => handleChange({ ...state.goal, gcal_calendar_id: v })
     });
+
+    // Sync AI suggestions to refs so getParentOptions/getChildOptions can rank them
+    useEffect(() => {
+        parentSuggestionsRef.current = parentSuggestions.suggestions;
+    }, [parentSuggestions.suggestions]);
+
+    useEffect(() => {
+        childSuggestionsRef.current = childSuggestions.suggestions;
+    }, [childSuggestions.suggestions]);
 
     // Ensure the error at the top is visible by resetting scroll to top when errors appear
     const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1373,6 +1406,34 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         onSuccess(safeUpdatedEvent);
                     }
                 }
+            } else if (state.goal.goal_type === 'routine' && newStatus === 'completed') {
+                // For routines completing, show confirmation dialog because it sets end date to now
+                setRoutineUpdateDialog({
+                    isOpen: true,
+                    updateType: 'resolution',
+                    originalGoal: state.goal,
+                    updatedGoal: { ...state.goal, resolution_status: 'completed' },
+                    isParentEdit: true,
+                    selectedScope: 'future',
+                    rangeStart: null,
+                    rangeEnd: null,
+                    onConfirm: async () => {
+                        try {
+                            const response = await resolveGoal(state.goal.id!, 'completed');
+                            const updatedGoal: Goal = {
+                                ...state.goal,
+                                resolution_status: response.resolution_status,
+                                resolved_at: response.resolved_at ? new Date(response.resolved_at) : undefined,
+                                end_timestamp: response.resolved_at ? new Date(response.resolved_at) : state.goal.end_timestamp
+                            };
+                            setState({ ...state, goal: updatedGoal });
+                            if (onSuccess) onSuccess(updatedGoal);
+                            setRoutineUpdateDialog(prev => ({ ...prev, isOpen: false }));
+                        } catch (error) {
+                            setState({ ...state, error: 'Failed to complete routine' });
+                        }
+                    }
+                });
             } else {
                 // For all non-events, use resolve goal API
                 const response = await resolveGoal(state.goal.id!, newStatus);
@@ -1767,11 +1828,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 updateType = 'duration';
                 hasChanges = true;
             }
-            // Check for other property changes (name, description, priority)
+            // Check for other property changes (name, description, priority, resolution_status)
             else if (
                 originalGoal.name !== updatedGoal.name ||
                 originalGoal.description !== updatedGoal.description ||
-                originalGoal.priority !== updatedGoal.priority
+                originalGoal.priority !== updatedGoal.priority ||
+                originalGoal.resolution_status !== updatedGoal.resolution_status
             ) {
                 updateType = 'other';
                 hasChanges = true;
@@ -2051,6 +2113,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             description?: string;
             priority?: string;
             scheduled_timestamp?: Date;
+            resolution_status?: string;
         } = {};
 
         if (changeType === 'duration') {
@@ -2061,6 +2124,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             if (updatedGoal.name) updates.name = updatedGoal.name;
             if (updatedGoal.description) updates.description = updatedGoal.description;
             if (updatedGoal.priority) updates.priority = updatedGoal.priority;
+            if (updatedGoal.resolution_status) updates.resolution_status = updatedGoal.resolution_status;
         }
 
         const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope, rangeStart, rangeEnd);
@@ -2120,7 +2184,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     updatedGoal.scheduled_timestamp!,
                     scope,
                     rangeStart,
-                    rangeEnd
+                    rangeEnd,
+                    updatedGoal.resolution_status
                 );
 
                 // Update the routine's default time as well
@@ -3309,6 +3374,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {dateFields}
                         {frequencyField}
                         {routineFields}
+                        {completedField}
                     </>
                 );
             case 'task':
@@ -3374,7 +3440,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                     isLoading={scheduledDateTimeSuggestions.isLoading} 
                                                     onSelect={(v) => {
                                                         setTaskEvents(prev => prev.map((evt, idx) =>
-                                                            idx === index ? { ...evt, scheduled_timestamp: new Date(v) } : evt
+                                                            idx === index ? { ...evt, scheduled_timestamp: inputStringToTimestamp(v, 'datetime') } : evt
                                                         ));
                                                     }} 
                                                 />
@@ -4277,122 +4343,137 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 maxWidth="sm"
                 fullWidth
             >
-                <DialogTitle>Update Routine Event</DialogTitle>
+                <DialogTitle>
+                    {routineUpdateDialog.updateType === 'resolution' ? 'Complete Routine' : 'Update Routine Event'}
+                </DialogTitle>
                 <DialogContent>
-                    <Typography variant="body1" sx={{ mb: 2 }}>
-                        You're modifying a routine event. What scope would you like to apply this change to?
-                    </Typography>
-                    
-                    <FormControl component="fieldset" sx={{ width: '100%' }}>
-                        <RadioGroup
-                            value={routineUpdateDialog.selectedScope}
-                            onChange={(e) => setRoutineUpdateDialog({ ...routineUpdateDialog, selectedScope: e.target.value as 'single' | 'all' | 'future' | 'range' })}
-                        >
-                            {!routineUpdateDialog.isParentEdit && (
-                                <FormControlLabel value="single" control={<Radio />} label="Apply to just this occurrence" />
-                            )}
-                            <FormControlLabel value="future" control={<Radio />} label={routineUpdateDialog.isParentEdit ? "Apply changes from now on" : "Apply to this occurrence and beyond"} />
-                            <FormControlLabel value="all" control={<Radio />} label={routineUpdateDialog.isParentEdit ? "Apply to all past and future occurrences" : "Apply to all occurrences"} />
-                            {/* Hide Range for Parent Edit for now as backend support is pending, or show if desired? User asked for standardization. */}
-                            {!routineUpdateDialog.isParentEdit && (
-                                <FormControlLabel value="range" control={<Radio />} label="Apply to specific date range" />
-                            )}
-                        </RadioGroup>
-                    </FormControl>
-
-                    <Box sx={{ mt: 2 }}>
-                        {routineUpdateDialog.isParentEdit ? (
-                             <Alert severity="warning">
-                                This will delete future events for this routine starting from your selection (Now or Start), including events that are already marked as completed, and regenerate them on the new schedule. Any edits you made to future events will be lost. Past events will remain unchanged.
-                            </Alert>
-                        ) : (
-                            routineUpdateDialog.updateType === 'scheduled_time' ? (
-                            routineUpdateDialog.selectedScope === 'single' ? (
-                                <Alert severity="info">
-                                    Only this event will be moved. The old time slot will be remembered as intentionally changed, so it won’t be recreated later.
-                                </Alert>
-                            ) : routineUpdateDialog.selectedScope === 'future' ? (
-                                <Alert severity="warning">
-                                    This event and all future events will be shifted. Any previously deleted/skipped future occurrences starting at this event may reappear on the new schedule.
-                                </Alert>
-                            ) : (
-                                <Alert severity="warning">
-                                    All occurrences will be shifted. Any previously deleted/skipped occurrences may reappear on the new schedule.
-                                </Alert>
-                            )
-                        ) : (
-                            routineUpdateDialog.selectedScope === 'single' ? (
-                                <Alert severity="info">
-                                    Only this event will be updated. Deleted/skipped occurrences stay deleted.
-                                </Alert>
-                            ) : (
-                                <Alert severity="info">
-                                    Existing events will be updated and the routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
-                                </Alert>
-                            )
-                        ))}
-                    </Box>
-
-                    {routineUpdateDialog.selectedScope === 'range' && (
-                        <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-                            <TextField
-                                label="From"
-                                type="date"
-                                value={routineUpdateDialog.rangeStart ? timestampToInputString(routineUpdateDialog.rangeStart, 'date') : ''}
-                                onChange={(e) => setRoutineUpdateDialog({
-                                    ...routineUpdateDialog,
-                                    rangeStart: inputStringToTimestamp(e.target.value, 'date')
-                                })}
-                                fullWidth
-                                InputLabelProps={{ shrink: true }}
-                            />
-                            <TextField
-                                label="To"
-                                type="date"
-                                value={routineUpdateDialog.rangeEnd ? timestampToInputString(routineUpdateDialog.rangeEnd, 'date') : ''}
-                                onChange={(e) => setRoutineUpdateDialog({
-                                    ...routineUpdateDialog,
-                                    rangeEnd: inputStringToTimestamp(e.target.value, 'date')
-                                })}
-                                fullWidth
-                                InputLabelProps={{ shrink: true }}
-                            />
-                        </Box>
-                    )}
-
-                    {routineUpdateDialog.selectedScope !== 'single' && routineChanges.length > 0 && (
-                        <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-                            <Typography variant="subtitle2" gutterBottom color="primary">
-                                Updates to Parent Routine:
+                    {routineUpdateDialog.updateType === 'resolution' ? (
+                        <>
+                            <Typography variant="body1" sx={{ mb: 2 }}>
+                                Are you sure you want to complete this routine?
                             </Typography>
-                            {routineChanges.map((change, idx) => (
-                                <Box key={idx} sx={{ display: 'flex', alignItems: 'center', mb: 0.5, fontSize: '0.9rem' }}>
-                                    <Typography variant="body2" sx={{ fontWeight: 'bold', minWidth: 120 }}>
-                                        {change.label}:
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                                Completing this routine will set its end date to now. No further routine events will be generated. Existing past events will remain unchanged.
+                            </Alert>
+                        </>
+                    ) : (
+                        <>
+                            <Typography variant="body1" sx={{ mb: 2 }}>
+                                You're modifying a routine event. What scope would you like to apply this change to?
+                            </Typography>
+                            
+                            <FormControl component="fieldset" sx={{ width: '100%' }}>
+                                <RadioGroup
+                                    value={routineUpdateDialog.selectedScope}
+                                    onChange={(e) => setRoutineUpdateDialog({ ...routineUpdateDialog, selectedScope: e.target.value as 'single' | 'all' | 'future' | 'range' })}
+                                >
+                                    {!routineUpdateDialog.isParentEdit && (
+                                        <FormControlLabel value="single" control={<Radio />} label="Apply to just this occurrence" />
+                                    )}
+                                    <FormControlLabel value="future" control={<Radio />} label={routineUpdateDialog.isParentEdit ? "Apply changes from now on" : "Apply to this occurrence and beyond"} />
+                                    <FormControlLabel value="all" control={<Radio />} label={routineUpdateDialog.isParentEdit ? "Apply to all past and future occurrences" : "Apply to all occurrences"} />
+                                    {/* Hide Range for Parent Edit for now as backend support is pending, or show if desired? User asked for standardization. */}
+                                    {!routineUpdateDialog.isParentEdit && (
+                                        <FormControlLabel value="range" control={<Radio />} label="Apply to specific date range" />
+                                    )}
+                                </RadioGroup>
+                            </FormControl>
+
+                            <Box sx={{ mt: 2 }}>
+                                {routineUpdateDialog.isParentEdit ? (
+                                    <Alert severity="warning">
+                                        This will delete future events for this routine starting from your selection (Now or Start), including events that are already marked as completed, and regenerate them on the new schedule. Any edits you made to future events will be lost. Past events will remain unchanged.
+                                    </Alert>
+                                ) : (
+                                    routineUpdateDialog.updateType === 'scheduled_time' ? (
+                                    routineUpdateDialog.selectedScope === 'single' ? (
+                                        <Alert severity="info">
+                                            Only this event will be moved. The old time slot will be remembered as intentionally changed, so it won’t be recreated later.
+                                        </Alert>
+                                    ) : routineUpdateDialog.selectedScope === 'future' ? (
+                                        <Alert severity="warning">
+                                            This event and all future events will be shifted. Any previously deleted/skipped future occurrences starting at this event may reappear on the new schedule.
+                                        </Alert>
+                                    ) : (
+                                        <Alert severity="warning">
+                                            All occurrences will be shifted. Any previously deleted/skipped occurrences may reappear on the new schedule.
+                                        </Alert>
+                                    )
+                                ) : (
+                                    routineUpdateDialog.selectedScope === 'single' ? (
+                                        <Alert severity="info">
+                                            Only this event will be updated. Deleted/skipped occurrences stay deleted.
+                                        </Alert>
+                                    ) : (
+                                        <Alert severity="info">
+                                            Existing events will be updated and the routine defaults will be updated for future generation. Deleted/skipped occurrences stay deleted.
+                                        </Alert>
+                                    )
+                                ))}
+                            </Box>
+
+                            {routineUpdateDialog.selectedScope === 'range' && (
+                                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                                    <TextField
+                                        label="From"
+                                        type="date"
+                                        value={routineUpdateDialog.rangeStart ? timestampToInputString(routineUpdateDialog.rangeStart, 'date') : ''}
+                                        onChange={(e) => setRoutineUpdateDialog({
+                                            ...routineUpdateDialog,
+                                            rangeStart: inputStringToTimestamp(e.target.value, 'date')
+                                        })}
+                                        fullWidth
+                                        InputLabelProps={{ shrink: true }}
+                                    />
+                                    <TextField
+                                        label="To"
+                                        type="date"
+                                        value={routineUpdateDialog.rangeEnd ? timestampToInputString(routineUpdateDialog.rangeEnd, 'date') : ''}
+                                        onChange={(e) => setRoutineUpdateDialog({
+                                            ...routineUpdateDialog,
+                                            rangeEnd: inputStringToTimestamp(e.target.value, 'date')
+                                        })}
+                                        fullWidth
+                                        InputLabelProps={{ shrink: true }}
+                                    />
+                                </Box>
+                            )}
+
+                            {routineUpdateDialog.selectedScope !== 'single' && routineChanges.length > 0 && (
+                                <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                                    <Typography variant="subtitle2" gutterBottom color="primary">
+                                        Updates to Parent Routine:
                                     </Typography>
-                                    <Typography variant="body2" sx={{ mx: 1, color: 'text.secondary', textDecoration: 'line-through' }}>
-                                        {change.oldVal}
-                                    </Typography>
-                                    <Typography variant="body2" sx={{ mx: 0.5 }}>
-                                        →
-                                    </Typography>
-                                    <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                                        {change.newVal}
+                                    {routineChanges.map((change, idx) => (
+                                        <Box key={idx} sx={{ display: 'flex', alignItems: 'center', mb: 0.5, fontSize: '0.9rem' }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 'bold', minWidth: 120 }}>
+                                                {change.label}:
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ mx: 1, color: 'text.secondary', textDecoration: 'line-through' }}>
+                                                {change.oldVal}
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ mx: 0.5 }}>
+                                                →
+                                            </Typography>
+                                            <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                                {change.newVal}
+                                            </Typography>
+                                        </Box>
+                                    ))}
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                        {routineUpdateDialog.updateType === 'scheduled_time'
+                                            ? 'This will update the routine defaults and shift existing events. Previously deleted/skipped occurrences may reappear in the selected range.'
+                                            : 'This will update the routine defaults and update existing events. Deleted/skipped occurrences will remain deleted.'}
                                     </Typography>
                                 </Box>
-                            ))}
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                                {routineUpdateDialog.updateType === 'scheduled_time'
-                                    ? 'This will update the routine defaults and shift existing events. Previously deleted/skipped occurrences may reappear in the selected range.'
-                                    : 'This will update the routine defaults and update existing events. Deleted/skipped occurrences will remain deleted.'}
-                            </Typography>
-                        </Box>
-                    )}
-                    
-                    {routineUpdateDialog.selectedScope === 'single' && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 2, ml: 1 }}>
-                            The parent routine will not be changed.
-                        </Typography>
+                            )}
+                            
+                            {routineUpdateDialog.selectedScope === 'single' && (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 2, ml: 1 }}>
+                                    The parent routine will not be changed.
+                                </Typography>
+                            )}
+                        </>
                     )}
                 </DialogContent>
                 <DialogActions>
@@ -4409,7 +4490,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         color="primary"
                         variant="contained"
                     >
-                        Update
+                        {routineUpdateDialog.updateType === 'resolution' ? 'Complete' : 'Update'}
                     </Button>
                 </DialogActions>
             </Dialog>

@@ -53,14 +53,14 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
 
   // Helper to fix Safari issue with redirected responses in SW
-  const cleanRedirect = (response) => {
+  const cleanResponse = (response) => {
+    if (!response) return response;
     if (response.redirected) {
-      const clean = new Response(response.body, {
-        status: response.status,
+      return new Response(response.body, {
+        status: response.status === 0 ? 200 : response.status,
         statusText: response.statusText,
         headers: response.headers
       });
-      return clean;
     }
     return response;
   };
@@ -70,10 +70,10 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       try {
         const response = await fetch(request);
-        return cleanRedirect(response);
+        return cleanResponse(response);
       } catch (_) {
         const fallback = await caches.match('/index.html');
-        return fallback || new Response('', { status: 503, statusText: 'Offline' });
+        return fallback ? cleanResponse(fallback) : new Response('', { status: 503, statusText: 'Offline' });
       }
     })());
     return;
@@ -83,10 +83,10 @@ self.addEventListener('fetch', event => {
   event.respondWith((async () => {
     try {
       const response = await fetch(request);
-      return cleanRedirect(response);
+      return cleanResponse(response);
     } catch (_) {
       const cached = await caches.match(request);
-      return cached || new Response('', { status: 503, statusText: 'Offline' });
+      return cached ? cleanResponse(cached) : new Response('', { status: 503, statusText: 'Offline' });
     }
   })());
 });

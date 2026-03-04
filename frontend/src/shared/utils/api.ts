@@ -346,7 +346,8 @@ export const updateRoutineEvent = async (
     newTimestamp: Date,
     updateScope: 'single' | 'all' | 'future' | 'range',
     rangeStart?: Date,
-    rangeEnd?: Date
+    rangeEnd?: Date,
+    resolutionStatus?: string
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEvent called with:', {
         eventId,
@@ -354,12 +355,14 @@ export const updateRoutineEvent = async (
         newTimestampMs: newTimestamp.getTime(),
         updateScope,
         rangeStart,
-        rangeEnd
+        rangeEnd,
+        resolutionStatus
     });
 
     const requestData: any = {
         new_timestamp: newTimestamp.getTime(),
-        update_scope: updateScope
+        update_scope: updateScope,
+        resolution_status: resolutionStatus
     };
 
     if (rangeStart) requestData.range_start = rangeStart.getTime();
@@ -403,6 +406,7 @@ export const updateRoutineEventProperties = async (
         description?: string;
         priority?: string;
         scheduled_timestamp?: Date;
+        resolution_status?: string;
     },
     updateScope: 'single' | 'all' | 'future' | 'range',
     rangeStart?: Date,
@@ -422,6 +426,7 @@ export const updateRoutineEventProperties = async (
         name: updates.name,
         description: updates.description,
         priority: updates.priority,
+        resolution_status: updates.resolution_status,
         scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined,
         range_start: rangeStart ? rangeStart.getTime() : undefined,
         range_end: rangeEnd ? rangeEnd.getTime() : undefined

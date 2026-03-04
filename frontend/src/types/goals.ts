@@ -19,6 +19,11 @@ export function getDisplayStatus(goal: Goal): DisplayStatus {
     const startTimestamp = goal.start_timestamp?.getTime() ?? goal.start_date?.getTime();
     const endTimestamp = goal.due_date?.getTime() ?? goal.end_timestamp?.getTime();
 
+    // For routines, if now > end_timestamp, it is considered completed even if pending
+    if (goal.goal_type === 'routine' && endTimestamp && now > endTimestamp && goal.resolution_status !== 'completed' && goal.resolution_status !== 'failed' && goal.resolution_status !== 'skipped') {
+        return 'completed';
+    }
+
     switch (goal.resolution_status) {
         case 'completed':
             // Check if tardy (resolved after due/end date)
@@ -49,18 +54,18 @@ export interface Goal {
     description?: string;
     goal_type: GoalType;
     priority?: 'high' | 'medium' | 'low';
-    start_timestamp?: Date;
-    end_timestamp?: Date;
+    start_timestamp?: Date | null;
+    end_timestamp?: Date | null;
     resolution_status?: ResolutionStatus;
-    resolved_at?: Date;
+    resolved_at?: Date | null;
     frequency?: string;
-    next_timestamp?: Date;
+    next_timestamp?: Date | null;
     routine_name?: string;
     routine_description?: string;
     routine_type?: 'task' | 'achievement';
     routine_duration?: number;
-    routine_time?: Date;
-    scheduled_timestamp?: Date;
+    routine_time?: Date | null;
+    scheduled_timestamp?: Date | null;
     duration?: number; // minuites
     _tz?: 'utc' | 'user';
     position_x?: number;
@@ -74,8 +79,8 @@ export interface Goal {
     is_deleted?: boolean;
 
     // Modified for tasks:
-    due_date?: Date;
-    start_date?: Date;
+    due_date?: Date | null;
+    start_date?: Date | null;
     // Note: scheduled_timestamp is now event-only for tasks
     // Note: duration is now event-only for tasks
 
@@ -83,12 +88,12 @@ export interface Goal {
     gcal_event_id?: string;
     gcal_calendar_id?: string;
     gcal_sync_enabled?: boolean;
-    gcal_last_sync?: Date;
+    gcal_last_sync?: Date | null;
     gcal_sync_direction?: 'bidirectional' | 'to_gcal' | 'from_gcal';
     is_gcal_imported?: boolean;
 
     // Modification tracking for conflict detection
-    updated_at?: Date;
+    updated_at?: Date | null;
 }
 
 // Utility functions for timezone conversion

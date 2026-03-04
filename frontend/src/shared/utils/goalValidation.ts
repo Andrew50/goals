@@ -114,7 +114,6 @@ export function validateGoal(goal: Goal): string[] {
         const value = goal[field];
         if (value !== null && value !== undefined && !(value instanceof Date)) {
             validationErrors.push(`${field} must be a valid Date object instead of ${typeof value}`);
-            console.trace()
         }
     });
 
