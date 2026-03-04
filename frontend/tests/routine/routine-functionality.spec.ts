@@ -410,7 +410,7 @@ test.describe('Routine Functionality', () => {
 
         // Parent Goals are required for non-directive goals (GoalMenu validation)
         // Pick the first available goal from the autocomplete dropdown.
-        const parentInput = page.locator('input[placeholder="Search for parent goals..."]');
+        const parentInput = page.locator('label:has-text("Parent Goals (Required)") + div input');
         await expect(parentInput).toBeVisible();
         await parentInput.click();
         // Ensure options render

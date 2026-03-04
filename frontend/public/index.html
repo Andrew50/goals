@@ -27,6 +27,53 @@
       work correctly both with client-side routing and a non-root public URL.
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
+
+  <!-- Theme flash prevention - runs before React loads -->
+  <script>
+    (function() {
+      try {
+        const cached = localStorage.getItem('goals_theme_cache');
+        if (cached) {
+          const { theme } = JSON.parse(cached);
+          const validThemes = ['light', 'dark', 'green', 'blue', 'orange', 'purple'];
+          if (validThemes.includes(theme)) {
+            document.documentElement.setAttribute('data-theme', theme);
+
+            // Theme color definitions for immediate application
+            const themeColors = {
+              light: { bg: '#f5f7fa', text: '#2d3748', primary: '#4299e1' },
+              dark: { bg: '#1a202c', text: '#f7fafc', primary: '#63b3ed' },
+              green: { bg: '#0f2418', text: '#f0fff4', primary: '#68d391' },
+              blue: { bg: '#0f2034', text: '#ebf8ff', primary: '#63b3ed' },
+              orange: { bg: '#2d1b0f', text: '#fffaf0', primary: '#f6ad55' },
+              purple: { bg: '#24183a', text: '#faf5ff', primary: '#b794f6' }
+            };
+
+            const colors = themeColors[theme];
+            const css = `
+              :root {
+                --color-bg-default: ${colors.bg};
+                --color-text-primary: ${colors.text};
+                --color-primary-main: ${colors.primary};
+              }
+              body {
+                background-color: ${colors.bg} !important;
+                color: ${colors.text} !important;
+              }
+            `;
+
+            const style = document.createElement('style');
+            style.id = 'theme-preload';
+            style.textContent = css;
+            document.head.appendChild(style);
+          }
+        }
+      } catch (e) {
+        // Ignore any errors - this is just a performance optimization
+      }
+    })();
+  </script>
+
   <title>Goals</title>
 </head>
 

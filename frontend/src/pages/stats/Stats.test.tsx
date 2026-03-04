@@ -36,7 +36,7 @@ describe('Stats', () => {
         });
 
         await waitFor(() => {
-            const searchInput = screen.queryByPlaceholderText(/search/i);
+            const searchInput = screen.queryByLabelText(/search/i);
             expect(searchInput || screen.getByText(/stats/i) || document.body.textContent).toBeTruthy();
         });
     });

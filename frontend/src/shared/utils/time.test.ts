@@ -344,7 +344,7 @@ describe('Time conversion utilities', () => {
             const expected = date; // Expect a Date object
 
             // Compare getTime() for robustness against object identity
-            expect(inputStringToTimestamp(timeString, 'time').getTime()).toBe(expected.getTime());
+            expect(inputStringToTimestamp(timeString, 'time')!.getTime()).toBe(expected.getTime());
         });
 
         test('should parse datetime string to timestamp', () => {
@@ -356,10 +356,9 @@ describe('Time conversion utilities', () => {
         });
 
         test('should handle empty string input', () => {
-            const epochDate = new Date(0);
-            expect(inputStringToTimestamp('', 'date')).toEqual(epochDate);
-            expect(inputStringToTimestamp('', 'time')).toEqual(epochDate);
-            expect(inputStringToTimestamp('', 'datetime')).toEqual(epochDate);
+            expect(inputStringToTimestamp('', 'date')).toBeNull();
+            expect(inputStringToTimestamp('', 'time')).toBeNull();
+            expect(inputStringToTimestamp('', 'datetime')).toBeNull();
         });
 
         test('should handle midnight boundary cases', () => {
@@ -374,8 +373,8 @@ describe('Time conversion utilities', () => {
             // Parse back to timestamp (Date object)
             const parsedMidnightDate = inputStringToTimestamp('00:00', 'time');
             // const midnightDate = new Date(parsedMidnight); // No longer needed
-            expect(parsedMidnightDate.getHours()).toBe(0);
-            expect(parsedMidnightDate.getMinutes()).toBe(0);
+            expect(parsedMidnightDate!.getHours()).toBe(0);
+            expect(parsedMidnightDate!.getMinutes()).toBe(0);
 
             // Test just before midnight
             const beforeMidnightTimestamp = new Date(2023, 0, 15, 23, 59, 59, 999).getTime();
@@ -387,20 +386,19 @@ describe('Time conversion utilities', () => {
         });
 
         test('should handle invalid input strings gracefully', () => {
-            const epochDate = new Date(0);
-            // Test with malformed date strings - should return Epoch Date
-            expect(inputStringToTimestamp('not-a-date', 'date')).toEqual(epochDate);
-            // Invalid dates might parse to something unexpected or NaN, check against Epoch
-            expect(inputStringToTimestamp('2023-13-32', 'date')).toEqual(epochDate); // Should now return Epoch for invalid date parts
+            // Test with malformed date strings - should return null
+            expect(inputStringToTimestamp('not-a-date', 'date')).toBeNull();
+            // Invalid dates might parse to something unexpected or NaN, check against null
+            expect(inputStringToTimestamp('2023-13-32', 'date')).toBeNull(); // Should now return null for invalid date parts
 
-            // Test with malformed time strings - should return Epoch Date
+            // Test with malformed time strings - should return null
             // Note: setHours can handle wrapping, but invalid formats should fail
-            expect(inputStringToTimestamp('25:70', 'time')).toEqual(epochDate); // Should now return Epoch for invalid time parts
-            expect(inputStringToTimestamp('not-a-time', 'time')).toEqual(epochDate);
+            expect(inputStringToTimestamp('25:70', 'time')).toBeNull(); // Should now return null for invalid time parts
+            expect(inputStringToTimestamp('not-a-time', 'time')).toBeNull();
 
-            // Test with malformed datetime strings - should return Epoch Date
-            expect(inputStringToTimestamp('2023-01-15Tnot-a-time', 'datetime')).toEqual(epochDate);
-            expect(inputStringToTimestamp('not-a-dateT12:30', 'datetime')).toEqual(epochDate);
+            // Test with malformed datetime strings - should return null
+            expect(inputStringToTimestamp('2023-01-15Tnot-a-time', 'datetime')).toBeNull();
+            expect(inputStringToTimestamp('not-a-dateT12:30', 'datetime')).toBeNull();
         });
     });
 

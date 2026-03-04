@@ -45,4 +45,7 @@ node_modules
 .cargo/
 
 .target/
-vapid.env
+.env.backup
+*.tmp
+*.bak
+docker-compose.worker-*.yaml

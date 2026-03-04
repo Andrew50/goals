@@ -6,6 +6,7 @@ import { getGoalStyle } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import './List.css';
 import '../../shared/styles/badges.css';
+import NewButton from '../../shared/components/NewButton';
 import { SearchBar } from '../../shared/components/SearchBar';
 import { formatFrequency } from '../../shared/utils/frequency';
 import { deleteGoal, duplicateGoal, updateGoal, resolveGoal, deleteEvent, updateEvent } from '../../shared/utils/api';
@@ -689,15 +690,7 @@ const List: React.FC = () => {
             <div className="list-content">
                 <div className="list-header">
                     <h2 className="list-title">Goals</h2>
-                    <button
-                        onClick={handleCreateGoal}
-                        className="new-goal-button"
-                    >
-                        <svg className="new-goal-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        <span>New Goal</span>
-                    </button>
+                    <NewButton onClick={handleCreateGoal} />
                 </div>
 
                 <div className="toolbar-row">

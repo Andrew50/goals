@@ -4,6 +4,10 @@ use axum::{http::StatusCode, Json};
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 
+const NETWORK_COMPLETED_AGE_LIMIT_DAYS: i64 = 30;
+const NETWORK_NODE_LIMIT: usize = 150;
+const TEMPORAL_RANGE_DAYS: i64 = 3;
+
 #[derive(Deserialize, Debug)]
 pub struct AutofillRequest {
     pub field_name: String,
@@ -60,7 +64,7 @@ async fn fetch_similar_goals(
          WHERE g.user_id = $user_id AND g.goal_type = $goal_type
          RETURN g.name, g.description 
          ORDER BY id(g) DESC 
-         LIMIT 5",
+         LIMIT 10",
     )
     .param("user_id", user_id)
     .param("goal_type", gt);
@@ -82,9 +86,8 @@ async fn fetch_nearby_goals(
     user_id: i64,
     timestamp: i64,
 ) -> Result<Vec<String>, neo4rs::Error> {
-    // +/- 7 days
-    let start = timestamp - (7 * 24 * 60 * 60 * 1000);
-    let end = timestamp + (7 * 24 * 60 * 60 * 1000);
+    let start = timestamp - (TEMPORAL_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    let end = timestamp + (TEMPORAL_RANGE_DAYS * 24 * 60 * 60 * 1000);
 
     let q = query(
         "MATCH (g:Goal) 
@@ -111,34 +114,122 @@ async fn fetch_nearby_goals(
     Ok(goals)
 }
 
-async fn fetch_related_goals(
+async fn fetch_goal_network_map(
     graph: &Graph,
-    ids: &[i64],
-    relation: &str,
-) -> Result<Vec<String>, neo4rs::Error> {
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
+    user_id: i64,
+) -> Result<String, neo4rs::Error> {
+    let cutoff = chrono::Utc::now().timestamp_millis() - (NETWORK_COMPLETED_AGE_LIMIT_DAYS * 24 * 60 * 60 * 1000);
     
-    // Manual query construction since neo4rs might not support IN clause with param list easily in all versions, 
-    // but usually it does. Let's try unwinding.
     let q = query(
-        "UNWIND $ids as gid
-         MATCH (g:Goal) WHERE id(g) = gid
-         RETURN g.name, g.goal_type",
+        "MATCH (g:Goal)
+         WHERE g.user_id = $user_id
+           AND g.goal_type <> 'event'
+           AND coalesce(g.is_deleted, false) = false
+           AND (coalesce(g.resolution_status, 'pending') <> 'completed' OR g.resolved_at >= $cutoff)
+         OPTIONAL MATCH (parent:Goal)-[:CHILD]->(g)
+         WHERE coalesce(parent.is_deleted, false) = false
+         RETURN id(g) as id, g.name as name, g.goal_type as type, collect(id(parent)) as parent_ids"
     )
-    .param("ids", ids.to_vec());
+    .param("user_id", user_id)
+    .param("cutoff", cutoff);
 
     let mut result = graph.execute(q).await?;
-    let mut goals = Vec::new();
+    
+    #[derive(Clone)]
+    struct Node {
+        id: i64,
+        name: String,
+        goal_type: String,
+        parent_ids: Vec<i64>,
+        children: Vec<i64>,
+    }
+    
+    let mut nodes = std::collections::HashMap::new();
     while let Some(row) = result.next().await? {
-        let name: String = row.get("g.name").unwrap_or_default();
-        let gt: String = row.get("g.goal_type").unwrap_or_default();
-        if !name.is_empty() {
-            goals.push(format!("{} ({}): {}", relation, gt, name));
+        let id: i64 = row.get("id").unwrap_or(0);
+        let name: String = row.get("name").unwrap_or_default();
+        let goal_type: String = row.get("type").unwrap_or_default();
+        let parent_ids: Vec<i64> = row.get("parent_ids").unwrap_or_default();
+        
+        nodes.insert(id, Node {
+            id,
+            name,
+            goal_type,
+            parent_ids,
+            children: Vec::new(),
+        });
+    }
+    
+    // Populate children
+    let mut roots = Vec::new();
+    let node_ids: Vec<i64> = nodes.keys().copied().collect();
+    for id in node_ids {
+        let parent_ids = nodes.get(&id).unwrap().parent_ids.clone();
+        if parent_ids.is_empty() {
+            roots.push(id);
+        } else {
+            let mut is_root = true;
+            for pid in parent_ids {
+                if let Some(parent) = nodes.get_mut(&pid) {
+                    parent.children.push(id);
+                    is_root = false;
+                }
+            }
+            if is_root {
+                roots.push(id);
+            }
         }
     }
-    Ok(goals)
+    
+    // Sort roots for deterministic traversal
+    roots.sort_unstable();
+    
+    let mut visited = std::collections::HashSet::new();
+    let mut ordered = Vec::new();
+    
+    fn dfs(
+        node_id: i64, 
+        nodes: &std::collections::HashMap<i64, Node>, 
+        visited: &mut std::collections::HashSet<i64>,
+        ordered: &mut Vec<i64>
+    ) {
+        if ordered.len() >= NETWORK_NODE_LIMIT {
+            return;
+        }
+        if !visited.insert(node_id) {
+            return;
+        }
+        ordered.push(node_id);
+        
+        if let Some(node) = nodes.get(&node_id) {
+            let mut sorted_children = node.children.clone();
+            sorted_children.sort_unstable();
+            for child_id in sorted_children {
+                dfs(child_id, nodes, visited, ordered);
+            }
+        }
+    }
+    
+    for root in roots {
+        dfs(root, &nodes, &mut visited, &mut ordered);
+        if ordered.len() >= NETWORK_NODE_LIMIT {
+            break;
+        }
+    }
+    
+    let mut out = Vec::new();
+    for id in ordered {
+        if let Some(n) = nodes.get(&id) {
+            let parent_str = if n.parent_ids.is_empty() {
+                "None".to_string()
+            } else {
+                format!("{:?}", n.parent_ids)
+            };
+            out.push(format!("[ID: {}] {}: \"{}\" (Parents: {})", n.id, n.goal_type, n.name, parent_str));
+        }
+    }
+    
+    Ok(out.join("\n"))
 }
 
 pub async fn get_autofill_suggestions(
@@ -175,6 +266,16 @@ pub async fn get_autofill_suggestions(
     if let Some(freq) = &request.goal_context.frequency {
         context_parts.push(format!("Frequency: {}", freq));
     }
+    if let Some(parents) = &request.parent_ids {
+        if !parents.is_empty() {
+            context_parts.push(format!("Direct Parent IDs: {:?}", parents));
+        }
+    }
+    if let Some(children) = &request.child_ids {
+        if !children.is_empty() {
+            context_parts.push(format!("Direct Child IDs: {:?}", children));
+        }
+    }
 
     // Allowed options
     if let Some(allowed) = &request.allowed_values {
@@ -191,22 +292,15 @@ pub async fn get_autofill_suggestions(
         }
     }
 
-    // Related Goals
-    if let Some(parents) = &request.parent_ids {
-        if !parents.is_empty() {
-            match fetch_related_goals(&graph, parents, "Parent").await {
-                Ok(rels) => context_parts.extend(rels),
-                Err(e) => eprintln!("Error fetching parents: {}", e),
+    // Goal Network Map
+    match fetch_goal_network_map(&graph, user_id).await {
+        Ok(network_map) => {
+            if !network_map.is_empty() {
+                context_parts.push("=== User's Goal Network ===".to_string());
+                context_parts.push(network_map);
             }
         }
-    }
-    if let Some(children) = &request.child_ids {
-        if !children.is_empty() {
-            match fetch_related_goals(&graph, children, "Child").await {
-                Ok(rels) => context_parts.extend(rels),
-                Err(e) => eprintln!("Error fetching children: {}", e),
-            }
-        }
+        Err(e) => eprintln!("Error fetching goal network map: {}", e),
     }
 
     // Nearby Goals

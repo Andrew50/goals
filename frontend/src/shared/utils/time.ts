@@ -7,12 +7,18 @@ import { Goal, ApiGoal } from '../../types/goals';
  * ────────────────────────────────────────────────────────── */
 
 /** Wrap a UTC ms value (or undefined) into a Date in local zone. */
-const msToDate = (ms?: number | null): Date | undefined =>
-  ms == null ? undefined : new Date(ms);
+const msToDate = (ms?: number | null): Date | null | undefined => {
+  if (ms === null) return null;
+  if (ms === undefined) return undefined;
+  return new Date(ms);
+};
 
 /** Extract UTC ms from a Date (or undefined). */
-const dateToMs = (d?: Date | null): number | undefined =>
-  d == null ? undefined : d.getTime();
+const dateToMs = (d?: Date | null): number | null | undefined => {
+  if (d === null) return null;
+  if (d === undefined) return undefined;
+  return d.getTime();
+};
 
 /* ────────────────────────────────────────────────────────── *
  *  2.  Former "timestamp conversion" API                     *
@@ -147,13 +153,13 @@ export const timestampToInputString = (
   }
 };
 
-/** Parse value from input fields – always returns *local* Date. */
+/** Parse value from input fields – always returns *local* Date or null if invalid. */
 export const inputStringToTimestamp = (
   str: string,
   format: 'date' | 'datetime' | 'time' | 'end-date'
-): Date => {
-  // Return Epoch date for empty/invalid string instead of 0
-  if (!str) return new Date(0);
+): Date | null => {
+  // Return null for empty/invalid string instead of Unix Epoch
+  if (!str) return null;
   const today = new Date();
 
   try {
@@ -161,43 +167,43 @@ export const inputStringToTimestamp = (
     switch (format) {
       case 'date': {
         const parts = str.split('-');
-        if (parts.length !== 3) return new Date(0);
+        if (parts.length !== 3) return null;
         const [y, m, dd] = parts.map(Number);
         // Validate the input values
         if (isNaN(y) || isNaN(m) || isNaN(dd) ||
           y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31) {
-          return new Date(0);
+          return null;
         }
         d = new Date(y, m - 1, dd, 0, 0, 0, 0);
         // Check if the date components actually match what we set
         if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
-          return new Date(0);
+          return null;
         }
         break;
       }
       case 'end-date': {
         const parts = str.split('-');
-        if (parts.length !== 3) return new Date(0);
+        if (parts.length !== 3) return null;
         const [y, m, dd] = parts.map(Number);
         // Validate the input values
         if (isNaN(y) || isNaN(m) || isNaN(dd) ||
           y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31) {
-          return new Date(0);
+          return null;
         }
         d = new Date(y, m - 1, dd, 23, 59, 59, 999);
         // Check if the date components actually match what we set
         if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
-          return new Date(0);
+          return null;
         }
         break;
       }
       case 'time': {
         const parts = str.split(':');
-        if (parts.length !== 2) return new Date(0);
+        if (parts.length !== 2) return null;
         const [hh, mm] = parts.map(Number);
         // Validate the input values
         if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-          return new Date(0);
+          return null;
         }
         d.setHours(hh, mm, 0, 0);
         break;
@@ -205,12 +211,12 @@ export const inputStringToTimestamp = (
       case 'datetime':
       default: {
         const mainParts = str.split('T');
-        if (mainParts.length !== 2) return new Date(0);
+        if (mainParts.length !== 2) return null;
         const [datePart, timePart] = mainParts;
 
         const dateParts = datePart.split('-');
         const timeParts = timePart.split(':');
-        if (dateParts.length !== 3 || timeParts.length !== 2) return new Date(0);
+        if (dateParts.length !== 3 || timeParts.length !== 2) return null;
 
         const [y, m, dd] = dateParts.map(Number);
         const [hh, mm] = timeParts.map(Number);
@@ -219,21 +225,21 @@ export const inputStringToTimestamp = (
         if (isNaN(y) || isNaN(m) || isNaN(dd) || isNaN(hh) || isNaN(mm) ||
           y < 1000 || y > 9999 || m < 1 || m > 12 || dd < 1 || dd > 31 ||
           hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-          return new Date(0);
+          return null;
         }
 
         d = new Date(y, m - 1, dd, hh, mm, 0, 0);
         // Check if the date components actually match what we set
         if (d.getFullYear() !== y || d.getMonth() !== m - 1 || d.getDate() !== dd) {
-          return new Date(0);
+          return null;
         }
       }
     }
     // Ensure the parsed date is valid before returning
-    return isNaN(d.getTime()) ? new Date(0) : d;
+    return isNaN(d.getTime()) ? null : d;
   } catch (e) {
-    // Return Epoch date on parsing error
-    return new Date(0);
+    // Return null on parsing error
+    return null;
   }
 };
 

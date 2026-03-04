@@ -53,14 +53,14 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
 
   // Helper to fix Safari issue with redirected responses in SW
-  const cleanRedirect = (response) => {
+  const cleanResponse = (response) => {
+    if (!response) return response;
     if (response.redirected) {
-      const clean = new Response(response.body, {
-        status: response.status,
+      return new Response(response.body, {
+        status: response.status === 0 ? 200 : response.status,
         statusText: response.statusText,
         headers: response.headers
       });
-      return clean;
     }
     return response;
   };
@@ -70,10 +70,10 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       try {
         const response = await fetch(request);
-        return cleanRedirect(response);
+        return cleanResponse(response);
       } catch (_) {
         const fallback = await caches.match('/index.html');
-        return fallback || new Response('', { status: 503, statusText: 'Offline' });
+        return fallback ? cleanResponse(fallback) : new Response('', { status: 503, statusText: 'Offline' });
       }
     })());
     return;
@@ -83,85 +83,12 @@ self.addEventListener('fetch', event => {
   event.respondWith((async () => {
     try {
       const response = await fetch(request);
-      return cleanRedirect(response);
+      return cleanResponse(response);
     } catch (_) {
       const cached = await caches.match(request);
-      return cached || new Response('', { status: 503, statusText: 'Offline' });
+      return cached ? cleanResponse(cached) : new Response('', { status: 503, statusText: 'Offline' });
     }
   })());
-});
-
-// Push event - show notification
-self.addEventListener('push', event => {
-  console.log('[ServiceWorker] Push received:', event);
-
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch (e) {
-    console.error('[ServiceWorker] Error parsing push data:', e);
-  }
-
-  const title = data.title || 'Goals Notification';
-  const options = {
-    body: data.body || 'You have a new notification',
-    icon: data.icon || '/logo192.png',
-    badge: data.badge || '/logo192.png',
-    vibrate: data.vibrate || [100, 50, 100],
-    data: data.data || {},
-    actions: data.actions || [],
-    tag: data.tag || 'default',
-    requireInteraction: data.requireInteraction || false,
-    renotify: data.renotify || false,
-    silent: data.silent || false,
-    timestamp: data.timestamp || Date.now()
-  };
-
-  event.waitUntil(
-    self.registration.showNotification(title, options)
-      .catch(err => {
-        console.error('[ServiceWorker] Error showing notification:', err);
-      })
-  );
-});
-
-// Notification click event - handle notification interactions
-self.addEventListener('notificationclick', event => {
-  console.log('[ServiceWorker] Notification clicked:', event);
-
-  event.notification.close();
-
-  const data = event.notification.data || {};
-  const url = data.url || '/';
-
-  // Handle action buttons
-  if (event.action) {
-    console.log('[ServiceWorker] Action clicked:', event.action);
-    // You can handle different actions here
-    // For example: mark task complete, snooze reminder, etc.
-  }
-
-  event.waitUntil(
-    self.clients.matchAll({
-      type: 'window',
-      includeUncontrolled: true
-    }).then(clientList => {
-      // Check if there's already a window/tab open
-      for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          // Navigate to the URL if provided
-          if (url !== '/' && client.url !== new URL(url, self.location.origin).href) {
-            client.navigate(url);
-          }
-          return client.focus();
-        }
-      }
-      // If no window is open, open a new one
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(url);
-      }
-    })
-  );
 });
 
 // Background sync event (for future use)

@@ -3,23 +3,23 @@
 ----------------------------- */
 :root {
     /* Button colors */
-    --fc-button-text-color: #4a5568;
-    --fc-button-bg-color: #ffffff;
-    --fc-button-border-color: #e2e8f0;
-    --fc-button-hover-bg-color: #f7fafc;
-    --fc-button-hover-border-color: #cbd5e0;
-    --fc-button-active-bg-color: #edf2f7;
-    --fc-button-active-border-color: #a0aec0;
+    --fc-button-text-color: var(--color-text-secondary, #4a5568);
+    --fc-button-bg-color: var(--color-bg-paper, #ffffff);
+    --fc-button-border-color: var(--color-border-main, #e2e8f0);
+    --fc-button-hover-bg-color: var(--color-bg-elevated, #f7fafc);
+    --fc-button-hover-border-color: var(--color-border-dark, #cbd5e0);
+    --fc-button-active-bg-color: var(--color-border-light, #edf2f7);
+    --fc-button-active-border-color: var(--color-text-muted, #a0aec0);
 
     /* Calendar colors */
-    --fc-border-color: #e2e8f0;
-    --fc-today-bg-color: rgba(66, 153, 225, 0.1);
-    --fc-now-indicator-color: #4299e1;
+    --fc-border-color: var(--color-border-main, #e2e8f0);
+    --fc-today-bg-color: rgba(var(--color-primary-main-rgb, 66, 153, 225), 0.1);
+    --fc-now-indicator-color: var(--color-primary-main, #4299e1);
 
     /* Event colors */
-    --fc-event-border-color: #4299e1;
-    --fc-event-bg-color: #4299e1;
-    --fc-event-text-color: #ffffff;
+    --fc-event-border-color: var(--color-primary-main, #4299e1);
+    --fc-event-bg-color: var(--color-primary-main, #4299e1);
+    --fc-event-text-color: var(--color-text-inverse, #ffffff);
 }
 
 /* -----------------------------
@@ -28,7 +28,7 @@
 .calendar-container {
     height: calc(100vh - 65px);
     /* Account for navbar */
-    background-color: #f5f7fa;
+    background-color: var(--color-bg-default, #f5f7fa);
     padding: 2rem;
     overflow: auto;
 }
@@ -37,7 +37,7 @@
     max-width: 1600px;
     margin: 0 auto;
     display: flex;
-    gap: 2rem;
+    gap: 1rem;
     height: 100%;
 }
 
@@ -52,24 +52,24 @@
 }
 
 .calendar-sidebar>div {
-    background-color: #ffffff;
+    background-color: var(--color-bg-paper, #ffffff);
     border-radius: 0.75rem;
     padding: 1.5rem;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
 }
 
 .sidebar-section-title {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #2d3748;
+    color: var(--color-text-primary, #2d3748);
     margin-bottom: 1rem;
 }
 
 .calendar-main {
     flex: 1;
-    background-color: #ffffff;
+    background-color: var(--color-bg-paper, #ffffff);
     border-radius: 0.75rem;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
     padding: 1.5rem;
     position: relative;
     overflow: visible;
@@ -85,10 +85,10 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: var(--color-bg-paper, rgba(255, 255, 255, 0.95));
     padding: 2rem;
     border-radius: 0.75rem;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px -1px rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-medium, 0.1));
     z-index: 1000;
     display: flex;
     flex-direction: column;
@@ -100,8 +100,8 @@
 .loading-spinner {
     width: 3rem;
     height: 3rem;
-    border: 4px solid #e2e8f0;
-    border-top: 4px solid #4299e1;
+    border: 4px solid var(--color-border-main, #e2e8f0);
+    border-top: 4px solid var(--color-primary-main, #4299e1);
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin-bottom: 1rem;
@@ -118,7 +118,7 @@
 }
 
 .loading-text {
-    color: #718096;
+    color: var(--color-text-muted, #718096);
     font-size: 1rem;
 }
 
@@ -133,48 +133,48 @@
     min-height: 400px;
     padding: 3rem;
     text-align: center;
-    background-color: #ffffff;
+    background-color: var(--color-bg-paper, #ffffff);
     border-radius: 0.75rem;
     margin: 2rem auto;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
     max-width: 600px;
 }
 
 .calendar-error-container h2 {
     margin-bottom: 1rem;
-    color: #2d3748;
+    color: var(--color-text-primary, #2d3748);
     font-size: 1.5rem;
 }
 
 .calendar-error-container p {
     margin-bottom: 1.5rem;
-    color: #718096;
+    color: var(--color-text-muted, #718096);
     line-height: 1.6;
 }
 
 .retry-button {
     padding: 0.75rem 1.5rem;
-    background-color: #4299e1;
-    color: white;
+    background-color: var(--color-primary-main, #4299e1);
+    color: var(--color-text-inverse, #ffffff);
     border: none;
     border-radius: 0.5rem;
     cursor: pointer;
     font-weight: 600;
     transition: all 0.2s;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
 }
 
 .retry-button:hover {
-    background-color: #3182ce;
+    background-color: var(--color-primary-dark, #3182ce);
     transform: translateY(-1px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px -1px rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-medium, 0.1));
 }
 
 /* -----------------------------
    FullCalendar Overrides
 ----------------------------- */
 .fc {
-    background-color: #ffffff;
+    background-color: var(--color-bg-paper, #ffffff);
     height: 100%;
 }
 
@@ -195,13 +195,13 @@
 
 .fc .fc-button:active,
 .fc .fc-button.fc-button-active {
-    background-color: #4299e1 !important;
-    border-color: #4299e1 !important;
-    color: white !important;
+    background-color: var(--color-primary-main, #4299e1) !important;
+    border-color: var(--color-primary-main, #4299e1) !important;
+    color: var(--color-text-inverse, #ffffff) !important;
 }
 
 .fc .fc-toolbar-title {
-    color: #2d3748 !important;
+    color: var(--color-text-primary, #2d3748) !important;
     font-weight: 600 !important;
 }
 
@@ -215,12 +215,12 @@
 }
 
 .fc .fc-daygrid-day-number {
-    color: #4a5568 !important;
+    color: var(--color-text-secondary, #4a5568) !important;
     padding: 0.5rem !important;
 }
 
 .fc .fc-col-header-cell-cushion {
-    color: #718096 !important;
+    color: var(--color-text-muted, #718096) !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
     font-size: 0.75rem !important;
@@ -242,7 +242,7 @@
 
 .fc-event:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+    box-shadow: 0 4px 6px -1px rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1)) !important;
 }
 
 .fc-daygrid-event {
@@ -272,18 +272,18 @@
 .fc-daygrid-more-link {
     margin: 0.25rem !important;
     padding: 0.25rem 0.5rem !important;
-    background-color: #edf2f7 !important;
+    background-color: var(--color-border-light, #edf2f7) !important;
     border-radius: 0.375rem !important;
-    color: #4a5568 !important;
+    color: var(--color-text-secondary, #4a5568) !important;
     font-weight: 500 !important;
 }
 
 .fc-daygrid-more-link:hover {
-    background-color: #e2e8f0 !important;
-    color: #2d3748 !important;
+    background-color: var(--color-border-main, #e2e8f0) !important;
+    color: var(--color-text-primary, #2d3748) !important;
 }
 
-/* Keep the “+N more” popover visible and within the viewport */
+/* Keep the "+N more" popover visible and within the viewport */
 .fc-popover {
     z-index: 1600;
     max-height: calc(100vh - 24px);
@@ -307,15 +307,15 @@
 
 .task-item {
     padding: 0.75rem;
-    background-color: #f7fafc;
+    background-color: var(--color-bg-elevated, #f7fafc);
     border-radius: 0.5rem;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border-main, #e2e8f0);
     cursor: grab;
     transition: all 0.2s;
 }
 
 .task-item:hover {
-    background-color: #edf2f7;
+    background-color: var(--color-border-light, #edf2f7);
     transform: translateX(4px);
 }
 
@@ -389,11 +389,11 @@
 }
 
 .calendar-container .fc .event-compact.event-selected {
-    box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.9) !important;
+    box-shadow: 0 0 0 2px rgba(var(--color-primary-main-rgb, 66, 153, 225), 0.9) !important;
 }
 
 .calendar-container .fc .event-compact.event-selected:hover {
-    box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.9), 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+    box-shadow: 0 0 0 2px rgba(var(--color-primary-main-rgb, 66, 153, 225), 0.9), 0 4px 6px -1px rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1)) !important;
 }
 
 .calendar-container .fc .event-compact .fc-event-main {
@@ -402,7 +402,7 @@
 
 /* Time-range selection highlight (dayGrid + timeGrid) */
 .calendar-container .fc .fc-highlight {
-    background-color: rgba(66, 153, 225, 0.25) !important;
+    background-color: rgba(var(--color-primary-main-rgb, 66, 153, 225), 0.25) !important;
     opacity: 1 !important;
     border-radius: 2px;
 }

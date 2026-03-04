@@ -9,6 +9,29 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
     let six_months = Duration::days(180).num_milliseconds();
     let horizon = now + six_months;
 
+    // First, automatically complete routines that have passed their end_timestamp
+    let complete_expired_query = "
+        MATCH (r:Goal)
+        WHERE r.goal_type = 'routine'
+        AND r.end_timestamp < $now
+        AND (r.resolution_status IS NULL OR r.resolution_status = 'pending')
+        SET r.resolution_status = 'completed',
+            r.resolved_at = r.end_timestamp
+        RETURN count(r) as completed_count
+    ";
+
+    let mut complete_result = graph
+        .execute(query(complete_expired_query).param("now", now))
+        .await
+        .map_err(|e| format!("Failed to complete expired routines: {}", e))?;
+
+    if let Some(row) = complete_result.next().await.map_err(|e| e.to_string())? {
+        let completed_count: i64 = row.get("completed_count").unwrap_or(0);
+        if completed_count > 0 {
+            println!("Automatically completed {} expired routines", completed_count);
+        }
+    }
+
     // Find routines that need more events generated
     let query_str = "
         MATCH (r:Goal)

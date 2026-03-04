@@ -14,30 +14,6 @@ jest.mock('../../shared/utils/api', () => ({
     unlinkGoogleAccount: jest.fn(),
 }));
 
-jest.mock('../../shared/hooks/usePushNotifications', () => ({
-    usePushNotifications: () => ([
-        {
-            isSupported: false,
-            isStandalone: false,
-            permission: 'default',
-            isSubscribed: false,
-            isLoading: false,
-            error: null,
-        },
-        {
-            requestPermission: jest.fn(),
-            subscribe: jest.fn(),
-            unsubscribe: jest.fn(),
-            sendTestNotification: jest.fn(),
-        }
-    ]),
-    useInstallPrompt: () => ({
-        showPrompt: false,
-        dismissPrompt: jest.fn(),
-        resetPrompt: jest.fn(),
-    }),
-}));
-
 describe('AccountSettings', () => {
     beforeEach(() => {
         (privateRequest as jest.Mock).mockResolvedValue({

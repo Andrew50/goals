@@ -23,8 +23,8 @@ describe('Projects', () => {
         });
 
         await waitFor(() => {
-            // Look for search bar or project content
-            const searchInput = screen.queryByPlaceholderText(/search/i);
+            // Look for search bar by aria-label or project content
+            const searchInput = screen.queryByLabelText(/search/i);
             expect(searchInput || screen.getByText(/projects/i)).toBeTruthy();
         });
     });

@@ -346,7 +346,8 @@ export const updateRoutineEvent = async (
     newTimestamp: Date,
     updateScope: 'single' | 'all' | 'future' | 'range',
     rangeStart?: Date,
-    rangeEnd?: Date
+    rangeEnd?: Date,
+    resolutionStatus?: string
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEvent called with:', {
         eventId,
@@ -354,12 +355,14 @@ export const updateRoutineEvent = async (
         newTimestampMs: newTimestamp.getTime(),
         updateScope,
         rangeStart,
-        rangeEnd
+        rangeEnd,
+        resolutionStatus
     });
 
     const requestData: any = {
         new_timestamp: newTimestamp.getTime(),
-        update_scope: updateScope
+        update_scope: updateScope,
+        resolution_status: resolutionStatus
     };
 
     if (rangeStart) requestData.range_start = rangeStart.getTime();
@@ -403,6 +406,7 @@ export const updateRoutineEventProperties = async (
         description?: string;
         priority?: string;
         scheduled_timestamp?: Date;
+        resolution_status?: string;
     },
     updateScope: 'single' | 'all' | 'future' | 'range',
     rangeStart?: Date,
@@ -422,6 +426,7 @@ export const updateRoutineEventProperties = async (
         name: updates.name,
         description: updates.description,
         priority: updates.priority,
+        resolution_status: updates.resolution_status,
         scheduled_timestamp: updates.scheduled_timestamp ? updates.scheduled_timestamp.getTime() : undefined,
         range_start: rangeStart ? rangeStart.getTime() : undefined,
         range_end: rangeEnd ? rangeEnd.getTime() : undefined
@@ -689,7 +694,6 @@ export const sendTelegramTest = async (): Promise<void> => {
 // Notification Settings API
 export interface NotificationSettings {
     notifications_enabled: boolean;
-    notify_via_push: boolean;
     notify_via_telegram: boolean;
     notify_high_priority_events: boolean;
     notify_event_reminders: boolean;
@@ -794,4 +798,17 @@ export const getGoalSubgraph = async (goalId: number): Promise<{
         edges: response.edges,
         truncated: response.truncated,
     };
+};
+
+// Theme Settings API
+export interface ThemeSettings {
+  theme_name: 'light' | 'dark' | 'green' | 'blue' | 'orange' | 'purple';
+}
+
+export const getThemeSettings = async (): Promise<ThemeSettings> => {
+    return privateRequest<ThemeSettings>('theme/settings', 'GET');
+};
+
+export const updateThemeSettings = async (settings: ThemeSettings): Promise<void> => {
+    await privateRequest('theme/settings', 'PUT', settings);
 };

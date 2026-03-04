@@ -1,6 +1,6 @@
 .list-container {
     min-height: 100vh;
-    background-color: #f5f7fa;
+    background-color: var(--color-bg-default, #f5f7fa);
     padding: 2rem;
 }
 
@@ -21,7 +21,7 @@
 .list-title {
     font-size: 2.5rem;
     font-weight: 700;
-    color: #2d3748;
+    color: var(--color-text-primary, #2d3748);
     margin: 0;
 }
 
@@ -30,20 +30,20 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1.5rem;
-    background-color: #4299e1;
-    color: white;
+    background-color: var(--color-primary-main, #4299e1);
+    color: var(--color-text-inverse, #ffffff);
     border: none;
     border-radius: 0.5rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
 }
 
 .new-goal-button:hover {
-    background-color: #3182ce;
+    background-color: var(--color-primary-dark, #3182ce);
     transform: translateY(-1px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px -1px rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-medium, 0.1));
 }
 
 .new-goal-icon {
@@ -62,13 +62,13 @@
 .search-input {
     flex: 1;
     padding: 0.75rem 1rem;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border-main, #e2e8f0);
     border-radius: 0.5rem;
-    background-color: white;
-    color: #2d3748;
+    background-color: var(--color-bg-paper, #ffffff);
+    color: var(--color-text-primary, #2d3748);
     font-size: 1rem;
     transition: all 0.2s;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
     height: var(--control-size);
     min-height: var(--control-size);
     line-height: 1;
@@ -83,8 +83,8 @@
 
 .search-input:focus {
     outline: none;
-    border-color: #4299e1;
-    box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+    border-color: var(--color-primary-main, #4299e1);
+    box-shadow: 0 0 0 3px rgba(var(--color-primary-main-rgb, 66, 153, 225), 0.1);
 }
 
 .filter-toggle-button {
@@ -95,13 +95,13 @@
     height: var(--control-size);
     min-height: var(--control-size);
     padding: 0;
-    background-color: white;
-    color: #4a5568;
-    border: 1px solid #e2e8f0;
+    background-color: var(--color-bg-paper, #ffffff);
+    color: var(--color-text-secondary, #4a5568);
+    border: 1px solid var(--color-border-main, #e2e8f0);
     border-radius: 0.5rem;
     cursor: pointer;
     transition: all 0.2s;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
     flex-shrink: 0;
     line-height: 1;
     margin: 0;
@@ -112,8 +112,8 @@
 }
 
 .filter-toggle-button:hover {
-    background-color: #f7fafc;
-    border-color: #cbd5e0;
+    background-color: var(--color-bg-elevated, #f7fafc);
+    border-color: var(--color-border-dark, #cbd5e0);
 }
 
 .filter-icon {
@@ -124,11 +124,11 @@
 
 .filters-section {
     display: none;
-    background-color: white;
+    background-color: var(--color-bg-paper, #ffffff);
     padding: 1.5rem;
     border-radius: 0.75rem;
     margin-bottom: 1.5rem;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
 }
 
 .filters-section.show {
@@ -145,13 +145,13 @@
 .filters-title {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #2d3748;
+    color: var(--color-text-primary, #2d3748);
 }
 
 .reset-filters-button {
     padding: 0.5rem 1rem;
-    background-color: #e2e8f0;
-    color: #4a5568;
+    background-color: var(--color-border-main, #e2e8f0);
+    color: var(--color-text-secondary, #4a5568);
     border: none;
     border-radius: 0.375rem;
     font-size: 0.875rem;
@@ -161,8 +161,8 @@
 }
 
 .reset-filters-button:hover {
-    background-color: #cbd5e0;
-    color: #2d3748;
+    background-color: var(--color-border-dark, #cbd5e0);
+    color: var(--color-text-primary, #2d3748);
 }
 
 .filters-grid {
@@ -199,7 +199,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    color: #4a5568;
+    color: var(--color-text-secondary, #4a5568);
     cursor: pointer;
     opacity: 0;
     visibility: hidden;
@@ -224,14 +224,14 @@
 .filter-label {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #4a5568;
+    color: var(--color-text-secondary, #4a5568);
     text-transform: capitalize;
 }
 
 .table-container {
-    background-color: white;
+    background-color: var(--color-bg-paper, #ffffff);
     border-radius: 0.75rem;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px 0 rgba(var(--shadow-color, 0, 0, 0), var(--shadow-opacity-low, 0.1));
     overflow: hidden;
 }
 
@@ -245,8 +245,8 @@
 }
 
 .table-header {
-    background-color: #f7fafc;
-    border-bottom: 1px solid #e2e8f0;
+    background-color: var(--color-bg-elevated, #f7fafc);
+    border-bottom: 1px solid var(--color-border-main, #e2e8f0);
 }
 
 .table-header th {
@@ -254,14 +254,14 @@
     text-align: left;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #4a5568;
+    color: var(--color-text-secondary, #4a5568);
     cursor: pointer;
     user-select: none;
     position: relative;
 }
 
 .table-header th:hover {
-    background-color: #edf2f7;
+    background-color: var(--color-border-light, #edf2f7);
 }
 
 .header-content {
@@ -271,14 +271,14 @@
 }
 
 .sort-indicator {
-    color: #4299e1;
+    color: var(--color-primary-main, #4299e1);
     font-size: 0.75rem;
 }
 
 .table-row {
     cursor: pointer;
     transition: all 0.2s;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--color-border-main, #e2e8f0);
 }
 
 .table-row:last-child {
@@ -286,13 +286,13 @@
 }
 
 .table-row:hover {
-    background-color: #f7fafc;
+    background-color: var(--color-bg-elevated, #f7fafc);
 }
 
 .table-cell {
     padding: 1rem;
     font-size: 0.875rem;
-    color: #4a5568;
+    color: var(--color-text-secondary, #4a5568);
 }
 
 /* Badge styles moved to shared stylesheet: src/shared/styles/badges.css */
@@ -309,8 +309,8 @@
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
-    background: #f7fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--color-bg-elevated, #f7fafc);
+    border: 1px solid var(--color-border-main, #e2e8f0);
     border-radius: 0.5rem;
     padding: 1rem 1rem;
     margin-bottom: 1.5rem;
@@ -330,10 +330,10 @@
 
 .bulk-actions-button {
     padding: 0.5rem 0.75rem;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border-main, #e2e8f0);
     border-radius: 0.375rem;
-    background: white;
-    color: #2d3748;
+    background: var(--color-bg-paper, #ffffff);
+    color: var(--color-text-primary, #2d3748);
     cursor: pointer;
     font-size: 0.875rem;
     line-height: 1.25;
@@ -344,24 +344,24 @@
 }
 
 .bulk-actions-button:hover {
-    background: #edf2f7;
+    background: var(--color-border-light, #edf2f7);
 }
 
 .bulk-actions-button.secondary {
-    background: #edf2f7;
+    background: var(--color-border-light, #edf2f7);
 }
 
 .bulk-actions-button.danger {
-    border-color: #feb2b2;
-    color: #c53030;
+    border-color: rgba(var(--color-status-failed-rgb, 229, 62, 62), 0.3);
+    color: var(--color-status-failed, #c53030);
 }
 
 .bulk-actions-select {
     padding: 0.5rem;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border-main, #e2e8f0);
     border-radius: 0.375rem;
-    background: white;
-    color: #2d3748;
+    background: var(--color-bg-paper, #ffffff);
+    color: var(--color-text-primary, #2d3748);
     font-size: 0.875rem;
     line-height: 1.25;
     height: 2.75rem;
@@ -378,8 +378,8 @@
 
 /* Make search toolbar visually consistent with bulk actions bar */
 .toolbar-row .search-section {
-    background: #f7fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--color-bg-elevated, #f7fafc);
+    border: 1px solid var(--color-border-main, #e2e8f0);
     border-radius: 0.5rem;
     padding: 0rem 1rem;
 }
@@ -408,4 +408,29 @@
         padding: 0.75rem 0.5rem;
         font-size: 0.75rem;
     }
+}
+
+/* Filter section checkboxes - ensure they are square */
+.filters-section input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    min-width: 1.25rem;
+    min-height: 1.25rem;
+    flex-shrink: 0;
+}
+
+/* Label styling for filter checkboxes to align properly */
+.filters-section label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+/* Table selection checkboxes */
+.selection-header input[type="checkbox"],
+.selection-cell input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
 }

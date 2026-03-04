@@ -59,13 +59,23 @@ const TaskSelectorBase: React.FC<TaskSelectorProps> = ({ tasks, onSelect, onClos
                 </div>
 
                 <div className="task-selector-search">
-                    <input
-                        type="text"
-                        placeholder="Search tasks..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        autoFocus
-                    />
+                    <div className="task-selector-search-wrapper">
+                        {!searchTerm && (
+                            <span className="task-selector-search-icon" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <path d="m21 21-4.35-4.35"></path>
+                                </svg>
+                            </span>
+                        )}
+                        <input
+                            type="text"
+                            placeholder=""
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            autoFocus
+                        />
+                    </div>
                 </div>
 
                 <div className="task-selector-list">

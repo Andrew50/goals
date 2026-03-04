@@ -56,8 +56,8 @@ const CompletionBar: React.FC<CompletionBarProps> = ({
                     width: `${width}px`,
                     height: `${height}px`,
                     borderRadius: '4px',
-                    backgroundColor: '#f3f4f6',
-                    border: '1px solid #e5e7eb',
+                    backgroundColor: 'var(--color-bg-elevated, #f3f4f6)',
+                    border: '1px solid var(--color-border-light, #e5e7eb)',
                     position: 'relative',
                     overflow: 'hidden',
                     verticalAlign: 'middle'
@@ -78,5 +78,3 @@ const CompletionBar: React.FC<CompletionBarProps> = ({
 };
 
 export default CompletionBar;
-
-

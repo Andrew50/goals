@@ -36,6 +36,7 @@ pub struct UpdateRoutineEventRequest {
     pub update_scope: String, // "single", "all", "future", or "range"
     pub range_start: Option<i64>,
     pub range_end: Option<i64>,
+    pub resolution_status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +47,7 @@ pub struct UpdateRoutineEventPropertiesRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub priority: Option<String>,
+    pub resolution_status: Option<String>,
     #[allow(dead_code)]
     pub frequency: Option<String>,
     pub range_start: Option<i64>,
@@ -1115,16 +1117,28 @@ pub async fn update_routine_event_handler(
             }
 
             // Update only this event
-            let update_query = query(
+            let mut set_clauses = vec!["e.scheduled_timestamp = $new_timestamp"];
+            if request.resolution_status.is_some() {
+                set_clauses.push("e.resolution_status = $resolution_status");
+            }
+
+            let query_str = format!(
                 "MATCH (e:Goal)
                  WHERE id(e) = $event_id
                  AND e.user_id = $user_id
-                 SET e.scheduled_timestamp = $new_timestamp
+                 SET {}
                  RETURN e",
-            )
-            .param("event_id", event_id)
-            .param("new_timestamp", request.new_timestamp)
-            .param("user_id", user_id);
+                set_clauses.join(", ")
+            );
+
+            let mut update_query = query(&query_str)
+                .param("event_id", event_id)
+                .param("new_timestamp", request.new_timestamp)
+                .param("user_id", user_id);
+
+            if let Some(status) = &request.resolution_status {
+                update_query = update_query.param("resolution_status", status.clone());
+            }
 
             let mut update_result = graph
                 .execute(update_query)
@@ -1217,21 +1231,48 @@ pub async fn update_routine_event_handler(
             }
 
             // Update ALL events to the new time-of-day (preserve their dates, change only time)
-            let update_query = query(
-                "MATCH (e:Goal)
-                 WHERE e.goal_type = 'event'
-                 AND e.parent_id = $parent_id
-                 AND e.parent_type = 'routine'
-                 AND e.user_id = $user_id
-                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                 WITH e
-                 SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
-                 RETURN collect(e) as events"
-            )
-            .param("parent_id", parent_id)
-            .param("day_in_ms", day_in_ms)
-            .param("new_time_of_day", new_time_of_day)
-            .param("user_id", user_id);
+            let set_clauses = ["e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day"];
+
+            // If resolution_status is provided, apply it ONLY to the target event_id
+            let update_query_str = if request.resolution_status.is_some() {
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND e.user_id = $user_id
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     WITH e
+                     SET {}
+                     SET e.resolution_status = CASE WHEN id(e) = $event_id THEN $resolution_status ELSE e.resolution_status END
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            } else {
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND e.user_id = $user_id
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     WITH e
+                     SET {}
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            };
+
+            let mut update_query = query(&update_query_str)
+                .param("parent_id", parent_id)
+                .param("day_in_ms", day_in_ms)
+                .param("new_time_of_day", new_time_of_day)
+                .param("user_id", user_id)
+                .param("event_id", event_id);
+
+            if let Some(status) = &request.resolution_status {
+                update_query = update_query.param("resolution_status", status.clone());
+            }
 
             let mut update_result = graph
                 .execute(update_query)
@@ -1326,23 +1367,50 @@ pub async fn update_routine_event_handler(
             }
 
             // Update ALL future events to the new time-of-day (preserve their dates, change only time)
-            let update_query = query(
-                "MATCH (e:Goal)
-                 WHERE e.goal_type = 'event'
-                 AND e.parent_id = $parent_id
-                 AND e.parent_type = 'routine'
-                 AND e.user_id = $user_id
-                 AND e.scheduled_timestamp >= $current_timestamp
-                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
-                 WITH e
-                 SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
-                 RETURN collect(e) as events"
-            )
-            .param("parent_id", parent_id)
-            .param("current_timestamp", current_timestamp)
-            .param("day_in_ms", day_in_ms)
-            .param("new_time_of_day", new_time_of_day)
-            .param("user_id", user_id);
+            let set_clauses = ["e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day"];
+
+            let update_query_str = if request.resolution_status.is_some() {
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND e.user_id = $user_id
+                     AND e.scheduled_timestamp >= $current_timestamp
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     WITH e
+                     SET {}
+                     SET e.resolution_status = CASE WHEN id(e) = $event_id THEN $resolution_status ELSE e.resolution_status END
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            } else {
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND e.user_id = $user_id
+                     AND e.scheduled_timestamp >= $current_timestamp
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     WITH e
+                     SET {}
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            };
+
+            let mut update_query = query(&update_query_str)
+                .param("parent_id", parent_id)
+                .param("current_timestamp", current_timestamp)
+                .param("day_in_ms", day_in_ms)
+                .param("new_time_of_day", new_time_of_day)
+                .param("user_id", user_id)
+                .param("event_id", event_id);
+
+            if let Some(status) = &request.resolution_status {
+                update_query = update_query.param("resolution_status", status.clone());
+            }
 
             let mut update_result = graph
                 .execute(update_query)
@@ -2259,6 +2327,13 @@ pub async fn update_routine_event_properties_handler(
                     neo4rs::BoltType::String(neo4rs::BoltString::new(priority)),
                 ));
             }
+            if let Some(status) = &request.resolution_status {
+                set_clauses.push("e.resolution_status = $resolution_status");
+                params.push((
+                    "resolution_status".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(status)),
+                ));
+            }
 
             if set_clauses.is_empty() {
                 return Err((
@@ -2376,6 +2451,17 @@ pub async fn update_routine_event_properties_handler(
                     neo4rs::BoltType::String(neo4rs::BoltString::new(priority)),
                 ));
             }
+            if let Some(status) = &request.resolution_status {
+                set_clauses.push("e.resolution_status = CASE WHEN id(e) = $event_id THEN $resolution_status ELSE e.resolution_status END");
+                params.push((
+                    "resolution_status".to_string(),
+                    neo4rs::BoltType::String(neo4rs::BoltString::new(status)),
+                ));
+                params.push((
+                    "event_id".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(event_id)),
+                ));
+            }
 
             if set_clauses.is_empty() {
                 return Err((
@@ -2397,11 +2483,11 @@ pub async fn update_routine_event_properties_handler(
                 neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(user_id)),
             ));
 
-            if request.duration.is_some() {
+            if let Some(duration) = request.duration {
                 routine_set_clauses.push("r.duration = $r_duration");
                 routine_params.push((
                     "r_duration".to_string(),
-                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(request.duration.unwrap() as i64)),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(duration as i64)),
                 ));
             }
             if let Some(name) = &request.name {

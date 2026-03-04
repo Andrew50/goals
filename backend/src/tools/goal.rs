@@ -45,6 +45,37 @@ impl std::fmt::Display for ResolutionStatus {
     }
 }
 
+fn normalize_resolution_status(status_raw: &str) -> Result<String, (StatusCode, String)> {
+    let normalized = status_raw.trim().to_lowercase();
+    if ResolutionStatus::from_str(&normalized).is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped",
+                status_raw
+            ),
+        ));
+    }
+    Ok(normalized)
+}
+
+fn ensure_goal_type_can_be_resolved(goal_type: &str) -> Result<(), (StatusCode, String)> {
+    if goal_type == "directive" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Cannot resolve goals of type: directive".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn resolution_set_clauses() -> [&'static str; 2] {
+    [
+        "g.resolution_status = $resolution_status",
+        "g.resolved_at = CASE WHEN $resolution_status = 'pending' THEN null WHEN coalesce(g.resolution_status, 'pending') <> $resolution_status OR g.resolved_at IS NULL THEN timestamp() ELSE g.resolved_at END",
+    ]
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Goal {
     pub id: Option<i64>,
@@ -461,33 +492,16 @@ pub async fn update_goal_handler(
         ("goal_type", goal.goal_type.as_str().into()),
     ];
 
-    // ---------------------------
-    // Resolution semantics (mirror /goals/:id/resolve)
-    // ---------------------------
-    // If the client includes a resolution_status, we treat it as an intent to "resolve"
-    // and manage resolved_at consistently on the server (rather than trusting client-provided resolved_at).
-    //
-    // This prevents a common mismatch where resolution_status changes are sent without resolved_at,
-    // and also avoids unintentionally overwriting resolved_at when the status hasn't changed.
+    // Shared resolution semantics with /goals/:id/resolve.
+    // Keep this as part of the same SET query so all edits apply atomically.
     if let Some(status_raw) = &goal.resolution_status {
-        let desired = status_raw.trim().to_lowercase();
-        if !["pending", "completed", "failed", "skipped"].contains(&desired.as_str()) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped",
-                    status_raw
-                ),
-            ));
-        }
+        let desired = normalize_resolution_status(status_raw)?;
 
-        // Load current status so we only update resolved_at when it actually changes (or is missing).
+        // Validate goal type before applying resolution status updates.
         let check_query = query(
             "MATCH (g:Goal)
              WHERE id(g) = $id
-             RETURN g.goal_type as goal_type,
-                    coalesce(g.resolution_status, 'pending') as current_status,
-                    g.resolved_at as current_resolved_at",
+             RETURN g.goal_type as goal_type",
         )
         .param("id", id);
 
@@ -509,32 +523,20 @@ pub async fn update_goal_handler(
             })?
             .ok_or((StatusCode::NOT_FOUND, "Goal not found".to_string()))?;
 
-        let current_goal_type: String = row.get("goal_type").unwrap_or_else(|_| "unknown".to_string());
-        if current_goal_type == "routine" || current_goal_type == "directive" {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Cannot resolve goals of type: directive or routine".to_string(),
-            ));
+        let current_goal_type: String =
+            row.get("goal_type").unwrap_or_else(|_| "unknown".to_string());
+        ensure_goal_type_can_be_resolved(&current_goal_type)?;
+
+        for clause in resolution_set_clauses() {
+            set_clauses.push(clause);
         }
-
-        let current_status: String = row
-            .get("current_status")
-            .unwrap_or_else(|_| "pending".to_string());
-        let current_resolved_at: Option<i64> = row.get("current_resolved_at").ok();
-
-        // Always set resolution_status if provided.
-        set_clauses.push("g.resolution_status = $resolution_status");
         params.push(("resolution_status", desired.clone().into()));
 
-        // resolved_at logic:
-        // - pending => clear resolved_at
-        // - non-pending => set resolved_at only if status changed or resolved_at is missing
-        if desired == "pending" {
-            set_clauses.push("g.resolved_at = null");
-        } else if current_status != desired || current_resolved_at.is_none() {
+        // If routine is being completed, also set end_timestamp to now
+        if current_goal_type == "routine" && desired == "completed" {
             let now = chrono::Utc::now().timestamp_millis();
-            set_clauses.push("g.resolved_at = $resolved_at");
-            params.push(("resolved_at", now.into()));
+            set_clauses.push("g.end_timestamp = $now_end_timestamp");
+            params.push(("now_end_timestamp", now.into()));
         }
     } else if let Some(resolved_at) = goal.resolved_at {
         // Only accept direct resolved_at updates when no resolution_status is being set.
@@ -642,14 +644,11 @@ pub async fn update_goal_handler(
     // Derivation: when converting to routine and routine_time is not provided,
     // but scheduled_timestamp is provided (common in Task → Routine conversion),
     // derive routine_time from scheduled_timestamp and align start_timestamp to that date's midnight.
-    if goal.goal_type == GoalType::Routine
-        && goal.routine_time.is_none()
-        && goal.scheduled_timestamp.is_some()
-    {
-        let ts = goal.scheduled_timestamp.unwrap();
-        // Set routine_time to the provided scheduled_timestamp (time-of-day preserved)
-        set_clauses.push("g.routine_time = $derived_routine_time");
-        params.push(("derived_routine_time", ts.into()));
+    if goal.goal_type == GoalType::Routine && goal.routine_time.is_none() {
+        if let Some(ts) = goal.scheduled_timestamp {
+            // Set routine_time to the provided scheduled_timestamp (time-of-day preserved)
+            set_clauses.push("g.routine_time = $derived_routine_time");
+            params.push(("derived_routine_time", ts.into()));
 
         // If start_timestamp is not provided, derive the start of day in UTC based on `ts`.
         //
@@ -668,8 +667,9 @@ pub async fn update_goal_handler(
             params.push(("derived_start_timestamp", start_of_day_utc.into()));
         }
 
-        // Clear scheduled_timestamp on the routine to avoid ambiguity
-        set_clauses.push("g.scheduled_timestamp = NULL");
+            // Clear scheduled_timestamp on the routine to avoid ambiguity
+            set_clauses.push("g.scheduled_timestamp = NULL");
+        }
     }
     // Log the routine_time being sent in the update
     if let Some(rt) = goal.routine_time {
@@ -815,6 +815,7 @@ pub async fn delete_goal_handler(
 
 /// Computes the display status for a goal based on resolution status and dates
 pub fn get_display_status(
+    goal_type: Option<&str>,
     resolution_status: Option<&str>,
     resolved_at: Option<i64>,
     start_timestamp: Option<i64>,
@@ -822,6 +823,13 @@ pub fn get_display_status(
     due_date: Option<i64>,
     now: i64,
 ) -> String {
+    // For routines, if now > end_timestamp, it is considered completed even if pending
+    if let (Some("routine"), Some(end), status) = (goal_type, end_timestamp, resolution_status) {
+        if now > end && status != Some("completed") && status != Some("failed") && status != Some("skipped") {
+            return "completed".to_string();
+        }
+    }
+
     match resolution_status {
         Some("completed") => {
             // Check if tardy (resolved after due/end date)
@@ -856,19 +864,12 @@ pub async fn resolve_goal_handler(
     goal_id: i64,
     request: ResolveGoalRequest,
 ) -> Result<Json<ResolveGoalResponse>, (StatusCode, String)> {
-    // Validate resolution status
-    let status = ResolutionStatus::from_str(&request.resolution_status).ok_or((
-        StatusCode::BAD_REQUEST,
-        format!(
-            "Invalid resolution_status: {}. Must be one of: pending, completed, failed, skipped",
-            request.resolution_status
-        ),
-    ))?;
+    let status = normalize_resolution_status(&request.resolution_status)?;
 
     println!(
         "Resolving goal {}: status={}",
         goal_id,
-        status.as_str()
+        status
     );
 
     // First, check if this is a valid goal type for resolution
@@ -901,52 +902,30 @@ pub async fn resolve_goal_handler(
             )
         })?;
 
-        // Only allow resolution for these goal types
-        if goal_type != "achievement"
-            && goal_type != "task"
-            && goal_type != "project"
-            && goal_type != "event"
-        {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Cannot resolve goals of type: directive or routine".to_string(),
-            ));
-        }
+        ensure_goal_type_can_be_resolved(&goal_type)?;
 
         let now = chrono::Utc::now().timestamp_millis();
-        let resolved_at = if status == ResolutionStatus::Pending {
-            None
-        } else {
-            Some(now)
-        };
-
-        // Update the goal's resolution status
-        let update_query = if let Some(ts) = resolved_at {
-            query(
-                "MATCH (g:Goal) 
-                 WHERE id(g) = $id 
-                 SET g.resolution_status = $resolution_status,
-                     g.resolved_at = $resolved_at
-                 RETURN g.start_timestamp as start_timestamp,
-                        g.end_timestamp as end_timestamp,
-                        g.due_date as due_date",
-            )
-            .param("id", goal_id)
-            .param("resolution_status", status.as_str())
-            .param("resolved_at", ts)
-        } else {
-            query(
-                "MATCH (g:Goal) 
-                 WHERE id(g) = $id 
-                 SET g.resolution_status = $resolution_status,
-                     g.resolved_at = null
-                 RETURN g.start_timestamp as start_timestamp,
-                        g.end_timestamp as end_timestamp,
-                        g.due_date as due_date",
-            )
-            .param("id", goal_id)
-            .param("resolution_status", status.as_str())
-        };
+        let mut set_clauses = resolution_set_clauses().to_vec();
+        // If routine is being completed, also set end_timestamp to now
+        if status == "completed" && goal_type == "routine" {
+            set_clauses.push("g.end_timestamp = $now_end_timestamp");
+        }
+        let mut update_query = query(&format!(
+            "MATCH (g:Goal)
+             WHERE id(g) = $id
+             SET {}
+             RETURN g.start_timestamp as start_timestamp,
+                    g.end_timestamp as end_timestamp,
+                    g.due_date as due_date,
+                    g.resolved_at as resolved_at,
+                    g.resolution_status as resolution_status",
+            set_clauses.join(", ")
+        ))
+        .param("id", goal_id)
+        .param("resolution_status", status.clone());
+        if status == "completed" && goal_type == "routine" {
+            update_query = update_query.param("now_end_timestamp", now);
+        }
 
         let mut update_result = graph.execute(update_query).await.map_err(|e| {
             (
@@ -964,9 +943,14 @@ pub async fn resolve_goal_handler(
             let start_timestamp: Option<i64> = updated_row.get("start_timestamp").ok();
             let end_timestamp: Option<i64> = updated_row.get("end_timestamp").ok();
             let due_date: Option<i64> = updated_row.get("due_date").ok();
+            let resolved_at: Option<i64> = updated_row.get("resolved_at").ok();
+            let resolution_status: String = updated_row
+                .get("resolution_status")
+                .unwrap_or_else(|_| "pending".to_string());
 
             let display_status = get_display_status(
-                Some(status.as_str()),
+                Some(goal_type.as_str()),
+                Some(&resolution_status),
                 resolved_at,
                 start_timestamp,
                 end_timestamp,
@@ -975,7 +959,7 @@ pub async fn resolve_goal_handler(
             );
 
             Ok(Json(ResolveGoalResponse {
-                resolution_status: status.as_str().to_string(),
+                resolution_status,
                 display_status,
                 resolved_at,
             }))

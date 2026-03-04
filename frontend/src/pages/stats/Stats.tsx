@@ -708,7 +708,6 @@ const Stats: React.FC = () => {
                                             value={effortSearchQuery}
                                             onChange={setEffortSearchQuery}
                                             onResults={(_, ids) => setEffortSearchIds(new Set(ids))}
-                                            placeholder="Search goals…"
                                         />
                                         <label htmlFor="effort-type" style={{ color: '#666', fontSize: '0.9rem' }}>
                                             Type:

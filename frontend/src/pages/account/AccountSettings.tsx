@@ -9,10 +9,6 @@ import {
     Alert,
     Chip,
     Divider,
-    List,
-    ListItem,
-    ListItemText,
-    ListItemSecondaryAction,
     IconButton,
     Card,
     CardContent,
@@ -25,22 +21,20 @@ import {
     Select,
     MenuItem,
     SelectChangeEvent,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
 } from "@mui/material";
 import {
     Google,
     Key,
     LinkOff,
-    Notifications,
-    NotificationsOff,
-    NotificationsActive,
-    PhoneIphone,
-    CheckCircle,
-    CalendarMonth,
     Sync,
     Send,
     Add,
-    Telegram,
 } from "@mui/icons-material";
+import { useTheme } from "../../shared/contexts/ThemeContext";
 import {
     privateRequest,
     getGoogleStatus,
@@ -59,7 +53,6 @@ import {
     GoogleStatusResponse,
     GCalSettingsResponse
 } from "../../shared/utils/api";
-import { usePushNotifications, useInstallPrompt } from "../../shared/hooks/usePushNotifications";
 
 interface AuthMethod {
     method_type: string;
@@ -86,8 +79,6 @@ const AccountSettings: React.FC = () => {
     const [success, setSuccess] = useState<string | null>(null);
     const [password, setPassword] = useState("");
     const [showPasswordForm, setShowPasswordForm] = useState(false);
-    const [notificationState, notificationActions] = usePushNotifications();
-    const { showPrompt: showInstallPrompt, dismissPrompt } = useInstallPrompt();
     const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
 
     // Google Calendar state
@@ -105,6 +96,12 @@ const AccountSettings: React.FC = () => {
     const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
     const [notificationSettingsLoading, setNotificationSettingsLoading] = useState(false);
     const [newOffset, setNewOffset] = useState("");
+
+    // Telegram Dialog state
+    const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+
+    // Theme context
+    const { themeName, setTheme, availableThemes } = useTheme();
 
     const loadAccountInfo = async () => {
         try {
@@ -366,150 +363,106 @@ const AccountSettings: React.FC = () => {
 
                     {account && (
                         <>
-                            {/* Account Information */}
+                            {/* Account */}
                             <Box sx={{ mb: 4 }}>
                                 <Typography variant="h6" gutterBottom>
-                                    Account Information
+                                    Account
                                 </Typography>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                    <Typography><strong>Username:</strong> {account.username}</Typography>
-                                    {account.email && (
-                                        <Typography><strong>Email:</strong> {account.email}</Typography>
-                                    )}
-                                    {account.display_name && (
-                                        <Typography><strong>Display Name:</strong> {account.display_name}</Typography>
-                                    )}
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                        <Typography><strong>Email Verified:</strong></Typography>
-                                        <Chip
-                                            label={account.is_email_verified ? "Verified" : "Not Verified"}
-                                            color={account.is_email_verified ? "success" : "warning"}
-                                            size="small"
-                                        />
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    {/* Auth Method Bubbles */}
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+                                        {/* Password Auth Bubble */}
+                                        {hasPasswordAuth ? (
+                                            <Chip
+                                                icon={<Key />}
+                                                label="Password"
+                                                sx={{
+                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                                    color: 'text.primary',
+                                                    '& .MuiChip-icon': {
+                                                        color: 'text.secondary',
+                                                    },
+                                                }}
+                                            />
+                                        ) : (
+                                            !showPasswordForm ? (
+                                                <Button
+                                                    variant="outlined"
+                                                    size="small"
+                                                    startIcon={<Key />}
+                                                    onClick={() => setShowPasswordForm(true)}
+                                                >
+                                                    Set Password
+                                                </Button>
+                                            ) : (
+                                                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                                    <TextField
+                                                        size="small"
+                                                        label="New Password"
+                                                        type="password"
+                                                        value={password}
+                                                        onChange={(e) => setPassword(e.target.value)}
+                                                        required
+                                                        sx={{ width: 180 }}
+                                                    />
+                                                    <Button type="submit" variant="contained" size="small" onClick={handleSetPassword}>
+                                                        Save
+                                                    </Button>
+                                                    <Button
+                                                        variant="outlined"
+                                                        size="small"
+                                                        onClick={() => {
+                                                            setShowPasswordForm(false);
+                                                            setPassword("");
+                                                        }}
+                                                    >
+                                                        Cancel
+                                                    </Button>
+                                                </Box>
+                                            )
+                                        )}
+
+                                        {/* Google Auth Bubble */}
+                                        {hasGoogleAuth ? (
+                                            <Chip
+                                                icon={<Google />}
+                                                label="Google"
+                                                onDelete={hasPasswordAuth ? handleUnlinkGoogle : undefined}
+                                                deleteIcon={<LinkOff />}
+                                                sx={{
+                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                                    color: 'text.primary',
+                                                    '& .MuiChip-icon': {
+                                                        color: 'text.secondary',
+                                                    },
+                                                }}
+                                            />
+                                        ) : (
+                                            <Button
+                                                variant="outlined"
+                                                size="small"
+                                                startIcon={<Google />}
+                                                onClick={handleLinkGoogle}
+                                            >
+                                                Link Google
+                                            </Button>
+                                        )}
                                     </Box>
+
+                                    {account.display_name && (
+                                        <Typography variant="body2" color="text.secondary">
+                                            {account.display_name}
+                                        </Typography>
+                                    )}
                                 </Box>
                             </Box>
 
                             <Divider sx={{ mb: 4 }} />
 
-                            {/* Authentication Methods */}
+                            {/* Notifications Section */}
                             <Box sx={{ mb: 4 }}>
                                 <Typography variant="h6" gutterBottom>
-                                    Authentication Methods
-                                </Typography>
-                                <List>
-                                    {account.auth_methods.map((method, index) => (
-                                        <ListItem key={index} divider>
-                                            <ListItemText
-                                                primary={
-                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                        {method.method_type === "password" ? <Key /> : <Google />}
-                                                        <Typography variant="subtitle1">
-                                                            {method.method_type === "password" ? "Password" : "Google"}
-                                                        </Typography>
-                                                        {method.is_primary && (
-                                                            <Chip label="Primary" color="primary" size="small" />
-                                                        )}
-                                                    </Box>
-                                                }
-                                                secondary={`Added: ${new Date(method.created_at).toLocaleDateString()}`}
-                                            />
-                                            <ListItemSecondaryAction>
-                                                {method.method_type === "google" && (
-                                                    <IconButton
-                                                        edge="end"
-                                                        onClick={handleUnlinkGoogle}
-                                                        disabled={!hasPasswordAuth}
-                                                        title={!hasPasswordAuth ? "Set a password before unlinking Google" : "Unlink Google account"}
-                                                    >
-                                                        <LinkOff />
-                                                    </IconButton>
-                                                )}
-                                            </ListItemSecondaryAction>
-                                        </ListItem>
-                                    ))}
-                                </List>
-                            </Box>
-
-                            <Divider sx={{ mb: 4 }} />
-
-                            {/* Add Authentication Methods */}
-                            <Box sx={{ mb: 4 }}>
-                                <Typography variant="h6" gutterBottom>
-                                    Add Authentication Methods
-                                </Typography>
-
-                                {/* Password Section */}
-                                {!hasPasswordAuth && (
-                                    <Box sx={{ mb: 3 }}>
-                                        <Typography variant="subtitle1" gutterBottom>
-                                            Set Password
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                            Add a password to your account for additional security.
-                                        </Typography>
-                                        {!showPasswordForm ? (
-                                            <Button
-                                                variant="outlined"
-                                                startIcon={<Key />}
-                                                onClick={() => setShowPasswordForm(true)}
-                                            >
-                                                Set Password
-                                            </Button>
-                                        ) : (
-                                            <Box component="form" onSubmit={handleSetPassword} sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
-                                                <TextField
-                                                    label="New Password"
-                                                    type="password"
-                                                    value={password}
-                                                    onChange={(e) => setPassword(e.target.value)}
-                                                    required
-                                                    sx={{ flexGrow: 1 }}
-                                                />
-                                                <Button type="submit" variant="contained">
-                                                    Set Password
-                                                </Button>
-                                                <Button
-                                                    variant="outlined"
-                                                    onClick={() => {
-                                                        setShowPasswordForm(false);
-                                                        setPassword("");
-                                                    }}
-                                                >
-                                                    Cancel
-                                                </Button>
-                                            </Box>
-                                        )}
-                                    </Box>
-                                )}
-
-                                {/* Google Section */}
-                                {!hasGoogleAuth && (
-                                    <Box sx={{ mb: 3 }}>
-                                        <Typography variant="subtitle1" gutterBottom>
-                                            Link Google Account
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                            Link your Google account for easy sign-in.
-                                        </Typography>
-                                        <Button
-                                            variant="outlined"
-                                            startIcon={<Google />}
-                                            onClick={handleLinkGoogle}
-                                        >
-                                            Link Google Account
-                                        </Button>
-                                    </Box>
-                                )}
-                            </Box>
-
-                            <Divider sx={{ mb: 4 }} />
-
-                            {/* Notification Preferences Section */}
-                            <Box sx={{ mb: 4 }}>
-                                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <NotificationsActive />
-                                    Notification Preferences
+                                    Notifications
                                 </Typography>
 
                                 {notificationSettingsLoading ? (
@@ -518,95 +471,72 @@ const AccountSettings: React.FC = () => {
                                     </Box>
                                 ) : notificationSettings ? (
                                     <Card sx={{ mb: 2 }}>
-                                        <CardContent>
-                                            <FormControlLabel
-                                                control={
-                                                    <Switch
-                                                        checked={notificationSettings.notifications_enabled}
-                                                        onChange={(e) => handleNotificationSettingChange('notifications_enabled', e.target.checked)}
-                                                    />
-                                                }
-                                                label="Enable all notifications"
-                                                sx={{ mb: 2 }}
-                                            />
-
-                                            <Divider sx={{ my: 2 }} />
-
-                                            <Typography variant="subtitle2" gutterBottom>Channels</Typography>
-                                            <Box sx={{ display: 'flex', gap: 4, mb: 3 }}>
+                                        <CardContent sx={{ '& .MuiFormControlLabel-root': { marginLeft: 0, marginRight: 0 } }}>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                                 <FormControlLabel
-                                                    control={
-                                                        <Switch
-                                                            checked={notificationSettings.notify_via_push}
-                                                            onChange={(e) => handleNotificationSettingChange('notify_via_push', e.target.checked)}
-                                                            disabled={!notificationSettings.notifications_enabled}
-                                                        />
-                                                    }
-                                                    label="Push"
-                                                />
-                                                <FormControlLabel
-                                                    control={
-                                                        <Switch
-                                                            checked={notificationSettings.notify_via_telegram}
-                                                            onChange={(e) => handleNotificationSettingChange('notify_via_telegram', e.target.checked)}
-                                                            disabled={!notificationSettings.notifications_enabled}
-                                                        />
-                                                    }
-                                                    label="Telegram"
-                                                />
-                                            </Box>
-
-                                            <Typography variant="subtitle2" gutterBottom>What to notify on</Typography>
-                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 3 }}>
-                                                <FormControlLabel
+                                                    sx={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 1,
+                                                        '& .MuiSwitch-root': { margin: 0 },
+                                                    }}
                                                     control={
                                                         <Switch
                                                             checked={notificationSettings.notify_high_priority_events}
                                                             onChange={(e) => handleNotificationSettingChange('notify_high_priority_events', e.target.checked)}
-                                                            disabled={!notificationSettings.notifications_enabled}
                                                         />
                                                     }
                                                     label="High priority events (starting soon)"
                                                 />
                                                 <FormControlLabel
+                                                    sx={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 1,
+                                                        '& .MuiSwitch-root': { margin: 0 },
+                                                    }}
                                                     control={
                                                         <Switch
                                                             checked={notificationSettings.notify_event_reminders}
                                                             onChange={(e) => handleNotificationSettingChange('notify_event_reminders', e.target.checked)}
-                                                            disabled={!notificationSettings.notifications_enabled}
                                                         />
                                                     }
                                                     label="Event reminders"
                                                 />
-                                            </Box>
 
-                                            <Typography variant="subtitle2" gutterBottom>Reminder offsets (minutes before)</Typography>
-                                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-                                                {notificationSettings.reminder_offsets_minutes.map(offset => (
-                                                    <Chip
-                                                        key={offset}
-                                                        label={offset >= 1440 ? `${offset / 1440}d (${offset}m)` : offset >= 60 ? `${offset / 60}h (${offset}m)` : `${offset}m`}
-                                                        onDelete={() => handleRemoveOffset(offset)}
-                                                        disabled={!notificationSettings.notifications_enabled}
-                                                    />
-                                                ))}
-                                            </Box>
-                                            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                                                <TextField
-                                                    size="small"
-                                                    label="Add offset (min)"
-                                                    type="number"
-                                                    value={newOffset}
-                                                    onChange={(e) => setNewOffset(e.target.value)}
-                                                    disabled={!notificationSettings.notifications_enabled}
-                                                />
-                                                <IconButton 
-                                                    onClick={handleAddOffset} 
-                                                    disabled={!newOffset || !notificationSettings.notifications_enabled}
-                                                    color="primary"
-                                                >
-                                                    <Add />
-                                                </IconButton>
+                                                <Box sx={{ mt: 1 }}>
+                                                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                                                        Reminder offsets (minutes before)
+                                                    </Typography>
+                                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+                                                        {notificationSettings.reminder_offsets_minutes.map(offset => (
+                                                            <Chip
+                                                                key={offset}
+                                                                size="small"
+                                                                label={offset >= 1440 ? `${offset / 1440}d` : offset >= 60 ? `${offset / 60}h` : `${offset}m`}
+                                                                onDelete={() => handleRemoveOffset(offset)}
+                                                            />
+                                                        ))}
+                                                    </Box>
+                                                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                                        <TextField
+                                                            size="small"
+                                                            label="Add (min)"
+                                                            type="number"
+                                                            value={newOffset}
+                                                            onChange={(e) => setNewOffset(e.target.value)}
+                                                            sx={{ width: 100 }}
+                                                        />
+                                                        <IconButton
+                                                            onClick={handleAddOffset}
+                                                            disabled={!newOffset}
+                                                            color="primary"
+                                                            size="small"
+                                                        >
+                                                            <Add />
+                                                        </IconButton>
+                                                    </Box>
+                                                </Box>
                                             </Box>
                                         </CardContent>
                                     </Card>
@@ -617,316 +547,160 @@ const AccountSettings: React.FC = () => {
 
                             <Divider sx={{ mb: 4 }} />
 
-                            {/* Telegram Section */}
-                            <Box sx={{ mb: 4 }}>
-                                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Telegram />
-                                    Telegram Bot Config
-                                </Typography>
-
-                                {telegramLoading ? (
-                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-                                        <CircularProgress size={24} />
-                                    </Box>
-                                ) : telegramSettings ? (
-                                    <Card sx={{ mb: 2 }}>
-                                        <CardContent>
-                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                                                <TextField
-                                                    fullWidth
-                                                    label="Telegram Chat ID"
-                                                    value={telegramSettings.chat_id || ""}
-                                                    onChange={(e) => setTelegramSettings({ ...telegramSettings, chat_id: e.target.value })}
-                                                    placeholder="e.g. 123456789"
-                                                    helperText="Use @userinfobot or similar to find your ID"
-                                                />
-                                                <TextField
-                                                    fullWidth
-                                                    label="Telegram Bot Token"
-                                                    type="password"
-                                                    value={telegramBotToken}
-                                                    onChange={(e) => setTelegramBotToken(e.target.value)}
-                                                    placeholder={telegramSettings.has_bot_token ? "•••••••••••• (saved)" : "Your bot token from @BotFather"}
-                                                    helperText={telegramSettings.has_bot_token ? "Leave blank to keep existing token" : "Enter the API token for your personal bot"}
-                                                />
-                                                <Box sx={{ display: 'flex', gap: 2 }}>
-                                                    <Button
-                                                        variant="contained"
-                                                        onClick={handleTelegramSave}
-                                                        disabled={telegramLoading}
-                                                    >
-                                                        Save Telegram Config
-                                                    </Button>
-                                                    <Button
-                                                        variant="outlined"
-                                                        startIcon={<Send />}
-                                                        onClick={handleTelegramTest}
-                                                        disabled={!telegramSettings.has_bot_token && !telegramBotToken}
-                                                    >
-                                                        Send Test Message
-                                                    </Button>
-                                                </Box>
-                                            </Box>
-                                        </CardContent>
-                                    </Card>
-                                ) : (
-                                    <Typography color="text.secondary">Failed to load Telegram settings</Typography>
-                                )}
-                            </Box>
-
-                            <Divider sx={{ mb: 4 }} />
-                            
-                            {/* Push Notifications Section */}
+                            {/* Integrations */}
                             <Box sx={{ mb: 4 }}>
                                 <Typography variant="h6" gutterBottom>
-                                    Push Notifications
+                                    Integrations
                                 </Typography>
 
-                                {/* iOS Install Prompt */}
-                                {showInstallPrompt && (
-                                    <Card sx={{ mb: 3, bgcolor: 'info.light', color: 'info.contrastText' }}>
-                                        <CardContent>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                                                <PhoneIphone />
-                                                <Typography variant="subtitle1">
-                                                    Install App for Notifications
-                                                </Typography>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    {/* Google Calendar Integration */}
+                                    {gcalLoading ? (
+                                        <CircularProgress size={24} />
+                                    ) : googleStatus?.linked ? (
+                                        <Card>
+                                            <CardContent>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                                                    <Sync color="success" />
+                                                    <Box sx={{ flexGrow: 1 }}>
+                                                        <Typography variant="subtitle1">
+                                                            Google Account Linked
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            {googleStatus.email}
+                                                        </Typography>
+                                                        {googleStatus.calendars_synced > 0 && (
+                                                            <Chip
+                                                                label={`${googleStatus.calendars_synced} calendar(s) synced`}
+                                                                size="small"
+                                                                color="primary"
+                                                                sx={{ mt: 0.5 }}
+                                                            />
+                                                        )}
+                                                    </Box>
+                                                    <IconButton
+                                                        onClick={handleUnlinkGoogleCalendar}
+                                                        title="Unlink Google account"
+                                                        color="error"
+                                                        size="small"
+                                                    >
+                                                        <LinkOff />
+                                                    </IconButton>
+                                                </Box>
+
+                                                <FormControlLabel
+                                                    control={
+                                                        <Switch
+                                                            checked={gcalSettings?.gcal_auto_sync_enabled || false}
+                                                            onChange={handleGcalAutoSyncChange}
+                                                            size="small"
+                                                        />
+                                                    }
+                                                    label="Auto-sync (every 15 minutes)"
+                                                    sx={{ mb: 1 }}
+                                                />
+
+                                                {calendars.length > 0 && (
+                                                    <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+                                                        <InputLabel id="default-calendar-label">Default Calendar</InputLabel>
+                                                        <Select
+                                                            labelId="default-calendar-label"
+                                                            value={gcalSettings?.gcal_default_calendar_id || 'primary'}
+                                                            label="Default Calendar"
+                                                            onChange={handleDefaultCalendarChange}
+                                                        >
+                                                            {calendars.map((cal) => (
+                                                                <MenuItem key={cal.id} value={cal.id}>
+                                                                    {cal.summary} {cal.primary && '(Primary)'}
+                                                                </MenuItem>
+                                                            ))}
+                                                        </Select>
+                                                    </FormControl>
+                                                )}
+                                            </CardContent>
+                                        </Card>
+                                    ) : (
+                                        <Card>
+                                            <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                    <Google color="action" />
+                                                    <Box>
+                                                        <Typography variant="subtitle1">Google Calendar</Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            Not connected
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                                <Button
+                                                    variant="outlined"
+                                                    size="small"
+                                                    onClick={handleLinkGoogle}
+                                                >
+                                                    Connect
+                                                </Button>
+                                            </CardContent>
+                                        </Card>
+                                    )}
+
+                                    {/* Telegram Config */}
+                                    <Card>
+                                        <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                <Send color="action" />
+                                                <Box>
+                                                    <Typography variant="subtitle1">Telegram</Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        {telegramSettings?.has_bot_token ? 'Configured' : 'Not configured'}
+                                                    </Typography>
+                                                </Box>
                                             </Box>
-                                            <Typography variant="body2" sx={{ mb: 2 }}>
-                                                To receive push notifications on iOS, you need to add this app to your home screen:
-                                            </Typography>
-                                            <Typography variant="body2" component="ol" sx={{ pl: 2, mb: 2 }}>
-                                                <li>Tap the Share button <span style={{ fontFamily: 'system-ui' }}>􀈂</span> in Safari</li>
-                                                <li>Select "Add to Home Screen"</li>
-                                                <li>Tap "Add" to install</li>
-                                                <li>Open the app from your home screen</li>
-                                            </Typography>
                                             <Button
-                                                variant="contained"
+                                                variant="outlined"
                                                 size="small"
-                                                onClick={dismissPrompt}
+                                                onClick={() => setTelegramDialogOpen(true)}
                                             >
-                                                Got it
+                                                Configure
                                             </Button>
                                         </CardContent>
                                     </Card>
-                                )}
+                                </Box>
+                            </Box>
 
-                                {/* Notification Status */}
+                            <Divider sx={{ mb: 4 }} />
+
+                            {/* Appearance / Theme Section */}
+                            <Box sx={{ mb: 4 }}>
+                                <Typography variant="h6" gutterBottom>
+                                    Appearance
+                                </Typography>
+
                                 <Card sx={{ mb: 2 }}>
                                     <CardContent>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                                {notificationState.isSubscribed ? (
-                                                    <NotificationsActive color="success" />
-                                                ) : (
-                                                    <NotificationsOff color="disabled" />
-                                                )}
-                                                <Box>
-                                                    <Typography variant="subtitle1">
-                                                        {notificationState.isSubscribed ? 'Notifications Enabled' : 'Notifications Disabled'}
-                                                    </Typography>
-                                                    <Typography variant="body2" color="text.secondary">
-                                                        {notificationState.isSupported ?
-                                                            (notificationState.isStandalone ?
-                                                                `Permission: ${notificationState.permission}` :
-                                                                'App not installed to home screen') :
-                                                            'Not supported in this browser'}
-                                                    </Typography>
-                                                </Box>
-                                            </Box>
-
-                                            {notificationState.isLoading && <CircularProgress size={24} />}
-                                        </Box>
-
-                                        {notificationState.error && (
-                                            <Alert severity="error" sx={{ mt: 2 }}>
-                                                {notificationState.error}
-                                            </Alert>
-                                        )}
-
-                                        <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
-                                            {!notificationState.isSubscribed ? (
+                                        <Typography variant="subtitle2" gutterBottom>Color Theme</Typography>
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                                            {availableThemes.map((t) => (
                                                 <Button
-                                                    variant="contained"
-                                                    startIcon={<Notifications />}
-                                                    onClick={async () => {
-                                                        const success = await notificationActions.subscribe();
-                                                        if (success) {
-                                                            setSnackbarMessage('Push notifications enabled successfully!');
-                                                        }
+                                                    key={t.name}
+                                                    variant={themeName === t.name ? 'contained' : 'outlined'}
+                                                    onClick={() => setTheme(t.name)}
+                                                    sx={{
+                                                        minWidth: 100,
+                                                        borderColor: themeName === t.name ? undefined : t.preview,
+                                                        backgroundColor: themeName === t.name ? t.preview : undefined,
+                                                        color: themeName === t.name ? '#fff' : t.preview,
+                                                        '&:hover': {
+                                                            backgroundColor: themeName === t.name
+                                                                ? t.preview
+                                                                : `${t.preview}20`,
+                                                        },
                                                     }}
-                                                    disabled={
-                                                        notificationState.isLoading ||
-                                                        !notificationState.isSupported ||
-                                                        (!notificationState.isStandalone && /iPad|iPhone|iPod/.test(navigator.userAgent))
-                                                    }
                                                 >
-                                                    Enable Notifications
+                                                    {t.label}
                                                 </Button>
-                                            ) : (
-                                                <>
-                                                    <Button
-                                                        variant="outlined"
-                                                        startIcon={<NotificationsOff />}
-                                                        onClick={async () => {
-                                                            const success = await notificationActions.unsubscribe();
-                                                            if (success) {
-                                                                setSnackbarMessage('Push notifications disabled');
-                                                            }
-                                                        }}
-                                                        disabled={notificationState.isLoading}
-                                                    >
-                                                        Disable Notifications
-                                                    </Button>
-                                                    <Button
-                                                        variant="outlined"
-                                                        startIcon={<CheckCircle />}
-                                                        onClick={async () => {
-                                                            const success = await notificationActions.sendTestNotification();
-                                                            if (success) {
-                                                                setSnackbarMessage('Test notification sent!');
-                                                            }
-                                                        }}
-                                                        disabled={notificationState.isLoading}
-                                                    >
-                                                        Send Test
-                                                    </Button>
-                                                </>
-                                            )}
+                                            ))}
                                         </Box>
                                     </CardContent>
                                 </Card>
-
-                                {/* Information about notifications */}
-                                <Typography variant="body2" color="text.secondary">
-                                    Push notifications can alert you about upcoming events, task deadlines, and routine reminders.
-                                    {' '}
-                                    {/iPad|iPhone|iPod/.test(navigator.userAgent) && !notificationState.isStandalone && (
-                                        <>
-                                            <strong>Note:</strong> On iOS devices, the app must be installed to your home screen to receive notifications.
-                                        </>
-                                    )}
-                                </Typography>
-                            </Box>
-
-                            <Divider sx={{ mb: 4 }} />
-
-                            {/* Google Calendar Settings */}
-                            <Box sx={{ mb: 4 }}>
-                                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <CalendarMonth />
-                                    Google Calendar Sync
-                                </Typography>
-
-                                {gcalLoading ? (
-                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-                                        <CircularProgress size={24} />
-                                    </Box>
-                                ) : googleStatus?.linked ? (
-                                    <Card sx={{ mb: 2 }}>
-                                        <CardContent>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                                                <Sync color="success" />
-                                                <Box sx={{ flexGrow: 1 }}>
-                                                    <Typography variant="subtitle1">
-                                                        Google Account Linked
-                                                    </Typography>
-                                                    <Typography variant="body2" color="text.secondary">
-                                                        {googleStatus.email}
-                                                    </Typography>
-                                                    {googleStatus.calendars_synced > 0 && (
-                                                        <Chip 
-                                                            label={`${googleStatus.calendars_synced} calendar(s) synced`} 
-                                                            size="small" 
-                                                            color="primary" 
-                                                            sx={{ mt: 1 }}
-                                                        />
-                                                    )}
-                                                </Box>
-                                                <IconButton
-                                                    onClick={handleUnlinkGoogleCalendar}
-                                                    title="Unlink Google account"
-                                                    color="error"
-                                                >
-                                                    <LinkOff />
-                                                </IconButton>
-                                            </Box>
-
-                                            <Divider sx={{ my: 2 }} />
-
-                                            {/* Auto-sync toggle */}
-                                            <FormControlLabel
-                                                control={
-                                                    <Switch
-                                                        checked={gcalSettings?.gcal_auto_sync_enabled || false}
-                                                        onChange={handleGcalAutoSyncChange}
-                                                    />
-                                                }
-                                                label={
-                                                    <Box>
-                                                        <Typography variant="body1">Auto-sync (every 15 minutes)</Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            Automatically sync events between Goals and Google Calendar
-                                                        </Typography>
-                                                    </Box>
-                                                }
-                                                sx={{ mb: 2, alignItems: 'flex-start' }}
-                                            />
-
-                                            {/* Default calendar selector */}
-                                            {calendars.length > 0 && (
-                                                <FormControl fullWidth sx={{ mt: 2 }}>
-                                                    <InputLabel id="default-calendar-label">Default Calendar</InputLabel>
-                                                    <Select
-                                                        labelId="default-calendar-label"
-                                                        value={gcalSettings?.gcal_default_calendar_id || 'primary'}
-                                                        label="Default Calendar"
-                                                        onChange={handleDefaultCalendarChange}
-                                                    >
-                                                        {calendars.map((cal) => (
-                                                            <MenuItem key={cal.id} value={cal.id}>
-                                                                {cal.summary} {cal.primary && '(Primary)'}
-                                                            </MenuItem>
-                                                        ))}
-                                                    </Select>
-                                                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                                                        New events will sync to this calendar by default
-                                                    </Typography>
-                                                </FormControl>
-                                            )}
-                                        </CardContent>
-                                    </Card>
-                                ) : (
-                                    <Card sx={{ mb: 2 }}>
-                                        <CardContent>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                                <Google color="disabled" />
-                                                <Box sx={{ flexGrow: 1 }}>
-                                                    <Typography variant="subtitle1">
-                                                        Google Calendar Not Connected
-                                                    </Typography>
-                                                    <Typography variant="body2" color="text.secondary">
-                                                        Link your Google account to sync events with Google Calendar
-                                                    </Typography>
-                                                </Box>
-                                            </Box>
-                                            <Button
-                                                variant="contained"
-                                                startIcon={<Google />}
-                                                onClick={handleLinkGoogle}
-                                                sx={{ mt: 2 }}
-                                            >
-                                                Connect Google Calendar
-                                            </Button>
-                                        </CardContent>
-                                    </Card>
-                                )}
-
-                                <Typography variant="body2" color="text.secondary">
-                                    Google Calendar sync allows you to import events from Google Calendar and export your scheduled events.
-                                    You can also use the Sync button in the Calendar view for manual syncing.
-                                </Typography>
                             </Box>
                         </>
                     )}
@@ -941,6 +715,66 @@ const AccountSettings: React.FC = () => {
                 message={snackbarMessage}
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             />
+
+            {/* Telegram Config Dialog */}
+            <Dialog open={telegramDialogOpen} onClose={() => setTelegramDialogOpen(false)} maxWidth="sm" fullWidth>
+                <DialogTitle>Telegram Configuration</DialogTitle>
+                <DialogContent>
+                    {telegramLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                            <CircularProgress size={24} />
+                        </Box>
+                    ) : telegramSettings ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+                            <TextField
+                                fullWidth
+                                size="small"
+                                label="Telegram Chat ID"
+                                value={telegramSettings.chat_id || ""}
+                                onChange={(e) => setTelegramSettings({ ...telegramSettings, chat_id: e.target.value })}
+                                placeholder="e.g. 123456789"
+                                helperText="Use @userinfobot or similar to find your ID"
+                            />
+                            <TextField
+                                fullWidth
+                                size="small"
+                                label="Telegram Bot Token"
+                                type="password"
+                                value={telegramBotToken}
+                                onChange={(e) => setTelegramBotToken(e.target.value)}
+                                placeholder={telegramSettings.has_bot_token ? "•••••••••••• (saved)" : "Your bot token from @BotFather"}
+                                helperText={telegramSettings.has_bot_token ? "Leave blank to keep existing token" : "Enter the API token for your personal bot"}
+                            />
+                            <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                                <Button
+                                    variant="contained"
+                                    onClick={handleTelegramSave}
+                                    disabled={telegramLoading}
+                                    size="small"
+                                >
+                                    Save
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    startIcon={<Send />}
+                                    onClick={handleTelegramTest}
+                                    disabled={!telegramSettings.has_bot_token && !telegramBotToken}
+                                    size="small"
+                                >
+                                    Send Test
+                                </Button>
+                            </Box>
+                        </Box>
+                    ) : (
+                        <Typography color="text.secondary">Failed to load Telegram settings</Typography>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setTelegramDialogOpen(false)} size="small">
+                        Close
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Container>
     );
 };

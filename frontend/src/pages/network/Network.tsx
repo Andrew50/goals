@@ -9,7 +9,6 @@ import {
   List,
   ListItem
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
 import AddLinkIcon from '@mui/icons-material/AddLink';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -28,6 +27,7 @@ import {
 import { formatNetworkNode } from '../../shared/utils/formatNetworkNode';
 import { validateRelationship } from '../../shared/utils/goalValidation';
 import { SearchBar } from '../../shared/components/SearchBar';
+import NewButton from '../../shared/components/NewButton';
 import { getGoalStyle } from '../../shared/styles/colors';
 import '../../shared/styles/badges.css';
 
@@ -1366,7 +1366,6 @@ const NetworkView: React.FC = () => {
         <SearchBar
           items={filteredSearchItems}
           keys={['name', 'description']}
-          placeholder="Find a goal…"
           debounceMs={200}
           excludeGoalTypes={['event']}
           onChange={(q) => {
@@ -1397,10 +1396,10 @@ const NetworkView: React.FC = () => {
           <div
             style={{
               marginTop: '0.5rem',
-              background: '#ffffff',
-              border: '1px solid #e0e0e0',
+              background: 'var(--color-bg-paper, #ffffff)',
+              border: '1px solid var(--color-border-main, #e0e0e0)',
               borderRadius: '10px',
-              boxShadow: '0 6px 18px rgba(0,0,0,0.08)',
+              boxShadow: '0 6px 18px rgba(var(--shadow-color, 0,0,0), 0.08)',
               overflow: 'hidden'
             }}
             role="listbox"
@@ -1481,10 +1480,10 @@ const NetworkView: React.FC = () => {
                 minHeight: 'auto',
                 px: '0.75rem',
                 py: '0.5rem',
-                border: '1px solid #d1d5db',
+                border: '1px solid var(--color-border-main, #d1d5db)',
                 borderRadius: '0.375rem',
-                background: '#ffffff',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                background: 'var(--color-bg-paper, #ffffff)',
+                boxShadow: '0 1px 2px rgba(var(--shadow-color, 0,0,0), 0.04)',
                 '& .MuiAccordionSummary-content': {
                   margin: 0,
                   alignItems: 'center'
@@ -1637,26 +1636,14 @@ const NetworkView: React.FC = () => {
         </div>
       </div>
 
-      <Button
-        variant="contained"
-        color="primary"
-        style={{
-          position: 'absolute',
-          top: '1rem',
-          left: '1rem',
-          minWidth: '32px',
-          width: '32px',
-          height: '32px',
-          padding: '0',
-          borderRadius: '4px',
-          backgroundColor: addNodeMode ? '#e8f5e9' : '#f3f3f3',
-          border: '1px solid #c1c1c1',
-          boxShadow: 'none'
-        }}
-        onClick={handleAddNode}
-      >
-        <AddIcon style={{ fontSize: '20px', color: addNodeMode ? '#2e7d32' : '#666666' }} />
-      </Button>
+      <div style={{ position: 'absolute', top: '1rem', left: '1rem', zIndex: 2 }}>
+        <NewButton
+          onClick={handleAddNode}
+          style={{
+            backgroundColor: addNodeMode ? 'var(--color-status-completed, #2e7d32)' : undefined
+          }}
+        />
+      </div>
 
       <Button
         variant="contained"
@@ -1670,13 +1657,13 @@ const NetworkView: React.FC = () => {
           height: '32px',
           padding: '0',
           borderRadius: '4px',
-          backgroundColor: addEdgeMode ? '#e3f2fd' : '#f3f3f3',
-          border: '1px solid #c1c1c1',
+          backgroundColor: addEdgeMode ? 'rgba(var(--color-primary-main-rgb, 33, 150, 243), 0.1)' : 'var(--color-bg-elevated, #f3f3f3)',
+          border: '1px solid var(--color-border-dark, #c1c1c1)',
           boxShadow: 'none'
         }}
         onClick={handleAddEdgeMode}
       >
-        <AddLinkIcon style={{ fontSize: '20px', color: addEdgeMode ? '#1976d2' : '#666666' }} />
+        <AddLinkIcon style={{ fontSize: '20px', color: addEdgeMode ? 'var(--color-primary-main, #1976d2)' : 'var(--color-text-muted, #666666)' }} />
       </Button>
 
       <Button
@@ -1691,13 +1678,13 @@ const NetworkView: React.FC = () => {
           height: '32px',
           padding: '0',
           borderRadius: '4px',
-          backgroundColor: deleteMode ? '#ffebee' : '#f3f3f3',
-          border: '1px solid #c1c1c1',
+          backgroundColor: deleteMode ? 'rgba(var(--color-status-failed-rgb, 229, 62, 62), 0.1)' : 'var(--color-bg-elevated, #f3f3f3)',
+          border: '1px solid var(--color-border-dark, #c1c1c1)',
           boxShadow: 'none'
         }}
         onClick={handleDeleteMode}
       >
-        <DeleteIcon style={{ fontSize: '20px', color: deleteMode ? '#f44336' : '#666666' }} />
+        <DeleteIcon style={{ fontSize: '20px', color: deleteMode ? 'var(--color-status-failed, #f44336)' : 'var(--color-text-muted, #666666)' }} />
       </Button>
 
       <Button
@@ -1712,14 +1699,14 @@ const NetworkView: React.FC = () => {
           height: '32px',
           padding: '0',
           borderRadius: '4px',
-          backgroundColor: '#f3f3f3',
-          border: '1px solid #c1c1c1',
+          backgroundColor: 'var(--color-bg-elevated, #f3f3f3)',
+          border: '1px solid var(--color-border-dark, #c1c1c1)',
           boxShadow: 'none'
         }}
         onClick={handleReorganizeNetwork}
         title="Reorganize Network"
       >
-        <RefreshIcon style={{ fontSize: '20px', color: '#666666' }} />
+        <RefreshIcon style={{ fontSize: '20px', color: 'var(--color-text-muted, #666666)' }} />
       </Button>
 
     </div>
