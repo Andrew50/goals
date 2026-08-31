@@ -22,19 +22,64 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Backup the *currently running* prod DB before we tear anything down.
+          # Neo4j Community requires an offline dump. Stop the production DB
+          # container and run neo4j-admin in a separate helper container that
+          # mounts the exact same data and backup volumes.
           if docker ps -q -f name='^goals_db$' | grep -q .; then
-            echo "goals_db is running; taking a pre-deploy backup..."
-            before_count=$(docker exec --user neo4j goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-            docker exec --user neo4j goals_db bash -lc '/scripts/backup.sh'
-            after_count=$(docker exec --user neo4j goals_db bash -lc 'ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | wc -l')
-            echo "Backup count before: ${before_count}, after: ${after_count}"
-            if [ "${after_count}" -le "${before_count}" ]; then
-              echo "Pre-deploy backup did not produce a new dump file" >&2
-              docker exec goals_db bash -lc 'ls -la /backups || true'
-              exit 1
-            fi
-            docker exec goals_db bash -lc 'echo "Latest dump:"; ls -1t /backups/neo4j_dump_*.dump 2>/dev/null | head -n 1 || true'
+            echo "goals_db is running; taking an offline pre-deploy backup..."
+
+            DB_IMAGE=$(docker inspect -f '{{.Config.Image}}' goals_db)
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            FINAL_DUMP="/backups/neo4j_dump_${TIMESTAMP}.dump"
+            TMP_DIR="/backups/tmp_${TIMESTAMP}"
+            DB_STOPPED=false
+
+            restore_db() {
+              if [ "${DB_STOPPED}" = "true" ]; then
+                echo "Ensuring goals_db is running..."
+                if ! docker start goals_db >/dev/null; then
+                  echo "::error::Failed to restart goals_db after backup attempt"
+                fi
+              fi
+            }
+            trap restore_db EXIT
+
+            echo "Database image: ${DB_IMAGE}"
+            echo "Stopping goals_db to release the Neo4j store lock..."
+            docker stop --time 60 goals_db
+            DB_STOPPED=true
+
+            echo "Running neo4j-admin in a temporary helper container..."
+            docker run --rm \
+              --volumes-from goals_db \
+              --user neo4j \
+              --entrypoint bash \
+              "${DB_IMAGE}" \
+              -lc "
+                set -euo pipefail
+                export NEO4J_server_directories_data=/data
+
+                rm -rf '${TMP_DIR}'
+                mkdir -p '${TMP_DIR}'
+                trap 'rm -rf \"${TMP_DIR}\"' EXIT
+
+                /var/lib/neo4j/bin/neo4j-admin database dump neo4j \
+                  --to-path='${TMP_DIR}' \
+                  --overwrite-destination
+
+                test -s '${TMP_DIR}/neo4j.dump'
+                mv '${TMP_DIR}/neo4j.dump' '${FINAL_DUMP}'
+                rmdir '${TMP_DIR}'
+                trap - EXIT
+
+                echo 'Created backup: ${FINAL_DUMP}'
+                ls -lh '${FINAL_DUMP}'
+              "
+
+            echo "Offline backup completed successfully."
+            docker start goals_db >/dev/null
+            DB_STOPPED=false
+            trap - EXIT
           else
             echo "goals_db is not running; skipping pre-deploy backup (first deploy or DB down)."
           fi
@@ -246,7 +291,6 @@ jobs:
           name: backup-logs
           path: |
             ${{ github.workspace }}/backup-artifacts/backup.log
-            ${{ github.workspace }}/.env
 
       - name: Start monitor
         if: always()

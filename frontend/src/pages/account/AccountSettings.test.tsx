@@ -30,6 +30,7 @@ describe('AccountSettings', () => {
         renderWithProviders(<AccountSettings />, {
             withAuth: true,
             withGoalMenu: true,
+            withTheme: true,
         });
 
         await waitFor(() => {
