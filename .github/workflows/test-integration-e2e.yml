@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 # The self-hosted runners share one Debian host and Docker daemon. Serialize this
-# workflow so fixed test ports (5057/3031) cannot collide across refs/runs.
+# workflow so fixed test ports cannot collide across normal CI runs.
 concurrency:
   group: goals-ci-shared-host
   cancel-in-progress: false
@@ -113,6 +113,27 @@ jobs:
           # Optional: also avoid conflicts for the unused dev Neo4j service in CI
           echo "GOALS_DB_HTTP_PORTS=7474" >> .env
           echo "GOALS_DB_BOLT_PORTS=7687" >> .env
+
+      - name: Wait for shared CI ports
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Older runs used a shared Compose project and can still own these ports while
+          # a workflow update is rolling out. Normal future CI runs are serialized above.
+          for port in 5057 3031 7475 7688; do
+            echo "Waiting for host port $port to be free..."
+            for i in {1..300}; do
+              if ! nc -z localhost "$port" 2>/dev/null; then
+                echo "Port $port is free"
+                break
+              fi
+              if [ "$i" -eq 300 ]; then
+                echo "Port $port remained occupied for 10 minutes"
+                exit 1
+              fi
+              sleep 2
+            done
+          done
           
       - name: Start test stack
         run: |
