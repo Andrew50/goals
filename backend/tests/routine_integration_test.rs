@@ -2208,6 +2208,7 @@ async fn test_routine_single_reschedule_creates_tombstone_for_old_slot() {
             update_scope: "single".to_string(),
             range_start: None,
             range_end: None,
+            resolution_status: None,
         },
     )
     .await

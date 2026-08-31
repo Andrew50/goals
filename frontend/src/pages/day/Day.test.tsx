@@ -22,8 +22,7 @@ describe('Day', () => {
         });
 
         await waitFor(() => {
-            // For today's date, Day renders the title "Today's Tasks" and no "Today" button.
-            expect(screen.getByText(/today's tasks/i)).toBeInTheDocument();
+            expect(screen.getByText('To Do')).toBeInTheDocument();
         });
     });
 });

@@ -21,22 +21,6 @@ jobs:
       frontend: ${{ steps.compute.outputs.frontend }}
       any_changes: ${{ steps.compute.outputs.any_changes }}
     steps:
-      - name: Stop residual compose stacks (pre-checkout)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          echo "Stopping any existing compose stacks before checkout..."
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            cd "$GITHUB_WORKSPACE" || exit 0
-            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
-              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
-            fi
-            if [ -f docker-compose.prod.yaml ]; then
-              docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
-            fi
-          fi
-
       - name: Pre-fix workspace ownership
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -44,23 +28,17 @@ jobs:
           set -euo pipefail
           echo "Fixing ownership on $GITHUB_WORKSPACE"
           if [ -d "$GITHUB_WORKSPACE" ]; then
-            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
-            if command -v sudo >/dev/null 2>&1; then
-              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
-            else
-              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            if ! chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null; then
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws"
             fi
             if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
               rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
               if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
-                if command -v sudo >/dev/null 2>&1; then
-                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
-                else
-                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
-                fi
+                docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache'
               fi
             fi
           fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -72,11 +50,8 @@ jobs:
         working-directory: repo_changed_files
         run: |
           set -euo pipefail
-          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
-          if command -v sudo >/dev/null 2>&1; then
-            sudo chown -R $(id -u):$(id -g) "$PWD" || true
-          else
-            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          if ! chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null; then
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws"
           fi
       
       - name: Compute changed files
@@ -134,23 +109,17 @@ jobs:
           set -euo pipefail
           echo "Fixing ownership on $GITHUB_WORKSPACE"
           if [ -d "$GITHUB_WORKSPACE" ]; then
-            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
-            if command -v sudo >/dev/null 2>&1; then
-              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
-            else
-              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            if ! chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null; then
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws"
             fi
             if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
               rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
               if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
-                if command -v sudo >/dev/null 2>&1; then
-                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
-                else
-                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
-                fi
+                docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache'
               fi
             fi
           fi
+
       - name: Check for previous failures
         id: check-failures
         uses: actions/github-script@v8
@@ -167,63 +136,63 @@ jobs:
             core.info(`Current run id: ${currentRunId}`);
             core.info(`PR head sha: ${prHeadSha || "unknown"}`);
 
-            // Default: do NOT force checks to run (changed-files decides); only flip to true if we detect a prior failure
-            // (or if we truly cannot query the API, in which case we fail-open to avoid incorrect skipping).
+            // Changed-file detection is authoritative for a new commit. Only a
+            // previous run of this exact PR head SHA may force a retry; never
+            // inherit failure state from an unrelated PR or branch.
             let backendFailed = false;
             let frontendFailed = false;
 
-            try {
-              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-                owner,
-                repo,
-                workflow_id,
-                per_page: 50,
-              });
+            if (!prHeadSha) {
+              core.warning("PR head SHA is unavailable; changed-files alone will determine which checks run.");
+            } else {
+              try {
+                const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                  owner,
+                  repo,
+                  workflow_id,
+                  head_sha: prHeadSha,
+                  event: "pull_request",
+                  per_page: 50,
+                });
 
-              // Prefer a previous run for the same PR head SHA (exclude this run).
-              let prev = null;
-              if (prHeadSha) {
-                prev = runs.find((r) => r.id !== currentRunId && r.head_sha === prHeadSha);
-              }
-              // Fallback: any previous run (exclude this run).
-              if (!prev) {
-                prev = runs.find((r) => r.id !== currentRunId);
-              }
+                const prev = runs.find(
+                  (r) => r.id !== currentRunId && r.head_sha === prHeadSha
+                );
 
-              if (!prev) {
-                core.info("No previous workflow run found.");
-              } else {
-                const prevConclusion = prev.conclusion ?? "unknown";
-                core.info(`Previous workflow status: ${prevConclusion}`);
+                if (!prev) {
+                  core.info("No previous run found for this exact PR head SHA.");
+                } else {
+                  const prevConclusion = prev.conclusion ?? "unknown";
+                  core.info(`Previous same-head workflow status: ${prevConclusion}`);
 
-                // Treat any non-success terminal conclusion as "previously failed" so we rerun checks.
-                // If conclusion is missing/unknown (API oddities), fail-open so we don't incorrectly skip.
-                const terminalNonSuccess = new Set([
-                  "failure",
-                  "cancelled",
-                  "timed_out",
-                  "action_required",
-                  "stale",
-                  "startup_failure",
-                ]);
+                  const terminalNonSuccess = new Set([
+                    "failure",
+                    "cancelled",
+                    "timed_out",
+                    "action_required",
+                    "stale",
+                    "startup_failure",
+                  ]);
 
-                if (terminalNonSuccess.has(prevConclusion)) {
-                  backendFailed = true;
-                  frontendFailed = true;
-                } else if (prevConclusion === "unknown" || prev.conclusion === null) {
-                  backendFailed = true;
-                  frontendFailed = true;
-                  core.warning(
-                    "Unable to determine previous run conclusion; forcing checks to run (fail-open)."
-                  );
+                  if (terminalNonSuccess.has(prevConclusion)) {
+                    backendFailed = true;
+                    frontendFailed = true;
+                  } else if (prevConclusion === "unknown" || prev.conclusion === null) {
+                    backendFailed = true;
+                    frontendFailed = true;
+                    core.warning(
+                      "Unable to determine same-head run conclusion; forcing checks to rerun."
+                    );
+                  }
                 }
+              } catch (err) {
+                // Do not turn an Actions API lookup failure into unrelated
+                // backend/frontend work. The changed-files job still ensures
+                // code touched by this PR is verified.
+                core.warning(
+                  `Failed to query same-head workflow runs; relying on changed-files. Error: ${err?.message || err}`
+                );
               }
-            } catch (err) {
-              backendFailed = true;
-              frontendFailed = true;
-              core.warning(
-                `Failed to query previous workflow runs; forcing checks to run (fail-open). Error: ${err?.message || err}`
-              );
             }
 
             core.setOutput("backend_failed", String(backendFailed));
@@ -244,20 +213,13 @@ jobs:
           set -euo pipefail
           echo "Fixing ownership on $GITHUB_WORKSPACE"
           if [ -d "$GITHUB_WORKSPACE" ]; then
-            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null || true
-            if command -v sudo >/dev/null 2>&1; then
-              sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
-            else
-              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+            if ! chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" 2>/dev/null; then
+              docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws"
             fi
             if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
               rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" 2>/dev/null || true
               if [ -d "$GITHUB_WORKSPACE/frontend/node_modules" ] || [ -d "$GITHUB_WORKSPACE/frontend/.cache" ]; then
-                if command -v sudo >/dev/null 2>&1; then
-                  sudo rm -rf "$GITHUB_WORKSPACE/frontend/node_modules" "$GITHUB_WORKSPACE/frontend/.cache" || true
-                else
-                  docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache' || true
-                fi
+                docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules /ws/frontend/.cache'
               fi
             fi
           fi
@@ -277,15 +239,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
-          if command -v sudo >/dev/null 2>&1; then
-            sudo chown -R $(id -u):$(id -g) "$PWD" || true
-          else
-            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          if ! chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null; then
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws"
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.82.0
         with:
           components: clippy
 
@@ -303,13 +262,13 @@ jobs:
       - name: Remove legacy backend/target (optional)
         run: rm -rf backend/target || true
 
+      - name: Align dependencies with production Rust toolchain
+        working-directory: ./backend
+        run: cargo update -p base64ct --precise 1.6.0
+
       - name: Lint with clippy
         working-directory: ./backend
         run: cargo clippy -- -D warnings
-
-      - name: Build
-        working-directory: ./backend
-        run: cargo build --verbose
 
       - name: Unit tests
         working-directory: ./backend
@@ -334,20 +293,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null || true
-          if command -v sudo >/dev/null 2>&1; then
-            sudo chown -R $(id -u):$(id -g) "$PWD" || true
-          else
-            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws" || true
+          if ! chown -R $(id -u):$(id -g) "$PWD" 2>/dev/null; then
+            docker run --rm -v "$PWD:/ws" alpine sh -lc "chown -R $(id -u):$(id -g) /ws"
           fi
           if [ -d frontend/node_modules ]; then
             rm -rf frontend/node_modules 2>/dev/null || true
             if [ -d frontend/node_modules ]; then
-              if command -v sudo >/dev/null 2>&1; then
-                sudo rm -rf frontend/node_modules || true
-              else
-                docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules' || true
-              fi
+              docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules'
             fi
           fi
 

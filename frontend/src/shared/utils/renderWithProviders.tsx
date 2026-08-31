@@ -5,6 +5,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { GoalMenuProvider } from '../contexts/GoalMenuContext';
 import { AuthProvider } from '../contexts/AuthContext';
+import { ThemeProvider } from '../contexts/ThemeContext';
 
 interface RenderWithProvidersOptions extends Omit<RenderOptions, 'wrapper'> {
     initialEntries?: MemoryRouterProps['initialEntries'];
@@ -12,6 +13,7 @@ interface RenderWithProvidersOptions extends Omit<RenderOptions, 'wrapper'> {
     withDnd?: boolean;
     withGoalMenu?: boolean;
     withAuth?: boolean;
+    withTheme?: boolean;
 }
 
 /**
@@ -35,6 +37,7 @@ export function renderWithProviders(
         withDnd = false,
         withGoalMenu = false,
         withAuth = false,
+        withTheme = false,
         ...renderOptions
     }: RenderWithProvidersOptions = {}
 ) {
@@ -43,6 +46,10 @@ export function renderWithProviders(
 
         if (withAuth) {
             content = <AuthProvider>{content}</AuthProvider>;
+        }
+
+        if (withTheme) {
+            content = <ThemeProvider>{content}</ThemeProvider>;
         }
 
         if (withGoalMenu) {
