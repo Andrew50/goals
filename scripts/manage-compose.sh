@@ -28,46 +28,46 @@ case "$1" in
     "dev")
         echo "🚀 Starting development environment..."
         preflight
-        docker compose -f docker-compose.dev.yaml up -d --remove-orphans
+        docker compose -f docker-compose.yaml up -d --remove-orphans
         echo "✅ Development environment running on:"
         echo "   Frontend: http://localhost:3030"
         echo "   Backend: http://localhost:5059"
         echo "   Neo4j: http://localhost:7474"
         echo "📜 Streaming logs (Ctrl-C to stop streaming)..."
-        docker compose -f docker-compose.dev.yaml logs -f --tail=50
+        docker compose -f docker-compose.yaml logs -f --tail=50
         ;;
     "test")
         echo "🧪 Starting test environment..."
         preflight
-        docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --remove-orphans
+        docker compose -f docker-compose.yaml -f docker-compose.test.yaml up -d --remove-orphans
         echo "✅ Test environment running on:"
         echo "   Frontend: http://localhost:3031"
         echo "   Backend: http://localhost:5057"
         echo "   Neo4j: http://localhost:7475"
         echo "   Test DB: http://localhost:7475"
         echo "📜 Streaming test logs (Ctrl-C to stop streaming)..."
-        docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs -f --tail=50
+        docker compose -f docker-compose.yaml -f docker-compose.test.yaml logs -f --tail=50
         ;;
     "logs")
         # Stream logs for dev or test
         if [ "$2" = "test" ]; then
             echo "📜 Streaming test logs (Ctrl-C to stop streaming)..."
-            docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs -f --tail=50
+            docker compose -f docker-compose.yaml -f docker-compose.test.yaml logs -f --tail=50
         else
             echo "📜 Streaming dev logs (Ctrl-C to stop streaming)..."
-            docker compose -f docker-compose.dev.yaml logs -f --tail=50
+            docker compose -f docker-compose.yaml logs -f --tail=50
         fi
         ;;
     "down")
         echo "🛑 Shutting down all environments..."
-        docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down --remove-orphans 2>/dev/null || true
-        docker compose -f docker-compose.dev.yaml down --remove-orphans 2>/dev/null || true
+        docker compose -f docker-compose.yaml -f docker-compose.test.yaml down --remove-orphans 2>/dev/null || true
+        docker compose -f docker-compose.yaml down --remove-orphans 2>/dev/null || true
         echo "✅ All environments stopped"
         ;;
     "clean")
         echo "🧹 Cleaning up orphaned containers..."
-        docker compose -f docker-compose.dev.yaml down --remove-orphans 2>/dev/null || true
-        docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down --remove-orphans 2>/dev/null || true
+        docker compose -f docker-compose.yaml down --remove-orphans 2>/dev/null || true
+        docker compose -f docker-compose.yaml -f docker-compose.test.yaml down --remove-orphans 2>/dev/null || true
         # Also remove any containers that are binding our dev ports
         preflight
         docker container prune -f
@@ -75,9 +75,9 @@ case "$1" in
         ;;
     "status")
         echo "📊 Environment Status:"
-        docker compose -f docker-compose.dev.yaml ps 2>/dev/null || echo "   Dev environment: Not running"
+        docker compose -f docker-compose.yaml ps 2>/dev/null || echo "   Dev environment: Not running"
         echo ""
-        docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml ps 2>/dev/null || echo "   Test environment: Not running"
+        docker compose -f docker-compose.yaml -f docker-compose.test.yaml ps 2>/dev/null || echo "   Test environment: Not running"
         ;;
     *)
         echo "🎯 Goals App Environment Manager"

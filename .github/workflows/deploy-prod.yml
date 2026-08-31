@@ -102,8 +102,8 @@ jobs:
             if [ -f docker-compose.prod.yaml ]; then
               docker compose -p p -f docker-compose.prod.yaml down --remove-orphans || true
             fi
-            if [ -f docker-compose.dev.yaml ] || [ -f docker-compose.test.yaml ]; then
-              docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
+            if [ -f docker-compose.yaml ] || [ -f docker-compose.test.yaml ]; then
+              docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
             fi
           fi
           # Fallback: force remove any containers with expected name prefixes

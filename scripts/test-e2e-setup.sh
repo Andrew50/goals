@@ -11,7 +11,7 @@ echo "=================================="
 # Check if required files exist
 echo "📋 Checking required files..."
 required_files=(
-    "docker-compose.dev.yaml"
+    "docker-compose.yaml"
     "docker-compose.test.yaml"
     "db/seed_test_db.sh"
     "frontend/playwright.config.ts"
@@ -64,7 +64,7 @@ fi
 
 # Start test environment
 echo "🚀 Starting test environment..."
-docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d
+docker compose -f docker-compose.yaml -f docker-compose.test.yaml up -d
 
 # Wait for services
 echo "⏳ Waiting for services to start..."
@@ -75,7 +75,7 @@ echo "🔍 Testing database connection..."
 max_attempts=30
 attempt=1
 while [[ $attempt -le $max_attempts ]]; do
-    if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" &> /dev/null; then
+    if docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T goals_db_test /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 "RETURN 1;" &> /dev/null; then
         echo "✅ Neo4j test database is ready!"
         break
     fi
@@ -86,7 +86,7 @@ done
 
 if [[ $attempt -gt $max_attempts ]]; then
     echo "❌ Neo4j test database failed to start"
-    docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml logs goals_db_test
+    docker compose -f docker-compose.yaml -f docker-compose.test.yaml logs goals_db_test
     exit 1
 fi
 
@@ -100,7 +100,7 @@ fi
 
 # Seed database
 echo "🌱 Seeding test database..."
-if docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml exec -T goals_db_test /data/seed_test_db.sh; then
+if docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T goals_db_test /data/seed_test_db.sh; then
     echo "✅ Test database seeded successfully"
 else
     echo "❌ Failed to seed test database"
@@ -140,4 +140,4 @@ echo "To run the full test suite:"
 echo "  cd frontend && npx playwright test"
 echo ""
 echo "To cleanup:"
-echo "  docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v" 
+echo "  docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v" 

@@ -70,7 +70,7 @@ done
 
 # Start test stack
 echo -e "${YELLOW}Starting test stack...${NC}"
-docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml up -d --build
+docker compose -f docker-compose.yaml -f docker-compose.test.yaml up -d --build
 
 # Wait for services
 wait_for_port 5057 "Backend API" || exit 1
@@ -95,7 +95,7 @@ if [ "$SKIP_BACKEND" = false ]; then
         echo -e "${RED}✗ Backend tests failed${NC}"
         cd ..
         if [ "$KEEP_STACK" = false ]; then
-            docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+            docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v
         fi
         exit 1
     fi
@@ -129,7 +129,7 @@ if [ "$SKIP_FRONTEND" = false ]; then
         echo "View the report with: npx playwright show-report"
         cd ..
         if [ "$KEEP_STACK" = false ]; then
-            docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+            docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v
         fi
         exit 1
     fi
@@ -140,11 +140,11 @@ fi
 # Clean up
 if [ "$KEEP_STACK" = false ]; then
     echo -e "${YELLOW}Stopping test stack...${NC}"
-    docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v
+    docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v
     echo -e "${GREEN}✓ Test stack stopped${NC}"
 else
     echo -e "${YELLOW}Test stack is still running. Stop it with:${NC}"
-    echo "docker compose -f docker-compose.dev.yaml -f docker-compose.test.yaml down -v"
+    echo "docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v"
 fi
 
 echo ""

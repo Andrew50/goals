@@ -1,132 +1,90 @@
-# Goals
+# Goal Architecture Platform
 
-A sophisticated goal management system with graph-based visualization, temporal scheduling, and automated routine generation.
+[![PR checks](https://github.com/Andrew50/goals/actions/workflows/pr-verify.yml/badge.svg)](https://github.com/Andrew50/goals/actions/workflows/pr-verify.yml)
 
-![Network View](docs/assets/network-view.png)
-*Visualizing goal relationships and hierarchies.*
+Goal Architecture Platform is a self-hosted goal planning and scheduling application I use daily to manage 10K+ goals and tasks. A React/TypeScript frontend and Rust/Axum API model goal hierarchies in Neo4j and support automated scheduling, recurring routines, analytics, and optional Google Calendar sync.
 
-![Calendar View](docs/assets/calendar-view.png)
-*Unified scheduling for tasks, routines, and Google Calendar events.*
+![Network view of linked goals](docs/assets/network-view.png)
+
+![Calendar week view with tasks and routines](docs/assets/calendar-view.png)
 
 ## Overview
 
-The Goals system is designed to bridge the gap between long-term vision and daily execution. By representing goals as a directed graph, users can see exactly how their daily tasks contribute to high-level life directives.
+Goals are modeled as a directed graph. Directives, projects, achievements, tasks, and routines are nodes linked by parent/child relationships. The React UI exposes day, calendar, network, projects, stats, and list views on that model.
 
-### Key Features
+The graph model keeps arbitrary-depth relationships between those types explicit, which makes hierarchy traversal and aggregate progress easier than flattening everything into conventional task lists.
 
-- **Graph-Based Hierarchy**: Link goals in complex parent-child relationships (Directives → Projects → Achievements → Tasks).
-- **Network Visualization**: Interactive graph view using `vis-network` to explore and manage goal dependencies.
-- **Unified Calendar**: Merges singular tasks, automated routines, and bidirectional Google Calendar sync.
-- **Intelligent Routines**: Automated event generation (up to 6 months) with flexible recurrence patterns.
-- **Ecosystem Integration**: Telegram bot integration, and AI-powered suggestions via OpenRouter/Gemini.
+The Rust/Axum backend talks to Neo4j. Background jobs materialize routine events on a rolling ~6-month horizon, sync Google Calendar when enabled, and send Telegram notifications. Optional AI autofill goes through OpenRouter (with Gemini available for related query paths).
 
-## Tech Stack
+The application is self-hosted with Docker Compose and Nginx, with GitHub Actions handling testing and deployment from a self-hosted runner.
 
-- **Backend**: Rust ([Axum](https://github.com/tokio-rs/axum)) - High-performance, type-safe API.
-- **Frontend**: React 18, TypeScript, [Material-UI](https://mui.com/) - Modern and responsive UI.
-- **Database**: [Neo4j](https://neo4j.com/) - Graph database for complex relationship mapping.
-- **Infrastructure**: Docker Compose, Nginx (Router), Cloudflare Tunnel.
+## Highlights
+
+- Graph data model in Neo4j with interactive `vis-network` exploration and hierarchy traversal APIs
+- Routine engine that materializes recurring events over a rolling horizon, with exception handling and timezone-aware scheduling
+- Bidirectional Google Calendar sync plus JWT auth (email/password and Google OAuth)
+- Playwright E2E and Jest unit testing with parallel test stacks and coverage-gated PR CI
+- Docker Compose / Nginx deployment with Neo4j backup before deploy and a Python health monitor that alerts via Telegram
 
 ## Architecture
 
 ```mermaid
 graph TD
-    User[User/Browser] --> Nginx[Nginx Router]
+    Browser --> Nginx[Nginx router]
     Nginx --> Frontend[React SPA]
     Nginx --> Backend[Rust Axum API]
-    Backend --> Neo4j[(Neo4j Graph DB)]
+    Backend --> Neo4j[(Neo4j)]
     Backend --> GCal[Google Calendar API]
-    Backend --> AI[AI Engine - Gemini/OpenRouter]
-    Backend --> Jobs[Background Jobs - Cron]
-    Jobs --> Notify[Telegram]
+    Backend --> AI[OpenRouter / Gemini]
+    Backend --> Jobs[Background jobs]
+    Jobs --> Telegram[Telegram]
 ```
 
-## Getting Started
+**Stack:** React 18, TypeScript, MUI, FullCalendar, vis-network · Rust, Axum, neo4rs · Neo4j · Docker Compose · Nginx · GitHub Actions (self-hosted)
 
-### Prerequisites
+## Design
 
-- Docker & Docker Compose
-- Node.js 18+
-- Rust (latest stable)
+### Why a graph?
 
-### Installation
+Goals nest at arbitrary depth: a directive can own projects, which own achievements, tasks, and routines. Storing those links as first-class relationships in Neo4j matches how the product is used—walk the hierarchy, render the network view, and roll progress up through parents—without forcing a single flat task table or hard-coded nesting levels.
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/your-repo/goals.git
-   cd goals
-   ```
+### Recurring routines
 
-2. **Run the setup script:**
-   ```bash
-   ./scripts/setup.sh
-   ```
+Routines are definitions (frequency, time-of-day, optional end) rather than one-off calendar rows. A background job expands each routine into concrete event nodes out to a ~6-month horizon, skips recorded exceptions, and regenerates when the definition changes. Scheduling is timezone-aware so occurrence boundaries stay consistent across DST and client locales.
 
-3. **Start the development environment:**
-   ```bash
-   ./scripts/manage-compose.sh dev
-   ```
+## Running locally
 
-The application will be available at:
-- **Frontend**: http://localhost:3030
-- **Backend**: http://localhost:5059
-- **Neo4j**: http://localhost:7474
+**Requirements:** Docker and Docker Compose. Node 22 (see `.nvmrc`) and Rust are only needed outside containers.
 
-## Project Structure
+```bash
+git clone https://github.com/Andrew50/goals.git
+cd goals
+cp .env.example .env   # set JWT_SECRET; add Google/AI keys if needed
+./scripts/manage-compose.sh dev
+```
 
-- `backend/`: Rust source code and API implementation.
-- `frontend/`: React source code and UI components.
-- `db/`: Database initialization and backup scripts.
-- `router/`: Nginx configuration for unifying the stack.
-- `docs/`: Technical documentation and assets.
-- `scripts/`: Utility scripts for environment management and testing.
-- `ops/`: Monitoring and operational scripts.
+| Service  | URL |
+|----------|-----|
+| Frontend | http://localhost:3030 |
+| Backend  | http://localhost:5059 |
+| Neo4j    | http://localhost:7474 |
+
+Stop with `./scripts/manage-compose.sh down`.
+
+## Tests
+
+```bash
+./scripts/run-tests.sh                 # test Compose stack, then backend + frontend suites
+./scripts/run-tests.sh --skip-frontend # backend integration only
+cd frontend && npm test                # Jest unit tests
+```
+
+PR CI (`.github/workflows/pr-verify.yml`) runs Rust `cargo test --lib`, frontend Jest with a coverage gate, and related checks on a self-hosted runner. Routine integration/E2E runs in `.github/workflows/test-integration-e2e.yml`.
 
 ## Deployment
 
-The system is deployed on a **bare metal Linux server** using a Docker-based architecture for maximum reliability and ease of updates.
+Production runs on a bare-metal Linux host using `docker-compose.prod.yaml`. Pushes to `prod` (or a manual workflow run) trigger GitHub Actions on a self-hosted runner, which backs up Neo4j, rebuilds the application, and restarts the stack. A lightweight Python monitor checks frontend and API health and sends Telegram alerts on failures.
 
-### CI/CD Pipeline
+## Project status
 
-Deployments are fully automated through **GitHub Actions**:
-- **Triggers**: A push to the `prod` branch or a manual trigger starts the deployment.
-- **Pre-deploy Safety**: The pipeline automatically takes a backup of the Neo4j database before any changes are applied.
-- **Build & Deploy**: The production stack is built from source using `docker-compose.prod.yaml` on a self-hosted runner.
-- **Monitoring Integration**: The deployment process ensures the custom monitoring daemon is updated and running.
-
-### Monitoring & Health
-
-A custom Python-based monitoring service (`ops/monitor/goals_monitor.py`) runs in the background to ensure high availability:
-- **Proactive Probing**: Checks frontend and backend health every 60 seconds.
-- **Resource Tracking**: Monitors CPU, memory, and disk usage on the host.
-- **Instant Alerts**: Sends downtime notifications immediately via a **Telegram Bot**.
-- **Performance Summaries**: Delivers a daily uptime and latency report to stay on top of system performance.
-
-## Testing
-
-The project maintains a comprehensive testing suite covering both backend logic and frontend user flows.
-
-### Test Runner
-A unified test runner is provided to manage the environment and execute all tests:
-```bash
-./scripts/run-tests.sh
-```
-This script automates the creation of a clean test stack (Docker), builds the services, waits for health checks, and runs both backend and frontend suites.
-
-### Backend Integration Tests
-Located in `backend/tests/`, these tests validate:
-- **Routine Generation**: Complex recurrence logic and event creation patterns.
-- **Database Integrity**: Graph relationship creation and constraints.
-- **Neo4j Interaction**: Real database tests using a dedicated test container.
-
-### Frontend E2E Tests
-Located in `frontend/tests/`, using **Playwright**:
-- **Critical Paths**: Calendar interactions, goal creation, and list management.
-- **Parallel Execution**: A custom parallel environment (`scripts/start-parallel-test-env.sh`) allows running tests across multiple isolated worker containers to minimize CI time.
-- **Auth Simulation**: Shared global setup for consistent authentication state across test workers.
-
-### Specialized Testing
-- **Timezone Testing**: Dedicated guides and tests (`docs/development/timezone-testing.md`) to ensure consistent behavior across different system timezones and DST transitions.
-- **CI/CD Validation**: GitHub Actions (`test-integration-e2e.yml`) automatically runs the full suite on every Pull Request.
-
----
+**Status:** Active personal production system.

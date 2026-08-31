@@ -28,17 +28,7 @@ services:
       NEO4J_MAX_CONNECTIONS: 10
     networks:
       - dev_network
-      #    db:
-      #build:
-      #context: ./db
-      #dockerfile: Dockerfile.dev
-      #ports:
-      #- "5432:5432"
-      #networks:
-      #- dev_network
-      #volumes:
-      #- goal_db:/var/lib/postgresql/data
-      #restart: unless-stopped
+
   goals_db:
     build:
       context: ./db

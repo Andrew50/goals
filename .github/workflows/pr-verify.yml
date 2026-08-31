@@ -270,10 +270,6 @@ jobs:
         working-directory: ./backend
         run: cargo clippy -- -D warnings
 
-      - name: Build
-        working-directory: ./backend
-        run: cargo build --verbose
-
       - name: Unit tests
         working-directory: ./backend
         run: cargo test --lib

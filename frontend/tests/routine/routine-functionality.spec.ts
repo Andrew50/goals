@@ -387,8 +387,8 @@ test.describe('Routine Functionality', () => {
 
         console.log('Creating routine with name:', routineName);
 
-        // Open create-goal dialog via sidebar button (button label is "Create Goal")
-        await page.locator('.calendar-sidebar button:has-text("Create Goal")').click();
+        // Open create-goal dialog via sidebar New button
+        await page.locator('.calendar-sidebar button:has-text("New")').click();
         await expect(page.locator('div[role="dialog"]')).toBeVisible();
 
         // Fill in routine data using Material-UI selectors (like working test)
