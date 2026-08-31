@@ -1,51 +1,55 @@
-backend/target/
+# Secrets and local env
 .env
-backups/
-
-# Sensitive credential files (general patterns for security)
+.env.*
+!.env.example
+.env.backup
+*.pem
+*.p12
 **/*credentials*.json
 **/*secret*.json
 **/*private*.json
 
-##frontend
-# dependencies
-/frontend/node_modules
-/frontend/.pnp
-/frontend/.pnp.js
+# Backups and dumps
+backups/
+*.dump
+*.bak
+*.tmp
 
-# testing
-/frontend/coverage
+# OS / editor
+.DS_Store
+**/.DS_Store
+.idea/
+*.swp
+*.swo
 
-# production
-/frontend/build
+# Rust
+backend/target/
+.cargo/
+.target/
 
-# misc
-/frontend/.DS_Store
-/frontend/.env.local
-/frontend/.env.development.local
-/frontend/.env.test.local
-/frontend/.env.production.local
-
-/frontend/npm-debug.log*
-/frontend/yarn-debug.log*
-/frontend/yarn-error.log*
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/coverage/
+frontend/build/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
 
 # Playwright
-/frontend/node_modules/
-/frontend/test-results/
-/frontend/playwright-report/
-/frontend/blob-report/
-/frontend/playwright/.cache/
-/frontend/tests/.auth/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+frontend/tests/.auth/
 
-node_modules
-.cargo/
-.target/
-
-.cargo/
-
-.target/
-.env.backup
-*.tmp
-*.bak
+# Debug / scratch artifacts
+frontend/debug-*.png
+**/debug-*.png
 docker-compose.worker-*.yaml
