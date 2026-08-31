@@ -280,6 +280,8 @@ jobs:
           path: .env.dev
           retention-days: 3
           if-no-files-found: error
+          # upload-artifact v4+ excludes dotfiles unless explicitly enabled
+          include-hidden-files: true
           
       - name: Stop test stack
         if: always()
