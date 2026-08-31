@@ -9,9 +9,11 @@ on:
 permissions:
   contents: read
 
+# The self-hosted runners share one Debian host and Docker daemon. Serialize this
+# workflow so fixed test ports (5057/3031) cannot collide across refs/runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: goals-ci-shared-host
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -20,20 +22,11 @@ jobs:
     permissions:
       contents: read
       actions: write
+    env:
+      # Never share Compose containers, networks, or volumes with another run.
+      COMPOSE_PROJECT_NAME: goals-ci-${{ github.run_id }}
     
     steps:
-      - name: Stop residual test stacks (pre-checkout)
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Stopping any existing dev/test compose stacks before checkout..."
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            cd "$GITHUB_WORKSPACE" || exit 0
-            if [ -f docker-compose.yaml ] && [ -f docker-compose.test.yaml ]; then
-              docker compose -f docker-compose.yaml -f docker-compose.test.yaml down -v --remove-orphans || true
-            fi
-          fi
-
       - name: Pre-fix workspace ownership
         shell: bash
         run: |
@@ -81,6 +74,20 @@ jobs:
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install frontend test dependencies
+        working-directory: ./frontend
+        run: |
+          set -euo pipefail
+          npm ci
+          # Install browser dependencies before the frontend Docker dev server starts.
+          # This avoids mutating the bind-mounted frontend tree while webpack is running.
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            npx playwright install --with-deps chromium
+          else
+            echo "sudo not available/passwordless; installing chromium without OS deps (runner must have Playwright deps preinstalled)"
+            npx playwright install chromium
+          fi
       
       - name: Create test .env file
         run: |
@@ -175,15 +182,6 @@ jobs:
           docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T --user neo4j goals_db_test bash -lc '/scripts/backup.sh'
           echo "Verifying backup output..."
           docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'ls -l /backups && test -n "$(ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | head -n1)"'
-      
-      - name: Clean potentially root-owned node_modules
-        run: |
-          if [ -e frontend/node_modules ]; then
-            rm -rf frontend/node_modules 2>/dev/null || true
-            if [ -e frontend/node_modules ]; then
-              docker run --rm -v "$PWD:/ws" alpine sh -lc 'rm -rf /ws/frontend/node_modules'
-            fi
-          fi
           
       - name: Backend integration tests (in container)
         env:
@@ -195,23 +193,12 @@ jobs:
                                          NEO4J_TEST_PASSWORD=password123 \
                                          cargo test --test routine_integration_test -- --nocapture'
       
-          
       - name: E2E Playwright tests
+        working-directory: ./frontend
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: http://localhost:3031
-        run: |
-          cd frontend
-          npm ci
-          # On self-hosted runners, Playwright's `--with-deps` uses sudo to apt-get dependencies.
-          # If sudo isn't passwordless/non-interactive, the install will fail (no TTY for password).
-          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-            npx playwright install --with-deps chromium
-          else
-            echo "sudo not available/passwordless; installing chromium without OS deps (runner must have Playwright deps preinstalled)"
-            npx playwright install chromium
-          fi
-          npx playwright test tests/routine --project=chromium
+        run: npx playwright test tests/routine --project=chromium
           
       - name: Dump docker logs on failure
         if: failure()
