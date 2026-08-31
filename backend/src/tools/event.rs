@@ -30,12 +30,14 @@ pub struct UpdateEventRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateRoutineEventRequest {
     pub new_timestamp: i64,
-    pub update_scope: String, // "single", "all", or "future"
+    pub update_scope: String, // "single", "all", "future", or "up_to_date"
+    pub up_to_date_end: Option<i64>, // required when update_scope == "up_to_date"
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateRoutineEventPropertiesRequest {
-    pub update_scope: String, // "single", "all", or "future"
+    pub update_scope: String, // "single", "all", "future", or "up_to_date"
+    pub up_to_date_end: Option<i64>, // required when update_scope == "up_to_date"
     pub scheduled_timestamp: Option<i64>,
     pub duration: Option<i32>,
     pub name: Option<String>,
@@ -929,6 +931,83 @@ pub async fn update_routine_event_handler(
                 ))
             }
         }
+        "up_to_date" => {
+            println!("📅 [ROUTINE_UPDATE] Processing up_to_date events update");
+
+            let end_timestamp = request.up_to_date_end.ok_or((
+                StatusCode::BAD_REQUEST,
+                "up_to_date_end is required when update_scope is 'up_to_date'".to_string(),
+            ))?;
+
+            if end_timestamp < current_timestamp {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "up_to_date_end must be >= the selected event timestamp".to_string(),
+                ));
+            }
+
+            // Calculate the new time-of-day from the new timestamp
+            let day_in_ms: i64 = 24 * 60 * 60 * 1000;
+            let new_time_of_day = request.new_timestamp % day_in_ms;
+
+            // Persist an override so future-generated events in this window use the changed time-of-day,
+            // without changing the base routine.
+            create_routine_override(
+                &graph,
+                parent_id,
+                current_timestamp,
+                end_timestamp,
+                None,
+                None,
+                None,
+                None,
+                Some(request.new_timestamp),
+                None,
+            )
+            .await?;
+
+            // Update events from current occurrence up to the end timestamp (inclusive)
+            let update_query = query(
+                "MATCH (e:Goal)
+                 WHERE e.goal_type = 'event'
+                 AND e.parent_id = $parent_id
+                 AND e.parent_type = 'routine'
+                 AND e.scheduled_timestamp >= $current_timestamp
+                 AND e.scheduled_timestamp <= $end_timestamp
+                 AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                 WITH e
+                 SET e.scheduled_timestamp = (e.scheduled_timestamp / $day_in_ms) * $day_in_ms + $new_time_of_day
+                 RETURN collect(e) as events",
+            )
+            .param("parent_id", parent_id)
+            .param("current_timestamp", current_timestamp)
+            .param("end_timestamp", end_timestamp)
+            .param("day_in_ms", day_in_ms)
+            .param("new_time_of_day", new_time_of_day);
+
+            let mut update_result = graph
+                .execute(update_query)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if let Some(row) = update_result
+                .next()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            {
+                let events: Vec<Goal> = row
+                    .get("events")
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                println!(
+                    "✅ [ROUTINE_UPDATE] Updated {} events for 'up_to_date' scope to new time-of-day",
+                    events.len()
+                );
+                Ok(Json(events))
+            } else {
+                println!("⚠️  [ROUTINE_UPDATE] No events returned from update query");
+                Ok(Json(vec![]))
+            }
+        }
         "all" => {
             println!("🌐 [ROUTINE_UPDATE] Processing all events update");
 
@@ -1096,10 +1175,147 @@ pub async fn update_routine_event_handler(
             );
             Err((
                 StatusCode::BAD_REQUEST,
-                "Invalid update_scope. Must be 'single', 'all', or 'future'".to_string(),
+                "Invalid update_scope. Must be 'single', 'all', 'future', or 'up_to_date'".to_string(),
             ))
         }
     }
+}
+
+async fn create_routine_override(
+    graph: &Graph,
+    routine_id: i64,
+    start_timestamp: i64,
+    end_timestamp: i64,
+    name: Option<String>,
+    description: Option<String>,
+    priority: Option<String>,
+    duration: Option<i32>,
+    routine_time: Option<i64>,
+    frequency: Option<String>,
+) -> Result<(), (StatusCode, String)> {
+    let created_at = chrono::Utc::now().timestamp_millis();
+
+    // Normalize (prevent overlapping overrides) by truncating/splitting existing windows.
+    let start_minus = start_timestamp - 1;
+    let end_plus = end_timestamp + 1;
+
+    // 1) Delete overrides fully contained in the new window
+    graph
+        .run(
+            query(
+                "MATCH (o:RoutineOverride)
+                 WHERE o.routine_id = $routine_id
+                 AND o.start_timestamp >= $start_ts
+                 AND o.end_timestamp <= $end_ts
+                 DETACH DELETE o",
+            )
+            .param("routine_id", routine_id)
+            .param("start_ts", start_timestamp)
+            .param("end_ts", end_timestamp),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 2) Split overrides that fully cover the new window into left + right pieces
+    graph
+        .run(
+            query(
+                "MATCH (r:Goal) WHERE id(r) = $routine_id
+                 MATCH (o:RoutineOverride)
+                 WHERE o.routine_id = $routine_id
+                 AND o.start_timestamp < $start_ts
+                 AND o.end_timestamp > $end_ts
+                 WITH r, o, properties(o) as props, o.end_timestamp as old_end
+                 // create right-side copy
+                 CREATE (o2:RoutineOverride)
+                 SET o2 = props
+                 SET o2.start_timestamp = $end_plus
+                 SET o2.end_timestamp = old_end
+                 CREATE (r)-[:HAS_OVERRIDE]->(o2)
+                 // truncate existing to left side
+                 SET o.end_timestamp = $start_minus",
+            )
+            .param("routine_id", routine_id)
+            .param("start_ts", start_timestamp)
+            .param("end_ts", end_timestamp)
+            .param("start_minus", start_minus)
+            .param("end_plus", end_plus),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 3) Truncate overlaps on the left edge (existing overlaps into new window)
+    graph
+        .run(
+            query(
+                "MATCH (o:RoutineOverride)
+                 WHERE o.routine_id = $routine_id
+                 AND o.start_timestamp < $start_ts
+                 AND o.end_timestamp >= $start_ts
+                 AND o.end_timestamp <= $end_ts
+                 SET o.end_timestamp = $start_minus",
+            )
+            .param("routine_id", routine_id)
+            .param("start_ts", start_timestamp)
+            .param("end_ts", end_timestamp)
+            .param("start_minus", start_minus),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 4) Truncate overlaps on the right edge (existing starts in new window but extends beyond)
+    graph
+        .run(
+            query(
+                "MATCH (o:RoutineOverride)
+                 WHERE o.routine_id = $routine_id
+                 AND o.start_timestamp >= $start_ts
+                 AND o.start_timestamp <= $end_ts
+                 AND o.end_timestamp > $end_ts
+                 SET o.start_timestamp = $end_plus",
+            )
+            .param("routine_id", routine_id)
+            .param("start_ts", start_timestamp)
+            .param("end_ts", end_timestamp)
+            .param("end_plus", end_plus),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create the new override
+    graph
+        .run(
+            query(
+                "MATCH (r:Goal) WHERE id(r) = $routine_id
+                 CREATE (o:RoutineOverride {
+                    routine_id: $routine_id,
+                    start_timestamp: $start_ts,
+                    end_timestamp: $end_ts,
+                    created_at: $created_at,
+                    name: $name,
+                    description: $description,
+                    priority: $priority,
+                    duration: $duration,
+                    routine_time: $routine_time,
+                    frequency: $frequency
+                 })
+                 CREATE (r)-[:HAS_OVERRIDE]->(o)",
+            )
+            .param("routine_id", routine_id)
+            .param("start_ts", start_timestamp)
+            .param("end_ts", end_timestamp)
+            .param("created_at", created_at)
+            .param("name", name)
+            .param("description", description)
+            .param("priority", priority)
+            .param("duration", duration.map(|d| d as i64))
+            .param("routine_time", routine_time)
+            .param("frequency", frequency),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(())
 }
 
 pub async fn get_reschedule_options_handler(
@@ -1910,11 +2126,45 @@ pub async fn update_routine_event_properties_handler(
                 ))
             }
         }
-        "all" | "future" => {
+        "all" | "future" | "up_to_date" => {
             println!(
                 "🌐 [ROUTINE_PROPERTIES] Processing {} events property update",
                 request.update_scope
             );
+
+            let end_timestamp_for_up_to_date = if request.update_scope == "up_to_date" {
+                let end_ts = request.up_to_date_end.ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "up_to_date_end is required when update_scope is 'up_to_date'".to_string(),
+                ))?;
+
+                if end_ts < current_timestamp {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "up_to_date_end must be >= the selected event timestamp".to_string(),
+                    ));
+                }
+
+                // Persist an override so future-generated events in this window use these properties,
+                // without changing the base routine.
+                create_routine_override(
+                    &graph,
+                    parent_id,
+                    current_timestamp,
+                    end_ts,
+                    request.name.clone(),
+                    request.description.clone(),
+                    request.priority.clone(),
+                    request.duration,
+                    None,
+                    None,
+                )
+                .await?;
+
+                Some(end_ts)
+            } else {
+                None
+            };
 
             // Build the SET clause dynamically based on what properties are provided
             let mut set_clauses = Vec::new();
@@ -1978,7 +2228,7 @@ pub async fn update_routine_event_properties_handler(
                      RETURN collect(e) as events",
                     set_clauses.join(", ")
                 )
-            } else {
+            } else if request.update_scope == "future" {
                 // future scope
                 params.push((
                     "current_timestamp".to_string(),
@@ -1990,6 +2240,32 @@ pub async fn update_routine_event_properties_handler(
                      AND e.parent_id = $parent_id
                      AND e.parent_type = 'routine'
                      AND e.scheduled_timestamp >= $current_timestamp
+                     AND (e.is_deleted IS NULL OR e.is_deleted = false)
+                     SET {}
+                     RETURN collect(e) as events",
+                    set_clauses.join(", ")
+                )
+            } else {
+                // up_to_date scope
+                let end_ts = end_timestamp_for_up_to_date.ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "up_to_date_end missing for up_to_date scope".to_string(),
+                ))?;
+                params.push((
+                    "current_timestamp".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(current_timestamp)),
+                ));
+                params.push((
+                    "end_timestamp".to_string(),
+                    neo4rs::BoltType::Integer(neo4rs::BoltInteger::new(end_ts)),
+                ));
+                format!(
+                    "MATCH (e:Goal)
+                     WHERE e.goal_type = 'event'
+                     AND e.parent_id = $parent_id
+                     AND e.parent_type = 'routine'
+                     AND e.scheduled_timestamp >= $current_timestamp
+                     AND e.scheduled_timestamp <= $end_timestamp
                      AND (e.is_deleted IS NULL OR e.is_deleted = false)
                      SET {}
                      RETURN collect(e) as events",
@@ -2033,7 +2309,7 @@ pub async fn update_routine_event_properties_handler(
             );
             Err((
                 StatusCode::BAD_REQUEST,
-                "Invalid update_scope. Must be 'single', 'all', or 'future'".to_string(),
+                "Invalid update_scope. Must be 'single', 'all', 'future', or 'up_to_date'".to_string(),
             ))
         }
     }

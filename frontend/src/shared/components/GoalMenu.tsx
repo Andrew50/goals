@@ -99,8 +99,10 @@ interface RoutineUpdateDialogState {
     updateType: 'scheduled_time' | 'duration' | 'other';
     originalGoal: Goal | null;
     updatedGoal: Goal | null;
-    selectedScope: 'single' | 'all' | 'future';
-    onConfirm: (scope: 'single' | 'all' | 'future') => Promise<void>;
+    selectedScope: 'single' | 'all' | 'future' | 'up_to_date';
+    // yyyy-mm-dd (local date input). When selectedScope === 'up_to_date', this is required.
+    upToDateEnd: string;
+    onConfirm: (scope: 'single' | 'all' | 'future' | 'up_to_date', upToDateEnd?: Date) => Promise<void>;
 }
 
 const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType }) => {
@@ -200,6 +202,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         originalGoal: null,
         updatedGoal: null,
         selectedScope: 'single',
+        upToDateEnd: '',
         onConfirm: async () => { }
     });
 
@@ -982,8 +985,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     originalGoal,
                     updatedGoal,
                     selectedScope: 'single',
-                    onConfirm: async (scope: 'single' | 'all' | 'future') => {
-                        await handleRoutineEventUpdate(originalGoal, updatedGoal, updateType, scope);
+                    upToDateEnd: '',
+                    onConfirm: async (scope: 'single' | 'all' | 'future' | 'up_to_date', upToDateEnd?: Date) => {
+                        await handleRoutineEventUpdate(originalGoal, updatedGoal, updateType, scope, upToDateEnd);
                     }
                 });
                 return;
@@ -1178,19 +1182,22 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         originalGoal: Goal,
         updatedGoal: Goal,
         updateType: 'scheduled_time' | 'duration' | 'other',
-        scope: 'single' | 'all' | 'future'
+        scope: 'single' | 'all' | 'future' | 'up_to_date',
+        upToDateEnd?: Date
     ) => {
         try {
-            if (updateType === 'scheduled_time' && (scope === 'all' || scope === 'future')) {
+            if (updateType === 'scheduled_time' && (scope === 'all' || scope === 'future' || scope === 'up_to_date')) {
                 // Use the routine event update API for scheduled time changes
                 const updatedEvents = await updateRoutineEvent(
                     updatedGoal.id!,
                     updatedGoal.scheduled_timestamp!,
-                    scope
+                    scope,
+                    upToDateEnd
                 );
 
-                // Update the routine's default time as well
-                if (updatedGoal.parent_id) {
+                // Update the routine's default time only for all/future.
+                // For up_to_date we explicitly do NOT change the base routine.
+                if (updatedGoal.parent_id && (scope === 'all' || scope === 'future')) {
                     const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
                     if (parentRoutine) {
                         await updateGoal(parentRoutine.id!, {
@@ -1201,9 +1208,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
 
                 setState({ ...state, goal: updatedEvents[0] || updatedGoal });
-            } else if ((updateType === 'duration' || updateType === 'other') && (scope === 'all' || scope === 'future')) {
+            } else if ((updateType === 'duration' || updateType === 'other') && (scope === 'all' || scope === 'future' || scope === 'up_to_date')) {
                 // For duration or other property changes, update multiple events
-                await updateMultipleRoutineEvents(updatedGoal, updateType === 'duration' ? 'duration' : 'other', scope);
+                await updateMultipleRoutineEvents(updatedGoal, updateType === 'duration' ? 'duration' : 'other', scope, upToDateEnd);
             } else {
                 // For single updates or other changes, use regular update
                 const result = await updateGoal(updatedGoal.id!, updatedGoal);
@@ -1217,6 +1224,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 originalGoal: null,
                 updatedGoal: null,
                 selectedScope: 'single',
+                upToDateEnd: '',
                 onConfirm: async () => { }
             });
 
@@ -1236,7 +1244,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const updateMultipleRoutineEvents = async (
         updatedGoal: Goal,
         changeType: 'duration' | 'other',
-        scope: 'single' | 'all' | 'future'
+        scope: 'single' | 'all' | 'future' | 'up_to_date',
+        upToDateEnd?: Date
     ) => {
         if (!updatedGoal.id) {
             throw new Error('Goal ID is required for updating routine events');
@@ -1265,11 +1274,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
 
         // Use the dedicated API for updating routine event properties
-        const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope);
+        const updatedEvents = await updateRoutineEventProperties(updatedGoal.id, updates, scope, upToDateEnd);
 
-        // For 'all' scope, also update the parent routine with the same changes
-        // For 'future' scope, only update existing events, not the base routine
-        if (scope === 'all' && updatedGoal.parent_id) {
+        // For 'all' or 'future' scope, also update the parent routine with the same changes
+        // For up_to_date, we explicitly do NOT update the base routine.
+        if ((scope === 'all' || scope === 'future') && updatedGoal.parent_id) {
             const parentRoutine = allGoals.find(g => g.id === updatedGoal.parent_id);
             if (parentRoutine) {
                 const routineUpdates: Partial<Goal> = {};
@@ -1986,7 +1995,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         const project_and_achievement_fields = (
             <>
                 {dateFields}
-                {completedField}
             </>
         );
         switch (state.goal.goal_type) {
@@ -2153,7 +2161,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                             ) : null}
                         </Box>
-                        {completedField}
                     </>
                 );
             case 'event':
@@ -2172,7 +2179,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             </Button>
                         </Box>
                         {durationField}
-                        {completedField}
 
                         {/* Google Calendar Sync Settings */}
                         <Box sx={{ mt: 2, mb: 2 }}>
@@ -2398,8 +2404,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             originalGoal,
                             updatedGoal,
                             selectedScope: 'single',
-                            onConfirm: async (scope: 'single' | 'all' | 'future') => {
-                                await handleRoutineEventUpdate(originalGoal, updatedGoal, 'scheduled_time', scope);
+                            upToDateEnd: '',
+                            onConfirm: async (scope: 'single' | 'all' | 'future' | 'up_to_date', upToDateEnd?: Date) => {
+                                await handleRoutineEventUpdate(originalGoal, updatedGoal, 'scheduled_time', scope, upToDateEnd);
                             }
                         });
                         return;
@@ -2734,6 +2741,38 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 {state.error && (
                     <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
                 )}
+
+                {/* Status Selection (view mode only, separated for clarity) */}
+                {state.mode === 'view' && (
+                    <Box sx={{
+                        mb: 3,
+                        p: 1.5,
+                        borderRadius: 2,
+                        bgcolor: state.goal.completed ? 'success.light' : 'action.hover',
+                        border: '1px solid',
+                        borderColor: state.goal.completed ? 'success.main' : 'divider',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        transition: 'all 0.2s ease-in-out',
+                        '&:hover': {
+                            bgcolor: state.goal.completed ? 'success.light' : 'action.selected',
+                            borderColor: state.goal.completed ? 'success.main' : 'primary.main',
+                        }
+                    }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold', color: state.goal.completed ? 'success.contrastText' : 'text.primary' }}>
+                            Status
+                        </Typography>
+                        <Box sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            '& .MuiFormControlLabel-root': { margin: 0 }
+                        }}>
+                            {completedField}
+                        </Box>
+                    </Box>
+                )}
+
                 {/* Parent display (view mode only) */}
                 {state.mode === 'view' && parentGoals.length > 0 && (
                     <Box sx={{ mb: 3 }}>
@@ -2890,18 +2929,62 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <FormControl component="fieldset">
                         <RadioGroup
                             value={routineUpdateDialog.selectedScope}
-                            onChange={(e) => setRoutineUpdateDialog({ ...routineUpdateDialog, selectedScope: e.target.value as 'single' | 'all' | 'future' })}
+                            onChange={(e) => setRoutineUpdateDialog({
+                                ...routineUpdateDialog,
+                                selectedScope: e.target.value as 'single' | 'all' | 'future' | 'up_to_date'
+                            })}
                         >
                             <FormControlLabel value="single" control={<Radio />} label="Only this occurrence" />
                             <FormControlLabel value="future" control={<Radio />} label="This and all future occurrences" />
                             <FormControlLabel value="all" control={<Radio />} label="All occurrences of this routine" />
+                            <FormControlLabel value="up_to_date" control={<Radio />} label="Up to date..." />
                         </RadioGroup>
                     </FormControl>
+
+                    {routineUpdateDialog.selectedScope === 'up_to_date' && (
+                        <TextField
+                            label="Apply through (date)"
+                            type="date"
+                            value={routineUpdateDialog.upToDateEnd}
+                            onChange={(e) => setRoutineUpdateDialog({ ...routineUpdateDialog, upToDateEnd: e.target.value })}
+                            fullWidth
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                        />
+                    )}
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setRoutineUpdateDialog({ ...routineUpdateDialog, isOpen: false })}>Cancel</Button>
                     <Button
-                        onClick={() => routineUpdateDialog.onConfirm(routineUpdateDialog.selectedScope)}
+                        onClick={() => {
+                            if (routineUpdateDialog.selectedScope !== 'up_to_date') {
+                                routineUpdateDialog.onConfirm(routineUpdateDialog.selectedScope);
+                                return;
+                            }
+
+                            const dateStr = routineUpdateDialog.upToDateEnd;
+                            if (!dateStr) {
+                                setState({
+                                    ...state,
+                                    error: 'Please choose an end date for "Up to date".'
+                                });
+                                return;
+                            }
+
+                            const parts = dateStr.split('-').map(Number);
+                            if (parts.length !== 3 || parts.some(Number.isNaN)) {
+                                setState({
+                                    ...state,
+                                    error: 'Invalid end date.'
+                                });
+                                return;
+                            }
+
+                            const [year, month, day] = parts;
+                            // End of local day to ensure the selected date is inclusive.
+                            const endDate = new Date(year, month - 1, day, 23, 59, 59, 999);
+                            routineUpdateDialog.onConfirm('up_to_date', endDate);
+                        }}
                         color="primary"
                         variant="contained"
                     >

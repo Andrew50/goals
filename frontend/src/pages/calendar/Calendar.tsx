@@ -1147,7 +1147,11 @@ const Calendar: React.FC = () => {
           imported_events: 0,
           exported_events: 0,
           updated_events: 0,
-          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')]
+          deleted_events: 0,
+          conflicts_resolved: 0,
+          errors: ['Sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')],
+          conflicts: [],
+          dry_run: !!gcalSyncDialog.dryRun
         }
       });
     }

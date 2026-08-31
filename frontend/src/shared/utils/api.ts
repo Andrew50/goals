@@ -281,7 +281,8 @@ export const getTaskEvents = async (taskId: number): Promise<{
 export const updateRoutineEvent = async (
     eventId: number,
     newTimestamp: Date,
-    updateScope: 'single' | 'all' | 'future'
+    updateScope: 'single' | 'all' | 'future' | 'up_to_date',
+    upToDateEnd?: Date
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEvent called with:', {
         eventId,
@@ -291,13 +292,15 @@ export const updateRoutineEvent = async (
     });
 
     // Build query parameters in case the backend expects them in the URL. Send them in the body as well for backward-compat.
-    const query = `new_timestamp=${newTimestamp.getTime()}&update_scope=${updateScope}`;
+    const upToDateEndParam = upToDateEnd ? `&up_to_date_end=${upToDateEnd.getTime()}` : '';
+    const query = `new_timestamp=${newTimestamp.getTime()}&update_scope=${updateScope}${upToDateEndParam}`;
     const url = `events/${eventId}/routine-update?${query}`;
 
     console.log('📡 [API] Making request to:', url);
     console.log('📦 [API] Request body:', {
         new_timestamp: newTimestamp.getTime(),
-        update_scope: updateScope
+        update_scope: updateScope,
+        up_to_date_end: upToDateEnd ? upToDateEnd.getTime() : undefined
     });
 
     try {
@@ -307,7 +310,8 @@ export const updateRoutineEvent = async (
             {
                 // Keep the body payload to maintain compatibility with older backend versions
                 new_timestamp: newTimestamp.getTime(),
-                update_scope: updateScope
+                update_scope: updateScope,
+                up_to_date_end: upToDateEnd ? upToDateEnd.getTime() : undefined
             }
         );
 
@@ -330,7 +334,8 @@ export const updateRoutineEventProperties = async (
         priority?: string;
         scheduled_timestamp?: Date;
     },
-    updateScope: 'single' | 'all' | 'future'
+    updateScope: 'single' | 'all' | 'future' | 'up_to_date',
+    upToDateEnd?: Date
 ): Promise<Goal[]> => {
     console.log('🔄 [API] updateRoutineEventProperties called with:', {
         eventId,
@@ -340,6 +345,7 @@ export const updateRoutineEventProperties = async (
 
     const requestData = {
         update_scope: updateScope,
+        up_to_date_end: upToDateEnd ? upToDateEnd.getTime() : undefined,
         duration: updates.duration,
         name: updates.name,
         description: updates.description,
