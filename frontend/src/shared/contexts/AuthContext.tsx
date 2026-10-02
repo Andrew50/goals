@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { onForceLogout } from '../utils/authEvents';
-import { publicRequest, privateRequest, updateRoutines } from "../utils/api";
+import { publicRequest, refreshAccessToken, setAccessToken, updateRoutines } from "../utils/api";
  // test auth token expiration functio0nality by running:
  /*
  localStorage.removeItem('authToken'); 
@@ -19,18 +19,20 @@ interface GoogleAuthUrlResponse {
 
 interface AuthContextType {
     isAuthenticated: boolean;
+    authReady: boolean;
     username: string | null;
     token: string | null;
     setIsAuthenticated: (value: boolean) => void;
     scheduleRoutineUpdate: () => void;
     login: (username: string, password: string) => Promise<string>;
-    googleLogin: (googleToken: string) => Promise<string>;
+    googleLogin: () => Promise<string>;
     handleGoogleCallback: (code: string, state: string) => Promise<string>;
     logout: () => void;
 }
 
 export const AuthContext = createContext<AuthContextType>({
     isAuthenticated: false,
+    authReady: true,
     username: null,
     token: null,
     setIsAuthenticated: () => { },
@@ -41,68 +43,80 @@ export const AuthContext = createContext<AuthContextType>({
     logout: () => { },
 });
 
+function isTestMode(): boolean {
+    try {
+        return localStorage.getItem('testMode') === 'true';
+    } catch {
+        return false;
+    }
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // Initialize from localStorage first
-    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-        return !!localStorage.getItem('authToken');
-    });
-
-    // Add username state
-    const [username, setUsername] = useState<string | null>(() => {
-        return localStorage.getItem('username');
-    });
-
-    // Add token getter function
-    const getToken = (): string | null => {
-        return localStorage.getItem('authToken');
-    };
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => isTestMode());
+    const [authReady, setAuthReady] = useState<boolean>(() => isTestMode());
+    const [username, setUsername] = useState<string | null>(() => (
+        isTestMode() ? localStorage.getItem('username') : null
+    ));
+    const [token, setToken] = useState<string | null>(() => (
+        isTestMode() ? localStorage.getItem('authToken') : null
+    ));
 
     const logout = useCallback(() => {
-        // Best-effort request to clear HttpOnly cookie on the server
         publicRequest('auth/logout', 'GET').catch(() => { });
+        setAccessToken(null);
         localStorage.removeItem('authToken');
         localStorage.removeItem('routineUpdateTimeout');
         localStorage.removeItem('nextRoutineUpdate');
         localStorage.removeItem('username');
+        setToken(null);
         setUsername(null);
         setIsAuthenticated(false);
+        setAuthReady(true);
     }, []);
 
-    // Function to validate token and update auth state if invalid
-    const validateAndUpdateAuthState = useCallback(async () => {
-        // Skip validation in test mode to prevent token clearing during tests
-        const isTestMode = localStorage.getItem('testMode') === 'true';
-        if (isTestMode) {
-            console.log('Test mode detected - skipping token validation');
+    const applySession = useCallback((accessToken: string, nextUsername?: string | null) => {
+        setAccessToken(accessToken);
+        setToken(accessToken);
+        if (nextUsername) {
+            setUsername(nextUsername);
+            try {
+                localStorage.setItem('username', nextUsername);
+            } catch {
+                // ignore storage errors
+            }
+        }
+        setIsAuthenticated(true);
+    }, []);
+
+    const restoreSession = useCallback(async () => {
+        if (isTestMode()) {
             setIsAuthenticated(true);
             const storedUsername = localStorage.getItem('username');
+            const storedToken = localStorage.getItem('authToken');
             if (storedUsername) {
                 setUsername(storedUsername);
             }
+            if (storedToken) {
+                setToken(storedToken);
+            }
+            setAuthReady(true);
             return;
         }
 
-        try {
-            // Try to make a request to validate the session (cookie or bearer)
-            await privateRequest('auth/validate', 'GET');
-            // Token is valid, we're already authenticated
-            // Mark as authenticated in case we only have an HttpOnly cookie (no local token)
-            setIsAuthenticated(true);
-            // If we don't have a local username yet, keep existing
-        } catch (error) {
-            console.error('Token validation failed:', error);
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('routineUpdateTimeout');
-            localStorage.removeItem('nextRoutineUpdate');
-            localStorage.removeItem('username');
-            setIsAuthenticated(false);
+        const refreshed = await refreshAccessToken();
+        if (refreshed?.token) {
+            applySession(refreshed.token, refreshed.username || null);
+        } else {
+            setToken(null);
             setUsername(null);
+            setIsAuthenticated(false);
         }
-    }, []);
+        setAuthReady(true);
+    }, [applySession]);
 
-    // Validate token on mount; subscribe to force-logout; revalidate on focus/visibility
+    // Restore the session from the refresh cookie before treating the user as signed out.
     useEffect(() => {
-        validateAndUpdateAuthState();
+        restoreSession();
 
         const unsubscribe = onForceLogout(() => {
             logout();
@@ -110,11 +124,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         let refocusDebounce: number | undefined;
         const debouncedValidate = () => {
-            // Skip in tests
-            if (localStorage.getItem('testMode') === 'true') return;
+            if (isTestMode()) return;
             if (refocusDebounce) window.clearTimeout(refocusDebounce);
             refocusDebounce = window.setTimeout(() => {
-                validateAndUpdateAuthState();
+                restoreSession();
             }, 150);
         };
 
@@ -132,7 +145,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             document.removeEventListener('visibilitychange', onVisibilityChange);
             if (refocusDebounce) window.clearTimeout(refocusDebounce);
         };
-    }, [validateAndUpdateAuthState, logout]);
+    }, [restoreSession, logout]);
 
     const scheduleRoutineUpdate = useCallback(() => {
         // Clear any existing timeout
@@ -178,16 +191,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             { username, password }
         );
 
-        try {
-            // Keep token for now for compatibility; backend also sets HttpOnly cookie
-            localStorage?.setItem("authToken", response.token);
-            localStorage?.setItem("username", username);
-        } catch (error) {
-            console.warn('Could not access localStorage during login:', error);
-        }
-
-        setUsername(username);
-        setIsAuthenticated(true);
+        applySession(response.token, response.username || username);
 
         // Immediately update routines on login
         try {
@@ -201,23 +205,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         scheduleRoutineUpdate();
 
         return response.message;
-    }, [scheduleRoutineUpdate]);
+    }, [applySession, scheduleRoutineUpdate]);
 
-    const googleLogin = useCallback(async (googleToken: string): Promise<string> => {
-        // For our backend OAuth flow, we need to:
-        // 1. Get the auth URL from our backend
-        // 2. Redirect user to Google
-        // 3. Handle the callback from our backend
-
+    const googleLogin = useCallback(async (): Promise<string> => {
         try {
-            // Get Google OAuth URL from our backend
             const authUrlResponse = await publicRequest<GoogleAuthUrlResponse>(
                 'auth/google',
                 'GET'
             );
 
-            // Store the state for verification
             localStorage.setItem('google_oauth_state', authUrlResponse.state);
+            localStorage.setItem('google_oauth_purpose', 'login');
 
             // Redirect to Google OAuth
             window.location.href = authUrlResponse.auth_url;
@@ -250,7 +248,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('✅ [AUTH] State verification passed');
 
             // Exchange code for token with our backend
-            const url = `auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+            const purpose = localStorage.getItem('google_oauth_purpose') || 'login';
+            const url = `auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&purpose=${encodeURIComponent(purpose)}`;
             console.log('🌐 [AUTH] Making request to:', url);
 
             const response = await publicRequest<SigninResponse>(url, 'GET');
@@ -259,21 +258,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.log('📋 [AUTH] Response message:', response.message);
             console.log('👤 [AUTH] Username from response:', response.username);
 
-            // Store token and update auth state
-            // Keep token for compatibility; backend also set cookie
-            localStorage.setItem('authToken', response.token);
-
-            // Extract username from the response
-            const username = response.username || 'Google User';
-            localStorage.setItem('username', username);
-
-            setUsername(username);
-            setIsAuthenticated(true);
+            const nextUsername = response.username || 'Google User';
+            applySession(response.token, nextUsername);
 
             console.log('✅ [AUTH] Updated local auth state');
 
-            // Clean up OAuth state
             localStorage.removeItem('google_oauth_state');
+            localStorage.removeItem('google_oauth_purpose');
             console.log('🧹 [AUTH] Cleaned up OAuth state');
 
             // Update routines
@@ -300,15 +291,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
 
             localStorage.removeItem('google_oauth_state');
+            localStorage.removeItem('google_oauth_purpose');
             throw new Error(error.message || 'Google login failed');
         }
-    }, [scheduleRoutineUpdate]);
+    }, [applySession, scheduleRoutineUpdate]);
 
     return (
         <AuthContext.Provider value={{
             isAuthenticated,
+            authReady,
             username,
-            token: getToken(),
+            token,
             setIsAuthenticated,
             scheduleRoutineUpdate,
             login,

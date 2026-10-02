@@ -7,7 +7,7 @@ import {
   cacheTheme, 
   getCachedTheme 
 } from '../styles/injectThemeVariables';
-import { privateRequest } from '../utils/api';
+import { getAccessToken, onAccessTokenChange, privateRequest } from '../utils/api';
 
 interface ThemeSettings {
   theme_name: ThemeName;
@@ -42,29 +42,44 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     injectThemeVariables(themeName);
   }, [themeName]);
 
-  // Load theme from server on mount (if authenticated)
+  // Load theme once an access token exists. The token arrives after the refresh cookie is exchanged.
   useEffect(() => {
-    const loadTheme = async () => {
-      try {
-        const token = localStorage.getItem('authToken');
-        if (!token) {
-          setIsLoading(false);
-          return;
-        }
+    let cancelled = false;
 
+    const loadTheme = async (token: string | null) => {
+      if (!token) {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      try {
         const settings = await privateRequest<ThemeSettings>('theme/settings', 'GET');
-        if (settings.theme_name && themeConfigs[settings.theme_name]) {
+        if (!cancelled && settings.theme_name && themeConfigs[settings.theme_name]) {
           setThemeName(settings.theme_name);
           cacheTheme(settings.theme_name);
         }
       } catch (err) {
         console.log('Failed to load theme settings, using default');
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
-    loadTheme();
+    loadTheme(getAccessToken());
+    const unsubscribe = onAccessTokenChange((token) => {
+      if (token) {
+        loadTheme(token);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const setTheme = useCallback(async (name: ThemeName) => {

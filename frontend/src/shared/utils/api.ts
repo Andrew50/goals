@@ -3,7 +3,7 @@ import { forceLogout } from './authEvents';
 import { Goal, RelationshipType, ApiGoal, ResolutionStatus, DisplayStatus } from '../../types/goals';
 import { goalToUTC, goalToLocal } from './time';
 
-const API_URL = process.env.REACT_APP_API_URL;
+const API_URL = (process.env.REACT_APP_API_URL || '').replace(/\/+$/, '');
 if (!API_URL) {
     throw new Error('REACT_APP_API_URL is not set');
 }
@@ -14,33 +14,136 @@ axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.common['Content-Type'] = 'application/json';
 axios.defaults.withCredentials = true; // Include cookies on cross-origin requests
 
-// Global 401 handler: redirect flow via forceLogout on any 401 from our API
+let memoryAccessToken: string | null = null;
+const accessTokenListeners = new Set<(token: string | null) => void>();
+
+function readTestToken(): string | null {
+    try {
+        if (localStorage.getItem('testMode') === 'true') {
+            return localStorage.getItem('authToken');
+        }
+    } catch {
+        // ignore storage errors
+    }
+    return null;
+}
+
+export function getAccessToken(): string | null {
+    const testToken = readTestToken();
+    if (testToken) {
+        return testToken;
+    }
+    try {
+        if (localStorage.getItem('testMode') === 'true') {
+            return null;
+        }
+    } catch {
+        // ignore
+    }
+    return memoryAccessToken;
+}
+
+export function setAccessToken(token: string | null): void {
+    memoryAccessToken = token;
+    accessTokenListeners.forEach((listener) => listener(token));
+}
+
+export function onAccessTokenChange(listener: (token: string | null) => void): () => void {
+    accessTokenListeners.add(listener);
+    return () => {
+        accessTokenListeners.delete(listener);
+    };
+}
+
+function isExpectedAuthFailure(url: string): boolean {
+    return /\/auth\/(signin|signup|callback|refresh)(\?|$)/.test(url);
+}
+
+let refreshInFlight: Promise<{ token: string; username?: string } | null> | null = null;
+
+export async function refreshAccessToken(): Promise<{ token: string; username?: string } | null> {
+    if (refreshInFlight) {
+        return refreshInFlight;
+    }
+    const request = (async () => {
+        try {
+            const response = await axios.post(`${API_URL}/auth/refresh`, {}, { withCredentials: true });
+            const token = response.data?.token;
+            if (!token || typeof token !== 'string') {
+                setAccessToken(null);
+                return null;
+            }
+            setAccessToken(token);
+            if (typeof response.data?.username === 'string' && response.data.username) {
+                try {
+                    localStorage.setItem('username', response.data.username);
+                } catch {
+                    // ignore storage errors
+                }
+            }
+            return { token, username: response.data?.username as string | undefined };
+        } catch {
+            setAccessToken(null);
+            return null;
+        } finally {
+            refreshInFlight = null;
+        }
+    })();
+    refreshInFlight = request;
+    return request;
+}
+
+function clearStoredAuth(): void {
+    try {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('routineUpdateTimeout');
+        localStorage.removeItem('nextRoutineUpdate');
+        localStorage.removeItem('username');
+    } catch {
+        // ignore storage errors
+    }
+}
+
+// On 401, exchange the refresh cookie once and retry. Sign-in failures are not sessions.
 let axios401InterceptorInstalled = false;
 let logoutCooldownUntilMs = 0;
 if (!axios401InterceptorInstalled) {
     axios.interceptors.response.use(
         (response) => response,
-        (error) => {
+        async (error) => {
             const status = error?.response?.status;
             const url: string | undefined = error?.config?.url;
             const isFromApi =
                 typeof url === 'string' &&
                 typeof API_URL === 'string' &&
                 url.startsWith(API_URL);
-            if (status === 401 && isFromApi) {
-                const now = Date.now();
-                if (now >= logoutCooldownUntilMs) {
-                    logoutCooldownUntilMs = now + 1000; // throttle duplicate events
-                    try {
-                        localStorage.removeItem('authToken');
-                        localStorage.removeItem('routineUpdateTimeout');
-                        localStorage.removeItem('nextRoutineUpdate');
-                        localStorage.removeItem('username');
-                    } catch {
-                        // ignore storage errors
-                    }
-                    forceLogout();
+            if (status !== 401 || !isFromApi || !error.config || isExpectedAuthFailure(url || '')) {
+                return Promise.reject(error);
+            }
+
+            let testMode = false;
+            try {
+                testMode = localStorage.getItem('testMode') === 'true';
+            } catch {
+                testMode = false;
+            }
+
+            if (!testMode && !error.config._retry) {
+                error.config._retry = true;
+                const refreshed = await refreshAccessToken();
+                if (refreshed?.token) {
+                    error.config.headers = error.config.headers || {};
+                    error.config.headers.Authorization = `Bearer ${refreshed.token}`;
+                    return axios(error.config);
                 }
+            }
+
+            const now = Date.now();
+            if (now >= logoutCooldownUntilMs) {
+                logoutCooldownUntilMs = now + 1000;
+                setAccessToken(null);
+                clearStoredAuth();
+                forceLogout();
             }
             return Promise.reject(error);
         }
@@ -89,7 +192,7 @@ export async function privateRequest<T>(
     params?: any,
     timeoutMs?: number
 ): Promise<T> {
-    const token = localStorage.getItem('authToken');
+    const token = getAccessToken();
     try {
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -110,14 +213,10 @@ export async function privateRequest<T>(
 
         return response.data as T;
     } catch (error: any) {
-        if (error.response?.status === 401) {
-            // Clear storage as a fallback and broadcast a global logout event
-            try {
-                localStorage.removeItem('authToken');
-                localStorage.removeItem('routineUpdateTimeout');
-                localStorage.removeItem('nextRoutineUpdate');
-                localStorage.removeItem('username');
-            } catch (_) { }
+        if (error.response?.status === 401 && !error.config?._retry) {
+            // Jest replaces the axios interceptor, so 401s still end the session here.
+            setAccessToken(null);
+            clearStoredAuth();
             forceLogout();
             throw error;
         }

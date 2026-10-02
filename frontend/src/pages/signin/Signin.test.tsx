@@ -9,6 +9,9 @@ jest.mock('../../shared/utils/api', () => ({
     publicRequest: jest.fn(),
     privateRequest: jest.fn(),
     updateRoutines: jest.fn(),
+    refreshAccessToken: jest.fn().mockResolvedValue(null),
+    setAccessToken: jest.fn(),
+    getAccessToken: jest.fn(() => null),
 }));
 
 describe('Signin', () => {

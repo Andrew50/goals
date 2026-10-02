@@ -4,14 +4,6 @@ use oauth2::{reqwest::async_http_client, RefreshToken, TokenResponse};
 
 use super::auth::create_google_oauth_client;
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct UserTokens {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<i64>,
-}
-
 /// Get a valid access token for a user, refreshing if necessary
 pub async fn get_valid_token(graph: &Graph, user_id: i64) -> Result<String, String> {
     eprintln!("🔍 [TOKEN] Getting valid token for user {}", user_id);

@@ -12,6 +12,10 @@ jest.mock('../../shared/utils/api', () => ({
     getGoogleCalendars: jest.fn(),
     updateGCalSettings: jest.fn(),
     unlinkGoogleAccount: jest.fn(),
+    refreshAccessToken: jest.fn().mockResolvedValue(null),
+    setAccessToken: jest.fn(),
+    getAccessToken: jest.fn(() => null),
+    onAccessTokenChange: jest.fn(() => () => {}),
 }));
 
 describe('AccountSettings', () => {
