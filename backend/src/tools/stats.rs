@@ -430,8 +430,10 @@ struct YearCacheEntry {
     stored_at: Instant,
 }
 
-fn year_stats_cache() -> &'static Mutex<HashMap<(i64, i32, String), YearCacheEntry>> {
-    static CACHE: OnceLock<Mutex<HashMap<(i64, i32, String), YearCacheEntry>>> = OnceLock::new();
+type YearStatsCache = Mutex<HashMap<(i64, i32, String), YearCacheEntry>>;
+
+fn year_stats_cache() -> &'static YearStatsCache {
+    static CACHE: OnceLock<YearStatsCache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

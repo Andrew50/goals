@@ -1,4 +1,6 @@
-FROM rust:latest
+# Match the production builder. cargo-watch pulls in notify-rust, and rustc 1.99
+# segfaults while compiling that crate, which breaks the CI test image.
+FROM rust:1.82
 
 # Install build dependencies needed by crates like reqwest (OpenSSL)
 RUN apt-get update \
