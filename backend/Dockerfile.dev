@@ -20,4 +20,6 @@ ENV NEO4J_URI=bolt://goals_db:7687
 ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
 EXPOSE 5059
-CMD ["cargo-watch", "-x", "run"]
+# --poll: Docker Desktop on Windows/macOS does not deliver inotify events
+# from bind mounts, so cargo-watch would never see source edits without it.
+CMD ["cargo-watch", "--poll", "-x", "run"]
