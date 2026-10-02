@@ -4,7 +4,6 @@ import { AppBar, Toolbar, Button, Box, CssBaseline } from '@mui/material';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { HotkeysProvider } from 'react-hotkeys-hook';
-import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import { ThemeProvider } from './shared/contexts/ThemeContext';
 import ProtectedRoute from './shared/components/ProtectedRoute';
@@ -29,7 +28,7 @@ import AccountSettings from './pages/account/AccountSettings';
 import GoogleCallback from './pages/auth/GoogleCallback';
 
 const NavBar: React.FC = () => {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, authReady, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleSignOut = () => {
@@ -51,17 +50,17 @@ const NavBar: React.FC = () => {
           {/* <Button color="inherit" component={Link} to="/query">Query</Button> */}
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0 }}>
-          {isAuthenticated ? (
+          {authReady && isAuthenticated ? (
             <>
               {/* <Box sx={{ typography: 'body1', color: 'inherit' }}>{username}</Box> */}
               <Button color="inherit" onClick={handleSignOut} sx={{ whiteSpace: 'nowrap' }}>Sign Out</Button>
             </>
-          ) : (
+          ) : authReady ? (
             <>
               <Button color="inherit" component={Link} to="/signin">Sign In</Button>
               <Button color="inherit" component={Link} to="/signup">Sign Up</Button>
             </>
-          )}
+          ) : null}
         </Box>
       </Toolbar>
     </AppBar>
@@ -70,7 +69,6 @@ const NavBar: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID || ''}>
       <AuthProvider>
         <GoalMenuProvider>
           <ThemeProvider>
@@ -151,7 +149,6 @@ const App: React.FC = () => {
           </ThemeProvider>
         </GoalMenuProvider>
       </AuthProvider>
-    </GoogleOAuthProvider>
   );
 };
 

@@ -65,6 +65,7 @@ pub async fn run_gcal_sync(graph: Graph) {
         }
     }
 
+    crate::tools::stats::invalidate_all_year_stats();
     println!(
         "📅 [GCAL_SYNC] Scheduled sync complete: {} users synced, {} errors",
         sync_count, error_count

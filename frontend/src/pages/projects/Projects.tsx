@@ -2,61 +2,19 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
 import { Goal, ApiGoal, NetworkEdge } from '../../types/goals';
-import { getGoalStyle } from '../../shared/styles/colors';
+import { getGoalStyle, getPriorityBorderColor } from '../../shared/styles/colors';
 import GoalMenu from '../../shared/components/GoalMenu';
 import { SearchBar } from '../../shared/components/SearchBar';
 import CompletionBar from '../../shared/components/CompletionBar';
 import NewButton from '../../shared/components/NewButton';
 import './Projects.css';
-import { Accordion, AccordionSummary, AccordionDetails, Typography, List, ListItem } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import '../../shared/styles/badges.css';
-
-// Match backend weighted-completion logic (see `backend/src/tools/stats.rs`):
-// none=0, low=1, medium=2, high=3, default=2 (medium).
-const getPriorityWeight = (priority: unknown): number => {
-    switch (priority) {
-        case 'none':
-            return 0;
-        case 'low':
-            return 1;
-        case 'medium':
-            return 2;
-        case 'high':
-            return 3;
-        default:
-            return 2;
-    }
-};
 
 const isResolved = (g: Goal): boolean => !!g.resolution_status && g.resolution_status !== 'pending';
 
-const getWeightedCompletionStats = (items: Goal[]) => {
+const getCompletionCounts = (items: Goal[]) => {
     const totalCount = items.length;
     const resolvedCount = items.filter(isResolved).length;
-
-    let weightedTotal = 0;
-    let weightedResolved = 0;
-
-    for (const g of items) {
-        const w = getPriorityWeight(g.priority);
-        weightedTotal += w;
-        if (isResolved(g)) weightedResolved += w;
-    }
-
-    // If everything is explicitly weight=0 (e.g. "none"), fall back to counts
-    // so the bar still behaves sensibly.
-    const effectiveTotal = weightedTotal > 0 ? weightedTotal : totalCount;
-    const effectiveResolved = weightedTotal > 0 ? weightedResolved : resolvedCount;
-
-    return {
-        totalCount,
-        resolvedCount,
-        weightedTotal: effectiveTotal,
-        weightedResolved: effectiveResolved,
-        rawWeightedTotal: weightedTotal,
-        rawWeightedResolved: weightedResolved
-    };
+    return { totalCount, resolvedCount };
 };
 
 const Projects: React.FC = () => {
@@ -239,7 +197,7 @@ const Projects: React.FC = () => {
 
     const handleCreateAchievement = () => {
         // Allow creating any goal type; if a project is created, update the list immediately
-        GoalMenu.open({} as Goal, 'create', (newGoal) => {
+        GoalMenu.open({ goal_type: 'project' } as Goal, 'create', (newGoal) => {
             if (newGoal && newGoal.goal_type === 'project') {
                 setProjects(prev => {
                     const exists = prev.some(p => p.id === newGoal.id);
@@ -352,79 +310,29 @@ const Projects: React.FC = () => {
                     </div>
                 </div>
 
-                <div style={{ marginTop: '0.5rem' }}>
-                    <Accordion disableGutters>
-                        <AccordionSummary
-                            expandIcon={<ExpandMoreIcon />}
-                            sx={{
-                                minHeight: 'auto',
-                                px: '0.75rem',
-                                py: '0.5rem',
-                                border: '1px solid var(--color-border-main, #d1d5db)',
-                                borderRadius: '0.375rem',
-                                background: 'var(--color-bg-paper, #ffffff)',
-                                boxShadow: '0 1px 2px rgba(var(--shadow-color, 0,0,0), 0.04)',
-                                '& .MuiAccordionSummary-content': { margin: 0, alignItems: 'center' }
-                            }}
-                        >
-                            <Typography variant="body2" style={{ fontSize: '0.95rem' }}>Suggestions</Typography>
-                        </AccordionSummary>
-                        <AccordionDetails>
-                            <div style={{ display: 'grid', gap: '8px' }}>
-                                <List dense style={{ maxHeight: 288, overflowY: 'auto' }}>
-                                    {suggestionProjects.map((p) => {
-                                        const style = getGoalStyle(p);
-                                        return (
-                                            <ListItem
-                                                key={`suggestion-${p.id}`}
-                                                button
-                                                onClick={() => handleProjectClick(p)}
-                                            >
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-                                                    <div style={{ flex: '1 1 auto', minWidth: 0 }}>
-                                                        <span
-                                                            className="goal-type-badge"
-                                                            style={{
-                                                                display: 'inline-block',
-                                                                padding: '2px 8px',
-                                                                borderRadius: '999px',
-                                                                backgroundColor: `${style.backgroundColor}20`,
-                                                                fontWeight: 600,
-                                                                maxWidth: '100%',
-                                                                whiteSpace: 'nowrap',
-                                                                overflow: 'hidden',
-                                                                textOverflow: 'ellipsis'
-                                                            }}
-                                                            title={p.name}
-                                                        >
-                                                            {p.name}
-                                                        </span>
-                                                    </div>
-                                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                                        <div
-                                                            style={{
-                                                                padding: '2px 8px',
-                                                                borderRadius: '999px',
-                                                                fontSize: '11px',
-                                                                lineHeight: 1.5,
-                                                                background: '#e8f5e9',
-                                                                color: '#1b5e20',
-                                                                flex: '0 0 auto'
-                                                            }}
-                                                            aria-label="No active achievements"
-                                                        >
-                                                            No active achievements
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </ListItem>
-                                        );
-                                    })}
-                                </List>
+                {suggestionProjects.length > 0 && (
+                    <section className="project-block">
+                        <div className="project-block-header">
+                            <h2 className="project-heading">Suggestions</h2>
+                        </div>
+                        {suggestionProjects.map((p) => (
+                            <div
+                                key={`suggestion-${p.id}`}
+                                className="project-row"
+                                onClick={() => handleProjectClick(p)}
+                            >
+                                <span
+                                    className="project-dot"
+                                    style={{ backgroundColor: getGoalStyle(p).backgroundColor }}
+                                />
+                                <div className="project-row-main">
+                                    <div className="project-row-name">{p.name}</div>
+                                    <div className="project-row-meta">No active achievements</div>
+                                </div>
                             </div>
-                        </AccordionDetails>
-                    </Accordion>
-                </div>
+                        ))}
+                    </section>
+                )}
 
                 <div className="achievements-list">
                     {/* Old horizontally scrolling list commented out */}
@@ -437,22 +345,16 @@ const Projects: React.FC = () => {
                     ) : (
                         <div className="projects-list">
                             {projectGroups.map(({ project, items }) => {
-                                const stats = getWeightedCompletionStats(items);
-                                const hasTasks = stats.weightedTotal > 0;
-                                const value = hasTasks ? (stats.weightedResolved / stats.weightedTotal) : 0;
+                                const stats = getCompletionCounts(items);
+                                const hasTasks = stats.totalCount > 0;
+                                const value = hasTasks ? (stats.resolvedCount / stats.totalCount) : 0;
                                 const projectBg = getGoalStyle(project).backgroundColor;
                                 return (
-                                    <section key={project.id} className="project-section">
-                                        <div className="project-section-header">
+                                    <section key={project.id} className="project-block">
+                                        <div className="project-block-header">
+                                            <span className="project-dot" style={{ backgroundColor: projectBg }} />
                                             <h2
                                                 className="project-title"
-                                                style={{
-                                                    cursor: 'pointer',
-                                                    backgroundColor: projectBg,
-                                                    color: '#ffffff',
-                                                    borderRadius: '999px',
-                                                    padding: '4px 10px'
-                                                }}
                                                 onClick={() => handleProjectClick(project)}
                                             >
                                                 {project.name}
@@ -460,60 +362,45 @@ const Projects: React.FC = () => {
                                             <CompletionBar
                                                 value={value}
                                                 hasTasks={hasTasks}
-                                                width={120}
+                                                width={140}
                                                 height={8}
-                                                title={`${stats.weightedResolved}/${stats.weightedTotal} (weighted by priority) — ${stats.resolvedCount}/${stats.totalCount} resolved`}
+                                                style={{ marginLeft: 'auto' }}
+                                                title={`${stats.resolvedCount}/${stats.totalCount} resolved`}
                                             />
                                             <span
                                                 className="project-count"
-                                                title={`${stats.weightedResolved}/${stats.weightedTotal} (weighted by priority)`}
+                                                title={`${stats.resolvedCount}/${stats.totalCount} resolved`}
                                             >
-                                                {stats.weightedResolved}/{stats.weightedTotal}
+                                                {stats.resolvedCount}/{stats.totalCount}
                                             </span>
                                         </div>
-                                        <div className="project-achievements">
-                                            {items.map(achievement => {
-                                                const goalStyle = getGoalStyle(achievement);
-                                                const dueDateClass = getDueDateClass(achievement.end_timestamp);
-                                                const isDone = achievement.resolution_status && achievement.resolution_status !== 'pending';
-                                                return (
-                                                    <div
-                                                        key={achievement.id}
-                                                        className={`achievement-card ${isDone ? 'completed' : ''} ${dueDateClass}`}
-                                                        onClick={() => handleAchievementClick(achievement)}
-                                                        onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
-                                                        style={{
-                                                            border: goalStyle.border,
-                                                        }}
-                                                    >
-                                                        <div className="achievement-header">
-                                                            <h3 className="achievement-name">{achievement.name}</h3>
-                                                        </div>
-
-                                                        {achievement.description && (
-                                                            <p className="achievement-description">{achievement.description}</p>
-                                                        )}
-
-                                                        <div className="achievement-footer">
-                                                            <div className={`due-date ${dueDateClass}`}>
-                                                                <svg className="calendar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                                                </svg>
-                                                                {formatDueDate(achievement.end_timestamp)}
-                                                            </div>
-                                                            {achievement.priority && (
-                                                                <span
-                                                                    className="priority-indicator"
-                                                                    data-priority={achievement.priority}
-                                                                >
-                                                                    {achievement.priority}
-                                                                </span>
-                                                            )}
+                                        {items.map(achievement => {
+                                            const dueDateClass = getDueDateClass(achievement.end_timestamp);
+                                            const isDone = achievement.resolution_status && achievement.resolution_status !== 'pending';
+                                            const isHigh = achievement.priority === 'high' && !isDone;
+                                            return (
+                                                <div
+                                                    key={achievement.id}
+                                                    className={`project-row ${isDone ? 'done' : ''}`}
+                                                    onClick={() => handleAchievementClick(achievement)}
+                                                    onContextMenu={(e) => handleAchievementContextMenu(e, achievement)}
+                                                >
+                                                    <span
+                                                        className="project-priority-bar"
+                                                        style={{ backgroundColor: isHigh ? getPriorityBorderColor('high') : 'transparent' }}
+                                                    />
+                                                    <div className="project-row-main">
+                                                        <div className="project-row-name">{achievement.name}</div>
+                                                        <div className="project-row-meta">
+                                                            Achievement{isHigh ? ' · High' : ''}
                                                         </div>
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
+                                                    <span className={`project-row-due ${dueDateClass}`}>
+                                                        {isDone ? 'Done' : formatDueDate(achievement.end_timestamp)}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
                                     </section>
                                 );
                             })}

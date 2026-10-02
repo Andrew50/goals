@@ -71,6 +71,20 @@
     color: var(--color-text-muted, #666);
 }
 
+.stats-error {
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.stats-retry-button {
+    border: 1px solid var(--color-border-main, #e0e0e0);
+    background: var(--color-bg-paper, #fff);
+    color: var(--color-text-primary, #333);
+    border-radius: 6px;
+    padding: 0.4rem 0.9rem;
+    cursor: pointer;
+}
+
 .activity-graph {
     background-color: var(--color-bg-paper, #ffffff);
     border: 1px solid var(--color-border-main, #e0e0e0);

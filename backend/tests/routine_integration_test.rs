@@ -1652,7 +1652,7 @@ mod tests {
         );
 
         // Set start date to Saturday (future date)
-        let days_to_saturday = if (6 + 7 - current_weekday).is_multiple_of(7) {
+        let days_to_saturday = if (6 + 7 - current_weekday) % 7 == 0 {
             // If today is Saturday, use next Saturday
             7
         } else {

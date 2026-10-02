@@ -51,7 +51,10 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      CHOKIDAR_USEPOLLING: "true" #enable polling
+      # Polling is required for hot reload on Docker Desktop (Windows/macOS).
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+      WATCHPACK_POLLING: "true"
       HOST_URL: ${HOST_URL:-localhost}
       REACT_APP_API_URL: "http://${HOST_URL:-localhost}:5059"
       REACT_APP_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}

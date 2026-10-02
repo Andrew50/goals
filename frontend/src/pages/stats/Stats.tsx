@@ -24,25 +24,6 @@ interface YearStats {
     daily_stats: DailyStats[];
 }
 
-interface PeriodStats {
-    period: string; // "2024-W01", "2024-01", "2024"
-    completion_rate: number; // 0.0 to 1.0
-    total_events: number;
-    completed_events: number;
-    days_with_tasks: number;
-    days_with_no_tasks_complete: number;
-    weighted_total: number;
-    weighted_completed: number;
-}
-
-interface ExtendedStats {
-    year: number;
-    daily_stats: DailyStats[];
-    weekly_stats: PeriodStats[];
-    monthly_stats: PeriodStats[];
-    yearly_stats: PeriodStats;
-}
-
 interface RoutineStats {
     routine_id: number;
     routine_name: string;
@@ -63,63 +44,9 @@ interface RoutineSearchResult {
     description?: string;
 }
 
-interface EventReschedulingStats {
-    total_reschedules: number;
-    avg_reschedule_distance_hours: number;
-    reschedule_frequency_by_month: MonthlyRescheduleStats[];
-    most_rescheduled_events: RescheduledEventInfo[];
-}
-
-interface MonthlyRescheduleStats {
-    month: string; // "2024-01"
-    reschedule_count: number;
-    total_events: number;
-    reschedule_rate: number;
-}
-
-interface RescheduledEventInfo {
-    event_name: string;
-    reschedule_count: number;
-    parent_type: string;
-}
-
 interface SmoothedDataPoint {
     date: string;
     smoothedScore: number;
-}
-
-// New analytics interfaces
-interface EventAnalytics {
-    duration_stats: DurationStats[];
-    priority_stats: PriorityStats[];
-    source_stats: SourceStats;
-}
-
-interface DurationStats {
-    duration_range: string;
-    completion_rate: number;
-    total_events: number;
-    completed_events: number;
-    avg_duration_minutes: number;
-}
-
-interface PriorityStats {
-    priority: string;
-    completion_rate: number;
-    total_events: number;
-    completed_events: number;
-}
-
-interface SourceStats {
-    routine_events: SourceBreakdown;
-    task_events: SourceBreakdown;
-}
-
-interface SourceBreakdown {
-    completion_rate: number;
-    total_events: number;
-    completed_events: number;
-    avg_priority_weight: number;
 }
 
 // Effort stats (all-time, per non-event goal)
@@ -137,11 +64,10 @@ interface EffortStat {
 const Stats: React.FC = () => {
     const navigate = useNavigate();
     const [yearStats, setYearStats] = useState<YearStats | null>(null);
-    const [, setExtendedStats] = useState<ExtendedStats | null>(null);
-    const [, setEventAnalytics] = useState<EventAnalytics | null>(null);
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
     const [hoveredDay, setHoveredDay] = useState<DailyStats | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
     const [activeTab, setActiveTab] = useState<'overview' | 'effort' | 'periods' | 'routines' | 'rescheduling' | 'analytics'>('overview');
 
@@ -150,7 +76,6 @@ const Stats: React.FC = () => {
     const [, setRoutineSearchResults] = useState<RoutineSearchResult[]>([]);
     const [selectedRoutineIds] = useState<number[]>([]);
     const [, setRoutineStats] = useState<RoutineStats[]>([]);
-    const [, setReschedulingStats] = useState<EventReschedulingStats | null>(null);
     const [effortStats, setEffortStats] = useState<EffortStat[] | null>(null);
     const [effortRange, setEffortRange] = useState<'all' | '5y' | '1y' | '6m' | '3m' | '1m' | '2w'>('all');
     const [effortSortKey, setEffortSortKey] = useState<'children_count' | 'total_duration_minutes' | 'total_events' | 'weighted_completion_rate'>('total_duration_minutes');
@@ -171,20 +96,17 @@ const Stats: React.FC = () => {
 
     const fetchStats = async () => {
         setLoading(true);
+        setLoadError(null);
         try {
             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            const [yearData, extendedData, reschedulingData, analyticsData] = await Promise.all([
-                privateRequest<YearStats>(`stats?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
-                privateRequest<ExtendedStats>(`stats/extended?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
-                privateRequest<EventReschedulingStats>(`stats/rescheduling?year=${selectedYear}&tz=${encodeURIComponent(tz)}`),
-                privateRequest<EventAnalytics>(`stats/analytics?year=${selectedYear}&tz=${encodeURIComponent(tz)}`)
-            ]);
+            const yearData = await privateRequest<YearStats>(
+                `stats?year=${selectedYear}&tz=${encodeURIComponent(tz)}`
+            );
             setYearStats(yearData);
-            setExtendedStats(extendedData);
-            setReschedulingStats(reschedulingData);
-            setEventAnalytics(analyticsData);
         } catch (error) {
             console.error('Failed to fetch stats:', error);
+            setYearStats(null);
+            setLoadError('Could not load stats. Try again.');
         } finally {
             setLoading(false);
         }
@@ -520,6 +442,13 @@ const Stats: React.FC = () => {
 
                 {loading ? (
                     <div className="loading-state">Loading stats...</div>
+                ) : loadError ? (
+                    <div className="loading-state stats-error">
+                        <p>{loadError}</p>
+                        <button type="button" className="stats-retry-button" onClick={fetchStats}>
+                            Try again
+                        </button>
+                    </div>
                 ) : (
                     <>
                         {activeTab === 'overview' && (

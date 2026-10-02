@@ -1,13 +1,12 @@
 use axum::{
-    extract::{Extension, Path, Query},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
-    middleware::from_fn,
-    response::IntoResponse,
+    extract::{Extension, Path, Query, Request},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    middleware::{from_fn, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
 };
 use chrono_tz::Tz;
-use jsonwebtoken::{decode, DecodingKey, Validation};
 use neo4rs::Graph;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -59,6 +58,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .route("/signup", post(handle_signup))
         .route("/google", get(handle_google_auth))
         .route("/callback", get(handle_google_callback))
+        .route("/refresh", post(handle_refresh))
         .route("/validate", get(handle_validate_token))
         .route("/logout", get(handle_logout));
 
@@ -178,8 +178,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let account_routes = Router::new()
         .route("/", get(handle_get_account))
-        .route("/set-password", post(handle_set_password))
-        .route("/unlink-google", post(handle_unlink_google_account));
+        .route("/set-password", post(handle_set_password));
 
     // Protected routes with auth middleware
     let protected_routes = Router::new()
@@ -203,6 +202,7 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .nest("/account", account_routes)
         .nest("/auth", auth_protected_routes)
         .route("/autofill", post(handle_autofill_suggestions))
+        .layer(from_fn(invalidate_year_stats_on_mutation))
         .layer(from_fn(middleware::auth_middleware));
 
     Router::new()
@@ -210,6 +210,33 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
         .merge(protected_routes)
         .layer(Extension(pool))
         .layer(Extension(user_locks))
+}
+
+fn year_stats_mutation_path(path: &str) -> bool {
+    path.starts_with("/goals")
+        || path.starts_with("/events")
+        || path.starts_with("/tasks")
+        || path.starts_with("/day")
+        || path.starts_with("/routine")
+        || path.starts_with("/gcal")
+        || path == "/stats/event-moves"
+}
+
+async fn invalidate_year_stats_on_mutation(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    let user_id = request.extensions().get::<i64>().copied();
+    let response = next.run(request).await;
+    let mutating = matches!(
+        method,
+        Method::POST | Method::PUT | Method::DELETE | Method::PATCH
+    );
+    if response.status().is_success() && mutating && year_stats_mutation_path(&path) {
+        if let Some(user_id) = user_id {
+            stats::invalidate_user_year_stats(user_id);
+        }
+    }
+    response
 }
 
 // Auth handlers
@@ -226,51 +253,57 @@ async fn handle_signin(
 ) -> Result<impl IntoResponse, StatusCode> {
     // Use enhanced_sign_in to get token
     match auth::enhanced_sign_in(graph, payload.username.clone(), payload.password).await {
-        Ok(Json(resp)) => {
-            // Build Set-Cookie header for HttpOnly session cookie
-            let cookie_value = build_auth_cookie(&resp.token);
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::SET_COOKIE,
-                HeaderValue::from_str(&cookie_value)
-                    .unwrap_or_else(|_| HeaderValue::from_static("")),
-            );
-            Ok((StatusCode::OK, headers, Json(resp)))
+        Ok(session) => {
+            let body = auth_body("Sign-in successful", &session);
+            Ok((StatusCode::OK, session_cookie_headers(&session), Json(body)))
         }
         Err((status, _json)) => Err(status),
+    }
+}
+
+async fn handle_refresh(
+    Extension(graph): Extension<Graph>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    let refresh = refresh_token_from_headers(&headers).unwrap_or_default();
+    match auth::refresh_session(&graph, &refresh).await {
+        Ok(session) => {
+            let body = auth_body("Session refreshed", &session);
+            Ok((StatusCode::OK, session_cookie_headers(&session), Json(body)))
+        }
+        Err((status, body)) => Err((status, clear_session_cookie_headers(), body)),
     }
 }
 
 async fn handle_validate_token(
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Extract token from Authorization header first
-    let mut token_opt = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map(|s| s.to_string());
-
-    // Fallback to cookie if no Authorization header
-    if token_opt.is_none() {
-        if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
-            for part in cookie_header.split(';') {
-                let trimmed = part.trim();
-                if let Some(value) = trimmed.strip_prefix("auth_token=") {
-                    token_opt = Some(value.to_string());
-                    break;
-                }
-            }
-        }
-    }
-
-    let token = token_opt.ok_or(StatusCode::UNAUTHORIZED)?;
+    let token = bearer_from_headers(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
     auth::validate_token(&token).await
 }
 
 // Google OAuth handlers
-async fn handle_google_auth() -> Result<impl IntoResponse, impl IntoResponse> {
-    auth::generate_google_auth_url().await
+async fn handle_google_auth(
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<auth::AuthResponse>)> {
+    let connect_calendar = params.get("purpose").map(|value| value.as_str()) == Some("calendar");
+    if connect_calendar {
+        let authorized = bearer_from_headers(&headers)
+            .and_then(|token| auth::decode_access_token(&token))
+            .is_some();
+        if !authorized {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(auth::AuthResponse {
+                    message: "Sign in before connecting Google Calendar".to_string(),
+                    token: "".to_string(),
+                    username: None,
+                }),
+            ));
+        }
+    }
+    auth::generate_google_auth_url(connect_calendar).await
 }
 
 async fn handle_google_callback(
@@ -308,60 +341,43 @@ async fn handle_google_callback(
     eprintln!("✅ [ROUTE] Both code and state parameters extracted successfully");
     eprintln!("🔄 [ROUTE] Calling auth::handle_google_callback...");
 
-    // Try to extract existing session token to link Google to current user if logged in
-    let mut token_opt = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map(|s| s.to_string());
+    let connect_calendar = params.get("purpose").map(|value| value.as_str()) == Some("calendar");
+    let presented_refresh = refresh_token_from_headers(&headers);
 
-    if token_opt.is_none() {
-        if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
-            for part in cookie_header.split(';') {
-                let trimmed = part.trim();
-                if let Some(value) = trimmed.strip_prefix("auth_token=") {
-                    token_opt = Some(value.to_string());
-                    break;
-                }
-            }
-        }
-    }
-
-    let existing_user_id: Option<i64> = if let Some(token) = token_opt {
-        let jwt_secret =
-            std::env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
-        match decode::<auth::Claims>(
-            &token,
-            &DecodingKey::from_secret(jwt_secret.as_bytes()),
-            &Validation::default(),
-        ) {
-            Ok(data) => Some(data.claims.user_id),
-            Err(e) => {
-                eprintln!(
-                    "⚠️ [ROUTE] Failed to decode existing auth token during Google callback: {:?}",
-                    e
-                );
-                None
-            }
-        }
+    // After the Google redirect the access token is gone. The refresh cookie
+    // identifies a user who is connecting Calendar or linking an account.
+    let bearer_user_id =
+        bearer_from_headers(&headers).and_then(|token| auth::decode_access_token(&token));
+    let existing_user_id = if let Some(user_id) = bearer_user_id {
+        Some(user_id)
+    } else if let Some(refresh) = &presented_refresh {
+        auth::user_id_from_refresh_token(&graph, refresh).await
     } else {
         None
     };
 
-    let result =
-        auth::handle_google_callback(graph, code.clone(), state.clone(), existing_user_id).await;
+    let result = auth::handle_google_callback(
+        graph.clone(),
+        code.clone(),
+        state.clone(),
+        existing_user_id,
+        connect_calendar,
+    )
+    .await;
 
     match result {
-        Ok(Json(resp)) => {
+        Ok(session) => {
+            if let Some(refresh) = presented_refresh {
+                let _ = auth::revoke_refresh_token(&graph, &refresh).await;
+            }
             eprintln!("✅ [ROUTE] Google OAuth callback completed successfully");
-            let cookie_value = build_auth_cookie(&resp.token);
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::SET_COOKIE,
-                HeaderValue::from_str(&cookie_value)
-                    .unwrap_or_else(|_| HeaderValue::from_static("")),
-            );
-            Ok((StatusCode::OK, headers, Json(resp)))
+            let message = if connect_calendar {
+                "Google Calendar connected"
+            } else {
+                "Google sign-in successful"
+            };
+            let body = auth_body(message, &session);
+            Ok((StatusCode::OK, session_cookie_headers(&session), Json(body)))
         }
         Err((status, response)) => {
             eprintln!(
@@ -377,9 +393,10 @@ async fn handle_google_callback(
 // Goal handlers
 async fn handle_get_goal(
     Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    crate::tools::goal::get_goal_handler(graph, id).await
+    crate::tools::goal::get_goal_handler(graph, user_id, id).await
 }
 
 async fn handle_create_goal(
@@ -649,8 +666,9 @@ async fn handle_get_calendar_data(
 async fn handle_get_list_data(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    list::get_list_data(graph, user_id).await
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Response, (StatusCode, String)> {
+    list::get_list_data(graph, user_id, &params).await
 }
 
 // Day handlers
@@ -884,22 +902,95 @@ async fn handle_recompute_routine_future(
     }
 }
 
-// Helper to build HttpOnly auth cookie string
-fn build_auth_cookie(token: &str) -> String {
+fn is_development_host() -> bool {
     let host_url = std::env::var("HOST_URL").unwrap_or_else(|_| "localhost".to_string());
-    let is_development = host_url == "localhost" || host_url.starts_with("127.0.0.1");
-    // Cross-site XHR requires SameSite=None. In production we must also set Secure.
-    // In development, many browsers still accept SameSite=None without Secure for localhost.
-    let same_site = "; SameSite=None";
-    let secure_attr = if is_development { "" } else { "; Secure" };
+    host_url == "localhost" || host_url.starts_with("127.0.0.1")
+}
 
-    // Default to 30 days for persistence
-    let max_age_seconds = 60 * 60 * 24 * 30;
+/// Public path of auth routes. `/auth` when the API is at the host root.
+/// Production nginx mounts the API at `/api`, so set AUTH_COOKIE_PATH=/api/auth.
+fn refresh_cookie_path() -> String {
+    std::env::var("AUTH_COOKIE_PATH").unwrap_or_else(|_| "/auth".to_string())
+}
 
+fn lax_cookie_attrs() -> String {
+    let secure = if is_development_host() { "" } else { "; Secure" };
+    format!("; HttpOnly; SameSite=Lax{secure}")
+}
+
+fn build_refresh_cookie(token: &str, max_age_secs: i64) -> String {
     format!(
-        "auth_token={}; Max-Age={}; Path=/; HttpOnly{}{}",
-        token, max_age_seconds, same_site, secure_attr
+        "refresh_token={}; Max-Age={}; Path={}{}",
+        token,
+        max_age_secs,
+        refresh_cookie_path(),
+        lax_cookie_attrs()
     )
+}
+
+fn clear_refresh_cookie() -> String {
+    format!(
+        "refresh_token=; Max-Age=0; Path={}{}",
+        refresh_cookie_path(),
+        lax_cookie_attrs()
+    )
+}
+
+fn clear_legacy_auth_cookie() -> String {
+    let secure = if is_development_host() { "" } else { "; Secure" };
+    format!("auth_token=; Max-Age=0; Path=/; HttpOnly; SameSite=None{secure}")
+}
+
+fn append_set_cookie(headers: &mut HeaderMap, value: String) {
+    if let Ok(header_value) = HeaderValue::from_str(&value) {
+        headers.append(header::SET_COOKIE, header_value);
+    }
+}
+
+fn session_cookie_headers(session: &auth::IssuedSession) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    append_set_cookie(
+        &mut headers,
+        build_refresh_cookie(&session.refresh_token, session.refresh_max_age_secs),
+    );
+    append_set_cookie(&mut headers, clear_legacy_auth_cookie());
+    headers
+}
+
+fn clear_session_cookie_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    append_set_cookie(&mut headers, clear_refresh_cookie());
+    append_set_cookie(&mut headers, clear_legacy_auth_cookie());
+    headers
+}
+
+fn auth_body(message: &str, session: &auth::IssuedSession) -> auth::AuthResponse {
+    auth::AuthResponse {
+        message: message.to_string(),
+        token: session.access_token.clone(),
+        username: Some(session.username.clone()),
+    }
+}
+
+fn bearer_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|value| value.to_string())
+}
+
+fn refresh_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
+    for part in cookie_header.split(';') {
+        let trimmed = part.trim();
+        if let Some(value) = trimmed.strip_prefix("refresh_token=") {
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
 }
 
 // Google account status handler
@@ -918,16 +1009,17 @@ async fn handle_google_unlink(
     auth::unlink_google_account(&graph, user_id).await
 }
 
-// Logout handler clears the auth cookie
-async fn handle_logout() -> impl IntoResponse {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::SET_COOKIE,
-        HeaderValue::from_static("auth_token=deleted; Max-Age=0; Path=/; HttpOnly; SameSite=None"),
-    );
+// Logout revokes the refresh session and clears both the new and legacy cookies.
+async fn handle_logout(
+    Extension(graph): Extension<Graph>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Some(refresh) = refresh_token_from_headers(&headers) {
+        let _ = auth::revoke_refresh_token(&graph, &refresh).await;
+    }
     (
         StatusCode::OK,
-        headers,
+        clear_session_cookie_headers(),
         Json(serde_json::json!({"message": "Logged out"})),
     )
 }
@@ -1154,18 +1246,27 @@ async fn handle_set_password(
     Extension(graph): Extension<Graph>,
     Extension(user_id): Extension<i64>,
     Json(payload): Json<auth::SetPasswordPayload>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     auth::set_password_for_user(&graph, user_id, payload.password)
         .await
-        .map(|_| StatusCode::OK)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
-}
-
-async fn handle_unlink_google_account(
-    Extension(graph): Extension<Graph>,
-    Extension(user_id): Extension<i64>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    auth::unlink_google_account(&graph, user_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    // Drop every refresh token, including ones that may have been stolen,
+    // then issue a new session so this browser stays signed in.
+    auth::revoke_all_sessions(&graph, user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let account = auth::get_user_account(&graph, user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let display = account
+        .display_name
+        .clone()
+        .unwrap_or_else(|| account.username.clone());
+    let session = auth::issue_session(&graph, user_id, &account.username, display)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let body = auth_body("Password updated", &session);
+    Ok((StatusCode::OK, session_cookie_headers(&session), Json(body)))
 }
 
 async fn handle_autofill_suggestions(

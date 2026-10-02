@@ -37,6 +37,7 @@ import {
 import { useTheme } from "../../shared/contexts/ThemeContext";
 import {
     privateRequest,
+    setAccessToken,
     getGoogleStatus,
     getGCalSettings,
     updateGCalSettings,
@@ -291,7 +292,10 @@ const AccountSettings: React.FC = () => {
         setSuccess(null);
 
         try {
-            await privateRequest("account/set-password", "POST", { password });
+            const updated = await privateRequest<{ token?: string }>("account/set-password", "POST", { password });
+            if (updated?.token) {
+                setAccessToken(updated.token);
+            }
             setSuccess("Password set successfully");
             setPassword("");
             setShowPasswordForm(false);
@@ -307,11 +311,15 @@ const AccountSettings: React.FC = () => {
 
         try {
             // Get Google auth URL
-            const response = await privateRequest<{ auth_url: string; state: string }>("auth/google", "GET");
+            const response = await privateRequest<{ auth_url: string; state: string }>(
+                "auth/google",
+                "GET",
+                undefined,
+                { purpose: "calendar" }
+            );
 
-            // Store the current action for when we return from Google
-            localStorage.setItem("google_auth_action", "link");
-            localStorage.setItem("google_auth_state", response.state);
+            localStorage.setItem("google_oauth_state", response.state);
+            localStorage.setItem("google_oauth_purpose", "calendar");
 
             // Redirect to Google
             window.location.href = response.auth_url;
@@ -329,7 +337,7 @@ const AccountSettings: React.FC = () => {
         setSuccess(null);
 
         try {
-            await privateRequest("account/unlink-google", "POST");
+            await unlinkGoogleAccount();
             setSuccess("Google account unlinked successfully");
             loadAccountInfo(); // Reload account info
         } catch (err: any) {

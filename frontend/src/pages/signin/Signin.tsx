@@ -39,7 +39,7 @@ const Signin: React.FC = () => {
     setSuccess(null);
 
     try {
-      await googleLogin("");
+      await googleLogin();
       // The googleLogin function will redirect to Google, so we won't reach here normally
     } catch (err: any) {
       setError(getAuthFriendlyErrorMessage(err));
