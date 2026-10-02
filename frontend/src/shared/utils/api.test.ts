@@ -53,10 +53,14 @@ import { forceLogout } from './authEvents';
 const API = (process.env.REACT_APP_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
 
 jest.mock('axios', () => {
-    const state = {
+    const state: {
+        request: (config?: any) => Promise<any>;
+        post: (...args: any[]) => Promise<any>;
+        handlers: { ok: (response: any) => any; err: (error: any) => any } | null;
+    } = {
         request: async () => ({ data: { id: 1, name: 'Goal', goal_type: 'task' } }),
         post: async () => ({ data: { token: 'access-token', username: 'ada' } }),
-        handlers: null as { ok: (response: any) => any; err: (error: any) => any } | null,
+        handlers: null,
     };
     const axiosFn: any = (config?: any) => state.request(config);
     axiosFn.post = (...args: any[]) => state.post(...args);

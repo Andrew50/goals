@@ -34,7 +34,9 @@ hyper-rustls = "0.25"
 # web-push = "0.9"
 base64_013 = { package = "base64", version = "0.13" }
 base64ct = "1.6"
-web-push = "0.9"
+# hyper-client skips isahc's static-curl. gcc 12 segfaults compiling that
+# vendored curl 8.17, which breaks the production image build.
+web-push = { version = "0.9", default-features = false, features = ["hyper-client"] }
 
 [[bin]]
 name = "backend"
