@@ -14,31 +14,35 @@ describe('Stats', () => {
         (privateRequest as jest.Mock).mockResolvedValue({
             year: 2023,
             daily_stats: [],
-            weekly_stats: [],
-            monthly_stats: [],
-            yearly_stats: {
-                period: '2023',
-                completion_rate: 0,
-                total_events: 0,
-                completed_events: 0,
-                days_with_tasks: 0,
-                days_with_no_tasks_complete: 0,
-                weighted_total: 0,
-                weighted_completed: 0,
-            },
         });
     });
 
-    test('renders stats page', async () => {
+    test('renders stats page from the year endpoint only', async () => {
         renderWithProviders(<Stats />, {
             withGoalMenu: true,
             initialEntries: ['/stats'],
         });
 
         await waitFor(() => {
-            const searchInput = screen.queryByLabelText(/search/i);
-            expect(searchInput || screen.getByText(/stats/i) || document.body.textContent).toBeTruthy();
+            expect(screen.getByText(/completion stats/i)).toBeInTheDocument();
         });
+
+        const urls = (privateRequest as jest.Mock).mock.calls.map((call) => String(call[0]));
+        expect(urls.some((url) => url.startsWith('stats?'))).toBe(true);
+        expect(urls.some((url) => url.includes('stats/extended'))).toBe(false);
+        expect(urls.some((url) => url.includes('stats/rescheduling'))).toBe(false);
+        expect(urls.some((url) => url.includes('stats/analytics'))).toBe(false);
+    });
+
+    test('shows an error when year stats fail', async () => {
+        (privateRequest as jest.Mock).mockRejectedValue(new Error('timeout'));
+
+        renderWithProviders(<Stats />, {
+            withGoalMenu: true,
+            initialEntries: ['/stats'],
+        });
+
+        expect(await screen.findByText(/could not load stats/i)).toBeInTheDocument();
     });
 });
 
