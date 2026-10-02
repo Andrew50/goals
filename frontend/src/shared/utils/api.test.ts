@@ -1,43 +1,4 @@
 import axios from 'axios';
-import { forceLogout } from './authEvents';
-
-const API = (process.env.REACT_APP_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
-
-jest.mock('axios', () => {
-    const state = {
-        request: async () => ({ data: { id: 1, name: 'Goal', goal_type: 'task' } }),
-        post: async () => ({ data: { token: 'access-token', username: 'ada' } }),
-        handlers: null as { ok: (response: any) => any; err: (error: any) => any } | null,
-    };
-    const axiosFn: any = (config?: any) => state.request(config);
-    axiosFn.post = (...args: any[]) => state.post(...args);
-    axiosFn.get = async () => ({ data: {} });
-    axiosFn.put = async () => ({ data: {} });
-    axiosFn.delete = async () => ({ data: {} });
-    axiosFn.defaults = {
-        timeout: 0,
-        headers: { common: {} as Record<string, string> },
-        withCredentials: false,
-    };
-    axiosFn.interceptors = {
-        response: {
-            use: (ok: any, err: any) => {
-                state.handlers = { ok, err };
-                return 0;
-            },
-        },
-    };
-    axiosFn.create = () => axiosFn;
-    axiosFn.__state = state;
-    return { __esModule: true, default: axiosFn };
-});
-
-const mockAxiosState = (axios as any).__state as {
-    request: (config?: any) => Promise<any>;
-    post: (...args: any[]) => Promise<any>;
-    handlers: { ok: (response: any) => any; err: (error: any) => any } | null;
-};
-
 import {
     completeEvent,
     completeGoal,
@@ -87,6 +48,44 @@ import {
     updateTelegramSettings,
     updateThemeSettings,
 } from './api';
+import { forceLogout } from './authEvents';
+
+const API = (process.env.REACT_APP_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
+
+jest.mock('axios', () => {
+    const state = {
+        request: async () => ({ data: { id: 1, name: 'Goal', goal_type: 'task' } }),
+        post: async () => ({ data: { token: 'access-token', username: 'ada' } }),
+        handlers: null as { ok: (response: any) => any; err: (error: any) => any } | null,
+    };
+    const axiosFn: any = (config?: any) => state.request(config);
+    axiosFn.post = (...args: any[]) => state.post(...args);
+    axiosFn.get = async () => ({ data: {} });
+    axiosFn.put = async () => ({ data: {} });
+    axiosFn.delete = async () => ({ data: {} });
+    axiosFn.defaults = {
+        timeout: 0,
+        headers: { common: {} as Record<string, string> },
+        withCredentials: false,
+    };
+    axiosFn.interceptors = {
+        response: {
+            use: (ok: any, err: any) => {
+                state.handlers = { ok, err };
+                return 0;
+            },
+        },
+    };
+    axiosFn.create = () => axiosFn;
+    axiosFn.__state = state;
+    return { __esModule: true, default: axiosFn };
+});
+
+const mockAxiosState = (axios as any).__state as {
+    request: (config?: any) => Promise<any>;
+    post: (...args: any[]) => Promise<any>;
+    handlers: { ok: (response: any) => any; err: (error: any) => any } | null;
+};
 
 const apiGoal = {
     id: 7,
