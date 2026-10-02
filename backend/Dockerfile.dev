@@ -17,7 +17,9 @@ ENV PATH="/usr/local/cargo/bin:${PATH}"
 # Make sure login shells also pick up cargo on PATH
 RUN printf '%s\n' 'export PATH=/usr/local/cargo/bin:$PATH' > /etc/profile.d/cargo.sh && chmod 644 /etc/profile.d/cargo.sh
 
-RUN cargo install cargo-watch --locked
+# cargo install's release profile uses LTO, and rustc 1.82 segfaults on that
+# build of cargo-watch. The dev image only needs the binary to run.
+RUN cargo install cargo-watch --locked --debug
 WORKDIR /usr/src/app
 COPY . .
 ENV NEO4J_URI=bolt://goals_db:7687
