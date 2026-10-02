@@ -268,3 +268,28 @@ export const timestampToDisplayString = (
   return d.toLocaleString(undefined, opts);
 };
 
+/**
+ * Compact clock range for agenda rows.
+ * A shared day-period is shown once ("9:00–10:30 AM"). Different periods keep both ("11:00 AM–1:00 PM").
+ */
+export const formatTimeRange = (start: number | Date, end: number | Date): string => {
+  const startDate = start instanceof Date ? start : new Date(start);
+  const endDate = end instanceof Date ? end : new Date(end);
+  const fmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  const render = (parts: Intl.DateTimeFormatPart[], includePeriod: boolean) => {
+    const kept = includePeriod ? parts : parts.filter((part) => part.type !== 'dayPeriod');
+    return kept.map((part) => part.value).join('').replace(/\s+/g, ' ').trim();
+  };
+
+  const startParts = fmt.formatToParts(startDate);
+  const endParts = fmt.formatToParts(endDate);
+  const startPeriod = startParts.find((part) => part.type === 'dayPeriod')?.value ?? '';
+  const endPeriod = endParts.find((part) => part.type === 'dayPeriod')?.value ?? '';
+
+  if (startPeriod && startPeriod === endPeriod) {
+    return `${render(startParts, false)}–${render(endParts, true)}`;
+  }
+  return `${render(startParts, true)}–${render(endParts, true)}`;
+};
+

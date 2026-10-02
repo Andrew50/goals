@@ -41,16 +41,10 @@ export const getGoalColor = (goal: Goal): string => {
 // Priority-based border styling
 export type Priority = 'high' | 'medium' | 'low';
 
-export const getPriorityBorder = (priority?: Priority): string => {
-    // NOTE: Priority border highlighting is disabled (returns transparent)
-    // To re-enable with priority-based borders:
-    // const borders: Record<Priority, string> = {
-    //     high: '2px solid #C45B5B',     // Muted brick red
-    //     medium: '2px solid #B8834A',   // Soft amber
-    //     low: '2px solid #7A8A9A'       // Steel gray
-    // };
-    // return priority ? borders[priority] : 'none';
-    return '2px solid transparent';
+export const getPriorityBorder = (_priority?: Priority): string => {
+    // Priority is not drawn as an outline. High priority uses an inset bar
+    // (see Day and Projects) via getPriorityBorderColor('high').
+    return 'none';
 };
 
 // Helper to get the priority border color (just the color, not the full border style)
@@ -64,7 +58,7 @@ export const getPriorityBorderColor = (priority?: Priority): string => {
 };
 
 // Combined styling helper that provides comprehensive styling for calendar events
-export const getGoalStyle = (goal: Goal, parent?: Goal): {
+export const getGoalStyle = (goal: Goal, _parent?: Goal): {
     backgroundColor: string;
     border: string;
     textColor: string;
@@ -72,17 +66,13 @@ export const getGoalStyle = (goal: Goal, parent?: Goal): {
 } => {
     const backgroundColor = getGoalColor(goal);
 
-    // Use event's own priority if set, otherwise fall back to parent's priority
-    const effectivePriority = goal.priority || parent?.priority;
-
-    const border = getPriorityBorder(effectivePriority);
-    const borderColor = getPriorityBorderColor(effectivePriority);
-
     return {
         backgroundColor,
-        border,
+        border: 'none',
         textColor: '#ffffff', // White text for good contrast on colored backgrounds
-        borderColor // Use priority-based border color for FullCalendar
+        // Match the fill so calendar events and network nodes are one color,
+        // not a type fill wrapped in a priority ring.
+        borderColor: backgroundColor
     };
 };
 

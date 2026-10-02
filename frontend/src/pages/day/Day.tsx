@@ -1,7 +1,17 @@
 import { privateRequest, updateEvent, expandTaskDateRange, TaskDateValidationError } from '../../shared/utils/api';
-import { timestampToDisplayString } from '../../shared/utils/time';
+import { formatTimeRange, timestampToDisplayString } from '../../shared/utils/time';
+import {
+    AlignUpdate,
+    buildTimeline,
+    cardAlignActions,
+    CardAlignActions,
+    getEventDurationMs,
+    getEventEndMs,
+    getEventStartMs,
+    isAllDay,
+} from './daySeam';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getGoalStyle } from '../../shared/styles/colors';
+import { getPriorityBorderColor } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
 import NewButton from '../../shared/components/NewButton';
@@ -9,6 +19,8 @@ import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import TodayIcon from '@mui/icons-material/Today';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import './Day.css';
 import '../../shared/styles/badges.css';
 import { useSearchParams } from 'react-router-dom';
@@ -16,6 +28,7 @@ import CompletionBar from '../../shared/components/CompletionBar';
 import { ResolutionStatus } from '../../types/goals';
 import ResolutionStatusToggle from '../../shared/components/ResolutionStatusToggle';
 import { useDrag, useDrop } from 'react-dnd';
+import { attachDragAutoScroll } from './dragAutoScroll';
 
 // Event type returned from the day endpoint
 interface DayEvent {
@@ -33,14 +46,6 @@ interface DayEvent {
     parent_goal_type?: string;
     routine_instance_id?: number;
 }
-
-// Default duration for events without duration (60 minutes)
-const DEFAULT_DURATION_MINUTES = 60;
-
-// Helper functions for event timing
-const getEventStartMs = (event: DayEvent) => event.scheduled_timestamp;
-const getEventDurationMs = (event: DayEvent) => (event.duration ?? DEFAULT_DURATION_MINUTES) * 60_000;
-const getEventEndMs = (event: DayEvent) => getEventStartMs(event) + getEventDurationMs(event);
 
 // Helper function to get start and end of a given date
 const getDayBounds = (date: Date) => {
@@ -85,15 +90,16 @@ const formatDateForDisplay = (date: Date) => {
     });
 };
 
-// Determine if an event is an all-day task
-const isAllDay = (event: DayEvent) => event.duration === 1440;
-
 const Day: React.FC = () => {
     const { openGoalMenu } = useGoalMenu();
     const [searchParams] = useSearchParams();
     const [events, setEvents] = useState<DayEvent[]>([]);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
     const [currentTime, setCurrentTime] = useState<Date>(new Date());
+    const todoListRef = useRef<HTMLDivElement>(null);
+    const resolvedListRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => attachDragAutoScroll(() => [todoListRef.current, resolvedListRef.current]), []);
 
     // Function to fetch events for a specific date
     const fetchEventsForDate = useCallback((date: Date) => {
@@ -305,6 +311,52 @@ const Day: React.FC = () => {
         }
     };
 
+    const saveEventUpdate = useCallback(async (
+        event: DayEvent,
+        updates: { scheduled_timestamp?: Date; duration?: number },
+        moveReason: string,
+    ) => {
+        const payload = { ...updates, move_reason: moveReason };
+        try {
+            await updateEvent(event.id, payload);
+            fetchEventsForDate(currentDate);
+        } catch (error: any) {
+            console.log('Event update error caught:', error);
+            console.log('Error response data:', error?.response?.data);
+            console.log('Error response status:', error?.response?.status);
+
+            if (isTaskDateValidationError(error)) {
+                const validationError = extractValidationError(error);
+
+                if (validationError && event.parent_id) {
+                    try {
+                        await expandTaskDateRange({
+                            task_id: event.parent_id,
+                            new_start_timestamp: validationError.violation.suggested_task_start
+                                ? new Date(validationError.violation.suggested_task_start)
+                                : undefined,
+                            new_end_timestamp: validationError.violation.suggested_task_end
+                                ? new Date(validationError.violation.suggested_task_end)
+                                : undefined,
+                        });
+                        await updateEvent(event.id, payload);
+                        fetchEventsForDate(currentDate);
+                        return;
+                    } catch (expandError) {
+                        console.error('Error expanding task date range:', expandError);
+                    }
+                } else {
+                    console.warn('No validation error or parent_id:', { validationError, parent_id: event.parent_id });
+                }
+                const errorMessage = validationError?.message || 'Event cannot be moved outside the task\'s date range.';
+                alert(errorMessage);
+            } else {
+                console.error('Error updating event (not a date range violation):', error);
+            }
+            fetchEventsForDate(currentDate);
+        }
+    }, [currentDate, fetchEventsForDate]);
+
     // Handle drop to reschedule event
     const handleDrop = useCallback(async (
         draggedEvent: DayEvent,
@@ -313,65 +365,8 @@ const Day: React.FC = () => {
         position: 'before' | 'after'
     ) => {
         const newTimestampMs = computeNewTimestamp(draggedEvent, anchorType, anchorEvent, position, events);
-        const newTimestamp = new Date(newTimestampMs);
-
-        try {
-            await updateEvent(draggedEvent.id, {
-                scheduled_timestamp: newTimestamp,
-                move_reason: 'Reordered in Day view'
-            });
-            // Refresh events
-            fetchEventsForDate(currentDate);
-        } catch (error: any) {
-            console.log('Drop error caught:', error);
-            console.log('Error response data:', error?.response?.data);
-            console.log('Error response status:', error?.response?.status);
-            
-            // Check if it's a task date range violation
-            if (isTaskDateValidationError(error)) {
-                console.log('Detected task date range violation');
-                const validationError = extractValidationError(error);
-                console.log('Extracted validation error:', validationError);
-                
-                if (validationError && draggedEvent.parent_id) {
-                    try {
-                        console.log('Attempting to expand task date range for task:', draggedEvent.parent_id);
-                        // Automatically expand the task date range
-                        await expandTaskDateRange({
-                            task_id: draggedEvent.parent_id,
-                            new_start_timestamp: validationError.violation.suggested_task_start
-                                ? new Date(validationError.violation.suggested_task_start)
-                                : undefined,
-                            new_end_timestamp: validationError.violation.suggested_task_end
-                                ? new Date(validationError.violation.suggested_task_end)
-                                : undefined,
-                        });
-                        console.log('Task date range expanded, retrying update');
-                        // Retry the update
-                        await updateEvent(draggedEvent.id, {
-                            scheduled_timestamp: newTimestamp,
-                            move_reason: 'Reordered in Day view'
-                        });
-                        // Refresh events
-                        fetchEventsForDate(currentDate);
-                        return;
-                    } catch (expandError) {
-                        console.error('Error expanding task date range:', expandError);
-                        // Fall through to show error message
-                    }
-                } else {
-                    console.warn('No validation error or parent_id:', { validationError, parent_id: draggedEvent.parent_id });
-                }
-                // Show user-friendly error message
-                const errorMessage = validationError?.message || 'Event cannot be moved outside the task\'s date range.';
-                alert(errorMessage);
-            } else {
-                console.error('Error rescheduling event (not a date range violation):', error);
-            }
-            // Refresh anyway to get back to correct state
-            fetchEventsForDate(currentDate);
-        }
-    }, [events, currentDate, fetchEventsForDate, computeNewTimestamp]);
+        await saveEventUpdate(draggedEvent, { scheduled_timestamp: new Date(newTimestampMs) }, 'Reordered in Day view');
+    }, [events, computeNewTimestamp, saveEventUpdate]);
 
     const handleEventClick = (event: DayEvent) => {
         // Convert event to Goal format for GoalMenu
@@ -456,8 +451,10 @@ const Day: React.FC = () => {
     const DraggableEvent: React.FC<{
         event: DayEvent;
         isResolved?: boolean;
+        align: CardAlignActions | null;
+        onAlign: (update: AlignUpdate) => void;
         onDrop: (draggedEvent: DayEvent, anchorType: 'event' | 'now', anchorEvent: DayEvent | null, position: 'before' | 'after') => void;
-    }> = ({ event, isResolved = false, onDrop }) => {
+    }> = ({ event, isResolved = false, align, onAlign, onDrop }) => {
         const cardRef = useRef<HTMLDivElement | null>(null);
         const [hoverPosition, setHoverPosition] = useState<'before' | 'after' | null>(null);
 
@@ -493,11 +490,37 @@ const Day: React.FC = () => {
             })
         });
 
-        const parentType = event.parent_goal_type === 'routine' ? 'routine' : (event.parent_goal_type === 'task' ? 'task' : undefined);
-        const priority = (event.priority === 'high' || event.priority === 'medium' || event.priority === 'low') ? event.priority : undefined;
-        const goalStyle = getGoalStyle({ goal_type: 'event', parent_type: parentType, priority, resolution_status: event.resolution_status } as any);
-        const timeString = isAllDay(event) ? 'All day' : timestampToDisplayString(new Date(event.scheduled_timestamp), 'time');
+        const isHighPriority = event.priority === 'high';
+        const timeString = isAllDay(event)
+            ? 'All day'
+            : formatTimeRange(getEventStartMs(event), getEventEndMs(event));
         const isCompleted = event.resolution_status === 'completed';
+        const alignLabel = (update: AlignUpdate) => (
+            `${update.edge === 'end' ? 'End' : 'Start'} at ${timestampToDisplayString(update.boundaryMs, 'time')}`
+        );
+        const renderAlign = (update: AlignUpdate | null, edge: 'top' | 'bottom') => {
+            if (!update) return null;
+            const label = alignLabel(update);
+            return (
+                <div className={`card-align card-align-${edge}`}>
+                    <button
+                        type="button"
+                        className="card-align-btn"
+                        aria-label={label}
+                        title={label}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onAlign(update);
+                        }}
+                    >
+                        {update.points === 'up'
+                            ? <KeyboardArrowUpIcon fontSize="inherit" />
+                            : <KeyboardArrowDownIcon fontSize="inherit" />}
+                    </button>
+                </div>
+            );
+        };
 
         return (
             <>
@@ -516,6 +539,14 @@ const Day: React.FC = () => {
                     }`}
                     style={{ opacity: isDragging ? 0.5 : 1 }}
                 >
+                    {renderAlign(align?.top ?? null, 'top')}
+                    {renderAlign(align?.bottom ?? null, 'bottom')}
+                    {isHighPriority && (
+                        <div
+                            className="priority-strip"
+                            style={{ backgroundColor: getPriorityBorderColor('high') }}
+                        />
+                    )}
                     <div
                         ref={drag}
                         className="drag-handle"
@@ -525,10 +556,6 @@ const Day: React.FC = () => {
                     >
                         <DragIndicatorIcon style={{ fontSize: '20px', color: '#718096' }} />
                     </div>
-                    <div
-                        className="priority-strip"
-                        style={{ backgroundColor: goalStyle.borderColor }}
-                    />
                     <div
                         className="task-content"
                         onClick={() => handleEventClick(event)}
@@ -654,16 +681,31 @@ const Day: React.FC = () => {
     };
     const resolvedTotalCount = resolvedCounts.completed + resolvedCounts.skipped + resolvedCounts.failed;
 
-    const renderResolvedEvent = (event: DayEvent, index: number, allEvents: DayEvent[]) => {
-        return (
-            <DraggableEvent
-                key={event.id}
-                event={event}
-                isResolved={true}
-                onDrop={handleDrop}
-            />
-        );
+    const eventsById = new Map(events.map((event) => [event.id, event]));
+    const nowMs = isToday(currentDate) ? currentTime.getTime() : null;
+    const timeline = buildTimeline(events, nowMs);
+
+    const applyAlign = (event: DayEvent, update: AlignUpdate) => {
+        if (update.edge === 'end') {
+            saveEventUpdate(event, { duration: update.duration }, 'Adjusted in Day view');
+            return;
+        }
+        saveEventUpdate(event, {
+            scheduled_timestamp: new Date(update.scheduledMs),
+            duration: update.duration,
+        }, 'Adjusted in Day view');
     };
+
+    const renderEvent = (event: DayEvent, resolved: boolean) => (
+        <DraggableEvent
+            key={event.id}
+            event={event}
+            isResolved={resolved}
+            align={cardAlignActions(event, timeline, eventsById, nowMs)}
+            onAlign={(update) => applyAlign(event, update)}
+            onDrop={handleDrop}
+        />
+    );
 
     const resolvedGroups: Array<{ status: ResolvedStatus; items: DayEvent[] }> = [
         { status: 'completed', items: organized.resolved.completed },
@@ -738,7 +780,7 @@ const Day: React.FC = () => {
                             <Typography variant="h6" className="column-title">To Do</Typography>
                             <span className="column-count">{organized.todo.length}</span>
                         </div>
-                        <div className="tasks-list">
+                        <div className="tasks-list" ref={todoListRef}>
                             {organized.todo.length === 0 ? (
                                 <>
                                     {isToday(currentDate) && (
@@ -756,7 +798,7 @@ const Day: React.FC = () => {
                                 </>
                             ) : (
                                 insertCurrentTimeLine(organized.todo).map((item, index) => {
-                                    if (item.type === 'current-time') {
+                                    if (item.type === 'current-time' || !item.event) {
                                         return (
                                             <CurrentTimeLine
                                                 key={`current-time-todo-${index}`}
@@ -764,16 +806,7 @@ const Day: React.FC = () => {
                                             />
                                         );
                                     }
-
-                                    const event = item.event!;
-                                    return (
-                                        <DraggableEvent
-                                            key={event.id}
-                                            event={event}
-                                            isResolved={false}
-                                            onDrop={handleDrop}
-                                        />
-                                    );
+                                    return renderEvent(item.event, false);
                                 })
                             )}
                         </div>
@@ -786,7 +819,7 @@ const Day: React.FC = () => {
                             </Typography>
                             <span className="column-count">{resolvedTotalCount}</span>
                         </div>
-                        <div className="tasks-list resolved">
+                        <div className="tasks-list resolved" ref={resolvedListRef}>
                             {resolvedTotalCount === 0 ? (
                                 <div className="empty-state">
                                     <svg className="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -796,18 +829,13 @@ const Day: React.FC = () => {
                                 </div>
                             ) : (
                                 <>
-                                    {                                nonEmptyResolvedGroups.map((group, groupIndex) => {
+                                    {nonEmptyResolvedGroups.map((group, groupIndex) => {
                                     return (
                                         <div
                                             key={group.status}
                                             className={`resolved-group ${groupIndex > 0 ? 'not-first' : ''}`}
                                         >
-                                            {group.items.map((event, index) => {
-                                                const allResolved = [...organized.resolved.completed, ...organized.resolved.skipped, ...organized.resolved.failed];
-                                                const sortedResolved = allResolved.sort((a, b) => getEventStartMs(a) - getEventStartMs(b));
-                                                const eventIndex = sortedResolved.findIndex(e => e.id === event.id);
-                                                return renderResolvedEvent(event, eventIndex, sortedResolved);
-                                            })}
+                                            {group.items.map((event) => renderEvent(event, true))}
                                         </div>
                                     );
                                 })}

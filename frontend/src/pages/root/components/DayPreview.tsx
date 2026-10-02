@@ -5,8 +5,8 @@ import '../../day/Day.css';
 const DayPreview: React.FC = () => {
     // Static sample tasks
     const todo = [
-        { id: 1, name: 'Deep Work: Project X', time: '9:00 AM', color: '#4299e1' },
-        { id: 2, name: 'Review PRs', time: '1:00 PM', color: '#48bb78' }
+        { id: 1, name: 'Deep Work: Project X', time: '9:00–11:00 AM', color: '#4299e1' },
+        { id: 2, name: 'Review PRs', time: '1:00–1:30 PM', color: '#48bb78' }
     ];
     const completed = [
         { id: 3, name: 'Morning Routine', time: 'All day', color: '#ed8936' }
