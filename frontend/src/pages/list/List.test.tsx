@@ -17,7 +17,7 @@ jest.mock('../../shared/utils/api', () => ({
 
 describe('List', () => {
     beforeEach(() => {
-        (privateRequest as jest.Mock).mockResolvedValue([]);
+        (privateRequest as jest.Mock).mockResolvedValue({ items: [], total: 0 });
     });
 
     test('renders list page', async () => {

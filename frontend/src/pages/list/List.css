@@ -236,7 +236,35 @@
 }
 
 .table-wrapper {
-    overflow-x: auto;
+    overflow: auto;
+    max-height: calc(100vh - 16rem);
+}
+
+.list-pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+    color: var(--color-text-secondary, #4a5568);
+}
+
+.list-pagination button {
+    border: 1px solid var(--color-border-main, #e2e8f0);
+    background: var(--color-bg-paper, #fff);
+    color: var(--color-text-primary, #333);
+    border-radius: 6px;
+    padding: 0.35rem 0.75rem;
+    cursor: pointer;
+}
+
+.list-pagination button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.list-error {
+    margin-bottom: 0.75rem;
+    color: #b91c1c;
 }
 
 .goals-table {
@@ -250,6 +278,10 @@
 }
 
 .table-header th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--color-bg-elevated, #f7fafc);
     padding: 1rem;
     text-align: left;
     font-size: 0.875rem;
