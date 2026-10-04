@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cleanup concepts</title>
+  <style>
+    :root {
+      --page: #f5f7fa;
+      --card: #ffffff;
+      --elev: #f7fafc;
+      --line: #e2e8f0;
+      --ink: #2d3748;
+      --muted: #4a5568;
+      --faint: #718096;
+      --blue: #4299e1;
+      --high: #C45B5B;
+      --med: #B8834A;
+      --low: #7A8A9A;
+      --project: #5B8BA0;
+      --achieve: #B87A7A;
+      --routine: #B8A06D;
+      --task: #7A9A7A;
+      --event: #B88D6D;
+      --directive: #8B7CB3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #e7e5e0;
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 72px; }
+    h1 { font-size: 26px; letter-spacing: -0.03em; margin: 0 0 8px; }
+    .lede { margin: 0 0 22px; max-width: 72ch; color: #5c564e; }
+    h2 { font-size: 18px; margin: 28px 0 6px; letter-spacing: -0.02em; }
+    .why { margin: 0 0 12px; color: #5c564e; max-width: 78ch; font-size: 14px; }
+    .pick {
+      display: inline-block; font-size: 11px; font-weight: 700;
+      background: #3d6b8c; color: white; border-radius: 999px;
+      padding: 2px 8px; margin-left: 8px; vertical-align: 2px;
+    }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .label { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #6f6a64; margin-bottom: 8px; }
+    .frame {
+      background: var(--page);
+      border: 1px solid #d5dbe3;
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .col-title { display: flex; justify-content: space-between; font-weight: 650; font-size: 14px; margin-bottom: 8px; }
+    .count { background: #edf2f7; color: var(--muted); border-radius: 999px; padding: 0 8px; font-size: 12px; }
+
+    /* Current day card: strip pinned to the box edge */
+    .card-edge {
+      position: relative;
+      display: flex; align-items: center; gap: 12px;
+      background: var(--elev);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 12px 12px 16px;
+      margin-bottom: 8px;
+      overflow: visible;
+    }
+    .card-edge .strip {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+    }
+    /* Inset bar, same as the earlier reference */
+    .card-inset {
+      display: grid;
+      grid-template-columns: 4px 1fr auto;
+      gap: 10px; align-items: center;
+      background: var(--elev);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .card-inset .bar { align-self: stretch; border-radius: 99px; }
+    .card-inset.plain { grid-template-columns: 1fr auto; }
+    .name { font-weight: 650; font-size: 14px; }
+    .meta { color: var(--faint); font-size: 12px; }
+    .time {
+      background: #edf2f7; color: var(--faint);
+      border-radius: 4px; padding: 2px 6px; font-size: 12px; font-weight: 600;
+    }
+    .note { font-size: 12px; color: #6f6a64; margin-top: 8px; }
+
+    .events { display: flex; flex-direction: column; gap: 6px; }
+    .evt {
+      color: white; font-size: 12px; font-weight: 650;
+      border-radius: 4px; padding: 4px 8px;
+    }
+    .evt.ringed { border: 2px solid var(--ring); }
+
+    /* Projects */
+    .proj-page { background: var(--page); border: 1px solid #d5dbe3; border-radius: 14px; padding: 16px; }
+    .proj-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .proj-h h3 { margin: 0; font-size: 28px; }
+    .filters { display: flex; gap: 4px; background: white; padding: 4px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+    .filters span { padding: 6px 10px; border-radius: 6px; color: var(--faint); font-size: 13px; font-weight: 600; }
+    .filters .on { background: var(--blue); color: white; }
+    .newb { background: var(--blue); color: white; border-radius: 8px; padding: 8px 12px; font-weight: 700; font-size: 13px; }
+    .suggest {
+      background: white; border: 1px solid #d1d5db; border-radius: 6px;
+      padding: 8px 12px; font-size: 14px; margin-bottom: 16px;
+      display: flex; justify-content: space-between;
+    }
+    .section { margin-bottom: 18px; }
+    .section-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .pill {
+      background: var(--project); color: white; border-radius: 999px;
+      padding: 4px 10px; font-weight: 700; font-size: 16px;
+    }
+    .barwrap { width: 120px; height: 8px; background: #edf2f7; border-radius: 99px; overflow: hidden; }
+    .barwrap i { display: block; height: 100%; background: #9ccc65; }
+    .frac { color: var(--faint); font-size: 14px; }
+    .ach-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .ach {
+      background: white; border-radius: 12px; padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .ach h4 { margin: 0 0 8px; font-size: 16px; }
+    .ach p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+    .ach-foot { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 10px; color: var(--faint); font-size: 13px; }
+    .pri {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      border-radius: 999px; padding: 3px 8px;
+    }
+    .pri.high { background: rgba(196,91,91,.15); color: #C45B5B; }
+    .pri.med { background: rgba(184,131,74,.15); color: #B8834A; }
+    .chip-green { background: #e8f5e9; color: #1b5e20; border-radius: 999px; font-size: 11px; padding: 2px 8px; }
+
+    .block {
+      background: white; border: 1px solid var(--line); border-radius: 12px;
+      padding: 12px 14px 6px; margin-bottom: 12px;
+    }
+    .block-h { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--project); flex: none; }
+    .block-h strong { font-size: 16px; }
+    .grow { flex: 1; }
+    .row {
+      display: grid; grid-template-columns: 4px 1fr auto; gap: 10px; align-items: center;
+      padding: 8px 2px; border-top: 1px solid var(--line);
+    }
+    .row .bar { align-self: stretch; border-radius: 99px; min-height: 28px; }
+    .row .due { color: var(--faint); font-size: 12px; }
+    .row.done .nm { text-decoration: line-through; color: var(--faint); }
+    .mini-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-bottom: 8px; }
+    .mini {
+      display: grid; grid-template-columns: 4px 1fr; gap: 8px;
+      background: var(--elev); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+    }
+    .mini .bar { border-radius: 99px; align-self: stretch; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Cleanup concepts</h1>
+    <p class="lede">Light mode stays as it is. These only change the priority mark and the Projects layout. Nothing here is applied to the app.</p>
+
+    <h2>Priority <span class="pick">Keep the inset bar, drop the outline</span></h2>
+    <p class="why">A priority border wraps a second color around a goal that already has a type color, and on Day it is pinned to the card edge so the rounded corner gets a square cap. Take the border off calendar events and network nodes (make the event border the same as its fill). Keep priority as the inset bar from the reference, and only paint High. Medium and Low are the common case; a bar on every row is what makes the column look noisy.</p>
+
+    <div class="grid3">
+      <div>
+        <div class="label">Day now</div>
+        <div class="frame">
+          <div class="col-title">To do <span class="count">3</span></div>
+          <div class="card-edge"><i class="strip" style="background:#B8834A"></i><div><div class="name">Morning run</div><div class="meta">Routine</div></div><span class="time">7:00 AM</span></div>
+          <div class="card-edge"><i class="strip" style="background:#C45B5B"></i><div><div class="name">Write proposal</div><div class="meta">Task</div></div><span class="time">9:30 AM</span></div>
+          <div class="card-edge"><i class="strip" style="background:#7A8A9A"></i><div><div class="name">Team sync</div><div class="meta">Event</div></div><span class="time">11:00 AM</span></div>
+          <div class="note">The 6px strip is flush to the left. The card radius clips it into a hard corner.</div>
+        </div>
+      </div>
+      <div>
+        <div class="label">Inset bar, every priority</div>
+        <div class="frame">
+          <div class="col-title">To do <span class="count">3</span></div>
+          <div class="card-inset"><i class="bar" style="background:#B8834A"></i><div><div class="name">Morning run</div><div class="meta">Routine</div></div><span class="time">7:00 AM</span></div>
+          <div class="card-inset"><i class="bar" style="background:#C45B5B"></i><div><div class="name">Write proposal</div><div class="meta">Task</div></div><span class="time">9:30 AM</span></div>
+          <div class="card-inset"><i class="bar" style="background:#7A8A9A"></i><div><div class="name">Team sync</div><div class="meta">Event</div></div><span class="time">11:00 AM</span></div>
+          <div class="note">Same colors, sitting inside the padding with rounded ends. This is the reference treatment.</div>
+        </div>
+      </div>
+      <div>
+        <div class="label">Inset bar, high only</div>
+        <div class="frame">
+          <div class="col-title">To do <span class="count">3</span></div>
+          <div class="card-inset plain"><div><div class="name">Morning run</div><div class="meta">Routine</div></div><span class="time">7:00 AM</span></div>
+          <div class="card-inset"><i class="bar" style="background:#C45B5B"></i><div><div class="name">Write proposal</div><div class="meta">Task · High</div></div><span class="time">9:30 AM</span></div>
+          <div class="card-inset plain"><div><div class="name">Team sync</div><div class="meta">Event</div></div><span class="time">11:00 AM</span></div>
+          <div class="note">Recommended. High is the only row that earns a color. Medium and low stay plain.</div>
+        </div>
+      </div>
+    </div>
+
+    <h2>Where the border actually wraps the goal</h2>
+    <p class="why">Calendar events and network nodes take <code>borderColor</code> from priority, so a red, amber, or gray ring sits on top of the type fill. Project cards already pass a transparent border, so they are not the problem.</p>
+    <div class="grid2">
+      <div>
+        <div class="label">Calendar now</div>
+        <div class="frame">
+          <div class="events">
+            <div class="evt ringed" style="background:#B8A06D;--ring:#B8834A">Morning run</div>
+            <div class="evt ringed" style="background:#7A9A7A;--ring:#C45B5B">Write proposal</div>
+            <div class="evt ringed" style="background:#B88D6D;--ring:#7A8A9A">Team sync</div>
+          </div>
+          <div class="note">Type fill plus a priority ring. Two color systems on one chip.</div>
+        </div>
+      </div>
+      <div>
+        <div class="label">Calendar, border matches the fill</div>
+        <div class="frame">
+          <div class="events">
+            <div class="evt" style="background:#B8A06D">Morning run</div>
+            <div class="evt" style="background:#7A9A7A">Write proposal</div>
+            <div class="evt" style="background:#B88D6D">Team sync</div>
+          </div>
+          <div class="note">One color per event. Priority stays on the Day row, not on the chip outline.</div>
+        </div>
+      </div>
+    </div>
+
+    <h2>Projects <span class="pick">One surface, rows inside it</span></h2>
+    <p class="why">The page feels jarring because each project name is a solid slate pill with white text, then a loose grid of large white cards, and the suggestions row uses a separate Material green. Fold each project into one card. The name is ordinary text with a small project dot. Achievements are rows, with the same inset High bar as Day.</p>
+
+    <div class="label">Projects now</div>
+    <div class="proj-page" style="margin-bottom:16px">
+      <div class="proj-h">
+        <h3>Projects</h3>
+        <div style="display:flex;gap:10px;align-items:center">
+          <div class="filters"><span class="on">All</span><span>In Progress</span><span>Completed</span></div>
+          <span class="newb">New</span>
+        </div>
+      </div>
+      <div class="suggest"><span>Suggestions</span><span class="chip-green">No active achievements</span></div>
+      <div class="section">
+        <div class="section-h">
+          <span class="pill">Ship onboarding</span>
+          <div class="barwrap"><i style="width:40%"></i></div>
+          <span class="frac">2/5</span>
+        </div>
+        <div class="ach-grid">
+          <div class="ach">
+            <h4>Invite flow</h4>
+            <p>Empty states and the first-run checklist.</p>
+            <div class="ach-foot"><span>Due in 3 days</span><span class="pri high">High</span></div>
+          </div>
+          <div class="ach">
+            <h4>Email templates</h4>
+            <p>Welcome, reminder, and digest.</p>
+            <div class="ach-foot"><span>Due in 9 days</span><span class="pri med">Medium</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="label">Projects, recommended</div>
+    <div class="proj-page">
+      <div class="proj-h">
+        <h3 style="font-size:22px">Projects</h3>
+        <div style="display:flex;gap:10px;align-items:center">
+          <div class="filters"><span class="on">All</span><span>In Progress</span><span>Completed</span></div>
+          <span class="newb">New</span>
+        </div>
+      </div>
+      <div class="block">
+        <div class="block-h">
+          <i class="dot"></i>
+          <strong>Ship onboarding</strong>
+          <div class="barwrap grow" style="width:auto"><i style="width:40%"></i></div>
+          <span class="frac">2/5</span>
+        </div>
+        <div class="row"><i class="bar" style="background:#C45B5B"></i><div><div class="nm name">Invite flow</div><div class="meta">Achievement · High</div></div><span class="due">Due in 3 days</span></div>
+        <div class="row"><i class="bar" style="background:transparent"></i><div><div class="nm name">Email templates</div><div class="meta">Achievement</div></div><span class="due">Due in 9 days</span></div>
+        <div class="row done"><i class="bar" style="background:transparent"></i><div><div class="nm name">Write the checklist</div><div class="meta">Achievement</div></div><span class="due">Done</span></div>
+      </div>
+      <div class="block">
+        <div class="block-h">
+          <i class="dot"></i>
+          <strong>Home studio</strong>
+          <div class="barwrap grow" style="width:auto"><i style="width:70%"></i></div>
+          <span class="frac">3/4</span>
+        </div>
+        <div class="row"><i class="bar" style="background:#C45B5B"></i><div><div class="nm name">Order acoustic panels</div><div class="meta">Achievement · High</div></div><span class="due" style="color:#C45B5B">Overdue by 2 days</span></div>
+        <div class="row done"><i class="bar" style="background:transparent"></i><div><div class="nm name">Measure the room</div><div class="meta">Achievement</div></div><span class="due">Done</span></div>
+      </div>
+      <div class="note">Suggestions become a third block in this list, titled Suggestions, instead of a separate accordion with a green chip. The completion bar can stay; it does not need its own rainbow. A single slate fill (<span style="color:#4299e1">#4299e1</span> at low opacity, or the existing bar) is enough, since the page is no longer fighting the project pill.</div>
+    </div>
+
+    <h2>Projects, if the cards should stay</h2>
+    <p class="why">Same header as above, but achievements remain cards. They get smaller, sit on the project surface, and use the inset bar instead of an uppercase pill.</p>
+    <div class="proj-page">
+      <div class="block" style="margin:0">
+        <div class="block-h">
+          <i class="dot"></i>
+          <strong>Ship onboarding</strong>
+          <div class="barwrap grow" style="width:auto"><i style="width:40%"></i></div>
+          <span class="frac">2/5</span>
+        </div>
+        <div class="mini-cards">
+          <div class="mini"><i class="bar" style="background:#C45B5B"></i><div><div class="name">Invite flow</div><div class="meta">Due in 3 days · High</div></div></div>
+          <div class="mini"><i class="bar" style="background:transparent"></i><div><div class="name">Email templates</div><div class="meta">Due in 9 days</div></div></div>
+          <div class="mini"><i class="bar" style="background:transparent"></i><div><div class="name">Write the checklist</div><div class="meta" style="text-decoration:line-through">Done</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

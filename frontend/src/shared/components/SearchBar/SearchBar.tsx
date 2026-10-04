@@ -24,6 +24,7 @@ export interface SearchBarProps {
   onFilterToggle?: () => void;
   useLegacyListStyles?: boolean; // Render with List.tsx's original class names
   excludeGoalTypes?: Array<Goal['goal_type']>;
+  serverSearch?: boolean; // Parent owns search; do not build a Fuse index
 }
 
 export const SearchBar: React.FC<SearchBarProps> = ({
@@ -43,7 +44,8 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   filterActive,
   onFilterToggle,
   useLegacyListStyles,
-  excludeGoalTypes
+  excludeGoalTypes,
+  serverSearch
 }) => {
   const isControlled = value !== undefined;
   const [internalQuery, setInternalQuery] = useState<string>(defaultValue || '');
@@ -62,17 +64,26 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     return items.filter(it => !excludeGoalTypes || !excludeGoalTypes.includes(it.goal_type));
   }, [items, excludeGoalTypes]);
 
-  const fuse = useMemo(() => {
+  const searching = !serverSearch && (query || '').trim().length > 0;
+  const nameFuse = useMemo(() => {
+    if (!searching) return null;
+    const primary = (keys as string[]).includes('name') ? ['name'] : (keys as string[]);
     return new Fuse(effectiveItems, {
-      keys: keys as string[],
+      keys: primary,
       threshold: 0.3,
       includeScore: true,
       ignoreLocation: true,
       useExtendedSearch: false
     });
+  }, [effectiveItems, keys, searching]);
+  const fallbackFuseRef = useRef<Fuse<Goal> | null>(null);
+
+  useEffect(() => {
+    fallbackFuseRef.current = null;
   }, [effectiveItems, keys]);
 
   useEffect(() => {
+    if (serverSearch) return;
     const trimmed = (query || '').trim();
 
     // If empty: clear once (avoid repeated emissions on rerenders)
@@ -100,7 +111,22 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 
     const handle = setTimeout(() => {
       try {
-        const results = fuse.search(trimmed) as Array<{ item: Goal; score: number | undefined }>;
+        const nameResults = (nameFuse?.search(trimmed) ?? []) as Array<{ item: Goal; score: number | undefined }>;
+        let results = nameResults;
+        const fallbackKeys = keys as string[];
+        const needsFallback = results.length === 0 && fallbackKeys.some(key => key !== 'name');
+        if (needsFallback) {
+          if (!fallbackFuseRef.current) {
+            fallbackFuseRef.current = new Fuse(effectiveItems, {
+              keys: fallbackKeys,
+              threshold: 0.3,
+              includeScore: true,
+              ignoreLocation: true,
+              useExtendedSearch: false
+            });
+          }
+          results = fallbackFuseRef.current.search(trimmed) as Array<{ item: Goal; score: number | undefined }>;
+        }
         const ids = results.map(r => (r.item as Goal).id);
         lastResultsRef.current = results as any;
         lastIdsRef.current = ids;
@@ -114,7 +140,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 
     prevTrimmedRef.current = trimmed;
     return () => clearTimeout(handle);
-  }, [query, fuse, debounceMs, effectiveItems]);
+  }, [query, nameFuse, debounceMs, effectiveItems, keys, serverSearch]);
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value;

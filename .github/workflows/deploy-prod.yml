@@ -17,8 +17,29 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 60
     steps:
+      # actions/checkout refuses a path outside GITHUB_WORKSPACE, and this
+      # workspace is not safe to check out into until the later force-clean.
+      # Fetch only the verify script for this commit into RUNNER_TEMP.
+      - name: Checkout backup verify script
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/goals-backup-src"
+          rm -rf "${dest}"
+          mkdir -p "${dest}"
+          git -C "${dest}" init
+          git -C "${dest}" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "${dest}" -c http.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" fetch --depth 1 origin "${GITHUB_SHA}"
+          git -C "${dest}" checkout FETCH_HEAD -- db/verify_restore.sh
+          test -f "${dest}/db/verify_restore.sh"
+
       - name: Pre-deploy backup (required if DB is running)
         shell: bash
+        env:
+          BACKUP_PATH: ${{ secrets.BACKUP_PATH }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -80,6 +101,16 @@ jobs:
             docker start goals_db >/dev/null
             DB_STOPPED=false
             trap - EXIT
+
+            HOST_BP="${BACKUP_PATH:-/var/lib/goals/backups}"
+            HOST_DUMP="${HOST_BP}/neo4j_dump_${TIMESTAMP}.dump"
+            VERIFY_SCRIPT="${RUNNER_TEMP}/goals-backup-src/db/verify_restore.sh"
+            if [ ! -f "${VERIFY_SCRIPT}" ]; then
+              echo "::error::Missing verify script at ${VERIFY_SCRIPT}"
+              exit 1
+            fi
+            echo "Verifying dump loads before deploy: ${HOST_DUMP}"
+            bash "${VERIFY_SCRIPT}" "${HOST_DUMP}" "${DB_IMAGE}"
           else
             echo "goals_db is not running; skipping pre-deploy backup (first deploy or DB down)."
           fi

@@ -1,4 +1,8 @@
-FROM rust:latest
+# Match the production builder. rustc 1.99 segfaults compiling notify-rust,
+# which cargo-watch needs. --locked uses cargo-watch 8.5.3's published lock
+# (home 0.5.9); an unlocked install pulls home 0.5.12, which needs edition2024
+# and does not parse on Cargo 1.82.
+FROM rust:1.82
 
 # Install build dependencies needed by crates like reqwest (OpenSSL)
 RUN apt-get update \
@@ -13,11 +17,15 @@ ENV PATH="/usr/local/cargo/bin:${PATH}"
 # Make sure login shells also pick up cargo on PATH
 RUN printf '%s\n' 'export PATH=/usr/local/cargo/bin:$PATH' > /etc/profile.d/cargo.sh && chmod 644 /etc/profile.d/cargo.sh
 
-RUN cargo install cargo-watch
+# cargo install's release profile uses LTO, and rustc 1.82 segfaults on that
+# build of cargo-watch. The dev image only needs the binary to run.
+RUN cargo install cargo-watch --locked --debug
 WORKDIR /usr/src/app
 COPY . .
 ENV NEO4J_URI=bolt://goals_db:7687
 ENV NEO4J_USERNAME=neo4j
 ENV NEO4J_PASSWORD=password123
 EXPOSE 5059
-CMD ["cargo-watch", "-x", "run"]
+# --poll: Docker Desktop on Windows/macOS does not deliver inotify events
+# from bind mounts, so cargo-watch would never see source edits without it.
+CMD ["cargo-watch", "--poll", "-x", "run"]

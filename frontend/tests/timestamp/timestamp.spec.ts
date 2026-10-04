@@ -396,6 +396,7 @@ test.describe('Timezone Handling in Calendar', () => {
             await context.addCookies([]);
             // Set localStorage items
             await page.addInitScript((authData) => {
+                localStorage.setItem('testMode', 'true');
                 localStorage.setItem('authToken', authData.token);
                 localStorage.setItem('userId', authData.userId);
                 localStorage.setItem('username', authData.username);

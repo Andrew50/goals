@@ -185,24 +185,73 @@ jobs:
           done
           echo "All services are ready"
 
-      - name: Backup smoke test (Neo4j dump)
+      - name: Backup restore round-trip
         shell: bash
+        env:
+          NEO4J_PASSWORD: password123
         run: |
           set -euo pipefail
+          compose() {
+            docker compose -f docker-compose.yaml -f docker-compose.test.yaml "$@"
+          }
           echo "Preparing backup script inside test DB container..."
-          CID=$(docker compose -f docker-compose.yaml -f docker-compose.test.yaml ps -q goals_db_test)
+          CID=$(compose ps -q goals_db_test)
           if [ -z "$CID" ]; then
             echo "Failed to resolve container ID for goals_db_test"
-            docker compose -f docker-compose.yaml -f docker-compose.test.yaml ps
+            compose ps
             exit 1
           fi
-          docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'mkdir -p /scripts /backups && chown -R neo4j:neo4j /scripts /backups'
+          TOKEN="ci-${GITHUB_RUN_ID}"
+          echo "Creating BackupCanary ${TOKEN}"
+          compose exec -T goals_db_test \
+            /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 \
+            --non-interactive --format plain \
+            -P "{token: '${TOKEN}'}" \
+            'CREATE (:BackupCanary {token: $token});'
+          compose exec -T goals_db_test bash -lc 'mkdir -p /scripts /backups && chown -R neo4j:neo4j /scripts /backups'
           docker cp db/backup.sh "$CID":/scripts/backup.sh
-          docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'chmod +x /scripts/backup.sh'
+          compose exec -T goals_db_test bash -lc 'chmod +x /scripts/backup.sh'
           echo "Running backup..."
-          docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T --user neo4j goals_db_test bash -lc '/scripts/backup.sh'
-          echo "Verifying backup output..."
-          docker compose -f docker-compose.yaml -f docker-compose.test.yaml exec -T goals_db_test bash -lc 'ls -l /backups && test -n "$(ls -1 /backups/neo4j_dump_*.dump 2>/dev/null | head -n1)"'
+          compose exec -T --user neo4j goals_db_test bash -lc '/scripts/backup.sh'
+          echo "Confirming source database restarted with the canary"
+          canary_ok=0
+          for _ in $(seq 1 60); do
+            if out=$(compose exec -T goals_db_test \
+              /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 \
+              --non-interactive --format plain \
+              -P "{token: '${TOKEN}'}" \
+              'MATCH (c:BackupCanary {token: $token}) RETURN count(c) AS c;'); then
+              echo "$out"
+              count=$(printf '%s\n' "$out" | tr -d '\r' | awk 'NF && $0 ~ /^[0-9]+$/ {line=$0} END {print line}')
+              if [ "$count" = "1" ]; then
+                canary_ok=1
+                break
+              fi
+            fi
+            sleep 2
+          done
+          if [ "$canary_ok" -ne 1 ]; then
+            echo "Source database did not return the BackupCanary after backup" >&2
+            exit 1
+          fi
+          DUMP_IN=$(compose exec -T goals_db_test bash -lc 'ls -1t /backups/neo4j_dump_*.dump | head -n1' | tr -d '\r')
+          if [ -z "$DUMP_IN" ]; then
+            echo "No dump found in /backups" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/backup-restore"
+          HOST_DUMP="$RUNNER_TEMP/backup-restore/neo4j_dump.dump"
+          rm -f "$HOST_DUMP"
+          docker cp "$CID:$DUMP_IN" "$HOST_DUMP"
+          IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CID")
+          echo "Loading dump ${DUMP_IN} from image ${IMAGE}"
+          bash db/verify_restore.sh "$HOST_DUMP" "$IMAGE" "$TOKEN"
+          echo "Removing BackupCanary from the test database"
+          compose exec -T goals_db_test \
+            /var/lib/neo4j/bin/cypher-shell -a bolt://localhost:7687 -u neo4j -p password123 \
+            --non-interactive --format plain \
+            -P "{token: '${TOKEN}'}" \
+            'MATCH (c:BackupCanary {token: $token}) DETACH DELETE c;'
           
       - name: Backend integration tests (in container)
         env:

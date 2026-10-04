@@ -1,7 +1,9 @@
 # Use Node.js as the base (keep in sync with repo .nvmrc)
 FROM node:22-alpine
+# Polling: Docker Desktop bind mounts do not emit inotify events.
 ENV CHOKIDAR_USEPOLLING=true
 ENV CHOKIDAR_INTERVAL=300
+ENV WATCHPACK_POLLING=true
 ENV HOST 0.0.0.0
 ENV PORT=3030
 

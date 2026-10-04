@@ -71,6 +71,19 @@ cp .env.example .env   # set JWT_SECRET; add Google/AI keys if needed
 
 Stop with `./scripts/manage-compose.sh down`.
 
+### Windows (Docker Desktop)
+
+Docker Desktop runs this Linux dev stack. Node and Rust are not required on the host. Use Docker Desktop’s engine only: a Docker daemon inside WSL binds the same ports and steals `localhost` from Desktop.
+
+This repo forces LF line endings (`.gitattributes`) so Dockerfiles and shell scripts keep working when Git’s `core.autocrlf` is `true`. Frontend hot reload polls via `CHOKIDAR_USEPOLLING` and `WATCHPACK_POLLING`. The backend image runs `cargo-watch --poll`, because Docker Desktop does not deliver filesystem events from Windows bind mounts.
+
+```powershell
+Copy-Item .env.example .env   # set JWT_SECRET; add Google/AI keys if needed
+docker compose up --build
+```
+
+Stop with `docker compose down`.
+
 ## Tests
 
 ```bash

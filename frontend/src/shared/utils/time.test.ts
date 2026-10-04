@@ -8,6 +8,7 @@ import {
     dateToTimestamp,
     timestampToDate,
     timestampToDisplayString,
+    formatTimeRange,
     deriveRoutineFieldsFromTaskSchedule
 } from './time';
 import { Goal, ApiGoal } from '../../types/goals'; // Import ApiGoal
@@ -463,6 +464,30 @@ describe('Time conversion utilities', () => {
         test('should handle undefined or null timestamp', () => {
             expect(timestampToDisplayString(undefined)).toBe('');
             expect(timestampToDisplayString(null)).toBe('');
+        });
+    });
+
+    describe('formatTimeRange', () => {
+        test('shows one day-period when start and end share it', () => {
+            const start = new Date(2023, 0, 15, 9, 0);
+            const end = new Date(2023, 0, 15, 10, 30);
+            const display = formatTimeRange(start, end);
+
+            expect(display).toMatch(/9:00/);
+            expect(display).toMatch(/10:30/);
+            expect(display).toContain('–');
+            const periods = display.match(/AM|PM/gi) ?? [];
+            expect(periods.length).toBeLessThanOrEqual(1);
+        });
+
+        test('keeps both day-periods when the range crosses noon', () => {
+            const start = new Date(2023, 0, 15, 11, 0);
+            const end = new Date(2023, 0, 15, 13, 0);
+            const display = formatTimeRange(start, end);
+
+            expect(display).toMatch(/11:00/);
+            expect(display).toMatch(/1:00/);
+            expect(display).toContain('–');
         });
     });
 

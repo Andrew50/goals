@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Goals color directions</title>
+  <style>
+    :root {
+      --page: #e8e4dc;
+      --sheet: #f7f5f1;
+      --ink: #2c2825;
+      --muted: #6f6a64;
+      --line: #d9d3c9;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--page);
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
+    .lede h1 { font-size: 28px; font-weight: 650; letter-spacing: -0.03em; margin: 0 0 8px; }
+    .lede p { margin: 0; max-width: 68ch; color: var(--muted); font-size: 15px; }
+    .jumps {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      position: sticky; top: 0; z-index: 5;
+      background: rgba(232, 228, 220, 0.94);
+      padding: 14px 0; margin-top: 18px;
+    }
+    .jumps a {
+      color: var(--ink); text-decoration: none;
+      border: 1px solid var(--line); background: var(--sheet);
+      border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+    }
+    .sheet { margin-top: 28px; }
+    .sheet-head { margin-bottom: 12px; }
+    .kicker {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 4px;
+    }
+    .tag {
+      letter-spacing: 0; text-transform: none; font-weight: 650;
+      background: #3d6b8c; color: white; border-radius: 999px; padding: 2px 8px; font-size: 11px;
+    }
+    .sheet-head h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.02em; }
+    .sheet-head p { margin: 0; color: var(--muted); font-size: 14px; max-width: 78ch; }
+
+    .app {
+      border: 1px solid #cfc8bc;
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--page-bg);
+      color: var(--ink-c);
+      font-size: 14px;
+    }
+    .nav {
+      display: flex; align-items: center; gap: 4px;
+      height: 52px; padding: 0 14px;
+      background: var(--nav-bg);
+      border-bottom: 1px solid var(--line-c);
+      box-shadow: var(--nav-shadow);
+    }
+    .nav .spacer { flex: 1; }
+    .nav a, .nav .link {
+      color: var(--nav-text); text-decoration: none;
+      padding: 6px 10px; border-radius: 8px; font-weight: 600; font-size: 13.5px;
+    }
+    .nav .link.on {
+      background: var(--nav-on-bg);
+      color: var(--nav-on);
+    }
+    .body { display: grid; grid-template-columns: minmax(0, 1fr) 292px; gap: 14px; padding: 16px; }
+    .body > * { min-width: 0; }
+    .dayhead { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; gap: 12px; }
+    .dayhead h3 { margin: 0; font-size: var(--title); font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+    .dayhead .sub { color: var(--faint); font-size: 13px; margin-top: 4px; }
+    .btn {
+      border: 0; border-radius: var(--radius-ctl);
+      background: var(--accent); color: var(--accent-ink);
+      font-weight: 650; font-size: 13px; padding: 8px 14px;
+      box-shadow: var(--btn-shadow);
+    }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .col {
+      background: var(--card);
+      border: 1px solid var(--line-c);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow);
+      padding: 12px 12px 6px;
+      min-height: 100%;
+    }
+    .col h4 {
+      margin: 0 0 8px; font-size: 13px; font-weight: 650;
+      display: flex; justify-content: space-between; align-items: center;
+      color: var(--ink-c);
+    }
+    .count {
+      background: var(--elev); color: var(--faint);
+      border-radius: 999px; padding: 1px 8px; font-size: 12px;
+    }
+    .task {
+      display: grid; grid-template-columns: 4px 1fr auto; gap: 10px;
+      align-items: center; padding: 8px 4px 8px 0; margin-bottom: 0;
+      border-bottom: 1px solid transparent;
+    }
+    .task.cards {
+      background: var(--elev);
+      border: 1px solid var(--line-c);
+      border-radius: 8px;
+      padding: 10px 10px 10px 8px;
+      margin-bottom: 8px;
+      grid-template-columns: 6px 1fr auto;
+    }
+    .task.rows { border-bottom: 1px solid var(--line-c); border-radius: 0; }
+    .task.rows:last-child { border-bottom: 0; }
+    .task .bar { align-self: stretch; border-radius: 99px; background: var(--bar); }
+    .task.cards .bar { border-radius: 2px; }
+    .task .name { font-weight: 650; font-size: 14px; }
+    .task .meta { color: var(--faint); font-size: 12px; margin-top: 1px; }
+    .task .time {
+      color: var(--faint); font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .task.cards .time {
+      background: var(--pill); color: var(--faint);
+      border-radius: 4px; padding: 2px 6px;
+    }
+    .task.done { opacity: 0.72; }
+    .task.done .name { text-decoration: line-through; color: var(--faint); }
+    .status {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 1.5px solid var(--status-line); display: inline-block;
+    }
+    .status.on {
+      background: var(--status-on); border-color: var(--status-on);
+      box-shadow: inset 0 0 0 3px var(--card);
+    }
+    .now {
+      display: flex; align-items: center; gap: 8px;
+      margin: 2px 0 8px; color: var(--now); font-size: 11px; font-weight: 700;
+    }
+    .now i { flex: 1; height: 1px; background: var(--now); display: block; }
+    .now b {
+      background: var(--now); color: var(--now-ink);
+      border-radius: 4px; padding: 1px 6px; font-weight: 700;
+    }
+    .side { display: flex; flex-direction: column; gap: 12px; }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line-c);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow);
+      padding: 12px;
+    }
+    .panel h4 { margin: 0 0 8px; font-size: 13px; font-weight: 650; }
+    .cal-item {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px; align-items: center; margin-bottom: 6px;
+    }
+    .cal-item .when { font-size: 11px; font-weight: 700; color: var(--faint); white-space: nowrap; }
+    .cal-item.today .when { color: var(--accent); }
+    .chip {
+      display: block; font-size: 12px; font-weight: 650; line-height: 1.2;
+      padding: 5px 8px; border-radius: var(--chip-radius);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      min-width: 0;
+      background: var(--fill); color: var(--inkchip);
+      border-left: var(--chip-bar);
+      box-shadow: var(--chip-shadow);
+    }
+    .heat { display: flex; gap: 3px; flex-wrap: wrap; }
+    .sq { width: 16px; height: 16px; border-radius: 3px; }
+    .sq.empty { background: transparent; border: 1px solid var(--line-c); }
+    .menu { padding: 0; overflow: hidden; }
+    .menu .mh { padding: 12px 14px; border-bottom: 1px solid var(--line-c); background: var(--menu-head); }
+    .menu .mh strong { display: block; font-size: 14px; }
+    .menu .mh span { color: var(--faint); font-size: 12px; }
+    .action {
+      margin: 6px 8px; padding: 8px 10px; border-radius: var(--action-radius);
+      background: var(--abg); color: var(--afg); font-weight: 600; font-size: 13px;
+    }
+    .menu .close {
+      margin: 4px 8px 10px auto; display: block; width: fit-content;
+      background: var(--close-bg); color: var(--close-fg);
+      border-radius: var(--action-radius); padding: 6px 12px; font-size: 13px; font-weight: 650;
+    }
+    .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .sw {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--sheet); border: 1px solid var(--line); border-radius: 999px;
+      padding: 3px 8px 3px 3px; font-size: 11px; color: var(--muted);
+    }
+    .sw i { width: 14px; height: 14px; border-radius: 50%; display: block; border: 1px solid rgba(0,0,0,.08); }
+    .note { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="lede">
+      <h1>Color directions</h1>
+      <p>Same Wednesday screen in each direction: Day list, a week of calendar chips, the stats heatmap, and the event menu. Current is the reference. A, B, and C are the choices. A and B share goal-type colors; only the shell changes. C keeps color to a thin bar.</p>
+    </div>
+    <nav class="jumps">
+      <a href="#current">Current</a>
+      <a href="#warm">A · Warm paper</a>
+      <a href="#warm-dark">A · Dark</a>
+      <a href="#cool">B · Cool slate</a>
+      <a href="#quiet">C · Quiet ink</a>
+    </nav>
+    <div id="root"></div>
+  </div>
+  <script>
+    const TYPES_LIGHT = {
+      directive:   { fill: "#E4DDF0", ink: "#5C4E78", solid: "#8B7CB3" },
+      project:     { fill: "#D5E4EC", ink: "#2F5568", solid: "#5B8BA0" },
+      achievement: { fill: "#F0D9D6", ink: "#7A4545", solid: "#B87A7A" },
+      routine:     { fill: "#F0E6C8", ink: "#6B5428", solid: "#B8A06D" },
+      task:        { fill: "#DCE6D8", ink: "#3E5A3E", solid: "#7A9A7A" },
+      event:       { fill: "#F0E0D0", ink: "#6B4A32", solid: "#B88D6D" },
+    };
+    const TYPES_DARK = {
+      directive:   { fill: "#3A3348", ink: "#D9D0E8", solid: "#8B7CB3" },
+      project:     { fill: "#2A3C46", ink: "#C5D8E2", solid: "#5B8BA0" },
+      achievement: { fill: "#4A3332", ink: "#F0D0CC", solid: "#B87A7A" },
+      routine:     { fill: "#453C28", ink: "#F0E2C0", solid: "#B8A06D" },
+      task:        { fill: "#2E3C2E", ink: "#D4E4D0", solid: "#7A9A7A" },
+      event:       { fill: "#453528", ink: "#F0DCC8", solid: "#B88D6D" },
+    };
+    const PRIORITY = { high: "#C45B5B", medium: "#B8834A", low: "#7A8A9A" };
+
+    const TODO = [
+      { name: "Morning run", time: "7:00 AM", type: "routine", priority: "medium" },
+      { name: "Write proposal", time: "9:30 AM", type: "task", priority: "high" },
+      { name: "Team sync", time: "11:00 AM", type: "event", priority: "low" },
+      { name: "Ship onboarding", time: "2:00 PM", type: "project", priority: "high" },
+      { now: "4:22 PM" },
+      { name: "Cook dinner", time: "5:30 PM", type: "routine", priority: "medium" },
+    ];
+    const DONE = [
+      { name: "Weekly review", time: "8:00 AM", type: "directive", done: true },
+      { name: "Q3 milestone", time: "3:00 PM", type: "achievement", done: true },
+    ];
+    const WEEK = [
+      { d: "MON", n: 28, events: [{ type: "routine", name: "Morning run" }] },
+      { d: "TUE", n: 29, events: [{ type: "event", name: "Team sync" }] },
+      { d: "WED", n: 30, today: true, events: [{ type: "task", name: "Write proposal" }, { type: "project", name: "Onboarding" }] },
+      { d: "THU", n: 1, events: [{ type: "achievement", name: "Milestone" }] },
+      { d: "FRI", n: 2, events: [{ type: "directive", name: "Review" }] },
+    ];
+    const SCORES = [0, 0.25, 0.5, 0.75, 1, null, 0.15, 0.6, 0.9, 0.35, null, 0.8, 0.45, 1];
+
+    const OPTIONS = [
+      {
+        id: "current",
+        kicker: "Reference",
+        title: "Current",
+        blurb: "Cool gray page, sky-blue buttons, gray task cards with a priority stripe, and goal types as solid mid-tone blocks with white text. The event menu pre-colors every action.",
+        mode: "current",
+        dark: false,
+        shell: {
+          page: "#f5f7fa", card: "#ffffff", elev: "#f7fafc", line: "#e2e8f0",
+          ink: "#2d3748", faint: "#718096", accent: "#4299e1", accentInk: "#ffffff",
+          nav: "#ffffff", navText: "#4a5568", navOn: "#4a5568", navOnBg: "transparent",
+          today: "rgba(66,153,225,0.12)", now: "#e53e3e", nowInk: "#ffffff",
+          statusOn: "#5B9A6B", statusLine: "#cbd5e0", pill: "#edf2f7",
+          menuHead: "#f8f8f8", shadow: "0 1px 3px rgba(0,0,0,.08)",
+          navShadow: "0 1px 2px rgba(0,0,0,.04)", btnShadow: "0 1px 2px rgba(0,0,0,.12)",
+          title: "26px", radiusCard: "12px", radiusCtl: "8px",
+          chipRadius: "4px", actionRadius: "4px",
+        },
+      },
+      {
+        id: "warm",
+        kicker: "Option A",
+        recommend: true,
+        title: "Warm paper",
+        blurb: "Stone page, one deep-slate accent, and goal types as a tint with dark ink plus a 3px bar. Rows sit flat inside the column. The menu is neutral; only Delete is red.",
+        mode: "tint",
+        dark: false,
+        shell: {
+          page: "#F4F1EB", card: "#FFFCF8", elev: "#EBE6DE", line: "#E3DCD2",
+          ink: "#2C2825", faint: "#8A837A", accent: "#3D6B8C", accentInk: "#ffffff",
+          nav: "#F4F1EB", navText: "#5C564E", navOn: "#3D6B8C", navOnBg: "#EBE6DE",
+          today: "rgba(61,107,140,0.10)", now: "#3D6B8C", nowInk: "#ffffff",
+          statusOn: "#3E6B4A", statusLine: "#D4CBBF", pill: "transparent",
+          menuHead: "#FFFCF8", shadow: "none", navShadow: "none", btnShadow: "none",
+          title: "20px", radiusCard: "12px", radiusCtl: "8px",
+          chipRadius: "6px", actionRadius: "8px",
+        },
+      },
+      {
+        id: "warm-dark",
+        kicker: "Option A",
+        title: "Warm paper, dark",
+        blurb: "Same system after dark. Warm near-black surfaces, lighter slate accent, and the same hues flipped to deep fills with light ink.",
+        mode: "tint",
+        dark: true,
+        shell: {
+          page: "#161412", card: "#221F1C", elev: "#2C2824", line: "#3A342E",
+          ink: "#F3EDE6", faint: "#8A8178", accent: "#8FB4C9", accentInk: "#161412",
+          nav: "#161412", navText: "#C4BBB2", navOn: "#8FB4C9", navOnBg: "#2C2824",
+          today: "rgba(143,180,201,0.16)", now: "#8FB4C9", nowInk: "#161412",
+          statusOn: "#7DAA8A", statusLine: "#3A342E", pill: "transparent",
+          menuHead: "#221F1C", shadow: "none", navShadow: "none", btnShadow: "none",
+          title: "20px", radiusCard: "12px", radiusCtl: "8px",
+          chipRadius: "6px", actionRadius: "8px",
+        },
+      },
+      {
+        id: "cool",
+        kicker: "Option B",
+        title: "Cool slate",
+        blurb: "The same tinted chips and flat rows as A, on a cool gray shell closer to the app today. Choose this if warm paper feels too beige.",
+        mode: "tint",
+        dark: false,
+        shell: {
+          page: "#F2F4F6", card: "#FFFFFF", elev: "#E7ECF1", line: "#D5DDE5",
+          ink: "#1C2833", faint: "#5E6B78", accent: "#2F5D7C", accentInk: "#ffffff",
+          nav: "#F2F4F6", navText: "#5E6B78", navOn: "#2F5D7C", navOnBg: "#E7ECF1",
+          today: "rgba(47,93,124,0.10)", now: "#2F5D7C", nowInk: "#ffffff",
+          statusOn: "#3E6B4A", statusLine: "#C5D0DA", pill: "transparent",
+          menuHead: "#FFFFFF", shadow: "none", navShadow: "none", btnShadow: "none",
+          title: "20px", radiusCard: "12px", radiusCtl: "8px",
+          chipRadius: "6px", actionRadius: "8px",
+        },
+      },
+      {
+        id: "quiet",
+        kicker: "Option C",
+        title: "Quiet ink",
+        blurb: "Near-white paper and a near-black accent. Goal type is only the 3px bar and a word. Calendar chips are not filled. The heatmap is one ink, light to dark.",
+        mode: "bar",
+        dark: false,
+        shell: {
+          page: "#F6F5F2", card: "#FFFFFF", elev: "#F6F5F2", line: "#E4E1DB",
+          ink: "#1C1B19", faint: "#6F6B64", accent: "#1C1B19", accentInk: "#ffffff",
+          nav: "#F6F5F2", navText: "#6F6B64", navOn: "#1C1B19", navOnBg: "#E7E4DE",
+          today: "rgba(28,27,25,0.05)", now: "#1C1B19", nowInk: "#ffffff",
+          statusOn: "#1C1B19", statusLine: "#C8C4BC", pill: "transparent",
+          menuHead: "#FFFFFF", shadow: "none", navShadow: "none", btnShadow: "none",
+          title: "20px", radiusCard: "12px", radiusCtl: "8px",
+          chipRadius: "6px", actionRadius: "8px",
+        },
+      },
+    ];
+
+    function mix(a, b, t) {
+      return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
+    }
+    function heatColor(score, opt) {
+      if (score == null) return null;
+      if (opt.mode === "current") {
+        if (score === 0) return "rgb(255,0,0)";
+        if (score <= 0.5) {
+          const g = Math.round(255 * (score * 2));
+          return `rgb(255,${g},0)`;
+        }
+        const r = Math.round(255 * (1 - (score - 0.5) * 2));
+        return `rgb(${r},255,0)`;
+      }
+      if (opt.mode === "bar") return mix([232, 229, 222], [28, 27, 25], score);
+      const stops = opt.dark
+        ? [[140, 96, 96], [150, 124, 112], [120, 116, 108], [96, 128, 110], [125, 170, 138]]
+        : [[196, 138, 138], [214, 186, 170], [214, 210, 198], [176, 196, 176], [110, 148, 116]];
+      const t = Math.max(0, Math.min(0.999, score)) * (stops.length - 1);
+      const i = Math.floor(t);
+      return mix(stops[i], stops[i + 1], t - i);
+    }
+    function chipStyle(opt, type) {
+      const palette = opt.dark ? TYPES_DARK : TYPES_LIGHT;
+      const t = palette[type];
+      if (opt.mode === "current") {
+        return `background:${t.solid};color:#fff;border-left:0;box-shadow:none`;
+      }
+      if (opt.mode === "bar") {
+        return `background:${opt.shell.card};color:${opt.shell.ink};border-left:3px solid ${t.ink};box-shadow:none`;
+      }
+      return `background:${t.fill};color:${t.ink};border-left:3px solid ${t.ink};box-shadow:none`;
+    }
+    function barColor(opt, item) {
+      const palette = opt.dark ? TYPES_DARK : TYPES_LIGHT;
+      if (opt.mode === "current") return PRIORITY[item.priority] || "#9AA0A8";
+      return palette[item.type].ink;
+    }
+    function taskHTML(opt, item) {
+      if (item.now) {
+        return `<div class="now"><i></i><b>${item.now}</b><i></i></div>`;
+      }
+      const cls = opt.mode === "current" ? "task cards" : "task rows";
+      const done = item.done ? " done" : "";
+      const label = item.type[0].toUpperCase() + item.type.slice(1);
+      const pri = item.priority === "high" && opt.mode !== "current" ? " · High" : "";
+      const time = opt.mode === "current"
+        ? `<span class="time">${item.time}</span>`
+        : `<span class="time">${item.time}</span>`;
+      return `<div class="${cls}${done}">
+        <div class="bar" style="background:${barColor(opt, item)}"></div>
+        <div>
+          <div class="name">${item.name}</div>
+          <div class="meta">${label}${pri}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">${time}<span class="status${item.done ? " on" : ""}"></span></div>
+      </div>`;
+    }
+    function actions(opt) {
+      if (opt.mode === "current") {
+        return [
+          ["Complete", "rgba(91,154,107,.18)", "#2e7d32"],
+          ["Edit", "rgba(184,131,74,.20)", "#ef6c00"],
+          ["Duplicate", "rgba(66,153,225,.18)", "#1976d2"],
+          ["Delete", "rgba(196,91,91,.18)", "#c62828"],
+        ].map(([n, bg, fg]) => `<div class="action" style="--abg:${bg};--afg:${fg}">${n}</div>`).join("");
+      }
+      const ink = opt.shell.ink;
+      const danger = opt.dark ? "#E3A3A3" : "#A33B3B";
+      const bg = "transparent";
+      return ["Complete", "Edit", "Duplicate", "Delete"].map((n) => {
+        const fg = n === "Delete" ? danger : ink;
+        return `<div class="action" style="--abg:${bg};--afg:${fg}">${n}</div>`;
+      }).join("");
+    }
+    function swatch(name, color) {
+      return `<span class="sw"><i style="background:${color}"></i>${name} ${color}</span>`;
+    }
+    function render(opt) {
+      const s = opt.shell;
+      const palette = opt.dark ? TYPES_DARK : TYPES_LIGHT;
+      const style = `
+        --page-bg:${s.page};--card:${s.card};--elev:${s.elev};--line-c:${s.line};
+        --ink-c:${s.ink};--faint:${s.faint};--accent:${s.accent};--accent-ink:${s.accentInk};
+        --nav-bg:${s.nav};--nav-text:${s.navText};--nav-on:${s.navOn};--nav-on-bg:${s.navOnBg};
+        --today:${s.today};--now:${s.now};--now-ink:${s.nowInk};
+        --status-on:${s.statusOn};--status-line:${s.statusLine};--pill:${s.pill};
+        --menu-head:${s.menuHead};--shadow:${s.shadow};--nav-shadow:${s.navShadow};--btn-shadow:${s.btnShadow};
+        --title:${s.title};--radius-card:${s.radiusCard};--radius-ctl:${s.radiusCtl};
+        --chip-radius:${s.chipRadius};--action-radius:${s.actionRadius};
+        --cell:${s.card};
+        --close-bg:${opt.mode === "current" ? "#718096" : "transparent"};
+        --close-fg:${opt.mode === "current" ? "#ffffff" : s.faint};
+      `;
+      const nav = ["Day", "Calendar", "Network", "Projects", "Stats", "List", "Settings"].map((n) => {
+        const on = n === "Day" && opt.mode !== "current";
+        return `<span class="link${on ? " on" : ""}">${n}</span>`;
+      }).join("");
+      const week = [
+        { when: "Mon 28", type: "routine", name: "Morning run" },
+        { when: "Tue 29", type: "event", name: "Team sync" },
+        { when: "Wed 30", type: "task", name: "Write proposal", today: true },
+        { when: "Wed 30", type: "project", name: "Ship onboarding", today: true },
+        { when: "Thu 1", type: "achievement", name: "Q3 milestone" },
+        { when: "Fri 2", type: "directive", name: "Weekly review" },
+      ].map((row) => `<div class="cal-item${row.today ? " today" : ""}"><span class="chip" style="${chipStyle(opt, row.type)}">${row.name}</span><span class="when">${row.when}</span></div>`).join("");
+      const heat = SCORES.map((score) => {
+        const c = heatColor(score, opt);
+        return c ? `<i class="sq" style="background:${c}"></i>` : `<i class="sq empty"></i>`;
+      }).join("");
+      const typeSwatches = Object.entries(palette).map(([name, t]) => {
+        const shown = opt.mode === "current" ? t.solid : (opt.mode === "bar" ? t.ink : t.fill);
+        return swatch(name, shown);
+      }).join("");
+      return `<section class="sheet" id="${opt.id}">
+        <div class="sheet-head">
+          <div class="kicker">${opt.kicker}${opt.recommend ? ' <span class="tag">Recommended</span>' : ""}</div>
+          <h2>${opt.title}</h2>
+          <p>${opt.blurb}</p>
+        </div>
+        <div class="app" style="${style}">
+          <div class="nav">${nav}<span class="spacer"></span><span class="link">Sign out</span></div>
+          <div class="body">
+            <div>
+              <div class="dayhead">
+                <div>
+                  <h3>Wednesday, September 30</h3>
+                  <div class="sub">4 scheduled · 2 done</div>
+                </div>
+                <button class="btn">New</button>
+              </div>
+              <div class="cols">
+                <section class="col">
+                  <h4>To do <span class="count">5</span></h4>
+                  ${TODO.map((item) => taskHTML(opt, item)).join("")}
+                </section>
+                <section class="col">
+                  <h4>Done <span class="count">2</span></h4>
+                  ${DONE.map((item) => taskHTML(opt, item)).join("")}
+                </section>
+              </div>
+            </div>
+            <aside class="side">
+              <div class="panel">
+                <h4>Calendar</h4>
+                <div class="week">${week}</div>
+              </div>
+              <div class="panel">
+                <h4>Stats</h4>
+                <div class="heat">${heat}</div>
+              </div>
+              <div class="panel menu">
+                <div class="mh"><strong>Write proposal</strong><span>Task</span></div>
+                ${actions(opt)}
+                <div class="close">Close</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+        <div class="swatches">
+          ${swatch("page", s.page)}
+          ${swatch("card", s.card)}
+          ${swatch("accent", s.accent)}
+          ${typeSwatches}
+        </div>
+        <div class="note">${opt.mode === "current"
+          ? "Day cards use the priority stripe (red, amber, gray), not the goal color. Goal color only appears on the calendar, in a different family from the blue button."
+          : opt.mode === "bar"
+            ? "Type color is the bar only. High priority is the word High, not a second stripe."
+            : "The bar and the chip ink are the goal type. High priority is a word. The now marker uses the accent, not red."}</div>
+      </section>`;
+    }
+    document.getElementById("root").innerHTML = OPTIONS.map(render).join("");
+  </script>
+</body>
+</html>

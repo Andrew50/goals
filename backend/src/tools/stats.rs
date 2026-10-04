@@ -4,6 +4,8 @@ use chrono_tz::Tz;
 use neo4rs::{query, Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration as StdDuration, Instant};
 
 fn priority_to_weight(priority: &str) -> f64 {
     match priority {
@@ -56,6 +58,7 @@ fn calculate_recursive_stats_internal(
     goals_map: &HashMap<i64, RawGoalData>,
     cache: &mut HashMap<i64, RecursiveStats>,
     visited: &mut HashSet<i64>,
+    with_daily: bool,
 ) -> RecursiveStats {
     if let Some(cached) = cache.get(&goal_id) {
         return cached.clone();
@@ -94,13 +97,15 @@ fn calculate_recursive_stats_internal(
             total_duration_minutes += event.duration;
         }
 
-        let day = daily_stats.entry(event.date.clone()).or_default();
-        day.total_count += 1;
-        day.weighted_total += weight;
-        if event.completed {
-            day.completed_count += 1;
-            day.weighted_completed += weight;
-            day.duration += event.duration;
+        if with_daily {
+            let day = daily_stats.entry(event.date.clone()).or_default();
+            day.total_count += 1;
+            day.weighted_total += weight;
+            if event.completed {
+                day.completed_count += 1;
+                day.weighted_completed += weight;
+                day.duration += event.duration;
+            }
         }
     }
 
@@ -114,7 +119,13 @@ fn calculate_recursive_stats_internal(
 
     for &child_id in &goal.child_ids {
         if let Some(child_raw) = goals_map.get(&child_id) {
-            let child_stats = calculate_recursive_stats_internal(child_id, goals_map, cache, visited);
+            let child_stats = calculate_recursive_stats_internal(
+                child_id,
+                goals_map,
+                cache,
+                visited,
+                with_daily,
+            );
             
             // Flat aggregates
             total_events += child_stats.total_events;
@@ -126,6 +137,10 @@ fn calculate_recursive_stats_internal(
             let weight = priority_to_weight(&child_raw.priority);
             child_completion_sum += child_stats.weighted_completion_rate * weight;
             child_weight_sum += weight;
+
+            if !with_daily {
+                continue;
+            }
 
             // Aggregate child's daily stats into parent's daily stats
             for (date, child_daily) in child_stats.daily_stats {
@@ -160,6 +175,7 @@ fn calculate_recursive_stats_internal(
 
     // 4. Finalize daily completion rates
     // Combine children's daily rates and direct events' completions for each day
+    if with_daily {
     for (date, day) in daily_stats.iter_mut() {
         if let Some(&(child_sum, child_w_sum)) = daily_child_agg.get(date) {
             // day.weighted_completed/total currently contain direct events for this day
@@ -171,6 +187,7 @@ fn calculate_recursive_stats_internal(
                 day.weighted_total = daily_combined_weight;
             }
         }
+    }
     }
 
     let stats = RecursiveStats {
@@ -238,7 +255,7 @@ fn tz_year_range_utc_millis(year: i32, tz: &Tz) -> (i64, i64) {
     (start, end)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailyStats {
     pub date: String,
     pub score: f64,
@@ -248,7 +265,7 @@ pub struct DailyStats {
     pub weighted_completed: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YearStats {
     pub year: i32,
     pub daily_stats: Vec<DailyStats>,
@@ -406,134 +423,203 @@ pub struct DailyEffortPoint {
     pub weighted_score: f64,
 }
 
-pub async fn get_year_stats(
+const YEAR_STATS_TTL: StdDuration = StdDuration::from_secs(5 * 60);
+
+struct YearCacheEntry {
+    stats: YearStats,
+    stored_at: Instant,
+}
+
+type YearStatsCache = Mutex<HashMap<(i64, i32, String), YearCacheEntry>>;
+
+fn year_stats_cache() -> &'static YearStatsCache {
+    static CACHE: OnceLock<YearStatsCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn invalidate_user_year_stats(user_id: i64) {
+    if let Ok(mut cache) = year_stats_cache().lock() {
+        cache.retain(|(uid, _, _), _| *uid != user_id);
+    }
+}
+
+pub fn invalidate_all_year_stats() {
+    if let Ok(mut cache) = year_stats_cache().lock() {
+        cache.clear();
+    }
+}
+
+fn cached_year_stats(user_id: i64, year: i32, tz: &str) -> Option<YearStats> {
+    let mut cache = year_stats_cache().lock().ok()?;
+    let key = (user_id, year, tz.to_string());
+    let fresh = cache.get(&key).map(|entry| {
+        entry.stored_at.elapsed() < YEAR_STATS_TTL
+    })?;
+    if fresh {
+        cache.get(&key).map(|entry| entry.stats.clone())
+    } else {
+        cache.remove(&key);
+        None
+    }
+}
+
+fn store_year_stats(user_id: i64, year: i32, tz: &str, stats: &YearStats) {
+    if let Ok(mut cache) = year_stats_cache().lock() {
+        cache.insert(
+            (user_id, year, tz.to_string()),
+            YearCacheEntry {
+                stats: stats.clone(),
+                stored_at: Instant::now(),
+            },
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DayTotals {
+    total_events: i32,
+    completed_events: i32,
+    weighted_total: f64,
+    weighted_completed: f64,
+}
+
+fn fill_year_daily_stats(year: i32, totals: &HashMap<String, DayTotals>) -> Vec<DailyStats> {
+    let start_date = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
+    let end_date = NaiveDate::from_ymd_opt(year, 12, 31).unwrap();
+    let mut daily_stats = Vec::new();
+    let mut current_date = start_date;
+    while current_date <= end_date {
+        let date_str = current_date.format("%Y-%m-%d").to_string();
+        let day = totals.get(&date_str).copied().unwrap_or_default();
+        let score = if day.weighted_total > 0.0 {
+            day.weighted_completed / day.weighted_total
+        } else {
+            0.0
+        };
+        daily_stats.push(DailyStats {
+            date: date_str,
+            score,
+            total_events: day.total_events,
+            completed_events: day.completed_events,
+            weighted_total: day.weighted_total,
+            weighted_completed: day.weighted_completed,
+        });
+        current_date += Duration::days(1);
+    }
+    daily_stats
+}
+
+fn row_i64(row: &neo4rs::Row, key: &str) -> i64 {
+    row.get::<i64>(key)
+        .or_else(|_| row.get::<f64>(key).map(|n| n as i64))
+        .unwrap_or(0)
+}
+
+fn row_f64(row: &neo4rs::Row, key: &str) -> f64 {
+    row.get::<f64>(key)
+        .or_else(|_| row.get::<i64>(key).map(|n| n as f64))
+        .unwrap_or(0.0)
+}
+
+fn json_f64(value: &serde_json::Value) -> f64 {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|n| n as f64))
+        .or_else(|| value.as_u64().map(|n| n as f64))
+        .unwrap_or(60.0)
+}
+
+pub async fn load_year_stats(
     graph: Graph,
     user_id: i64,
     year: Option<i32>,
     tz: String,
-) -> Result<Json<YearStats>, (StatusCode, String)> {
+) -> Result<YearStats, (StatusCode, String)> {
     let target_year = year.unwrap_or_else(|| Utc::now().year());
     let tz = normalize_tz(&tz)?;
     let tz_parsed: Tz = tz
         .parse()
         .expect("normalize_tz validated timezone; parse should not fail");
 
-    // Get start and end timestamps for the year
-    let start_date = NaiveDate::from_ymd_opt(target_year, 1, 1).unwrap();
-    let end_date = NaiveDate::from_ymd_opt(target_year, 12, 31).unwrap();
+    if let Some(cached) = cached_year_stats(user_id, target_year, &tz) {
+        return Ok(cached);
+    }
 
-    // Use the user's timezone for year boundaries so "year" matches their local calendar.
     let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
-    // Query all events (Goal nodes with goal_type='event') linked to tasks, achievements, and routines for the year
-    // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
-    // Exclude skipped events from metrics entirely
+    // One row per local day. Aggregation stays in Neo4j so Bolt does not stream every event.
     let query_str = "
-        MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
+        MATCH (g:Goal)
+        WHERE g.user_id = $user_id
+          AND g.goal_type IN ['task', 'achievement', 'routine']
+        MATCH (g)-[:HAS_EVENT]->(e:Goal)
         WHERE e.goal_type = 'event'
-        AND g.user_id = $user_id
-        AND (g.goal_type = 'task' OR g.goal_type = 'achievement' OR g.goal_type = 'routine')
-        AND e.scheduled_timestamp >= $start_timestamp
-        AND e.scheduled_timestamp <= $end_timestamp
-        AND (e.is_deleted IS NULL OR e.is_deleted = false)
-        WITH e, g, 
-             (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
-             timestamp() as current_time,
-             COALESCE(e.resolution_status, 'pending') as status
-        WHERE event_end_time <= current_time
-        AND status <> 'skipped'
-        WITH e, g, status,
-             datetime({epochMillis: e.scheduled_timestamp, timezone: $tz}) as dt
-        RETURN toString(date(dt)) as date,
-               CASE WHEN status = 'completed' THEN true ELSE false END as completed,
-               COALESCE(e.priority, g.priority, 'medium') as priority
+          AND coalesce(e.is_deleted, false) = false
+          AND e.scheduled_timestamp >= $start_timestamp
+          AND e.scheduled_timestamp <= $end_timestamp
+          AND coalesce(e.resolution_status, 'pending') <> 'skipped'
+          AND toFloat(e.scheduled_timestamp) + toFloat(coalesce(e.duration, e.duration_minutes, 60)) * 60000.0 <= timestamp()
+        WITH date(datetime({epochMillis: e.scheduled_timestamp, timezone: $tz})) AS d,
+             CASE WHEN coalesce(e.resolution_status, 'pending') = 'completed' THEN 1 ELSE 0 END AS completed,
+             CASE coalesce(e.priority, g.priority, 'medium')
+               WHEN 'none' THEN 0.0
+               WHEN 'low' THEN 1.0
+               WHEN 'high' THEN 3.0
+               ELSE 2.0
+             END AS weight
+        RETURN toString(d) AS date,
+               count(*) AS total_events,
+               sum(completed) AS completed_events,
+               sum(weight) AS weighted_total,
+               sum(CASE WHEN completed = 1 THEN weight ELSE 0.0 END) AS weighted_completed
     ";
 
     let query = query(query_str)
         .param("user_id", user_id)
         .param("start_timestamp", start_timestamp)
         .param("end_timestamp", end_timestamp)
-        .param("tz", tz);
+        .param("tz", tz.clone());
 
-    match graph.execute(query).await {
-        Ok(mut result) => {
-            let mut daily_events: HashMap<String, Vec<(bool, String)>> = HashMap::new();
+    let mut result = graph.execute(query).await.map_err(|e| {
+        eprintln!("Error fetching year stats: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to fetch year stats: {}", e),
+        )
+    })?;
 
-            while let Ok(Some(row)) = result.next().await {
-                let date = row.get::<String>("date").unwrap_or_default();
-                let completed = row.get::<bool>("completed").unwrap_or(false);
-                let priority = row
-                    .get::<String>("priority")
-                    .unwrap_or_else(|_| "medium".to_string());
-
-                daily_events
-                    .entry(date)
-                    .or_default()
-                    .push((completed, priority));
-            }
-
-            // Calculate daily stats for each day of the year
-            let mut daily_stats = Vec::new();
-            let mut current_date = start_date;
-
-            while current_date <= end_date {
-                let date_str = current_date.format("%Y-%m-%d").to_string();
-                let events = daily_events.get(&date_str).cloned().unwrap_or_default();
-
-                let mut total_events = 0;
-                let mut completed_events = 0;
-                let mut weighted_total = 0.0;
-                let mut weighted_completed = 0.0;
-
-                for (completed, priority) in events {
-                    let weight = match priority.as_str() {
-                        "none" => 0.0,
-                        "low" => 1.0,
-                        "medium" => 2.0,
-                        "high" => 3.0,
-                        _ => 2.0, // default to medium
-                    };
-
-                    total_events += 1;
-                    weighted_total += weight;
-
-                    if completed {
-                        completed_events += 1;
-                        weighted_completed += weight;
-                    }
-                }
-
-                let score = if weighted_total > 0.0 {
-                    weighted_completed / weighted_total
-                } else {
-                    0.0
-                };
-
-                daily_stats.push(DailyStats {
-                    date: date_str,
-                    score,
-                    total_events,
-                    completed_events,
-                    weighted_total,
-                    weighted_completed,
-                });
-
-                current_date += Duration::days(1);
-            }
-
-            Ok(Json(YearStats {
-                year: target_year,
-                daily_stats,
-            }))
+    let mut totals: HashMap<String, DayTotals> = HashMap::new();
+    while let Ok(Some(row)) = result.next().await {
+        let date = row.get::<String>("date").unwrap_or_default();
+        if date.is_empty() {
+            continue;
         }
-        Err(e) => {
-            eprintln!("Error fetching year stats: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to fetch year stats: {}", e),
-            ))
-        }
+        totals.insert(
+            date,
+            DayTotals {
+                total_events: row_i64(&row, "total_events") as i32,
+                completed_events: row_i64(&row, "completed_events") as i32,
+                weighted_total: row_f64(&row, "weighted_total"),
+                weighted_completed: row_f64(&row, "weighted_completed"),
+            },
+        );
     }
+
+    let stats = YearStats {
+        year: target_year,
+        daily_stats: fill_year_daily_stats(target_year, &totals),
+    };
+    store_year_stats(user_id, target_year, &tz, &stats);
+    Ok(stats)
+}
+
+pub async fn get_year_stats(
+    graph: Graph,
+    user_id: i64,
+    year: Option<i32>,
+    tz: String,
+) -> Result<Json<YearStats>, (StatusCode, String)> {
+    load_year_stats(graph, user_id, year, tz).await.map(Json)
 }
 
 pub async fn get_effort_stats(
@@ -578,38 +664,35 @@ pub async fn get_effort_stats(
         Some(_) => None,
     };
 
-    // Fetch all non-event goals and their relationships for the user
+    // Pattern comprehensions avoid a children×events row explosion and a phantom event.
     let tree_query_str = r#"
         MATCH (g:Goal)
         WHERE g.user_id = $user_id AND g.goal_type <> 'event'
-        OPTIONAL MATCH (g)-[:CHILD]->(child:Goal)
-        WHERE child.user_id = $user_id AND child.goal_type <> 'event'
-        OPTIONAL MATCH (g)-[:HAS_EVENT]->(e:Goal)
-        WHERE e.goal_type = 'event'
-          AND (e.is_deleted IS NULL OR e.is_deleted = false)
-          AND e.scheduled_timestamp < timestamp()
-          AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
-          AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
         RETURN id(g) AS id,
                g.name AS name,
                g.goal_type AS goal_type,
                COALESCE(g.priority, 'medium') AS priority,
-               collect(DISTINCT id(child)) AS child_ids,
-               collect(DISTINCT {
-                   status: COALESCE(e.resolution_status, 'pending'),
-                   priority: COALESCE(e.priority, g.priority, 'medium'),
-                   duration: CASE
-                      WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
-                        THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / (1000.0*60.0)
-                      ELSE toFloat(COALESCE(e.duration_minutes, e.duration, 60))
-                    END,
-                   date: toString(date(datetime({epochMillis: e.scheduled_timestamp, timezone: $tz})))
-               }) AS events
+               [(g)-[:CHILD]->(child:Goal)
+                  WHERE child.user_id = $user_id AND child.goal_type <> 'event'
+                  | id(child)] AS child_ids,
+               [(g)-[:HAS_EVENT]->(e:Goal)
+                  WHERE e.goal_type = 'event'
+                    AND coalesce(e.is_deleted, false) = false
+                    AND e.scheduled_timestamp < timestamp()
+                    AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
+                    AND coalesce(e.resolution_status, 'pending') <> 'skipped'
+                  | {
+                      status: coalesce(e.resolution_status, 'pending'),
+                      priority: coalesce(e.priority, g.priority, 'medium'),
+                      duration: CASE
+                        WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
+                          THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / 60000.0
+                        ELSE toFloat(coalesce(e.duration, e.duration_minutes, 60))
+                      END
+                    }] AS events
     "#;
 
-    let mut q = query(tree_query_str)
-        .param("user_id", user_id)
-        .param("tz", tz_parsed.to_string());
+    let mut q = query(tree_query_str).param("user_id", user_id);
 
     if let Some(start) = start_timestamp_opt {
         q = q.param("start_timestamp", start);
@@ -636,8 +719,8 @@ pub async fn get_effort_stats(
                         events.push(RawEventData {
                             completed: status == "completed",
                             priority: ev.get("priority").and_then(|v| v.as_str()).unwrap_or("medium").to_string(),
-                            duration: ev.get("duration").and_then(|v| v.as_f64()).unwrap_or(60.0),
-                            date: ev.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            duration: ev.get("duration").map(json_f64).unwrap_or(60.0),
+                            date: String::new(),
                         });
                     }
                 }
@@ -652,13 +735,19 @@ pub async fn get_effort_stats(
                 goal_ids.push(id);
             }
 
-            // Calculate recursive stats for all goals
+            // Scalar totals only. Daily series are built for the children endpoint.
             let mut cache = HashMap::new();
             let mut stats = Vec::new();
 
             for id in goal_ids {
                 let mut visited = HashSet::new();
-                let res = calculate_recursive_stats_internal(id, &goals_map, &mut cache, &mut visited);
+                let res = calculate_recursive_stats_internal(
+                    id,
+                    &goals_map,
+                    &mut cache,
+                    &mut visited,
+                    false,
+                );
                 
                 let goal = &goals_map[&id];
                 stats.push(EffortStat {
@@ -730,37 +819,41 @@ pub async fn get_goal_children_effort(
         Some(_) => None,
     };
 
-    // Fetch all non-event goals and their relationships for the user
+    // Only the expanded goal and its descendants. Daily dates stay on this path.
     let tree_query_str = r#"
-        MATCH (g:Goal)
+        MATCH (root:Goal)
+        WHERE id(root) = $goal_id AND root.user_id = $user_id AND root.goal_type <> 'event'
+        MATCH (root)-[:CHILD*0..20]->(g:Goal)
         WHERE g.user_id = $user_id AND g.goal_type <> 'event'
-        OPTIONAL MATCH (g)-[:CHILD]->(child:Goal)
-        WHERE child.user_id = $user_id AND child.goal_type <> 'event'
-        OPTIONAL MATCH (g)-[:HAS_EVENT]->(e:Goal)
-        WHERE e.goal_type = 'event'
-          AND (e.is_deleted IS NULL OR e.is_deleted = false)
-          AND e.scheduled_timestamp < timestamp()
-          AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
-          AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
+        WITH DISTINCT g
         RETURN id(g) AS id,
                g.name AS name,
                g.goal_type AS goal_type,
                COALESCE(g.priority, 'medium') AS priority,
-               collect(DISTINCT id(child)) AS child_ids,
-               collect(DISTINCT {
-                   status: COALESCE(e.resolution_status, 'pending'),
-                   priority: COALESCE(e.priority, g.priority, 'medium'),
-                   duration: CASE
-                      WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
-                        THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / (1000.0*60.0)
-                      ELSE toFloat(COALESCE(e.duration_minutes, e.duration, 60))
-                    END,
-                   date: toString(date(datetime({epochMillis: e.scheduled_timestamp, timezone: $tz})))
-               }) AS events
+               [(g)-[:CHILD]->(child:Goal)
+                  WHERE child.user_id = $user_id AND child.goal_type <> 'event'
+                  | id(child)] AS child_ids,
+               [(g)-[:HAS_EVENT]->(e:Goal)
+                  WHERE e.goal_type = 'event'
+                    AND coalesce(e.is_deleted, false) = false
+                    AND e.scheduled_timestamp < timestamp()
+                    AND ($start_timestamp IS NULL OR e.scheduled_timestamp >= $start_timestamp)
+                    AND coalesce(e.resolution_status, 'pending') <> 'skipped'
+                  | {
+                      status: coalesce(e.resolution_status, 'pending'),
+                      priority: coalesce(e.priority, g.priority, 'medium'),
+                      duration: CASE
+                        WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
+                          THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / 60000.0
+                        ELSE toFloat(coalesce(e.duration, e.duration_minutes, 60))
+                      END,
+                      date: toString(date(datetime({epochMillis: e.scheduled_timestamp, timezone: $tz})))
+                    }] AS events
     "#;
 
     let mut q = query(tree_query_str)
         .param("user_id", user_id)
+        .param("goal_id", goal_id)
         .param("tz", tz_parsed.to_string());
 
     if let Some(start) = start_timestamp_opt {
@@ -789,7 +882,7 @@ pub async fn get_goal_children_effort(
                         events.push(RawEventData {
                             completed: status == "completed",
                             priority: ev.get("priority").and_then(|v| v.as_str()).unwrap_or("medium").to_string(),
-                            duration: ev.get("duration").and_then(|v| v.as_f64()).unwrap_or(60.0),
+                            duration: ev.get("duration").map(json_f64).unwrap_or(60.0),
                             date: ev.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         });
                     }
@@ -815,7 +908,13 @@ pub async fn get_goal_children_effort(
             for child_id in root_goal_child_ids {
                 if let Some(child_raw) = goals_map.get(&child_id) {
                     let mut visited = HashSet::new();
-                    let res = calculate_recursive_stats_internal(child_id, &goals_map, &mut cache, &mut visited);
+                    let res = calculate_recursive_stats_internal(
+                        child_id,
+                        &goals_map,
+                        &mut cache,
+                        &mut visited,
+                        true,
+                    );
                     
                     // Convert daily stats to Vec<DailyEffortPoint>
                     let mut daily_stats: Vec<DailyEffortPoint> = res.daily_stats
@@ -869,9 +968,7 @@ pub async fn get_extended_stats(
     year: Option<i32>,
     tz: String,
 ) -> Result<Json<ExtendedStats>, (StatusCode, String)> {
-    // First get the daily stats
-    let year_stats_result = get_year_stats(graph.clone(), user_id, year, tz.clone()).await?;
-    let year_stats = year_stats_result.0;
+    let year_stats = load_year_stats(graph, user_id, year, tz).await?;
 
     // Aggregate into weekly and monthly stats
     let weekly_stats = aggregate_weekly_stats(&year_stats.daily_stats, year_stats.year);
@@ -1206,16 +1303,15 @@ pub async fn get_rescheduling_stats(
         AND em.move_timestamp >= $start_timestamp
         AND em.move_timestamp <= $end_timestamp
         AND em.move_type = 'reschedule'
-        MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
+        MATCH (e:Goal)
         WHERE id(e) = em.event_id
         AND e.goal_type = 'event'
-        AND g.user_id = $user_id
-        AND (g.goal_type = 'task' OR g.goal_type = 'achievement' OR g.goal_type = 'routine')
-        AND (e.is_deleted IS NULL OR e.is_deleted = false)
-        WITH em, e, g,
-             (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
-             timestamp() as current_time
-        WHERE event_end_time <= current_time
+        AND coalesce(e.is_deleted, false) = false
+        MATCH (g:Goal)-[:HAS_EVENT]->(e)
+        WHERE g.user_id = $user_id
+        AND g.goal_type IN ['task', 'achievement', 'routine']
+        WITH em, e, g
+        WHERE toFloat(e.scheduled_timestamp) + toFloat(coalesce(e.duration, e.duration_minutes, 60)) * 60000.0 <= timestamp()
         RETURN em.event_id as event_id,
                em.old_timestamp as old_timestamp,
                em.new_timestamp as new_timestamp,
@@ -1546,29 +1642,46 @@ pub async fn get_event_analytics(
     // Get start and end timestamps for the year
     let (start_timestamp, end_timestamp) = tz_year_range_utc_millis(target_year, &tz_parsed);
 
-    // Query all events with their parent information and duration
-    // Only include events that have passed their scheduled time (scheduled_timestamp + duration <= current_time)
+    // Group in the database. A year of events collapses to a few dozen bucket rows.
     let query_str = "
-        MATCH (e:Goal)<-[:HAS_EVENT]-(g:Goal)
+        MATCH (g:Goal)
+        WHERE g.user_id = $user_id
+          AND g.goal_type IN ['task', 'routine']
+        MATCH (g)-[:HAS_EVENT]->(e:Goal)
         WHERE e.goal_type = 'event'
-        AND g.user_id = $user_id
-        AND (g.goal_type = 'task' OR g.goal_type = 'routine')
-        AND e.scheduled_timestamp >= $start_timestamp
-        AND e.scheduled_timestamp <= $end_timestamp
-        AND (e.is_deleted IS NULL OR e.is_deleted = false)
-        AND COALESCE(e.resolution_status, 'pending') <> 'skipped'
-        WITH e, g,
-             (e.scheduled_timestamp + COALESCE(e.duration_minutes, e.duration, 60) * 60 * 1000) as event_end_time,
-             timestamp() as current_time,
-             COALESCE(e.resolution_status, 'pending') as status
-        WHERE event_end_time <= current_time
-        RETURN e.scheduled_timestamp as scheduled_timestamp,
-               COALESCE(e.end_timestamp, e.scheduled_timestamp + COALESCE(e.duration_minutes, 60) * 60 * 1000) as end_timestamp,
-               COALESCE(e.duration_minutes, 60) as duration_minutes,
-               CASE WHEN status = 'completed' THEN true ELSE false END as completed,
-               COALESCE(e.priority, g.priority, 'medium') as priority,
-               g.goal_type as parent_type,
-               g.name as parent_name
+          AND coalesce(e.is_deleted, false) = false
+          AND e.scheduled_timestamp >= $start_timestamp
+          AND e.scheduled_timestamp <= $end_timestamp
+          AND coalesce(e.resolution_status, 'pending') <> 'skipped'
+          AND toFloat(e.scheduled_timestamp) + toFloat(coalesce(e.duration, e.duration_minutes, 60)) * 60000.0 <= timestamp()
+        WITH CASE
+               WHEN e.end_timestamp IS NOT NULL AND e.end_timestamp > e.scheduled_timestamp
+                 THEN toFloat(e.end_timestamp - e.scheduled_timestamp) / 60000.0
+               ELSE toFloat(coalesce(e.duration, e.duration_minutes, 60))
+             END AS duration_minutes,
+             CASE WHEN coalesce(e.resolution_status, 'pending') = 'completed' THEN 1 ELSE 0 END AS completed,
+             coalesce(e.priority, g.priority, 'medium') AS priority,
+             g.goal_type AS parent_type,
+             CASE coalesce(e.priority, g.priority, 'medium')
+               WHEN 'none' THEN 0.0
+               WHEN 'low' THEN 1.0
+               WHEN 'high' THEN 3.0
+               ELSE 2.0
+             END AS weight
+        WITH duration_minutes, completed, priority, parent_type, weight,
+             CASE
+               WHEN toInteger(duration_minutes) <= 15 THEN '0-15 min'
+               WHEN toInteger(duration_minutes) <= 30 THEN '16-30 min'
+               WHEN toInteger(duration_minutes) <= 60 THEN '31-60 min'
+               WHEN toInteger(duration_minutes) <= 120 THEN '1-2 hours'
+               WHEN toInteger(duration_minutes) <= 240 THEN '2-4 hours'
+               ELSE '4+ hours'
+             END AS bucket
+        RETURN bucket, priority, parent_type,
+               count(*) AS total,
+               sum(completed) AS completed_count,
+               sum(duration_minutes) AS duration_sum,
+               sum(weight) AS weight_sum
     ";
 
     let query = query(query_str)
@@ -1578,34 +1691,87 @@ pub async fn get_event_analytics(
 
     match graph.execute(query).await {
         Ok(mut result) => {
-            let mut events = Vec::new();
+            let mut duration_buckets: HashMap<String, (i32, i32, f64)> = HashMap::new();
+            let mut priority_buckets: HashMap<String, (i32, i32)> = HashMap::new();
+            let mut routine_stats = (0i32, 0i32, 0.0f64);
+            let mut task_stats = (0i32, 0i32, 0.0f64);
 
             while let Ok(Some(row)) = result.next().await {
-                let scheduled_timestamp = row.get::<i64>("scheduled_timestamp").unwrap_or(0);
-                let end_timestamp = row.get::<i64>("end_timestamp").unwrap_or(0);
-                let duration_minutes = row.get::<i64>("duration_minutes").unwrap_or(60);
-                let completed = row.get::<bool>("completed").unwrap_or(false);
-                let priority = row
-                    .get::<String>("priority")
-                    .unwrap_or_else(|_| "medium".to_string());
-                let parent_type = row
-                    .get::<String>("parent_type")
-                    .unwrap_or_else(|_| "unknown".to_string());
+                let bucket = row.get::<String>("bucket").unwrap_or_default();
+                let priority = row.get::<String>("priority").unwrap_or_else(|_| "medium".to_string());
+                let parent_type = row.get::<String>("parent_type").unwrap_or_default();
+                let total = row_i64(&row, "total") as i32;
+                let completed = row_i64(&row, "completed_count") as i32;
+                let duration_sum = row_f64(&row, "duration_sum");
+                let weight_sum = row_f64(&row, "weight_sum");
 
-                // Calculate actual duration if end_timestamp is available
-                let actual_duration = if end_timestamp > scheduled_timestamp {
-                    ((end_timestamp - scheduled_timestamp) / (60 * 1000)) as f64
-                } else {
-                    duration_minutes as f64
-                };
+                let duration_entry = duration_buckets.entry(bucket).or_insert((0, 0, 0.0));
+                duration_entry.0 += total;
+                duration_entry.1 += completed;
+                duration_entry.2 += duration_sum;
 
-                events.push((actual_duration, completed, priority, parent_type));
+                let priority_entry = priority_buckets.entry(priority).or_insert((0, 0));
+                priority_entry.0 += total;
+                priority_entry.1 += completed;
+
+                match parent_type.as_str() {
+                    "routine" => {
+                        routine_stats.0 += total;
+                        routine_stats.1 += completed;
+                        routine_stats.2 += weight_sum;
+                    }
+                    "task" => {
+                        task_stats.0 += total;
+                        task_stats.1 += completed;
+                        task_stats.2 += weight_sum;
+                    }
+                    _ => {}
+                }
             }
 
-            // Generate analytics
-            let duration_stats = calculate_duration_stats(&events);
-            let priority_stats = calculate_priority_stats(&events);
-            let source_stats = calculate_source_stats(&events);
+            let mut duration_stats = Vec::new();
+            for (range, (total, completed, duration_sum)) in duration_buckets {
+                duration_stats.push(DurationStats {
+                    duration_range: range,
+                    completion_rate: if total > 0 { completed as f64 / total as f64 } else { 0.0 },
+                    total_events: total,
+                    completed_events: completed,
+                    avg_duration_minutes: if total > 0 { duration_sum / total as f64 } else { 0.0 },
+                });
+            }
+            let duration_order = ["0-15 min", "16-30 min", "31-60 min", "1-2 hours", "2-4 hours", "4+ hours"];
+            duration_stats.sort_by(|a, b| {
+                let a_index = duration_order.iter().position(|&x| x == a.duration_range).unwrap_or(999);
+                let b_index = duration_order.iter().position(|&x| x == b.duration_range).unwrap_or(999);
+                a_index.cmp(&b_index)
+            });
+
+            let mut priority_stats = Vec::new();
+            for (priority, (total, completed)) in priority_buckets {
+                priority_stats.push(PriorityStats {
+                    priority,
+                    completion_rate: if total > 0 { completed as f64 / total as f64 } else { 0.0 },
+                    total_events: total,
+                    completed_events: completed,
+                });
+            }
+            let priority_order = ["none", "low", "medium", "high"];
+            priority_stats.sort_by(|a, b| {
+                let a_index = priority_order.iter().position(|&x| x == a.priority).unwrap_or(999);
+                let b_index = priority_order.iter().position(|&x| x == b.priority).unwrap_or(999);
+                a_index.cmp(&b_index)
+            });
+
+            let source_breakdown = |stats: (i32, i32, f64)| SourceBreakdown {
+                completion_rate: if stats.0 > 0 { stats.1 as f64 / stats.0 as f64 } else { 0.0 },
+                total_events: stats.0,
+                completed_events: stats.1,
+                avg_priority_weight: if stats.0 > 0 { stats.2 / stats.0 as f64 } else { 0.0 },
+            };
+            let source_stats = SourceStats {
+                routine_events: source_breakdown(routine_stats),
+                task_events: source_breakdown(task_stats),
+            };
 
             Ok(Json(EventAnalytics {
                 duration_stats,
@@ -1623,173 +1789,75 @@ pub async fn get_event_analytics(
     }
 }
 
-fn calculate_duration_stats(events: &[(f64, bool, String, String)]) -> Vec<DurationStats> {
-    let mut duration_buckets: HashMap<String, (i32, i32, f64)> = HashMap::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    for (duration, completed, _, _) in events {
-        let bucket = match *duration as i64 {
-            0..=15 => "0-15 min",
-            16..=30 => "16-30 min",
-            31..=60 => "31-60 min",
-            61..=120 => "1-2 hours",
-            121..=240 => "2-4 hours",
-            _ => "4+ hours",
+    #[test]
+    fn fill_year_has_every_day_and_zero_score_for_missing_dates() {
+        let mut totals = HashMap::new();
+        totals.insert(
+            "2023-01-02".to_string(),
+            DayTotals {
+                total_events: 2,
+                completed_events: 1,
+                weighted_total: 4.0,
+                weighted_completed: 2.0,
+            },
+        );
+        let days = fill_year_daily_stats(2023, &totals);
+        assert_eq!(days.len(), 365);
+        assert_eq!(days[0].date, "2023-01-01");
+        assert_eq!(days[0].score, 0.0);
+        assert_eq!(days[0].total_events, 0);
+        assert!((days[1].score - 0.5).abs() < f64::EPSILON);
+        assert_eq!(days[1].total_events, 2);
+        assert_eq!(days.last().unwrap().date, "2023-12-31");
+    }
+
+    #[test]
+    fn empty_events_are_not_a_phantom_pending_event() {
+        let mut goals_map = HashMap::new();
+        goals_map.insert(
+            1,
+            RawGoalData {
+                name: "Goal".into(),
+                goal_type: "task".into(),
+                priority: "medium".into(),
+                child_ids: vec![],
+                events: vec![],
+            },
+        );
+        let mut cache = HashMap::new();
+        let mut visited = HashSet::new();
+        let stats =
+            calculate_recursive_stats_internal(1, &goals_map, &mut cache, &mut visited, false);
+        assert_eq!(stats.total_events, 0);
+        assert_eq!(stats.completed_events, 0);
+        assert!(stats.daily_stats.is_empty());
+    }
+
+    #[test]
+    fn year_stats_cache_hit_invalidation_and_ttl() {
+        invalidate_all_year_stats();
+        let stats = YearStats {
+            year: 2023,
+            daily_stats: vec![],
         };
+        store_year_stats(42, 2023, "UTC", &stats);
+        assert!(cached_year_stats(42, 2023, "UTC").is_some());
+        invalidate_user_year_stats(42);
+        assert!(cached_year_stats(42, 2023, "UTC").is_none());
 
-        let entry = duration_buckets
-            .entry(bucket.to_string())
-            .or_insert((0, 0, 0.0));
-        entry.0 += 1; // total events
-        if *completed {
-            entry.1 += 1; // completed events
+        store_year_stats(7, 2024, "UTC", &stats);
+        {
+            let mut cache = year_stats_cache().lock().unwrap();
+            let entry = cache
+                .get_mut(&(7, 2024, "UTC".to_string()))
+                .expect("cached entry");
+            entry.stored_at = Instant::now() - StdDuration::from_secs(6 * 60);
         }
-        entry.2 += duration; // sum of durations
-    }
-
-    let mut stats = Vec::new();
-    for (range, (total, completed, duration_sum)) in duration_buckets {
-        let completion_rate = if total > 0 {
-            completed as f64 / total as f64
-        } else {
-            0.0
-        };
-        let avg_duration = if total > 0 {
-            duration_sum / total as f64
-        } else {
-            0.0
-        };
-
-        stats.push(DurationStats {
-            duration_range: range,
-            completion_rate,
-            total_events: total,
-            completed_events: completed,
-            avg_duration_minutes: avg_duration,
-        });
-    }
-
-    // Sort by duration range
-    stats.sort_by(|a, b| {
-        let order = [
-            "0-15 min",
-            "16-30 min",
-            "31-60 min",
-            "1-2 hours",
-            "2-4 hours",
-            "4+ hours",
-        ];
-        let a_index = order
-            .iter()
-            .position(|&x| x == a.duration_range)
-            .unwrap_or(999);
-        let b_index = order
-            .iter()
-            .position(|&x| x == b.duration_range)
-            .unwrap_or(999);
-        a_index.cmp(&b_index)
-    });
-
-    stats
-}
-
-fn calculate_priority_stats(events: &[(f64, bool, String, String)]) -> Vec<PriorityStats> {
-    let mut priority_buckets: HashMap<String, (i32, i32)> = HashMap::new();
-
-    for (_, completed, priority, _) in events {
-        let entry = priority_buckets.entry(priority.clone()).or_insert((0, 0));
-        entry.0 += 1; // total events
-        if *completed {
-            entry.1 += 1; // completed events
-        }
-    }
-
-    let mut stats = Vec::new();
-    for (priority, (total, completed)) in priority_buckets {
-        let completion_rate = if total > 0 {
-            completed as f64 / total as f64
-        } else {
-            0.0
-        };
-
-        stats.push(PriorityStats {
-            priority,
-            completion_rate,
-            total_events: total,
-            completed_events: completed,
-        });
-    }
-
-    // Sort by priority order
-    stats.sort_by(|a, b| {
-        let order = ["none", "low", "medium", "high"];
-        let a_index = order.iter().position(|&x| x == a.priority).unwrap_or(999);
-        let b_index = order.iter().position(|&x| x == b.priority).unwrap_or(999);
-        a_index.cmp(&b_index)
-    });
-
-    stats
-}
-
-fn calculate_source_stats(events: &[(f64, bool, String, String)]) -> SourceStats {
-    let mut routine_stats = (0, 0, 0.0);
-    let mut task_stats = (0, 0, 0.0);
-
-    for (_, completed, priority, parent_type) in events {
-        let priority_weight = match priority.as_str() {
-            "none" => 0.0,
-            "low" => 1.0,
-            "medium" => 2.0,
-            "high" => 3.0,
-            _ => 2.0,
-        };
-
-        match parent_type.as_str() {
-            "routine" => {
-                routine_stats.0 += 1;
-                if *completed {
-                    routine_stats.1 += 1;
-                }
-                routine_stats.2 += priority_weight;
-            }
-            "task" => {
-                task_stats.0 += 1;
-                if *completed {
-                    task_stats.1 += 1;
-                }
-                task_stats.2 += priority_weight;
-            }
-            _ => {}
-        }
-    }
-
-    SourceStats {
-        routine_events: SourceBreakdown {
-            completion_rate: if routine_stats.0 > 0 {
-                routine_stats.1 as f64 / routine_stats.0 as f64
-            } else {
-                0.0
-            },
-            total_events: routine_stats.0,
-            completed_events: routine_stats.1,
-            avg_priority_weight: if routine_stats.0 > 0 {
-                routine_stats.2 / routine_stats.0 as f64
-            } else {
-                0.0
-            },
-        },
-        task_events: SourceBreakdown {
-            completion_rate: if task_stats.0 > 0 {
-                task_stats.1 as f64 / task_stats.0 as f64
-            } else {
-                0.0
-            },
-            total_events: task_stats.0,
-            completed_events: task_stats.1,
-            avg_priority_weight: if task_stats.0 > 0 {
-                task_stats.2 / task_stats.0 as f64
-            } else {
-                0.0
-            },
-        },
+        assert!(cached_year_stats(7, 2024, "UTC").is_none());
+        invalidate_all_year_stats();
     }
 }

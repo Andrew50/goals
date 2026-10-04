@@ -160,6 +160,12 @@
     scroll-behavior: smooth;
 }
 
+/* Smooth scrolling queues each edge step and fights drag auto-scroll. */
+body.day-drag-autoscroll,
+body.day-drag-autoscroll * {
+    scroll-behavior: auto !important;
+}
+
 /* Custom scrollbar for better UX */
 .tasks-list::-webkit-scrollbar {
     width: 6px;
@@ -185,6 +191,62 @@
 
 .tasks-list.resolved {
     opacity: 0.9;
+}
+
+.card-align {
+    position: absolute;
+    left: 50%;
+    z-index: 3;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.task-card:hover .card-align,
+.task-card:focus-within .card-align {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.task-card.dragging .card-align {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.card-align-top {
+    top: 0;
+    transform: translateX(-50%);
+}
+
+.card-align-bottom {
+    bottom: 0;
+    transform: translateX(-50%);
+}
+
+.card-align-btn {
+    appearance: none;
+    width: 4.125rem;
+    height: 1.275rem;
+    border-radius: 0.3rem;
+    border: 1px solid var(--color-border-dark, #cbd5e0);
+    background: var(--color-bg-paper, #ffffff);
+    color: var(--color-text-muted, #718096);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+}
+
+.card-align-btn svg {
+    font-size: 1.5rem;
+}
+
+.card-align-btn:hover,
+.card-align-btn:focus-visible {
+    color: var(--color-primary-main, #4299e1);
+    border-color: var(--color-primary-main, #4299e1);
+    background: var(--color-bg-elevated, #f7fafc);
+    outline: none;
 }
 
 .resolved-group.not-first {
@@ -214,11 +276,10 @@
 }
 
 .priority-strip {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 6px;
+    width: 4px;
+    align-self: stretch;
+    border-radius: 99px;
+    flex-shrink: 0;
 }
 
 .task-card:hover {
@@ -337,12 +398,17 @@
     align-items: center;
     gap: 0.75rem;
     margin-bottom: 0.25rem;
+    min-width: 0;
 }
 
 .task-name {
     font-weight: 600;
     color: var(--color-text-primary, #2d3748);
     font-size: 1.125rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .task-name.completed {
@@ -356,6 +422,9 @@
     background-color: var(--color-border-light, #edf2f7);
     padding: 0.125rem 0.5rem;
     border-radius: 0.25rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 /* Subtle priority dot indicator */
@@ -473,7 +542,6 @@
     display: flex;
     align-items: center;
     padding: 0.25rem;
-    margin-left: 6px; /* Account for priority-strip width */
     margin-right: 0.5rem;
     opacity: 0.4;
     transition: opacity 0.2s ease;

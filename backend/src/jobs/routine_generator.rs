@@ -131,6 +131,7 @@ pub async fn generate_future_routine_events(graph: &Graph) -> Result<(), String>
     }
 
     println!("Generated future events for {} routines", routine_count);
+    crate::tools::stats::invalidate_all_year_stats();
     Ok(())
 }
 
@@ -495,7 +496,10 @@ pub async fn run_routine_generator(graph: Graph) {
 
     match generate_future_routine_events(&graph).await {
         Ok(_) => println!("Routine event generation completed successfully"),
-        Err(e) => eprintln!("Error generating routine events: {}", e),
+        Err(e) => {
+            crate::tools::stats::invalidate_all_year_stats();
+            eprintln!("Error generating routine events: {}", e);
+        }
     }
 }
 

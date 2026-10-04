@@ -23,6 +23,8 @@ docker-compose* linguist-language=YAML
 *.md linguist-documentation
 README.md linguist-documentation
 
-# Ensure GitHub detects the correct languages
-* text=auto
+# Ensure GitHub detects the correct languages.
+# Force LF in the working tree so Docker builds and shell scripts work on Windows
+# (core.autocrlf=true would otherwise check them out as CRLF).
+* text=auto eol=lf
 *.css linguist-language=CSS
