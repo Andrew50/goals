@@ -3,7 +3,17 @@ name: Self-hosted Deploy
 on:
   push:
     branches: [ prod ]
+  pull_request:
+    branches: [ prod ]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: preflight only downloads the restore script; deploy runs the production deploy
+        type: choice
+        options:
+          - preflight
+          - deploy
+        default: preflight
 
 permissions:
   contents: read
@@ -13,13 +23,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Proves the restore-script download on the deploy runner before a merge.
+  # Does not stop the database or build images.
+  backup-preflight:
+    name: Backup script preflight
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight')
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Download and syntax-check the restore script
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/goals-backup-src"
+          rm -rf "${dest}"
+          mkdir -p "${dest}/db"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github.raw" \
+            --output "${dest}/db/verify_restore.sh" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/db/verify_restore.sh?ref=${GITHUB_SHA}"
+          test -s "${dest}/db/verify_restore.sh"
+          bash -n "${dest}/db/verify_restore.sh"
+          echo "Restore script downloaded and passed bash -n"
+
   build-and-deploy:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy')
     runs-on: self-hosted
     timeout-minutes: 60
     steps:
       # actions/checkout refuses a path outside GITHUB_WORKSPACE, and this
       # workspace is not safe to check out into until the later force-clean.
-      # Fetch only the verify script for this commit into RUNNER_TEMP.
+      # GitHub rejects the job token on git smart HTTP ("invalid credentials"),
+      # so download the script with the contents API instead.
       - name: Checkout backup verify script
         shell: bash
         env:
@@ -28,12 +70,14 @@ jobs:
           set -euo pipefail
           dest="${RUNNER_TEMP}/goals-backup-src"
           rm -rf "${dest}"
-          mkdir -p "${dest}"
-          git -C "${dest}" init
-          git -C "${dest}" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git -C "${dest}" -c http.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" fetch --depth 1 origin "${GITHUB_SHA}"
-          git -C "${dest}" checkout FETCH_HEAD -- db/verify_restore.sh
-          test -f "${dest}/db/verify_restore.sh"
+          mkdir -p "${dest}/db"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github.raw" \
+            --output "${dest}/db/verify_restore.sh" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/db/verify_restore.sh?ref=${GITHUB_SHA}"
+          test -s "${dest}/db/verify_restore.sh"
+          bash -n "${dest}/db/verify_restore.sh"
 
       - name: Pre-deploy backup (required if DB is running)
         shell: bash
