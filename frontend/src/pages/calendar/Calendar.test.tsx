@@ -8,7 +8,7 @@ import { Goal, ApiGoal } from '../../types/goals';
 
 import Calendar from './Calendar';
 import { GoalMenuProvider } from '../../shared/contexts/GoalMenuContext';
-import { fetchCalendarData } from './calendarData';
+import { fetchCalendarData, fetchCalendarTasks } from './calendarData';
 
 // Import the API
 jest.mock('../../shared/utils/api', () => ({
@@ -43,23 +43,36 @@ jest.mock('./TaskList', () => {
     };
 });
 
-// Mock dynamic imports for FullCalendar
-jest.mock('@fullcalendar/react', () => ({
-    __esModule: true,
-    default: jest.fn(props => (
-        <div data-testid="fullcalendar-mock">
-            {props.events && (
-                <div data-testid="calendar-events">
-                    {props.events.map((event: any, index: number) => (
-                        <div key={index} data-testid={`event-${index}`}>
-                            {event.title}: {new Date(event.start).toISOString()}
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    ))
-}));
+// Mock dynamic imports for FullCalendar. The events prop is a loader function.
+jest.mock('@fullcalendar/react', () => {
+    const React = require('react');
+    const calls: any[] = [];
+    const MockFullCalendar = React.forwardRef((props: any, ref: any) => {
+        calls.push([props]);
+        const ran = React.useRef(false);
+        React.useImperativeHandle(ref, () => ({
+            getApi: () => ({
+                refetchEvents: () => undefined,
+                unselect: () => undefined,
+            }),
+        }));
+        React.useEffect(() => {
+            if (ran.current || typeof props.events !== 'function') return;
+            ran.current = true;
+            props.events(
+                { start: new Date('2026-09-27T04:00:00Z'), end: new Date('2026-11-08T05:00:00Z') },
+                () => undefined,
+                () => undefined
+            );
+        }, [props.events]);
+        return <div data-testid="fullcalendar-mock" />;
+    });
+    MockFullCalendar.mock = { calls };
+    return {
+        __esModule: true,
+        default: MockFullCalendar,
+    };
+});
 
 jest.mock('@fullcalendar/daygrid', () => ({
     __esModule: true,
@@ -85,7 +98,8 @@ jest.mock('./calendarData', () => ({
             unscheduledTasks: [],
             achievements: []
         });
-    })
+    }),
+    fetchCalendarTasks: jest.fn().mockResolvedValue([]),
 }));
 
 // Mock the react-hotkeys-hook dependency
@@ -98,7 +112,7 @@ jest.mock('../../shared/hooks/useHistoryState', () => ({
     useHistoryState: (initialState: any) => {
         const React = require('react');
         const [state, setState] = React.useState(initialState);
-        const setStateWithHistory = (newState: any) => setState(newState);
+        const setStateWithHistory = React.useCallback((newState: any) => setState(newState), []);
         return [state, setStateWithHistory];
     }
 }));
@@ -198,7 +212,8 @@ describe('Calendar Component', () => {
 
         // Wait for the calendar to load and convert events
         await waitFor(() => {
-            expect(fetchCalendarData).toHaveBeenCalled();
+            expect(fetchCalendarData).toHaveBeenCalledTimes(1);
+            expect(fetchCalendarTasks).toHaveBeenCalledTimes(1);
         });
 
         // Check that the event is converted to local time using goalToLocal

@@ -99,10 +99,30 @@ export interface Goal {
 // Utility functions for timezone conversion
 export interface CalendarResponse {
     events: Goal[];
-    unscheduled_tasks: Goal[];
-    routines: Goal[];
-    achievements: Goal[];
     parents?: Goal[];
+    unscheduled_tasks?: Goal[];
+    routines?: Goal[];
+    achievements?: Goal[];
+}
+
+export interface CalendarTaskResponse {
+    id: number;
+    name: string;
+    goal_type: GoalType;
+    duration?: number;
+    priority?: Goal['priority'];
+    start_timestamp?: number | null;
+    end_timestamp?: number | null;
+    resolution_status?: ResolutionStatus;
+    event_count?: number;
+    completed_event_count?: number;
+    past_uncompleted_count?: number;
+    future_uncompleted_count?: number;
+    next_uncompleted?: number | null;
+}
+
+export interface CalendarTasksResponse {
+    tasks: CalendarTaskResponse[];
 }
 
 export interface CalendarEvent {
@@ -125,6 +145,11 @@ export interface CalendarTask {
     title: string;
     type: 'meeting' | 'task' | 'appointment';
     goal: Goal;
+    eventCount?: number;
+    completedEventCount?: number;
+    pastUncompletedCount?: number;
+    futureUncompletedCount?: number;
+    nextEventDate?: Date;
 }
 
 export interface Relationship {
