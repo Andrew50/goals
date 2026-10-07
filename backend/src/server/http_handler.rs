@@ -111,7 +111,9 @@ pub fn create_routes(pool: Graph, user_locks: UserLocks) -> Router {
 
     let traversal_routes = Router::new().route("/:goal_id", get(handle_query_hierarchy));
 
-    let calendar_routes = Router::new().route("/", get(handle_get_calendar_data));
+    let calendar_routes = Router::new()
+        .route("/", get(handle_get_calendar_data))
+        .route("/tasks", get(handle_get_calendar_tasks));
 
     let list_routes = Router::new().route("/", get(handle_get_list_data));
 
@@ -659,7 +661,14 @@ async fn handle_get_calendar_data(
     let start_timestamp = params.get("start").copied();
     let end_timestamp = params.get("end").copied();
 
-    calendar::get_calendar_data(graph, user_id, start_timestamp, end_timestamp).await
+    calendar::get_calendar_range(graph, user_id, start_timestamp, end_timestamp).await
+}
+
+async fn handle_get_calendar_tasks(
+    Extension(graph): Extension<Graph>,
+    Extension(user_id): Extension<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    calendar::get_calendar_tasks(graph, user_id).await
 }
 
 // List handlers

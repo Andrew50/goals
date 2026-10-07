@@ -42,11 +42,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 run_resolution_status_migration().await?;
                 return Ok(());
             }
+            "ensure-indexes" => {
+                run_ensure_indexes().await?;
+                return Ok(());
+            }
             _ => {
                 eprintln!("Unknown command: {}", args[1]);
                 eprintln!("Available commands:");
                 eprintln!("  migrate [--force]            - Run the event migration");
                 eprintln!("  migrate-resolution-status    - Migrate from completed to resolution_status");
+                eprintln!("  ensure-indexes               - Create performance indexes if missing");
                 eprintln!("  verify-migration             - Verify migration integrity");
                 eprintln!("  reset-migration              - Reset migration status (for development)");
                 eprintln!("  rollback-migration <backup>  - Rollback migration from backup");
@@ -163,6 +168,19 @@ async fn reset_migration() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    Ok(())
+}
+
+async fn run_ensure_indexes() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Creating performance indexes if they are missing...");
+    let graph = create_graph_connection().await?;
+    match tools::migration::ensure_performance_indexes(&graph).await {
+        Ok(_) => println!("Performance indexes are in place."),
+        Err(e) => {
+            eprintln!("Failed to create indexes: {}", e);
+            std::process::exit(1);
+        }
+    }
     Ok(())
 }
 

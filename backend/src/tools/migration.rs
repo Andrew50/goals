@@ -298,6 +298,11 @@ async fn cleanup_existing_events(graph: &Graph) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn ensure_performance_indexes(graph: &Graph) -> Result<(), String> {
+    let mut state = MigrationState::new();
+    create_performance_indexes(graph, &mut state).await
+}
+
 async fn create_performance_indexes(
     graph: &Graph,
     state: &mut MigrationState,
