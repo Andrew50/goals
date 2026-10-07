@@ -12,33 +12,126 @@ interface MiniNetworkGraphProps {
 }
 
 // vis-network draws arrow length as `15 * scaleFactor + 3 * edgeWidth`, in the
-// same units as node shapes, then scales the whole scene by the camera zoom.
-// The head has to be derived from the node and the edge. Multiplying by zoom
-// or by edge thickness makes the head grow faster than the nodes.
-const MINI_EDGE_WIDTH = 2;
+// same units as node boxes. The head is sized from the clear gap between boxes,
+// so a long link cannot grow a head that is larger than the nodes.
+const MINI_FONT = 13;
+const MINI_MAX_LABEL = 130;
+const MINI_GAP = 22;
+const MINI_EDGE_WIDTH = 1.25;
 
-function miniArrowScaleFactor(nodeExtent: number, edgeLength: number): number {
-  const node = Number.isFinite(nodeExtent) && nodeExtent > 0 ? nodeExtent : 36;
-  const edge = Number.isFinite(edgeLength) && edgeLength > 0 ? edgeLength : node * 3;
-  // About two-thirds of the smaller node, and never more than a fifth of the edge.
-  const target = Math.min(node * 0.85, edge * 0.22);
-  const length = Math.max(10, Math.min(target, 36));
+function estimateBox(label: string): { w: number; h: number } {
+  const text = label || '';
+  const raw = Math.max(28, text.length * MINI_FONT * 0.56);
+  const lines = Math.max(1, Math.ceil(raw / MINI_MAX_LABEL));
+  return {
+    w: Math.min(MINI_MAX_LABEL, raw) + 18,
+    h: lines * MINI_FONT * 1.2 + 14,
+  };
+}
+
+function edgeReach(box: { w: number; h: number }, angle: number): number {
+  const c = Math.abs(Math.cos(angle));
+  const s = Math.abs(Math.sin(angle));
+  const horiz = c < 1e-4 ? Infinity : (box.w / 2) / c;
+  const vert = s < 1e-4 ? Infinity : (box.h / 2) / s;
+  return Math.min(horiz, vert);
+}
+
+function arrowScaleForGap(gap: number): number {
+  const clear = Number.isFinite(gap) ? gap : MINI_GAP;
+  const length = Math.max(6, Math.min(clear * 0.4, 11));
   const scale = (length - 3 * MINI_EDGE_WIDTH) / 15;
-  return Math.max(0.2, Math.min(scale, 2));
+  return Math.max(0.08, Math.min(scale, 0.55));
+}
+
+function layoutMiniNodes(
+  nodes: Array<{ id: number; label?: string; name?: string }>,
+  edges: Array<{ from: number; to: number }>,
+  centerId?: number
+): Map<number, { x: number; y: number }> {
+  if (!nodes.length) return new Map();
+  const boxes = new Map<number, { w: number; h: number }>();
+  nodes.forEach((node) => boxes.set(node.id, estimateBox(String(node.label || node.name || ''))));
+  const ids = nodes.map((node) => node.id);
+  const center = centerId != null && ids.includes(centerId) ? centerId : ids[0];
+  const neighbors = new Map<number, number[]>();
+  ids.forEach((id) => neighbors.set(id, []));
+  edges.forEach((edge) => {
+    if (!neighbors.has(edge.from) || !neighbors.has(edge.to) || edge.from === edge.to) return;
+    neighbors.get(edge.from)!.push(edge.to);
+    neighbors.get(edge.to)!.push(edge.from);
+  });
+
+  const level = new Map<number, number>();
+  const queue = [center];
+  level.set(center, 0);
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const next of neighbors.get(id) || []) {
+      if (level.has(next)) continue;
+      level.set(next, (level.get(id) || 0) + 1);
+      queue.push(next);
+    }
+  }
+  let strayLevel = Math.max(0, ...Array.from(level.values())) + 1;
+  ids.forEach((id) => {
+    if (!level.has(id)) level.set(id, strayLevel);
+  });
+
+  const byLevel = new Map<number, number[]>();
+  level.forEach((depth, id) => {
+    if (!byLevel.has(depth)) byLevel.set(depth, []);
+    byLevel.get(depth)!.push(id);
+  });
+
+  const positions = new Map<number, { x: number; y: number }>();
+  positions.set(center, { x: 0, y: 0 });
+  const half = (id: number) => {
+    const box = boxes.get(id) || { w: 40, h: 24 };
+    return Math.hypot(box.w, box.h) / 2;
+  };
+
+  let previousRadius = 0;
+  const depths = Array.from(byLevel.keys()).filter((depth) => depth > 0).sort((a, b) => a - b);
+  depths.forEach((depth) => {
+    const group = byLevel.get(depth) || [];
+    const count = group.length;
+    const previousIds = depth === 1 ? [center] : (byLevel.get(depth - 1) || []);
+    const previousHalf = Math.max(...previousIds.map(half));
+    const outerHalf = Math.max(...group.map(half));
+    let radius = previousRadius + previousHalf + outerHalf + MINI_GAP;
+    for (let attempt = 0; attempt < 16 && count > 1; attempt += 1) {
+      const chord = 2 * radius * Math.sin(Math.PI / count);
+      const needed = Math.max(...group.map((id, index) => {
+        const next = boxes.get(group[(index + 1) % count]) || { w: 40, h: 24 };
+        const current = boxes.get(id) || { w: 40, h: 24 };
+        return (current.w + next.w) / 2 + MINI_GAP;
+      }));
+      if (chord >= needed) break;
+      radius *= 1.12;
+    }
+    group.forEach((id, index) => {
+      const angle = (2 * Math.PI * index) / count - Math.PI / 2;
+      positions.set(id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+    });
+    previousRadius = radius;
+  });
+
+  return positions;
 }
 
 const miniNetworkOptions = {
   nodes: {
     shape: 'box' as const,
-    margin: { top: 16, right: 16, bottom: 16, left: 16 },
-    widthConstraint: { maximum: 320 },
-    font: { size: 20 },
-    borderWidth: 3,
+    margin: { top: 6, right: 8, bottom: 6, left: 8 },
+    widthConstraint: { maximum: MINI_MAX_LABEL },
+    font: { size: MINI_FONT },
+    borderWidth: 1,
     chosen: false
   },
   edges: {
     arrows: { to: { enabled: true, scaleFactor: 0.2 } },
-    smooth: { enabled: true, type: 'curvedCW' as const, roundness: 0.05 },
+    smooth: { enabled: true, type: 'curvedCW' as const, roundness: 0.04 },
     width: MINI_EDGE_WIDTH,
     color: { inherit: 'from' as const, opacity: 0.9 }
   },
@@ -47,14 +140,23 @@ const miniNetworkOptions = {
   interaction: { dragNodes: false, dragView: true, zoomView: true, hover: true, keyboard: { enabled: false } }
 };
 
-function measuredNodeExtent(node: any): number {
+function boxOf(node: any): { w: number; h: number } {
   const width = node?.shape?.width;
   const height = node?.shape?.height;
   if (typeof width === 'number' && width > 0 && typeof height === 'number' && height > 0) {
-    return Math.min(width, height);
+    return { w: width, h: height };
   }
-  const size = node?.options?.size;
-  return typeof size === 'number' && size > 0 ? size : 36;
+  return estimateBox(String(node?.options?.label || node?.label || ''));
+}
+
+function gapBetween(from: any, to: any): number {
+  if (!from || !to) return MINI_GAP;
+  const dx = (to.x ?? 0) - (from.x ?? 0);
+  const dy = (to.y ?? 0) - (from.y ?? 0);
+  const distance = Math.hypot(dx, dy);
+  if (distance < 1) return MINI_GAP;
+  const angle = Math.atan2(dy, dx);
+  return distance - edgeReach(boxOf(from), angle) - edgeReach(boxOf(to), angle + Math.PI);
 }
 
 const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 220, onNodeClick }) => {
@@ -68,31 +170,48 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
     const network = networkRef.current as any;
     const el = containerRef.current;
     const edges = edgesDataSetRef.current;
-    if (!network || !el || !edges || el.clientWidth < 40 || el.clientHeight < 40) return;
+    const nodes = nodesDataSetRef.current;
+    if (!network || !el || !edges || !nodes || el.clientWidth < 40 || el.clientHeight < 40) return;
     try {
-      network.fit({ animation: false });
+      network.fit({ animation: false, maxZoomLevel: 1.45 });
       const bodyNodes = network.body?.nodes || {};
-      const updates = edges.get().map((edge: any) => {
+      let spread = 1;
+      edges.get().forEach((edge: any) => {
         const from = bodyNodes[edge.from];
         const to = bodyNodes[edge.to];
-        const edgeLength = from && to ? Math.hypot((to.x ?? 0) - (from.x ?? 0), (to.y ?? 0) - (from.y ?? 0)) : 0;
-        return {
-          id: edge.id,
-          width: MINI_EDGE_WIDTH,
-          arrows: {
-            to: {
-              enabled: true,
-              type: 'arrow',
-              scaleFactor: miniArrowScaleFactor(
-                Math.min(measuredNodeExtent(from), measuredNodeExtent(to)),
-                edgeLength
-              ),
-            },
-          },
-        };
+        if (!from || !to) return;
+        const gap = gapBetween(from, to);
+        if (gap >= MINI_GAP) return;
+        const dx = (to.x ?? 0) - (from.x ?? 0);
+        const dy = (to.y ?? 0) - (from.y ?? 0);
+        const distance = Math.hypot(dx, dy);
+        if (distance < 1) return;
+        const angle = Math.atan2(dy, dx);
+        const needed = MINI_GAP + edgeReach(boxOf(from), angle) + edgeReach(boxOf(to), angle + Math.PI);
+        spread = Math.max(spread, needed / distance);
       });
+      if (spread > 1.02) {
+        nodes.update(nodes.get().map((node: any) => ({
+          id: node.id,
+          x: (bodyNodes[node.id]?.x ?? node.x ?? 0) * spread,
+          y: (bodyNodes[node.id]?.y ?? node.y ?? 0) * spread,
+        })));
+        network.fit({ animation: false, maxZoomLevel: 1.45 });
+      }
+      const placed = network.body?.nodes || {};
+      const updates = edges.get().map((edge: any) => ({
+        id: edge.id,
+        width: MINI_EDGE_WIDTH,
+        arrows: {
+          to: {
+            enabled: true,
+            type: 'arrow',
+            scaleFactor: arrowScaleForGap(gapBetween(placed[edge.from], placed[edge.to])),
+          },
+        },
+      }));
       if (updates.length) edges.update(updates);
-      network.fit({ animation: false });
+      network.fit({ animation: false, maxZoomLevel: 1.45 });
     } catch (_) {}
   }, []);
 
@@ -148,32 +267,41 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
       // Replace data
       nodesDataSetRef.current.clear();
       edgesDataSetRef.current.clear();
-      nodesDataSetRef.current.add(laidOut.nodes);
-      const nodeById = new Map<number, { x: number; y: number; size: number }>();
-      (laidOut.nodes || []).forEach((n: any) => {
-        nodeById.set(n.id, {
-          x: typeof n.x === 'number' ? n.x : 0,
-          y: typeof n.y === 'number' ? n.y : 0,
-          size: typeof n.size === 'number' ? n.size : 30,
-        });
-      });
-      const miniEdges = (laidOut.edges || networkEdges).map((e: any) => {
-        const from = nodeById.get(e.from);
-        const to = nodeById.get(e.to);
-        const edgeLength = from && to ? Math.hypot(to.x - from.x, to.y - from.y) : 0;
-        const nodeSize = Math.min(from?.size ?? 30, to?.size ?? 30);
+      const positions = layoutMiniNodes(laidOut.nodes || [], laidOut.edges || networkEdges, centerId);
+      const compactNodes = (laidOut.nodes || []).map((node: any) => {
+        const at = positions.get(node.id) || { x: 0, y: 0 };
+        const font = typeof node.font === 'object' && node.font ? node.font : {};
         return {
-          ...e,
-          id: `${e.from}-${e.to}`,
+          ...node,
+          x: at.x,
+          y: at.y,
+          shape: 'box',
+          margin: { top: 6, right: 8, bottom: 6, left: 8 },
+          widthConstraint: { maximum: MINI_MAX_LABEL },
+          font: {
+            ...font,
+            size: MINI_FONT,
+            bold: { ...(font.bold || {}), size: MINI_FONT, color: font.color },
+          },
+        };
+      });
+      nodesDataSetRef.current.add(compactNodes);
+      const nodeById = new Map(compactNodes.map((node: any) => [node.id, node]));
+      const miniEdges = (laidOut.edges || networkEdges).map((edge: any) => {
+        const from = nodeById.get(edge.from);
+        const to = nodeById.get(edge.to);
+        return {
+          ...edge,
+          id: `${edge.from}-${edge.to}`,
           width: MINI_EDGE_WIDTH,
           arrows: {
             to: {
               enabled: true,
               type: 'arrow',
-              scaleFactor: miniArrowScaleFactor(nodeSize, edgeLength),
+              scaleFactor: arrowScaleForGap(gapBetween(from, to)),
             }
           },
-          smooth: { enabled: true, type: 'curvedCW', roundness: 0.05 }
+          smooth: { enabled: true, type: 'curvedCW', roundness: 0.04 }
         };
       });
       edgesDataSetRef.current.add(miniEdges);

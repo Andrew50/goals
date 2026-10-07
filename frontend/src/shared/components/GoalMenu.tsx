@@ -39,7 +39,7 @@ import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent, getGoalRelations } from '../utils/api';
+import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, CalendarListEntry, deleteGCalEvent, getGoalRelations } from '../utils/api';
 import { Goal, GoalType, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
 import {
     timestampToInputString,
@@ -60,8 +60,9 @@ import Fuse from 'fuse.js';
 import '../styles/badges.css';
 import { showSnackbar } from './Toaster';
 import { useAutofillSuggestions } from '../hooks/useAutofillSuggestions';
-import AiSuggestionsRow from './AiSuggestionsRow';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+// AI suggestion chips and sparkle are disabled in the goal menu.
+// import AiSuggestionsRow from './AiSuggestionsRow';
+// import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 
 type Mode = 'create' | 'edit' | 'view';
 
@@ -174,6 +175,16 @@ function GoalMenuSection({ title, children }: { title: string; children: React.R
     );
 }
 
+function ViewField({ label, value }: { label: string; value?: React.ReactNode }) {
+    const text = value === undefined || value === null || value === '' ? 'Not set' : value;
+    return (
+        <Box sx={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', columnGap: 1.5, alignItems: 'start' }}>
+            <Typography variant="body2" color="text.secondary">{label}</Typography>
+            <Typography variant="body2">{text}</Typography>
+        </Box>
+    );
+}
+
 function RelationshipChip({
     goal,
     onRemove,
@@ -190,30 +201,19 @@ function RelationshipChip({
             variant="outlined"
             onDelete={onRemove}
             onClick={onOpen}
-            label={
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, maxWidth: 240 }}>
-                    <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {goal.name}
-                    </Box>
-                    <Box
-                        component="span"
-                        sx={{
-                            color: style.backgroundColor,
-                            textTransform: 'capitalize',
-                            fontSize: '0.68rem',
-                            fontWeight: 700,
-                            flexShrink: 0,
-                        }}
-                    >
-                        {goal.goal_type}
-                    </Box>
-                </Box>
-            }
+            label={goal.name || 'Untitled'}
             sx={{
                 maxWidth: '100%',
+                height: 'auto',
                 borderColor: 'divider',
                 bgcolor: 'action.hover',
-                '& .MuiChip-label': { px: 1 },
+                '& .MuiChip-label': {
+                    px: 1,
+                    py: 0.25,
+                    color: style.backgroundColor,
+                    fontWeight: 700,
+                    whiteSpace: 'normal',
+                },
                 '& .MuiChip-deleteIcon': { color: 'text.secondary', fontSize: 16 },
                 ...(onOpen ? { cursor: 'pointer' } : {}),
             }}
@@ -460,8 +460,12 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         onConfirm: async () => { }
     });
 
-    // Load Google Calendars when sync is enabled for an event
+    // Google Calendar sync is disabled in the goal menu.
     useEffect(() => {
+        void state.goal.goal_type;
+        void state.goal.gcal_sync_enabled;
+        void gcalCalendars.length;
+        /*
         const shouldLoadCalendars = 
             state.goal.goal_type === 'event' && 
             state.goal.gcal_sync_enabled && 
@@ -472,6 +476,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 .then((calendars: CalendarListEntry[]) => setGcalCalendars(calendars))
                 .catch(() => setGcalCalendars([]));
         }
+        */
     }, [state.goal.gcal_sync_enabled, state.goal.goal_type, gcalCalendars.length]);
 
     // Add routine delete dialog state
@@ -2498,11 +2503,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     renderValue: (value) => (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {String(value).charAt(0).toUpperCase() + String(value).slice(1)}
+                            {/*
                             {prioritySuggestions.suggestions[0] === value && (
                                 <Tooltip title="AI Recommended">
                                     <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
                                 </Tooltip>
                             )}
+                            */}
                         </Box>
                     )
                 }}
@@ -2520,16 +2527,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     Low {prioritySuggestions.suggestions[0] === 'low' && '(Suggested)'}
                 </MenuItem>
             </TextField>
-            <AiSuggestionsRow 
-                suggestions={prioritySuggestions.suggestions} 
-                isLoading={prioritySuggestions.isLoading} 
-                onSelect={prioritySuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={prioritySuggestions.suggestions}
+                isLoading={prioritySuggestions.isLoading}
+                onSelect={prioritySuggestions.applySuggestion}
             />
+            */}
         </Box>
     );
     const durationField = isViewOnly ? (
-        <Box sx={{ mb: 2 }}>
-            <strong>Duration:</strong> {(() => {
+        <ViewField
+            label="Duration"
+            value={(() => {
                 const duration = state.goal.duration;
                 if (!duration) return 'Not set';
                 if (duration === 1440) return 'All Day';
@@ -2537,7 +2547,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 const minutes = duration % 60;
                 return `${hours}h ${minutes}m`;
             })()}
-        </Box>
+        />
     ) : (
         <Box>
             <FormControlLabel
@@ -2640,12 +2650,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             sx={{ width: '50%' }}
                         />
                     </Box>
-                    <AiSuggestionsRow 
-                        suggestions={durationSuggestions.suggestions} 
-                        isLoading={durationSuggestions.isLoading} 
-                        onSelect={durationSuggestions.applySuggestion} 
+                    {/*
+                    <AiSuggestionsRow
+                        suggestions={durationSuggestions.suggestions}
+                        isLoading={durationSuggestions.isLoading}
+                        onSelect={durationSuggestions.applySuggestion}
                         label="Duration (mins)"
                     />
+                    */}
                 </Box>
             )}
         </Box>
@@ -2696,9 +2708,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         }
     }, [state, isRoutineParentEvent, onSuccess, setState, handleRoutineEventUpdate, handleChange]);
     const scheduleField = isViewOnly ? (
-        <Box sx={{ mb: 2 }}>
-            <strong>Scheduled Date:</strong> {timestampToDisplayString(state.goal.scheduled_timestamp)}
-        </Box>
+        <ViewField label="Scheduled Date" value={timestampToDisplayString(state.goal.scheduled_timestamp)} />
     ) : (
         <Box>
             <TextField
@@ -2747,22 +2757,20 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }}
                 disabled={isViewOnly}
             />
-            <AiSuggestionsRow 
-                suggestions={scheduledDateTimeSuggestions.suggestions} 
-                isLoading={scheduledDateTimeSuggestions.isLoading} 
-                onSelect={scheduledDateTimeSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={scheduledDateTimeSuggestions.suggestions}
+                isLoading={scheduledDateTimeSuggestions.isLoading}
+                onSelect={scheduledDateTimeSuggestions.applySuggestion}
             />
+            */}
         </Box>
     );
 
     const dateFields = isViewOnly ? (
         <>
-            <Box sx={{ mb: 2 }}>
-                <strong>Start Date:</strong> {timestampToDisplayString(state.goal.start_timestamp, 'date')}
-            </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>End Date:</strong> {timestampToDisplayString(state.goal.end_timestamp, 'date')}
-            </Box>
+            <ViewField label="Start Date" value={timestampToDisplayString(state.goal.start_timestamp, 'date')} />
+            <ViewField label="End Date" value={timestampToDisplayString(state.goal.end_timestamp, 'date')} />
         </>
     ) : (
         <>
@@ -2787,11 +2795,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 InputLabelProps={{ shrink: true }}
                 disabled={isViewOnly}
             />
-            <AiSuggestionsRow 
-                suggestions={startDateSuggestions.suggestions} 
-                isLoading={startDateSuggestions.isLoading} 
-                onSelect={startDateSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={startDateSuggestions.suggestions}
+                isLoading={startDateSuggestions.isLoading}
+                onSelect={startDateSuggestions.applySuggestion}
             />
+            */}
             <TextField
                 label="End Date"
                 type="date"
@@ -2810,11 +2820,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 InputLabelProps={{ shrink: true }}
                 disabled={isViewOnly}
             />
-            <AiSuggestionsRow 
-                suggestions={endDateSuggestions.suggestions} 
-                isLoading={endDateSuggestions.isLoading} 
-                onSelect={endDateSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={endDateSuggestions.suggestions}
+                isLoading={endDateSuggestions.isLoading}
+                onSelect={endDateSuggestions.applySuggestion}
             />
+            */}
         </>
     );
 
@@ -2842,9 +2854,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         </Box>
     );
     const frequencyField = isViewOnly ? (
-        <Box sx={{ mb: 2 }}>
-            <strong>Frequency:</strong> {formatFrequency(state.goal.frequency)}
-        </Box>
+        <ViewField label="Frequency" value={formatFrequency(state.goal.frequency) || 'Not set'} />
     ) : (
         <Box sx={{ mb: 2 }}>
             <Box sx={{
@@ -2923,11 +2933,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <MenuItem value="Y">year</MenuItem>
                 </TextField>
             </Box>
-            <AiSuggestionsRow 
-                suggestions={frequencySuggestions.suggestions} 
-                isLoading={frequencySuggestions.isLoading} 
-                onSelect={frequencySuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={frequencySuggestions.suggestions}
+                isLoading={frequencySuggestions.isLoading}
+                onSelect={frequencySuggestions.applySuggestion}
             />
+            */}
 
             {state.goal.frequency?.includes('W') && (
                 <Box>
@@ -3017,11 +3029,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     autoComplete: 'off'
                 }}
             />
-            <AiSuggestionsRow 
-                suggestions={nameSuggestions.suggestions} 
-                isLoading={nameSuggestions.isLoading} 
-                onSelect={nameSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={nameSuggestions.suggestions}
+                isLoading={nameSuggestions.isLoading}
+                onSelect={nameSuggestions.applySuggestion}
             />
+            */}
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, columnGap: 1, alignItems: 'start', width: 'auto !important' }}>
             <Box sx={{ minWidth: 0, width: 'auto !important' }}>
             <TextField
@@ -3075,11 +3089,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     renderValue: (value) => (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {String(value)}
+                            {/*
                             {goalTypeSuggestions.suggestions[0] === value && (
                                 <Tooltip title="AI Recommended">
                                     <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
                                 </Tooltip>
                             )}
+                            */}
                         </Box>
                     )
                 }}
@@ -3103,11 +3119,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     Event {goalTypeSuggestions.suggestions[0] === 'event' && '(Suggested)'}
                 </MenuItem>
             </TextField>
-            <AiSuggestionsRow 
-                suggestions={goalTypeSuggestions.suggestions} 
-                isLoading={goalTypeSuggestions.isLoading} 
-                onSelect={goalTypeSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={goalTypeSuggestions.suggestions}
+                isLoading={goalTypeSuggestions.isLoading}
+                onSelect={goalTypeSuggestions.applySuggestion}
             />
+            */}
             </Box>
             {priorityField}
             </Box>
@@ -3128,11 +3146,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     autoComplete: 'off'
                 }}
             />
-            <AiSuggestionsRow 
-                suggestions={descriptionSuggestions.suggestions} 
-                isLoading={descriptionSuggestions.isLoading} 
-                onSelect={descriptionSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={descriptionSuggestions.suggestions}
+                isLoading={descriptionSuggestions.isLoading}
+                onSelect={descriptionSuggestions.applySuggestion}
             />
+            */}
             {applicableStatus}
         </>
     );
@@ -3208,11 +3228,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 <Typography variant="body2" sx={{ flexGrow: 1 }}>
                                     {option.name}
                                 </Typography>
+                                {/*
                                 {isSuggested && (
                                     <Tooltip title="AI Recommended">
                                         <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
                                     </Tooltip>
                                 )}
+                                */}
                             </Box>
                         </Box>
                     );
@@ -3253,12 +3275,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 handleHomeEndKeys
                 freeSolo={false}
             />
-            <AiSuggestionsRow 
-                suggestions={parentSuggestions.suggestions.map((id: string) => allGoals.find(g => String(g.id) === id)?.name || id)} 
-                isLoading={parentSuggestions.isLoading} 
-                onSelect={parentSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={parentSuggestions.suggestions.map((id: string) => allGoals.find(g => String(g.id) === id)?.name || id)}
+                isLoading={parentSuggestions.isLoading}
+                onSelect={parentSuggestions.applySuggestion}
                 label="Suggested Parents"
             />
+            */}
         </Box>
     ) : null;
 
@@ -3333,11 +3357,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 <Typography variant="body2" sx={{ flexGrow: 1 }}>
                                     {option.name}
                                 </Typography>
+                                {/*
                                 {isSuggested && (
                                     <Tooltip title="AI Recommended">
                                         <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
                                     </Tooltip>
                                 )}
+                                */}
                             </Box>
                         </Box>
                     );
@@ -3366,12 +3392,14 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 handleHomeEndKeys
                 freeSolo={false}
             />
-            <AiSuggestionsRow 
-                suggestions={childSuggestions.suggestions.map((id: string) => allGoals.find(g => String(g.id) === id)?.name || id)} 
-                isLoading={childSuggestions.isLoading} 
-                onSelect={childSuggestions.applySuggestion} 
+            {/*
+            <AiSuggestionsRow
+                suggestions={childSuggestions.suggestions.map((id: string) => allGoals.find(g => String(g.id) === id)?.name || id)}
+                isLoading={childSuggestions.isLoading}
+                onSelect={childSuggestions.applySuggestion}
                 label="Suggested Children"
             />
+            */}
         </Box>
     ) : null;
 
@@ -3379,9 +3407,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         <>
             {durationField}
             {state.goal.duration !== 1440 && (
-                <Box sx={{ mb: 2 }}>
-                    <strong>Scheduled Time:</strong> {timestampToDisplayString(state.goal.routine_time, 'time')}
-                </Box>
+                <ViewField label="Scheduled Time" value={timestampToDisplayString(state.goal.routine_time, 'time')} />
             )}
         </>
     ) : (
@@ -3408,11 +3434,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         inputProps={{ step: 300 }}
                         disabled={isViewOnly}
                     />
-                    <AiSuggestionsRow 
-                        suggestions={routineTimeSuggestions.suggestions} 
-                        isLoading={routineTimeSuggestions.isLoading} 
-                        onSelect={routineTimeSuggestions.applySuggestion} 
+                    {/*
+                    <AiSuggestionsRow
+                        suggestions={routineTimeSuggestions.suggestions}
+                        isLoading={routineTimeSuggestions.isLoading}
+                        onSelect={routineTimeSuggestions.applySuggestion}
                     />
+                    */}
                 </Box>
             )}
         </>
@@ -3498,15 +3526,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                     disabled={isViewOnly}
                                                     sx={{ width: '100%' }}
                                                 />
-                                                <AiSuggestionsRow 
-                                                    suggestions={scheduledDateTimeSuggestions.suggestions} 
-                                                    isLoading={scheduledDateTimeSuggestions.isLoading} 
+                                                {/*
+                                                <AiSuggestionsRow
+                                                    suggestions={scheduledDateTimeSuggestions.suggestions}
+                                                    isLoading={scheduledDateTimeSuggestions.isLoading}
                                                     onSelect={(v) => {
                                                         setTaskEvents(prev => prev.map((evt, idx) =>
                                                             idx === index ? { ...evt, scheduled_timestamp: inputStringToTimestamp(v, 'datetime') } : evt
                                                         ));
-                                                    }} 
+                                                    }}
                                                 />
+                                                */}
                                             </Box>
                                             <Box sx={{ width: 60 }}>
                                                 <TextField
@@ -3612,7 +3642,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         )}
                         {durationField}
 
-                        {/* Google Calendar Sync Settings */}
+                        {/* Google Calendar sync is disabled in the goal menu. */}
+                        {false && (
                         <Box sx={{ mt: 2, mb: 2 }}>
                             <Typography variant="subtitle2" sx={{ mb: 1 }}>
                                 Google Calendar Sync
@@ -3654,11 +3685,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                             renderValue: (value) => (
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                                     {String(value)}
+                                                    {/*
                                                     {gcalSyncDirectionSuggestions.suggestions[0] === value && (
                                                         <Tooltip title="AI Recommended">
                                                             <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
                                                         </Tooltip>
                                                     )}
+                                                    */}
                                                 </Box>
                                             )
                                         }}
@@ -3673,11 +3706,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                             From Google Calendar only {gcalSyncDirectionSuggestions.suggestions[0] === 'from_gcal' && '(Suggested)'}
                                         </MenuItem>
                                     </TextField>
-                                    <AiSuggestionsRow 
-                                        suggestions={gcalSyncDirectionSuggestions.suggestions} 
-                                        isLoading={gcalSyncDirectionSuggestions.isLoading} 
-                                        onSelect={gcalSyncDirectionSuggestions.applySuggestion} 
+                                    {/*
+                                    <AiSuggestionsRow
+                                        suggestions={gcalSyncDirectionSuggestions.suggestions}
+                                        isLoading={gcalSyncDirectionSuggestions.isLoading}
+                                        onSelect={gcalSyncDirectionSuggestions.applySuggestion}
                                     />
+                                    */}
 
                                     {/* Calendar selector */}
                                     {gcalCalendars.length > 0 && (
@@ -3703,11 +3738,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                         return (
                                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                                                 {cal ? cal.summary : String(value)}
+                                                                {/*
                                                                 {gcalCalendarSuggestions.suggestions[0] === value && (
                                                                     <Tooltip title="AI Recommended">
                                                                         <AutoAwesomeIcon sx={{ fontSize: 14, color: 'secondary.main' }} />
                                                                     </Tooltip>
                                                                 )}
+                                                                */}
                                                             </Box>
                                                         );
                                                     }
@@ -3723,11 +3760,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                                     </MenuItem>
                                                 ))}
                                             </TextField>
-                                            <AiSuggestionsRow 
-                                                suggestions={gcalCalendarSuggestions.suggestions.map((id: string) => gcalCalendars.find(c => c.id === id)?.summary || id)} 
-                                                isLoading={gcalCalendarSuggestions.isLoading} 
-                                                onSelect={gcalCalendarSuggestions.applySuggestion} 
+                                            {/*
+                                            <AiSuggestionsRow
+                                                suggestions={gcalCalendarSuggestions.suggestions.map((id: string) => gcalCalendars.find(c => c.id === id)?.summary || id)}
+                                                isLoading={gcalCalendarSuggestions.isLoading}
+                                                onSelect={gcalCalendarSuggestions.applySuggestion}
                                             />
+                                            */}
                                         </Box>
                                     )}
 
@@ -3745,6 +3784,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                             )}
                         </Box>
+                        )}
                     </>
                 );
         }
@@ -4278,7 +4318,17 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                     <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, width: 'auto !important' }}>
                         <Box sx={{ flex: '1 1 auto', minWidth: 0, width: 'auto !important' }}>
                             <DialogTitle
-                                sx={{
+                                sx={isViewOnly ? {
+                                    position: 'absolute',
+                                    width: '1px',
+                                    height: '1px',
+                                    padding: 0,
+                                    margin: '-1px',
+                                    overflow: 'hidden',
+                                    clip: 'rect(0, 0, 0, 0)',
+                                    whiteSpace: 'nowrap',
+                                    border: 0,
+                                } : {
                                     p: 0,
                                     fontSize: '0.75rem',
                                     fontWeight: 500,
@@ -4402,7 +4452,11 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         </GoalMenuSection>
                         {typeSpecificFields && (
                             <GoalMenuSection title="Details">
-                                {typeSpecificFields}
+                                {isViewOnly ? (
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                        {typeSpecificFields}
+                                    </Box>
+                                ) : typeSpecificFields}
                             </GoalMenuSection>
                         )}
                     </Box>
