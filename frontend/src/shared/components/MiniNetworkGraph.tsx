@@ -11,11 +11,90 @@ interface MiniNetworkGraphProps {
   onNodeClick?: (node: Goal) => void;
 }
 
+// vis-network draws arrow length as `15 * scaleFactor + 3 * edgeWidth`, in the
+// same units as node shapes, then scales the whole scene by the camera zoom.
+// The head has to be derived from the node and the edge. Multiplying by zoom
+// or by edge thickness makes the head grow faster than the nodes.
+const MINI_EDGE_WIDTH = 2;
+
+function miniArrowScaleFactor(nodeExtent: number, edgeLength: number): number {
+  const node = Number.isFinite(nodeExtent) && nodeExtent > 0 ? nodeExtent : 36;
+  const edge = Number.isFinite(edgeLength) && edgeLength > 0 ? edgeLength : node * 3;
+  // About two-thirds of the smaller node, and never more than a fifth of the edge.
+  const target = Math.min(node * 0.85, edge * 0.22);
+  const length = Math.max(10, Math.min(target, 36));
+  const scale = (length - 3 * MINI_EDGE_WIDTH) / 15;
+  return Math.max(0.2, Math.min(scale, 2));
+}
+
+const miniNetworkOptions = {
+  nodes: {
+    shape: 'box' as const,
+    margin: { top: 16, right: 16, bottom: 16, left: 16 },
+    widthConstraint: { maximum: 320 },
+    font: { size: 20 },
+    borderWidth: 3,
+    chosen: false
+  },
+  edges: {
+    arrows: { to: { enabled: true, scaleFactor: 0.2 } },
+    smooth: { enabled: true, type: 'curvedCW' as const, roundness: 0.05 },
+    width: MINI_EDGE_WIDTH,
+    color: { inherit: 'from' as const, opacity: 0.9 }
+  },
+  physics: { enabled: false },
+  manipulation: { enabled: false },
+  interaction: { dragNodes: false, dragView: true, zoomView: true, hover: true, keyboard: { enabled: false } }
+};
+
+function measuredNodeExtent(node: any): number {
+  const width = node?.shape?.width;
+  const height = node?.shape?.height;
+  if (typeof width === 'number' && width > 0 && typeof height === 'number' && height > 0) {
+    return Math.min(width, height);
+  }
+  const size = node?.options?.size;
+  return typeof size === 'number' && size > 0 ? size : 36;
+}
+
 const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 220, onNodeClick }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const networkRef = useRef<VisNetwork | null>(null);
   const nodesDataSetRef = useRef<DataSet<any> | null>(null);
   const edgesDataSetRef = useRef<DataSet<any> | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+
+  const fitToContainer = useCallback(() => {
+    const network = networkRef.current as any;
+    const el = containerRef.current;
+    const edges = edgesDataSetRef.current;
+    if (!network || !el || !edges || el.clientWidth < 40 || el.clientHeight < 40) return;
+    try {
+      network.fit({ animation: false });
+      const bodyNodes = network.body?.nodes || {};
+      const updates = edges.get().map((edge: any) => {
+        const from = bodyNodes[edge.from];
+        const to = bodyNodes[edge.to];
+        const edgeLength = from && to ? Math.hypot((to.x ?? 0) - (from.x ?? 0), (to.y ?? 0) - (from.y ?? 0)) : 0;
+        return {
+          id: edge.id,
+          width: MINI_EDGE_WIDTH,
+          arrows: {
+            to: {
+              enabled: true,
+              type: 'arrow',
+              scaleFactor: miniArrowScaleFactor(
+                Math.min(measuredNodeExtent(from), measuredNodeExtent(to)),
+                edgeLength
+              ),
+            },
+          },
+        };
+      });
+      if (updates.length) edges.update(updates);
+      network.fit({ animation: false });
+    } catch (_) {}
+  }, []);
 
 
   const renderGraph = useCallback(async () => {
@@ -70,20 +149,31 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
       nodesDataSetRef.current.clear();
       edgesDataSetRef.current.clear();
       nodesDataSetRef.current.add(laidOut.nodes);
+      const nodeById = new Map<number, { x: number; y: number; size: number }>();
+      (laidOut.nodes || []).forEach((n: any) => {
+        nodeById.set(n.id, {
+          x: typeof n.x === 'number' ? n.x : 0,
+          y: typeof n.y === 'number' ? n.y : 0,
+          size: typeof n.size === 'number' ? n.size : 30,
+        });
+      });
       const miniEdges = (laidOut.edges || networkEdges).map((e: any) => {
-        const currentScale = e?.arrows?.to?.scaleFactor ?? 0.4;
+        const from = nodeById.get(e.from);
+        const to = nodeById.get(e.to);
+        const edgeLength = from && to ? Math.hypot(to.x - from.x, to.y - from.y) : 0;
+        const nodeSize = Math.min(from?.size ?? 30, to?.size ?? 30);
         return {
           ...e,
           id: `${e.from}-${e.to}`,
-          width: Math.max(3, e.width ? e.width * 2 : 3),
+          width: MINI_EDGE_WIDTH,
           arrows: {
             to: {
               enabled: true,
-              type: e?.arrows?.to?.type || 'arrow',
-              scaleFactor: Math.max(1.4, currentScale * 3)
+              type: 'arrow',
+              scaleFactor: miniArrowScaleFactor(nodeSize, edgeLength),
             }
           },
-          smooth: { ...(e.smooth || { enabled: true, type: 'curvedCW' }), roundness: 0.05 }
+          smooth: { enabled: true, type: 'curvedCW', roundness: 0.05 }
         };
       });
       edgesDataSetRef.current.add(miniEdges);
@@ -97,25 +187,7 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
         networkRef.current = new VisNetwork(
           containerRef.current,
           { nodes: nodesDataSetRef.current, edges: edgesDataSetRef.current },
-          {
-            nodes: {
-              shape: 'box',
-              margin: { top: 16, right: 16, bottom: 16, left: 16 },
-              widthConstraint: { maximum: 320 },
-              font: { size: 20 },
-              borderWidth: 3,
-              chosen: false
-            },
-            edges: {
-              arrows: { to: { enabled: true, scaleFactor: 1.4 } },
-              smooth: { enabled: true, type: 'curvedCW', roundness: 0.05 },
-              width: 3,
-              color: { inherit: 'from', opacity: 0.9 }
-            },
-            physics: { enabled: false },
-            manipulation: { enabled: false },
-            interaction: { dragNodes: false, dragView: true, zoomView: true, hover: true, keyboard: { enabled: false } }
-          }
+          miniNetworkOptions
         );
 
         networkRef.current.on('click', (params: any) => {
@@ -136,55 +208,28 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
           networkRef.current = new VisNetwork(
             containerRef.current,
             { nodes: nodesDataSetRef.current!, edges: edgesDataSetRef.current! },
-            {
-              nodes: {
-                shape: 'box',
-                margin: { top: 16, right: 16, bottom: 16, left: 16 },
-                widthConstraint: { maximum: 320 },
-                font: { size: 20 },
-                borderWidth: 3,
-                chosen: false
-              },
-              edges: {
-                arrows: { to: { enabled: true, scaleFactor: 1.4 } },
-                smooth: { enabled: true, type: 'curvedCW', roundness: 0.05 },
-                width: 3,
-                color: { inherit: 'from', opacity: 0.9 }
-              },
-              physics: { enabled: false },
-              manipulation: { enabled: false },
-              interaction: { dragNodes: false, dragView: true, zoomView: true, hover: true, keyboard: { enabled: false } }
-            }
+            miniNetworkOptions
           );
         }
       }
 
-      // Fit view to content when there is something to show
+      if (containerRef.current && typeof ResizeObserver !== 'undefined' && !resizeObserverRef.current) {
+        resizeObserverRef.current = new ResizeObserver(() => fitToContainer());
+        resizeObserverRef.current.observe(containerRef.current);
+      }
+
+      // Fit once the container has its real size. A fit during dialog open
+      // locks the camera to a too-small panel and leaves the arrows oversized
+      // relative to the nodes.
       const nodeCount = nodesDataSetRef.current?.get().length || 0;
       if (networkRef.current && nodeCount > 0) {
-        requestAnimationFrame(() => {
-          try {
-            // Ensure entire mini-network is visible
-            networkRef.current && networkRef.current.fit({ animation: false as any });
-            // Do a second fit shortly after to account for font/layout paints
-            setTimeout(() => {
-              try { networkRef.current && networkRef.current.fit({ animation: false as any }); } catch (_) {}
-            }, 80);
-            // After fitting, zoom out slightly so edges are visually shorter within the container
-            setTimeout(() => {
-              try {
-                const currentScale = (networkRef.current as any)?.getScale?.() ?? 1;
-                (networkRef.current as any)?.moveTo?.({ scale: currentScale * 0.8 });
-              } catch (_) {}
-            }, 120);
-            console.log('[MiniNetworkGraph] renderGraph: fit applied (double)');
-          } catch (_) {}
-        });
+        requestAnimationFrame(() => fitToContainer());
+        setTimeout(() => fitToContainer(), 180);
       }
     } catch (e) {
       console.error('[MiniNetworkGraph] renderGraph: error', e);
     }
-  }, [centerId, onNodeClick]);
+  }, [centerId, onNodeClick, fitToContainer]);
 
   useEffect(() => {
     console.log('[MiniNetworkGraph] effect: renderGraph invoked', { centerId });
@@ -200,6 +245,10 @@ const MiniNetworkGraph: React.FC<MiniNetworkGraphProps> = ({ centerId, height = 
     return () => {
       window.removeEventListener('network:relationships-changed', handler as EventListener);
       console.log('[MiniNetworkGraph] cleanup: destroying network instance');
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
+      }
       if (networkRef.current) {
         try { networkRef.current.destroy(); } catch (_) {}
         networkRef.current = null;

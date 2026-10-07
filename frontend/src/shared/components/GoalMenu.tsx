@@ -25,6 +25,7 @@ import {
     InputAdornment,
     Alert,
     CssBaseline,
+    Menu,
 } from '@mui/material';
 import { ThemeProvider } from '@mui/material/styles';
 import { createAppTheme } from '../styles/theme';
@@ -36,6 +37,8 @@ import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import AvTimerIcon from '@mui/icons-material/AvTimer';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import SearchIcon from '@mui/icons-material/Search';
+import CloseIcon from '@mui/icons-material/Close';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import { createGoal, updateGoal, deleteGoal, createRelationship, deleteRelationship, updateRoutines, resolveGoal, completeEvent, deleteEvent, createEvent, getTaskEvents, updateEvent, updateRoutineEvent, updateRoutineEventProperties, TaskDateValidationError, duplicateGoal, recomputeRoutineFuture, getGoogleCalendars, CalendarListEntry, deleteGCalEvent, getGoalRelations } from '../utils/api';
 import { Goal, GoalType, ApiGoal, ResolutionStatus, getDisplayStatus } from '../../types/goals';
 import {
@@ -148,9 +151,80 @@ interface RoutineRecomputeDialogState {
     onConfirm: () => Promise<void>;
 }
 
+function GoalMenuSection({ title, children }: { title: string; children: React.ReactNode }) {
+    return (
+        <Box
+            sx={{
+                p: 1.5,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider',
+                bgcolor: 'background.default',
+            }}
+        >
+            <Typography
+                variant="overline"
+                color="text.secondary"
+                sx={{ display: 'block', lineHeight: 1.4, letterSpacing: 0.6, mb: 1 }}
+            >
+                {title}
+            </Typography>
+            {children}
+        </Box>
+    );
+}
+
+function RelationshipChip({
+    goal,
+    onRemove,
+    onOpen,
+}: {
+    goal: Goal;
+    onRemove?: () => void;
+    onOpen?: () => void;
+}) {
+    const style = getGoalStyle(goal);
+    return (
+        <Chip
+            size="small"
+            variant="outlined"
+            onDelete={onRemove}
+            onClick={onOpen}
+            label={
+                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, maxWidth: 240 }}>
+                    <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {goal.name}
+                    </Box>
+                    <Box
+                        component="span"
+                        sx={{
+                            color: style.backgroundColor,
+                            textTransform: 'capitalize',
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            flexShrink: 0,
+                        }}
+                    >
+                        {goal.goal_type}
+                    </Box>
+                </Box>
+            }
+            sx={{
+                maxWidth: '100%',
+                borderColor: 'divider',
+                bgcolor: 'action.hover',
+                '& .MuiChip-label': { px: 1 },
+                '& .MuiChip-deleteIcon': { color: 'text.secondary', fontSize: 16 },
+                ...(onOpen ? { cursor: 'pointer' } : {}),
+            }}
+        />
+    );
+}
+
 const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMode, onClose, onSuccess, submitOverride, defaultSelectedParents, defaultRelationshipType, autoCreateEventTimestamp }) => {
     const [isOpen, setIsOpen] = useState(true);
     const [relationsOpen, setRelationsOpen] = useState(false);
+    const [headerMenuAnchor, setHeaderMenuAnchor] = useState<null | HTMLElement>(null);
     const [parentGoals, setParentGoals] = useState<Goal[]>([]);
     const [childGoals, setChildGoals] = useState<Goal[]>([]);
 
@@ -2391,14 +2465,16 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     };
 
     const priorityField = isViewOnly ? (
-        <Box sx={{ mb: 2 }}>
-            <strong>Priority:</strong>{' '}
-            {state.goal.priority
-                ? state.goal.priority.charAt(0).toUpperCase() + state.goal.priority.slice(1)
-                : 'Not set'}
+        <Box sx={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', columnGap: 1.5, alignItems: 'start' }}>
+            <Typography variant="body2" color="text.secondary">Priority</Typography>
+            <Typography variant="body2">
+                {state.goal.priority
+                    ? state.goal.priority.charAt(0).toUpperCase() + state.goal.priority.slice(1)
+                    : 'Not set'}
+            </Typography>
         </Box>
     ) : (
-        <Box>
+        <Box sx={{ minWidth: 0, width: 'auto !important' }}>
             <TextField
                 label="Priority"
                 select
@@ -2906,39 +2982,19 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         </Box>
     );
 
+    const applicableStatus = state.goal.goal_type && state.goal.goal_type !== 'directive' ? completedField : null;
+
     const commonFields = isViewOnly ? (
-        <>
-            <Box sx={{ mb: 1 }}>
-                <strong>Name:</strong> {state.goal.name || 'Not set'}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', columnGap: 1.5, alignItems: 'start' }}>
+                <Typography variant="body2" color="text.secondary">Description</Typography>
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                    {state.goal.description || 'Not set'}
+                </Typography>
             </Box>
-            <Box sx={{ mb: 1.5, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-                {state.goal.goal_type && (() => {
-                    const style = getGoalStyle(state.goal);
-                    return (
-                        <span
-                            className="goal-type-badge"
-                            style={{
-                                backgroundColor: `${style.backgroundColor}20`,
-                                color: style.backgroundColor
-                            }}
-                        >
-                            {state.goal.goal_type}
-                        </span>
-                    );
-                })()}
-                {state.goal.priority && (
-                    <span className="priority-badge" data-priority={state.goal.priority}>
-                        {state.goal.priority}
-                    </span>
-                )}
-                <span className={`status-badge ${getDisplayStatus(state.goal)}`}>
-                    {getDisplayStatus(state.goal).charAt(0).toUpperCase() + getDisplayStatus(state.goal).slice(1)}
-                </span>
-            </Box>
-            <Box sx={{ mb: 2 }}>
-                <strong>Description:</strong> {state.goal.description || 'Not set'}
-            </Box>
-        </>
+            {priorityField}
+            {applicableStatus}
+        </Box>
     ) : (
         <>
             <TextField
@@ -2966,6 +3022,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 isLoading={nameSuggestions.isLoading} 
                 onSelect={nameSuggestions.applySuggestion} 
             />
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, columnGap: 1, alignItems: 'start', width: 'auto !important' }}>
+            <Box sx={{ minWidth: 0, width: 'auto !important' }}>
             <TextField
                 label="Goal Type"
                 value={state.goal.goal_type || ''}
@@ -3050,6 +3108,9 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 isLoading={goalTypeSuggestions.isLoading} 
                 onSelect={goalTypeSuggestions.applySuggestion} 
             />
+            </Box>
+            {priorityField}
+            </Box>
             <TextField
                 label="Description"
                 value={state.goal.description || ''}
@@ -3072,13 +3133,24 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 isLoading={descriptionSuggestions.isLoading} 
                 onSelect={descriptionSuggestions.applySuggestion} 
             />
-            {priorityField}
+            {applicableStatus}
         </>
     );
 
     // Parent selector field (available in create and edit modes, not shown for events in view mode as they have special display)
     const parentSelectorField = (state.mode === 'create' || state.mode === 'edit') ? (
-        <Box sx={{ mt: 2, mb: 2 }}>
+        <Box sx={{ mb: 2 }}>
+            {selectedParents.length > 0 && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: 1 }}>
+                    {selectedParents.map((parent) => (
+                        <RelationshipChip
+                            key={parent.id}
+                            goal={parent}
+                            onRemove={() => setSelectedParents((prev) => prev.filter((p) => p.id !== parent.id))}
+                        />
+                    ))}
+                </Box>
+            )}
             <Autocomplete
                 multiple
                 value={selectedParents}
@@ -3145,27 +3217,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         </Box>
                     );
                 }}
-                renderTags={(value, getTagProps) =>
-                    value.filter((option): option is Goal => !isCreatePlaceholder(option)).map((option, index) => {
-                        const { key, ...tagProps } = getTagProps({ index });
-                        const style = getGoalStyle(option);
-                        return (
-                            <Chip
-                                key={key}
-                                label={option.name}
-                                size="small"
-                                sx={{
-                                    ...style,
-                                    color: style.textColor,
-                                    '& .MuiChip-deleteIcon': {
-                                        color: style.textColor
-                                    }
-                                }}
-                                {...tagProps}
-                            />
-                        );
-                    })
-                }
+                renderTags={() => null}
                 renderInput={(params) => (
                     <TextField
                         {...params}
@@ -3176,7 +3228,8 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                     ? "Parent Goals (Required)"
                                     : "Parent Goals (Optional)")
                         }
-                        placeholder=""
+                        placeholder="Search goals..."
+                        InputLabelProps={{ shrink: true }}
                         helperText={
                             state.goal.goal_type === 'event'
                                 ? "Events must be associated with one task or routine"
@@ -3211,7 +3264,18 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
 
     // Child selector field (available in create and edit modes; tasks/events cannot be parents)
     const childSelectorField = ((state.mode === 'create' || state.mode === 'edit') && state.goal.goal_type !== 'task' && state.goal.goal_type !== 'event') ? (
-        <Box sx={{ mt: 2, mb: 2 }}>
+        <Box>
+            {selectedChildren.length > 0 && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: 1 }}>
+                    {selectedChildren.map((child) => (
+                        <RelationshipChip
+                            key={child.id}
+                            goal={child}
+                            onRemove={() => setSelectedChildren((prev) => prev.filter((c) => c.id !== child.id))}
+                        />
+                    ))}
+                </Box>
+            )}
             <Autocomplete
                 multiple
                 value={selectedChildren}
@@ -3278,32 +3342,13 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         </Box>
                     );
                 }}
-                renderTags={(value, getTagProps) =>
-                    value.filter((option): option is Goal => !isCreatePlaceholder(option)).map((option, index) => {
-                        const { key, ...tagProps } = getTagProps({ index });
-                        const style = getGoalStyle(option);
-                        return (
-                            <Chip
-                                key={key}
-                                label={option.name}
-                                size="small"
-                                sx={{
-                                    ...style,
-                                    color: style.textColor,
-                                    '& .MuiChip-deleteIcon': {
-                                        color: style.textColor
-                                    }
-                                }}
-                                {...tagProps}
-                            />
-                        );
-                    })
-                }
+                renderTags={() => null}
                 renderInput={(params) => (
                     <TextField
                         {...params}
                         label="Child Goals (Optional)"
-                        placeholder=""
+                        placeholder="Search goals..."
+                        InputLabelProps={{ shrink: true }}
                         helperText="Select child goals to create relationships"
                         InputProps={{
                             ...params.InputProps,
@@ -3378,7 +3423,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
         const project_and_achievement_fields = (
             <>
                 {dateFields}
-                {completedField}
             </>
         );
         switch (state.goal.goal_type) {
@@ -3394,7 +3438,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                         {dateFields}
                         {frequencyField}
                         {routineFields}
-                        {completedField}
                     </>
                 );
             case 'task':
@@ -3556,7 +3599,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                                 </Box>
                             ) : null}
                         </Box>
-                        {completedField}
                     </>
                 );
             case 'event':
@@ -3569,7 +3611,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             </Box>
                         )}
                         {durationField}
-                        {completedField}
 
                         {/* Google Calendar Sync Settings */}
                         <Box sx={{ mt: 2, mb: 2 }}>
@@ -4144,6 +4185,37 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     // --------------------
     // Render
     // --------------------
+    const displayName = (state.goal.name || '').trim();
+    const goalStyle = state.goal.goal_type ? getGoalStyle(state.goal) : null;
+    const accentColor = goalStyle?.backgroundColor || 'primary.main';
+    const bannerSummary = (() => {
+        const goal = state.goal;
+        if (goal.goal_type === 'routine') {
+            const parts: string[] = [];
+            if (goal.frequency) parts.push(formatFrequency(goal.frequency));
+            if (goal.duration === 1440) parts.push('All Day');
+            else if (goal.routine_time) parts.push(timestampToDisplayString(goal.routine_time, 'time'));
+            return parts.join(' · ');
+        }
+        if (goal.goal_type === 'event') {
+            return goal.scheduled_timestamp ? timestampToDisplayString(goal.scheduled_timestamp) : '';
+        }
+        if (goal.goal_type === 'project' || goal.goal_type === 'achievement' || goal.goal_type === 'task') {
+            const start = goal.start_timestamp ? timestampToDisplayString(goal.start_timestamp, 'date') : '';
+            const end = goal.end_timestamp ? timestampToDisplayString(goal.end_timestamp, 'date') : '';
+            if (start && end) return `${start} – ${end}`;
+            return start || end;
+        }
+        return '';
+    })();
+    const typeSpecificFields = renderTypeSpecificFields();
+    const showStats = state.mode === 'view' && (state.goal.goal_type === 'routine' || state.goal.goal_type === 'task' || state.goal.goal_type === 'event');
+    const networkCenterId = state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id;
+    const showNetwork = isViewOnly && !!networkCenterId;
+    const canHaveChildren = !!state.goal.goal_type && state.goal.goal_type !== 'task' && state.goal.goal_type !== 'event';
+    const showHeaderMenu = state.mode === 'view' || state.mode === 'edit';
+    const displayStatus = state.goal.goal_type ? getDisplayStatus(state.goal) : null;
+
     return (
         <Dialog
             open={isOpen}
@@ -4175,7 +4247,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }
                 close();
             }}
-            maxWidth="md"
+            maxWidth="lg"
             fullWidth
             PaperProps={{
                 sx: {
@@ -4191,144 +4263,239 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
             }}
         >
             {/* ---- Dialog Title ---- */}
-            <DialogTitle>{title}</DialogTitle>
+            <Box sx={{ display: 'flex', alignItems: 'stretch', width: '100%', borderBottom: '1px solid', borderColor: 'divider' }}>
+                <Box
+                    sx={{
+                        width: '4px !important',
+                        minWidth: '4px !important',
+                        maxWidth: '4px !important',
+                        flexGrow: 0,
+                        flexShrink: 0,
+                        bgcolor: accentColor,
+                    }}
+                />
+                <Box sx={{ flex: '1 1 auto', width: 'auto !important', minWidth: 0, px: 2, pt: 1.25, pb: 1.5 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, width: 'auto !important' }}>
+                        <Box sx={{ flex: '1 1 auto', minWidth: 0, width: 'auto !important' }}>
+                            <DialogTitle
+                                sx={{
+                                    p: 0,
+                                    fontSize: '0.75rem',
+                                    fontWeight: 500,
+                                    color: 'text.secondary',
+                                    lineHeight: 1.2,
+                                }}
+                            >
+                                {title}
+                            </DialogTitle>
+                            {displayName && (
+                                <Typography variant="h6" sx={{ fontWeight: 650, lineHeight: 1.3, wordBreak: 'break-word' }}>
+                                    {displayName}
+                                </Typography>
+                            )}
+                            {bannerSummary && (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                                    {bannerSummary}
+                                </Typography>
+                            )}
+                            {goalStyle && displayStatus && (
+                                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', alignItems: 'center', mt: 0.75 }}>
+                                    <span
+                                        className="goal-type-badge"
+                                        style={{
+                                            backgroundColor: `${goalStyle.backgroundColor}20`,
+                                            color: goalStyle.backgroundColor,
+                                        }}
+                                    >
+                                        {state.goal.goal_type ? state.goal.goal_type.charAt(0).toUpperCase() + state.goal.goal_type.slice(1) : ''}
+                                    </span>
+                                    {state.goal.priority && (
+                                        <span className="priority-badge" data-priority={state.goal.priority}>
+                                            {state.goal.priority}
+                                        </span>
+                                    )}
+                                    <span className={`status-badge ${displayStatus}`}>
+                                        {displayStatus.charAt(0).toUpperCase() + displayStatus.slice(1)}
+                                    </span>
+                                </Box>
+                            )}
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0, width: 'auto !important', pt: 0.5 }}>
+                            {isViewOnly && (
+                                <Button onClick={handleEdit} color="primary" variant="contained" size="small" disabled={isBusy}>
+                                    Edit
+                                </Button>
+                            )}
+                            {showHeaderMenu && (
+                                <IconButton
+                                    aria-label="More actions"
+                                    size="small"
+                                    disabled={isBusy}
+                                    onClick={(event) => setHeaderMenuAnchor(event.currentTarget)}
+                                >
+                                    <MoreVertIcon fontSize="small" />
+                                </IconButton>
+                            )}
+                            <IconButton aria-label="Close dialog" onClick={close} disabled={isBusy} size="small">
+                                <CloseIcon fontSize="small" />
+                            </IconButton>
+                        </Box>
+                    </Box>
+                </Box>
+            </Box>
+            <Menu
+                anchorEl={headerMenuAnchor}
+                open={Boolean(headerMenuAnchor)}
+                onClose={() => setHeaderMenuAnchor(null)}
+            >
+                {state.mode === 'view' && state.goal.goal_type !== 'event' && (
+                    <MenuItem
+                        onClick={() => {
+                            setHeaderMenuAnchor(null);
+                            handleCreateChild();
+                        }}
+                        disabled={isBusy}
+                    >
+                        Create Child
+                    </MenuItem>
+                )}
+                {state.mode === 'view' && (
+                    <MenuItem
+                        onClick={() => {
+                            setHeaderMenuAnchor(null);
+                            handleDuplicate();
+                        }}
+                        disabled={isBusy}
+                    >
+                        Duplicate
+                    </MenuItem>
+                )}
+                {(state.mode === 'view' || state.mode === 'edit') && (
+                    <MenuItem
+                        onClick={() => {
+                            setHeaderMenuAnchor(null);
+                            handleDelete();
+                        }}
+                        disabled={isBusy}
+                    >
+                        Delete
+                    </MenuItem>
+                )}
+            </Menu>
             {/* ---- Dialog Content ---- */}
-            <DialogContent ref={contentRef}>
+            <DialogContent ref={contentRef} sx={{ pt: 2 }}>
+                {state.error && (
+                    <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
+                )}
                 <Box
                     sx={{
                         display: 'grid',
-                        gridTemplateColumns: { xs: '1fr', sm: isViewOnly ? '1fr 260px' : '1fr' },
+                        gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 2fr) minmax(260px, 1fr)' },
                         columnGap: 2,
-                        alignItems: 'start'
+                        rowGap: 2,
+                        alignItems: 'start',
                     }}
                 >
-                    {/* Main column */}
-                    <Box sx={{ minWidth: 0 }}>
-                        {state.error && (
-                            <Box role="alert" sx={{ color: 'error.main', mb: 2 }}>{state.error}</Box>
+                    <Box sx={{ minWidth: 0, width: 'auto !important', display: 'flex', flexDirection: 'column', gap: 2, order: { xs: 1, md: 1 }, gridColumn: { md: 1 } }}>
+                        <GoalMenuSection title="Overview">
+                            {commonFields}
+                        </GoalMenuSection>
+                        {typeSpecificFields && (
+                            <GoalMenuSection title="Details">
+                                {typeSpecificFields}
+                            </GoalMenuSection>
                         )}
-                        {/* Loading relationships indicator - commented out to reduce visual noise
-                        {actualRelationsLoading && (
-                            <Box sx={{ mb: 2 }}>
-                                <LinearProgress />
-                                <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                    sx={{ mt: 0.5, display: 'block' }}
-                                >
-                                    Loading relationships…
-                                </Typography>
-                            </Box>
-                        )}
-                        */}
-                        {commonFields}
-                        {parentSelectorField}
-                        {childSelectorField}
-                        {renderTypeSpecificFields()}
-                        {renderStatsTiles()}
                     </Box>
-
-                    {/* Sidebar (view mode only, fixed width on sm+) */}
-                    {isViewOnly && (
-                        <Box sx={{ width: { xs: '100%', sm: 260 }, flexShrink: 0 }}>
-                            <Box sx={{ mb: 3 }}>
-                                <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
-                                    Parents
-                                </Typography>
-                                {parentGoals.length > 0 ? (
-                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                                        {parentGoals.map((parent) => (
-                                            <Box
-                                                key={parent.id}
-                                                sx={{
-                                                    ...getGoalStyle(parent),
-                                                    color: 'text.inverse',
-                                                    px: 1.5,
-                                                    py: 0.75,
-                                                    borderRadius: 2,
-                                                    fontSize: '0.875rem',
-                                                    fontWeight: 500,
-                                                    cursor: 'pointer',
-                                                    transition: 'all 0.2s',
-                                                    '&:hover': {
-                                                        transform: 'translateY(-2px)',
-                                                        boxShadow: 2
-                                                    }
-                                                }}
-                                                onClick={() => open(parent, 'view')}
-                                            >
-                                                {parent.name}
-                                            </Box>
-                                        ))}
-                                    </Box>
-                                ) : (
-                                    <Typography variant="caption" color="text.secondary">
-                                        None
+                    <Box
+                        sx={{
+                            minWidth: 0,
+                            width: 'auto !important',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            order: { xs: 2, md: 2 },
+                            gridColumn: { md: 2 },
+                            gridRow: { md: showStats ? '1 / span 2' : '1' },
+                        }}
+                    >
+                        <GoalMenuSection title="Hierarchy">
+                            {isViewOnly ? (
+                                <>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontWeight: 700, letterSpacing: 0.4, mb: 0.75 }}>
+                                        Parents
                                     </Typography>
-                                )}
-                            </Box>
-
-                            {childGoals.length > 0 && (
-                                <Box sx={{ mb: 3 }}>
-                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
-                                        Children
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                                        {childGoals.map((child) => (
-                                            <Box
-                                                key={child.id}
-                                                sx={{
-                                                    ...getGoalStyle(child),
-                                                    color: 'text.inverse',
-                                                    px: 1.5,
-                                                    py: 0.75,
-                                                    borderRadius: 2,
-                                                    fontSize: '0.875rem',
-                                                    fontWeight: 500,
-                                                    cursor: 'pointer',
-                                                    transition: 'all 0.2s',
-                                                    '&:hover': {
-                                                        transform: 'translateY(-2px)',
-                                                        boxShadow: 2
-                                                    }
-                                                }}
-                                                onClick={() => open(child, 'view')}
-                                            >
-                                                {child.name}
-                                            </Box>
-                                        ))}
-                                    </Box>
-                                </Box>
+                                    {parentGoals.length > 0 ? (
+                                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.75 }}>
+                                            {parentGoals.map((parent) => (
+                                                <RelationshipChip
+                                                    key={parent.id}
+                                                    goal={parent}
+                                                    onOpen={() => open(parent, 'view')}
+                                                />
+                                            ))}
+                                        </Box>
+                                    ) : (
+                                        <Typography variant="caption" color="text.secondary">None</Typography>
+                                    )}
+                                    {canHaveChildren && (
+                                        <Box sx={{ mt: 1.5 }}>
+                                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontWeight: 700, letterSpacing: 0.4, mb: 0.75 }}>
+                                                Children
+                                            </Typography>
+                                            {childGoals.length > 0 ? (
+                                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.75 }}>
+                                                    {childGoals.map((child) => (
+                                                        <RelationshipChip
+                                                            key={child.id}
+                                                            goal={child}
+                                                            onOpen={() => open(child, 'view')}
+                                                        />
+                                                    ))}
+                                                </Box>
+                                            ) : (
+                                                <Typography variant="caption" color="text.secondary">None</Typography>
+                                            )}
+                                        </Box>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    {parentSelectorField}
+                                    {childSelectorField}
+                                </>
                             )}
-                            {(state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id) && (
-                                <Box sx={{ mb: 3 }}>
-                                    <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary', fontSize: '0.875rem' }}>
-                                        Network
-                                    </Typography>
-                                    <MiniNetworkGraph
-                                        centerId={state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id}
-                                        height={220}
-                                        onNodeClick={(node) => {
-                                            try {
-                                                const centerId = state.goal.goal_type === 'event' ? state.goal.parent_id : state.goal.id;
-                                                if (!node?.id || node.id === centerId) {
-                                                    return;
-                                                }
-                                                close();
-                                                setTimeout(() => {
-                                                    GoalMenuWithStatic.open(node, 'view', onSuccess);
-                                                }, 100);
-                                            } catch (e) {}
-                                        }}
-                                    />
-                                </Box>
-                            )}
+                        </GoalMenuSection>
+                        {showNetwork && (
+                            <GoalMenuSection title="Network">
+                                <MiniNetworkGraph
+                                    centerId={networkCenterId}
+                                    height={220}
+                                    onNodeClick={(node) => {
+                                        try {
+                                            if (!node?.id || node.id === networkCenterId) {
+                                                return;
+                                            }
+                                            close();
+                                            setTimeout(() => {
+                                                GoalMenuWithStatic.open(node, 'view', onSuccess);
+                                            }, 100);
+                                        } catch (e) {}
+                                    }}
+                                />
+                            </GoalMenuSection>
+                        )}
+                    </Box>
+                    {showStats && (
+                        <Box sx={{ minWidth: 0, width: 'auto !important', order: { xs: 3, md: 3 }, gridColumn: { md: 1 } }}>
+                            <GoalMenuSection title="Stats">
+                                {renderStatsTiles()}
+                            </GoalMenuSection>
                         </Box>
                     )}
                 </Box>
             </DialogContent>
             {/* ---- Dialog Actions ---- */}
-            <DialogActions sx={{ justifyContent: 'space-between', px: 2, py: 1.5 }}>
+            <DialogActions sx={{ justifyContent: 'space-between', px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
                 <Box sx={{
                     display: 'flex',
                     gap: 1,
@@ -4341,7 +4508,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             {state.goal.goal_type !== 'event' && (
                                 <>
                                     <Button onClick={handleCreateChild} color="secondary" disabled={isBusy} size="small">Create Child</Button>
-                                    <Button onClick={handleEdit} color="primary" disabled={isBusy} size="small">Edit</Button>
                                     <Button onClick={handleDuplicate} color="secondary" disabled={isBusy} size="small">
                                         {pendingAction === 'duplicate' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                                         Duplicate
@@ -4355,7 +4521,6 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                             )}
                             {state.goal.goal_type === 'event' && (
                                 <>
-                                    <Button onClick={handleEdit} color="primary" disabled={isBusy} size="small">Edit</Button>
                                     <Button onClick={handleDuplicate} color="secondary" disabled={isBusy} size="small">
                                         {pendingAction === 'duplicate' ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                                         Duplicate
@@ -4384,7 +4549,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
                 }}>
                     <Button onClick={close} disabled={isBusy} size="small">{isViewOnly ? 'Close' : 'Cancel'}</Button>
                     {!isViewOnly && (
-                        <Button onClick={() => handleSubmit()} color="primary" disabled={isBusy || actualRelationsLoading} size="small">
+                        <Button onClick={() => handleSubmit()} color="primary" variant="contained" disabled={isBusy || actualRelationsLoading} size="small">
                             {(pendingAction === 'save' || pendingAction === 'create') ? <CircularProgress size={14} sx={{ mr: 0.5 }} /> : null}
                             {state.mode === 'create' ? 'Create' : 'Save'}
                         </Button>
