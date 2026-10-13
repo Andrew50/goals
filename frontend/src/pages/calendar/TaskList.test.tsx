@@ -54,7 +54,7 @@ test('renders sidebar counts from the task payload', () => {
     expect(getTaskEvents).not.toHaveBeenCalled();
 });
 
-function task(partial: Partial<CalendarTask> & { goal?: Partial<Goal> }): CalendarTask {
+function task(partial: Omit<Partial<CalendarTask>, 'goal'> & { goal?: Partial<Goal> }): CalendarTask {
     return {
         id: partial.id || '1',
         title: partial.title || 'Task',
