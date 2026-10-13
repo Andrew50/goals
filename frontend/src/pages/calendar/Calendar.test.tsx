@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
@@ -13,7 +13,16 @@ import { fetchCalendarData, fetchCalendarTasks } from './calendarData';
 // Import the API
 jest.mock('../../shared/utils/api', () => ({
     createGoal: jest.fn(),
-    updateGoal: jest.fn()
+    updateGoal: jest.fn().mockResolvedValue({}),
+    createEvent: jest.fn().mockResolvedValue({}),
+    updateRoutineEvent: jest.fn().mockResolvedValue({}),
+    updateRoutineEventProperties: jest.fn().mockResolvedValue({}),
+    expandTaskDateRange: jest.fn().mockResolvedValue({}),
+    syncFromGoogleCalendar: jest.fn().mockResolvedValue({}),
+    syncToGoogleCalendar: jest.fn().mockResolvedValue({}),
+    syncBidirectionalGoogleCalendar: jest.fn().mockResolvedValue({}),
+    resolveGCalConflict: jest.fn().mockResolvedValue({}),
+    resetGCalSyncState: jest.fn().mockResolvedValue({}),
 }));
 
 // Mock the GoalMenuContext to provide openGoalMenu
@@ -474,5 +483,151 @@ describe('Calendar Component', () => {
         expect(updatedGoal.duration).toBe(90); // 1.5 hours = 90 minutes
 
         restoreOffset();
+    });
+
+    test('runs interaction handlers against loaded events', async () => {
+        const start = new Date('2026-10-13T15:00:00Z');
+        const end = new Date('2026-10-13T16:00:00Z');
+        const routineGoal: Goal = {
+            id: 11,
+            name: 'Daily',
+            goal_type: 'event',
+            parent_type: 'routine',
+            parent_id: 3,
+            scheduled_timestamp: start,
+            duration: 30,
+        };
+        const plainGoal: Goal = {
+            id: 12,
+            name: 'Focus',
+            goal_type: 'event',
+            parent_type: 'task',
+            parent_id: 4,
+            scheduled_timestamp: start,
+            duration: 60,
+        };
+        const allDayGoal: Goal = {
+            id: 13,
+            name: 'Away',
+            goal_type: 'event',
+            scheduled_timestamp: start,
+            duration: 1440,
+        };
+        const loadedEvent = (id: string, goal: Goal, allDay = false) => ({
+            id,
+            title: goal.name,
+            start,
+            end,
+            allDay,
+            type: 'event' as const,
+            goal,
+        });
+
+        (fetchCalendarData as jest.Mock).mockResolvedValue({
+            events: [
+                loadedEvent('event-11', routineGoal),
+                loadedEvent('event-12', plainGoal),
+                loadedEvent('event-13', allDayGoal, true),
+            ],
+            unscheduledTasks: [],
+            achievements: [],
+        });
+
+        render(
+            <TestWrapper>
+                <Calendar />
+            </TestWrapper>
+        );
+
+        const FullCalendarMock = require('@fullcalendar/react').default;
+        const latestProps = () => FullCalendarMock.mock.calls[FullCalendarMock.mock.calls.length - 1][0];
+
+        await waitFor(() => {
+            expect(fetchCalendarData).toHaveBeenCalled();
+            expect(typeof latestProps().eventDrop).toBe('function');
+        });
+
+        await act(async () => {
+            latestProps().datesSet({ view: { type: 'timeGridWeek' } });
+            latestProps().dateClick({ date: start, jsEvent: { shiftKey: true } });
+            latestProps().dateClick({ date: start.toISOString(), jsEvent: {} });
+        });
+        const created = mockOpenGoalMenu.mock.calls.find((call) => call[1] === 'create');
+        created?.[2]?.();
+
+        await act(async () => {
+            latestProps().eventClick({
+                event: { id: 'event-12', extendedProps: { goal: plainGoal } },
+                jsEvent: { metaKey: true },
+            });
+            latestProps().eventClick({
+                event: { id: 'event-13', extendedProps: { goal: allDayGoal } },
+                jsEvent: { ctrlKey: true },
+            });
+        });
+        await act(async () => {
+            latestProps().eventClick({
+                event: { id: 'event-12', extendedProps: { goal: plainGoal } },
+                jsEvent: {},
+            });
+            latestProps().select({ start, end, jsEvent: { shiftKey: true } });
+            latestProps().select({ start, end, jsEvent: {} });
+            latestProps().unselect({ jsEvent: {} });
+            latestProps().eventClassNames({ event: { id: 'event-12' } });
+            latestProps().eventClassNames({ event: { id: 'missing' } });
+        });
+
+        const el = document.createElement('div');
+        latestProps().eventDidMount({
+            event: { title: 'Focus', extendedProps: { goal: plainGoal } },
+            timeText: '3pm',
+            el,
+        });
+        el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        latestProps().eventDidMount({
+            event: { title: 'Daily', extendedProps: { goal: routineGoal } },
+            timeText: '',
+            el,
+        });
+
+        const revert = jest.fn();
+        await act(async () => {
+            await latestProps().eventReceive({
+                event: {
+                    allDay: false,
+                    start,
+                    extendedProps: {
+                        task: { goal: { id: 4, name: 'Parent', goal_type: 'task', duration: 45, priority: 'high' } },
+                    },
+                },
+                revert,
+            });
+            await latestProps().eventReceive({
+                event: { allDay: true, start, extendedProps: {} },
+                revert,
+            });
+            await latestProps().eventDrop({
+                event: { id: 'missing', start, allDay: false },
+                revert,
+            });
+            await latestProps().eventDrop({
+                event: { id: 'event-11', start: new Date(start.getTime() + 3600000), allDay: false, title: 'Daily' },
+                revert,
+            });
+            await latestProps().eventDrop({
+                event: { id: 'event-12', start: new Date(start.getTime() + 3600000), allDay: true, title: 'Focus' },
+                revert,
+            });
+            await latestProps().eventDrop({
+                event: { id: 'event-13', start: new Date(start.getTime() + 3600000), allDay: false, title: 'Away' },
+                revert,
+            });
+        });
+
+        latestProps().moreLinkClick({ view: { type: 'timeGridWeek' } });
+        latestProps().moreLinkClick({ view: { type: 'dayGridMonth' }, date: start, allDay: false });
+
+        expect(mockOpenGoalMenu).toHaveBeenCalled();
+        expect(revert).toHaveBeenCalled();
     });
 }); 
