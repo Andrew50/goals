@@ -370,7 +370,7 @@ const GoalMenu: React.FC<GoalMenuProps> = ({ goal: initialGoal, mode: initialMod
     const [statsLoading, setStatsLoading] = useState<boolean>(false);
 
     // Google Calendar state
-    const [gcalCalendars, setGcalCalendars] = useState<CalendarListEntry[]>([]);
+    const [gcalCalendars] = useState<CalendarListEntry[]>([]);
     const [showDeleteGcalConfirm, setShowDeleteGcalConfirm] = useState<boolean>(false);
     const statsContainerRef = useRef<HTMLDivElement | null>(null);
     const prevStatsHeightRef = useRef<number | null>(null);

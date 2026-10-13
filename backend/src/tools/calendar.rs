@@ -47,9 +47,8 @@ pub(crate) fn parent_cypher() -> &'static str {
 }
 
 /// Pending tasks plus event counts. Skipped events are excluded, matching get_task_events_handler.
-pub(crate) fn pending_tasks_cypher() -> String {
-    format!(
-        "MATCH (t:Goal)
+pub(crate) fn pending_tasks_cypher() -> &'static str {
+    "MATCH (t:Goal)
         WHERE t.user_id = $user_id
         AND t.goal_type = 'task'
         AND (t.resolution_status IS NULL OR t.resolution_status = 'pending')
@@ -65,7 +64,7 @@ pub(crate) fn pending_tasks_cypher() -> String {
             sum(CASE WHEN e IS NOT NULL AND coalesce(e.resolution_status, 'pending') <> 'completed' AND e.scheduled_timestamp > $now THEN 1 ELSE 0 END) AS future_uncompleted_count,
             min(CASE WHEN e IS NOT NULL AND coalesce(e.resolution_status, 'pending') <> 'completed' AND e.scheduled_timestamp > $now THEN e.scheduled_timestamp ELSE NULL END) AS next_uncompleted
         ORDER BY t.priority DESC, t.name ASC
-        RETURN {{
+        RETURN {
             id: id(t),
             name: t.name,
             goal_type: t.goal_type,
@@ -78,8 +77,7 @@ pub(crate) fn pending_tasks_cypher() -> String {
             completed_event_count: completed_event_count,
             future_uncompleted_count: future_uncompleted_count,
             next_uncompleted: next_uncompleted
-        }} AS t"
-    )
+        } AS t"
 }
 
 pub fn past_uncompleted_count(event_count: i64, completed: i64, future_uncompleted: i64) -> i64 {
@@ -307,7 +305,7 @@ async fn fetch_pending_tasks(
     graph: &Graph,
     user_id: i64,
 ) -> Result<Vec<CalendarTaskNode>, (StatusCode, String)> {
-    let tasks_query = query(&pending_tasks_cypher())
+    let tasks_query = query(pending_tasks_cypher())
         .param("user_id", user_id)
         .param("now", Utc::now().timestamp_millis());
 

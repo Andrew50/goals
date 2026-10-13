@@ -49,6 +49,7 @@ jest.mock('@fullcalendar/react', () => {
     const calls: any[] = [];
     const MockFullCalendar = React.forwardRef((props: any, ref: any) => {
         calls.push([props]);
+        const { events } = props;
         const ran = React.useRef(false);
         React.useImperativeHandle(ref, () => ({
             getApi: () => ({
@@ -57,14 +58,14 @@ jest.mock('@fullcalendar/react', () => {
             }),
         }));
         React.useEffect(() => {
-            if (ran.current || typeof props.events !== 'function') return;
+            if (ran.current || typeof events !== 'function') return;
             ran.current = true;
-            props.events(
+            events(
                 { start: new Date('2026-09-27T04:00:00Z'), end: new Date('2026-11-08T05:00:00Z') },
                 () => undefined,
                 () => undefined
             );
-        }, [props.events]);
+        }, [events]);
         return <div data-testid="fullcalendar-mock" />;
     });
     MockFullCalendar.mock = { calls };

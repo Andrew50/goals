@@ -1,10 +1,7 @@
-import React from 'react';
 import { screen, fireEvent, act } from '@testing-library/react';
 import GoalMenu from './GoalMenu';
 import { getAutofillSuggestions, privateRequest } from '../utils/api';
 import { Goal } from '../../types/goals';
-import { DndProvider } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
 
 // Mock the API modules
 jest.mock('../utils/api', () => {

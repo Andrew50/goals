@@ -137,9 +137,10 @@ test.describe('Routine Functionality', () => {
         // Verify we have at least one routine event
         expect(routineEvents.length).toBeGreaterThan(0);
 
-        // Verify the routine itself appears in the routines list
-        const routines = calendarData.routines.filter(routine => routine.name === routineName);
+        // The range endpoint returns the routine as a parent of its events, not a routines list.
+        const routines = calendarData.parents.filter(routine => routine.name === routineName);
         expect(routines.length).toBe(1);
+        expect(routines[0].goal_type).toBe('routine');
         expect(routines[0].frequency).toBe('1D');
 
         console.log('✅ Routine functionality verification completed successfully!');
@@ -594,8 +595,18 @@ test.describe('Routine Functionality', () => {
         expect(calendarResponse.ok()).toBeTruthy();
         const cal = await calendarResponse.json();
 
-        // Find the routine by name
-        const routine = cal.routines.find((r: any) => r.name === baseName);
+        const parent = cal.parents.find((r: any) => r.name === baseName);
+        expect(parent).toBeTruthy();
+        expect(parent.goal_type).toBe('routine');
+
+        const goalResponse = await request.get(`${API_URL}/goals/${createdTask.id}`, {
+            headers: {
+                'Authorization': `Bearer ${testToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        expect(goalResponse.ok()).toBeTruthy();
+        const routine = await goalResponse.json();
         expect(routine).toBeTruthy();
 
         // Check start date aligns to midnight of target date (use UTC to avoid host timezone shifts)
