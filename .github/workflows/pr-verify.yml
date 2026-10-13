@@ -204,6 +204,10 @@ jobs:
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
+    env:
+      # rustc 1.82 overflows its stack while compiling dependencies such as hyper.
+      # The production image sets the same value.
+      RUST_MIN_STACK: "33554432"
     timeout-minutes: 45
     steps:
       - name: Pre-fix workspace ownership
