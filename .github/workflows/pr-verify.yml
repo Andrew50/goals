@@ -204,6 +204,10 @@ jobs:
     needs: [changed-files, check-previous-runs]
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
+    env:
+      # rustc 1.82 overflows its stack while compiling dependencies such as hyper.
+      # The production image sets the same value.
+      RUST_MIN_STACK: "33554432"
     timeout-minutes: 45
     steps:
       - name: Pre-fix workspace ownership
@@ -324,7 +328,17 @@ jobs:
 
       - name: Build
         working-directory: ./frontend
-        run: npm run build
+        env:
+          # ESLint already ran as its own step. Skipping it here avoids a second
+          # parallel lint during webpack, which is what made CI treat warnings as
+          # a failed compile. Sourcemaps are the main memory cost on the runner.
+          DISABLE_ESLINT_PLUGIN: "true"
+          GENERATE_SOURCEMAP: "false"
+        run: |
+          set -euo pipefail
+          echo "node $(node -v)"
+          awk '/MemAvailable/ {print "mem_available_kb", $2}' /proc/meminfo || true
+          node scripts/ci-build.js
 
       - name: Unit tests (Jest + coverage; do not stop workflow)
         id: frontend-unit-tests

@@ -1,7 +1,6 @@
-import { CalendarResponse, CalendarEvent, CalendarTask, ApiGoal } from '../../types/goals';
+import { CalendarResponse, CalendarEvent, CalendarTask, CalendarTasksResponse, ApiGoal } from '../../types/goals';
 import { privateRequest } from '../../shared/utils/api';
 import { goalToLocal } from '../../shared/utils/time';
-// Colors are now handled centrally in colors.ts via getGoalStyle
 
 export interface TransformedCalendarData {
     events: CalendarEvent[];
@@ -16,11 +15,9 @@ interface DateRange {
 
 export const fetchCalendarData = async (dateRange?: DateRange): Promise<TransformedCalendarData> => {
     try {
-        // Make API request to calendar endpoint, optionally scoped to a date range
         const params =
             dateRange && dateRange.start && dateRange.end
                 ? {
-                    // Use millisecond timestamps to match backend expectations
                     start: dateRange.start.getTime(),
                     end: dateRange.end.getTime(),
                 }
@@ -30,76 +27,34 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
 
         if (!response) {
             console.error('Empty calendar response');
-            return {
-                events: [],
-                unscheduledTasks: [],
-                achievements: []
-            };
+            return { events: [], unscheduledTasks: [], achievements: [] };
         }
 
-        // Process events - much simpler now!
-        const events: CalendarEvent[] = (response.events || []).map(apiEvent => {
-            // Convert API goal to local timezone
-            const event = goalToLocal(apiEvent as ApiGoal);
+        const parentsById = new Map(
+            (response.parents || []).map(parent => [parent.id, parent])
+        );
 
-            // Find the parent if available
-            const parent = response.parents?.find(p => p.id === event.parent_id);
+        const events: CalendarEvent[] = (response.events || []).map(apiEvent => {
+            const event = goalToLocal(apiEvent as ApiGoal);
+            const parent = event.parent_id != null ? parentsById.get(event.parent_id) : undefined;
             const parentGoal = parent ? goalToLocal(parent as ApiGoal) : undefined;
 
-            // Create calendar event - colors will be determined by getGoalStyle in Calendar.tsx
-            const calendarEvent: CalendarEvent = {
+            return {
                 id: `event-${event.id}`,
-                title: event.name, // Always inherited from parent
+                title: event.name,
                 start: new Date(event.scheduled_timestamp!),
                 end: new Date(event.scheduled_timestamp!.getTime() + (event.duration! * 60 * 1000)),
-                type: 'event', // Always 'event' now
-                goal: event, // The event goal
-                parent: parentGoal, // The parent task/routine
-                allDay: event.duration === 1440
-                // Colors removed - now handled centrally in Calendar.tsx via getGoalStyle
-            };
-
-            return calendarEvent;
-        });
-
-        // Process unscheduled tasks
-        const unscheduledTasks: CalendarTask[] = (response.unscheduled_tasks || []).map(apiTask => {
-            const task = goalToLocal(apiTask as ApiGoal);
-
-            return {
-                id: task.id.toString(),
-                title: task.name,
-                type: mapGoalTypeToTaskType(task.goal_type),
-                goal: task
-            };
-        });
-
-        // Process achievements if needed (keeping for compatibility)
-        const achievements: CalendarEvent[] = (response.achievements || []).map(apiAchievement => {
-            const achievement = goalToLocal(apiAchievement as ApiGoal);
-
-            if (!achievement.end_timestamp) {
-                return null;
-            }
-
-            const end = new Date(achievement.end_timestamp);
-
-            return {
-                id: `achievement-${achievement.id}`,
-                title: achievement.name,
-                start: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 0, 0, 0),
-                end: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999),
                 type: 'event',
-                goal: achievement,
-                allDay: true
-                // Colors removed - now handled centrally in Calendar.tsx via getGoalStyle
+                goal: event,
+                parent: parentGoal,
+                allDay: event.duration === 1440
             };
-        }).filter(Boolean) as CalendarEvent[];
+        });
 
         return {
             events,
-            unscheduledTasks,
-            achievements
+            unscheduledTasks: [],
+            achievements: []
         };
     } catch (error) {
         console.error('Failed to fetch calendar data:', error);
@@ -108,6 +63,42 @@ export const fetchCalendarData = async (dateRange?: DateRange): Promise<Transfor
             unscheduledTasks: [],
             achievements: []
         };
+    }
+};
+
+export const fetchCalendarTasks = async (): Promise<CalendarTask[]> => {
+    try {
+        const response = await privateRequest<CalendarTasksResponse>('calendar/tasks');
+        if (!response) {
+            return [];
+        }
+        return (response.tasks || []).map(apiTask => {
+            const goal = goalToLocal({
+                id: apiTask.id,
+                name: apiTask.name,
+                goal_type: apiTask.goal_type,
+                duration: apiTask.duration,
+                priority: apiTask.priority,
+                start_timestamp: apiTask.start_timestamp ?? undefined,
+                end_timestamp: apiTask.end_timestamp ?? undefined,
+                resolution_status: apiTask.resolution_status,
+            } as ApiGoal);
+            const next = apiTask.next_uncompleted;
+            return {
+                id: String(apiTask.id),
+                title: apiTask.name,
+                type: mapGoalTypeToTaskType(apiTask.goal_type),
+                goal,
+                eventCount: apiTask.event_count ?? 0,
+                completedEventCount: apiTask.completed_event_count ?? 0,
+                pastUncompletedCount: apiTask.past_uncompleted_count ?? 0,
+                futureUncompletedCount: apiTask.future_uncompleted_count ?? 0,
+                nextEventDate: typeof next === 'number' ? new Date(next) : undefined,
+            };
+        });
+    } catch (error) {
+        console.error('Failed to fetch calendar tasks:', error);
+        return [];
     }
 };
 
@@ -124,4 +115,4 @@ const mapGoalTypeToTaskType = (goalType: string): 'meeting' | 'task' | 'appointm
         default:
             return 'task';
     }
-}; 
+};

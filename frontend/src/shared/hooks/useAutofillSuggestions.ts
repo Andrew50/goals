@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { getAutofillSuggestions, AutofillRequest } from '../utils/api';
+// AI autofill is disabled. Restore this import with the call in fetchSuggestions.
+// import { getAutofillSuggestions, AutofillRequest } from '../utils/api';
 
 export interface UseAutofillSuggestionsOptions {
     fieldName: string;
@@ -13,10 +14,18 @@ export function useAutofillSuggestions(options: UseAutofillSuggestionsOptions) {
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Setters stay for the commented autofill call above.
+    void setIsLoading;
+    void setError;
 
     const fetchSuggestions = useCallback(async (currentValue?: string) => {
+        // AI autofill is disabled, so focusing a field does not call the API.
+        void currentValue;
+        void options;
+        return;
+        /*
         const context = options.getContext();
-        
+
         setIsLoading(true);
         setError(null);
         try {
@@ -51,6 +60,7 @@ export function useAutofillSuggestions(options: UseAutofillSuggestionsOptions) {
         } finally {
             setIsLoading(false);
         }
+        */
     }, [options]);
 
     const clearSuggestions = useCallback(() => {

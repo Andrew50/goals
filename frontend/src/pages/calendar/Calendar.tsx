@@ -3,7 +3,7 @@ import { Goal, CalendarEvent, CalendarTask } from '../../types/goals';
 import { updateGoal, createEvent, updateRoutineEvent, expandTaskDateRange, TaskDateValidationError, updateRoutineEventProperties, syncFromGoogleCalendar, syncToGoogleCalendar, syncBidirectionalGoogleCalendar, GCalSyncResult, GCalSyncConflict, CalendarListEntry, resolveGCalConflict, resetGCalSyncState } from '../../shared/utils/api';
 import { getGoalStyle } from '../../shared/styles/colors';
 import { useGoalMenu } from '../../shared/contexts/GoalMenuContext';
-import { fetchCalendarData } from './calendarData';
+import { fetchCalendarData, fetchCalendarTasks } from './calendarData';
 import TaskList from './TaskList';
 import { useHistoryState } from '../../shared/hooks/useHistoryState';
 import './Calendar.css';
@@ -178,6 +178,7 @@ const Calendar: React.FC = () => {
 
   const [error, setError] = useState<string | null>(null);
   const stateRef = useRef<CalendarState>(state);
+  const tasksRef = useRef<CalendarTask[]>(state.tasks);
   const [routineRescheduleDialog, setRoutineRescheduleDialog] = useState<RoutineRescheduleDialogState>({
     isOpen: false,
     eventId: null,
@@ -260,26 +261,23 @@ const Calendar: React.FC = () => {
   // Keep a ref pointing at the latest calendar state for use in stable callbacks
   useEffect(() => {
     stateRef.current = state;
+    tasksRef.current = state.tasks;
   }, [state]);
 
-  // Initial data load - with a flag to prevent duplicate calls
+  // Initial data load. FullCalendar calls `events` itself; do not also refetchEvents.
+  // The direct fetch runs only when there is no calendar API (unit tests).
   const initialLoadRef = useRef(false);
   useEffect(() => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
 
     const triggerInitialLoad = async () => {
-      // Prefer letting FullCalendar drive the load via its `events` callback.
-      // In unit tests we mock `@fullcalendar/react` without a real ref/getApi implementation,
-      // so we fall back to fetching directly to keep behavior testable.
       try {
         const api = (calendarRef.current as any)?.getApi?.();
-        if (api?.refetchEvents) {
-          api.refetchEvents();
+        if (typeof api?.refetchEvents === 'function') {
           return;
         }
       } catch (err) {
-        // If FullCalendar isn't ready yet, fall back below.
         console.warn('FullCalendar getApi/refetchEvents not available, falling back to direct fetch', err);
       }
 
@@ -296,13 +294,15 @@ const Calendar: React.FC = () => {
         });
 
         const data = await fetchCalendarData({ start, end });
-
-        setState({
+        const latest = stateRef.current;
+        const next = {
           events: data.events,
-          tasks: data.unscheduledTasks,
+          tasks: tasksRef.current,
           isLoading: false,
           dateRange: { start, end }
-        });
+        };
+        stateRef.current = { ...latest, ...next };
+        setState(stateRef.current);
       } catch (err) {
         console.error('Error triggering initial calendar fetch:', err);
         setError('Failed to load calendar data. Please try refreshing the page.');
@@ -320,6 +320,23 @@ const Calendar: React.FC = () => {
 
     void triggerInitialLoad();
   }, [setError, setState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTasks = async () => {
+      const tasks = await fetchCalendarTasks();
+      if (cancelled) return;
+      tasksRef.current = tasks;
+      const current = stateRef.current;
+      const next = { ...current, tasks };
+      stateRef.current = next;
+      setState(next);
+    };
+    void loadTasks();
+    return () => {
+      cancelled = true;
+    };
+  }, [setState]);
 
   // Set up drag-and-drop from the task list
   useEffect(() => {
@@ -457,6 +474,36 @@ const Calendar: React.FC = () => {
     }
   }, []);
 
+  const refreshTasks = useCallback(async () => {
+    const tasks = await fetchCalendarTasks();
+    tasksRef.current = tasks;
+    const current = stateRef.current;
+    const next = { ...current, tasks };
+    stateRef.current = next;
+    setState(next);
+  }, [setState]);
+
+  const patchLocalEvent = useCallback((calendarEventId: string, start: Date, duration: number) => {
+    const current = stateRef.current;
+    const events = current.events.map((evt) => {
+      if (String(evt.id) !== String(calendarEventId)) return evt;
+      return {
+        ...evt,
+        start,
+        end: new Date(start.getTime() + duration * 60 * 1000),
+        allDay: duration === 1440,
+        goal: {
+          ...evt.goal,
+          scheduled_timestamp: start,
+          duration,
+        },
+      };
+    });
+    const next = { ...current, events };
+    stateRef.current = next;
+    setState(next);
+  }, [setState]);
+
   const handleDatesSet = (dateInfo: any) => {
     // Update the "view" query param so refreshes keep the current view
     const currentViewType = dateInfo.view?.type;
@@ -516,6 +563,7 @@ const Calendar: React.FC = () => {
       () => {
         console.log('[Calendar] Goal menu success callback called');
         refetchCalendarEvents();
+        void refreshTasks();
       },
       { autoCreateEventTimestamp: clickedDate }
     );
@@ -657,6 +705,7 @@ const Calendar: React.FC = () => {
 
       info.revert(); // Revert the drag since we're creating a new event
       refetchCalendarEvents();
+      void refreshTasks();
     };
 
     try {
@@ -739,7 +788,14 @@ const Calendar: React.FC = () => {
         // If duration is not 1440 and not moving to all-day, keep existing duration
 
         await updateGoal(existingEvent.goal.id, updates);
-        refetchCalendarEvents();
+        const movedStart = updates.scheduled_timestamp instanceof Date
+          ? updates.scheduled_timestamp
+          : new Date(info.event.start);
+        patchLocalEvent(
+          String(info.event.id),
+          movedStart,
+          updates.duration ?? existingEvent.goal.duration ?? 60
+        );
       } else {
         // Non-event goals shouldn't be draggable in the new system
         info.revert();
@@ -1020,7 +1076,7 @@ const Calendar: React.FC = () => {
         };
 
         await updateGoal(existingEvent.goal.id, updates);
-        refetchCalendarEvents();
+        patchLocalEvent(String(info.event.id), start, durationInMinutes);
       } else {
         info.revert();
       }
@@ -1155,15 +1211,19 @@ const Calendar: React.FC = () => {
 
     openGoalMenu(tempGoal, 'create', () => {
       refetchCalendarEvents();
+      void refreshTasks();
     });
   };
 
   const handleTaskUpdate = (data: { events: CalendarEvent[]; tasks: CalendarTask[] }) => {
-    setState({
-      ...state,
+    tasksRef.current = data.tasks;
+    const next = {
+      ...stateRef.current,
       events: data.events,
       tasks: data.tasks
-    });
+    };
+    stateRef.current = next;
+    setState(next);
   };
 
   // Helper to convert CalendarEvent objects into FullCalendar events with styling
@@ -1406,17 +1466,20 @@ const Calendar: React.FC = () => {
       try {
         const data = await fetchCalendarData({ start, end });
 
-        // Clear any data-loading timeouts
         if (dataLoadingTimeoutRef.current) {
           clearTimeout(dataLoadingTimeoutRef.current);
         }
 
-        setState({
+        const latest = stateRef.current;
+        const next = {
+          ...latest,
           events: data.events,
-          tasks: data.unscheduledTasks,
+          tasks: tasksRef.current,
           isLoading: false,
           dateRange: { start, end }
-        });
+        };
+        stateRef.current = next;
+        setState(next);
 
         successCallback(mapEventsToFullCalendar(data.events));
       } catch (error) {
@@ -1581,6 +1644,10 @@ const Calendar: React.FC = () => {
               events={state.events}
               onAddTask={handleAddTask}
               onTaskUpdate={handleTaskUpdate}
+              onTasksChanged={() => {
+                void refreshTasks();
+                refetchCalendarEvents();
+              }}
               overlapSuggestions={overlapSuggestions}
               onNavigateDate={gotoDate}
               onToggleSuggestions={setShowSuggestions}

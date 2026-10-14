@@ -1,10 +1,7 @@
-import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { screen, fireEvent, act } from '@testing-library/react';
 import GoalMenu from './GoalMenu';
 import { getAutofillSuggestions, privateRequest } from '../utils/api';
 import { Goal } from '../../types/goals';
-import { DndProvider } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
 
 // Mock the API modules
 jest.mock('../utils/api', () => {
@@ -44,6 +41,26 @@ describe('GoalMenu AI Suggestions', () => {
         });
     });
 
+    test('does not fetch or show name suggestions on focus', async () => {
+        await act(async () => {
+            GoalMenu.open(mockGoal, 'edit');
+        });
+
+        const nameInput = await screen.findByLabelText(/Name/i);
+
+        await act(async () => {
+            fireEvent.focus(nameInput);
+        });
+
+        await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        });
+
+        expect(getAutofillSuggestions).not.toHaveBeenCalled();
+        expect(screen.queryByText('Suggested Value 1')).not.toBeInTheDocument();
+    });
+
+    /*
     test('fetches and applies name suggestions on focus', async () => {
         await act(async () => {
             GoalMenu.open(mockGoal, 'edit');
@@ -116,5 +133,6 @@ describe('GoalMenu AI Suggestions', () => {
             expect(screen.queryByText('Suggested Value 1')).not.toBeInTheDocument();
         }, { timeout: 1000 });
     });
+    */
 });
 
