@@ -1,8 +1,8 @@
 # Build stage.
-# Rust 1.82's LLVM segfaults in SROA while optimizing this crate. Rust 1.99
-# segfaults compiling notify-rust, which the matching dev image needs for
-# cargo-watch. 1.98 is the newest toolchain that avoids both.
-FROM rust:1.98-slim AS builder
+# Rust 1.82's LLVM segfaults in SROA while optimizing this crate. Rust 1.98
+# panics in optimized_mir on create_goal. Rust 1.99 segfaults compiling
+# notify-rust, which the matching dev image needs for cargo-watch.
+FROM rust:1.93-slim AS builder
 
 # Prefer system libcurl over vendored builds (avoids compiling bundled curl sources)
 ENV CURL_NO_VENDOR=1

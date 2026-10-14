@@ -11,6 +11,7 @@ use urlencoding;
 
 use crate::server::auth::Claims;
 
+#[allow(clippy::result_large_err)] // The error is the HTTP response itself.
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, Response> {
     // Get the token either from Authorization header or query parameter for WebSocket
     let token = match get_token_from_request(&request) {

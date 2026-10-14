@@ -1389,7 +1389,8 @@ pub async fn get_rescheduling_stats(
                     parent_type,
                 })
                 .collect();
-            most_rescheduled_events.sort_by(|a, b| b.reschedule_count.cmp(&a.reschedule_count));
+            most_rescheduled_events
+                .sort_by_key(|event| std::cmp::Reverse(event.reschedule_count));
             most_rescheduled_events.truncate(10);
 
             Ok(Json(EventReschedulingStats {

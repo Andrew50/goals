@@ -263,6 +263,7 @@ async fn handle_signin(
     }
 }
 
+#[allow(clippy::result_large_err)] // The error is the HTTP response itself.
 async fn handle_refresh(
     Extension(graph): Extension<Graph>,
     headers: HeaderMap,

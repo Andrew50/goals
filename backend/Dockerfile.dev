@@ -1,7 +1,7 @@
-# Match the production builder (Rust 1.98). rustc 1.99 segfaults compiling
+# Match the production builder (Rust 1.93). rustc 1.99 segfaults compiling
 # notify-rust, which cargo-watch needs. --locked uses cargo-watch 8.5.3's
 # published lock (home 0.5.9).
-FROM rust:1.98
+FROM rust:1.93
 
 # Match the production builder.
 ENV RUST_MIN_STACK=33554432
