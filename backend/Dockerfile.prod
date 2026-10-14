@@ -1,7 +1,9 @@
 # Build stage.
-# Rust 1.82's LLVM segfaults in SROA while optimizing this crate. Rust 1.98
+# Rust 1.82's LLVM segfaults while optimizing this crate, and Rust 1.98
 # panics in optimized_mir on create_goal. Rust 1.99 segfaults compiling
 # notify-rust, which the matching dev image needs for cargo-watch.
+# Release builds disable the SLP vectorizer in .cargo/config.toml; that pass
+# SIGSEGVs on this crate at opt-level 3.
 FROM rust:1.93-slim AS builder
 
 # Prefer system libcurl over vendored builds (avoids compiling bundled curl sources)
