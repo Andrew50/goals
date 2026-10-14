@@ -426,11 +426,8 @@ pub async fn create_goal_handler(
                 validation_errors.push("Events must have a duration");
             }
         }
-        GoalType::Project | GoalType::Achievement => {
-            if goal.start_timestamp.is_none() {
-                validation_errors
-                    .push("Start timestamp is required for project and achievement goals");
-            }
+        GoalType::Project | GoalType::Achievement if goal.start_timestamp.is_none() => {
+            validation_errors.push("Start timestamp is required for project and achievement goals");
         }
         _ => {}
     }

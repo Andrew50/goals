@@ -1,10 +1,13 @@
-# Build stage
-FROM rust:1.82-slim AS builder
+# Build stage.
+# Rust 1.82's LLVM segfaults while optimizing this crate, and Rust 1.98
+# panics in optimized_mir on create_goal. Rust 1.99 segfaults compiling
+# notify-rust, which the matching dev image needs for cargo-watch.
+# Release builds use opt-level 2 (Cargo.toml) and disable the SLP vectorizer
+# (.cargo/config.toml). Opt-level 3 SIGSEGVs in LLVM on the deploy host.
+FROM rust:1.93-slim AS builder
 
 # Prefer system libcurl over vendored builds (avoids compiling bundled curl sources)
 ENV CURL_NO_VENDOR=1
-# rustc 1.82's LLVM segfaults in SROA while optimizing this crate at -O3.
-ENV CARGO_PROFILE_RELEASE_OPT_LEVEL=2
 ENV RUST_MIN_STACK=33554432
 
 # Install build dependencies: pkg-config, OpenSSL dev libs, and system libcurl headers
@@ -15,7 +18,7 @@ RUN apt-get update && \
 
 WORKDIR /usr/src/app
 COPY . .
-# Ensure we avoid base64ct v1.8.0 (requires edition2024) and lock deps
+# Keep the image on the locked base64ct 1.6.0 instead of floating the crate.
 RUN cargo update -p base64ct --precise 1.6.0 && \
     cargo build --release --locked
 FROM debian:bookworm-slim

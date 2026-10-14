@@ -1,0 +1,6 @@
+# LLVM's SLP vectorizer recurses until rustc SIGSEGVs while optimizing this
+# crate in release mode. Rust 1.82 hit the same family of optimizer crashes.
+# The production image and the CI release build both run Cargo from this
+# directory, so they share this flag.
+[build]
+rustflags = ["-C", "no-vectorize-slp"]

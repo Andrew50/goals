@@ -41,3 +41,10 @@ web-push = { version = "0.9", default-features = false, features = ["hyper-clien
 [[bin]]
 name = "backend"
 path = "src/main.rs"
+
+[profile.release]
+# LLVM SIGSEGVs at opt-level 3 on the self-hosted builder, in the SLP
+# vectorizer and then in live-interval splitting. Opt-level 2 is the highest
+# level that has produced a production image. .cargo/config.toml also
+# disables the SLP pass, which still runs at this level.
+opt-level = 2

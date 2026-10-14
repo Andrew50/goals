@@ -205,8 +205,7 @@ jobs:
     if: ${{ needs.changed-files.outputs.backend == 'true' || needs.check-previous-runs.outputs.backend_previously_failed == 'true' }}
     runs-on: self-hosted
     env:
-      # rustc 1.82 overflows its stack while compiling dependencies such as hyper.
-      # The production image sets the same value.
+      # Match backend/Dockerfile.prod.
       RUST_MIN_STACK: "33554432"
     timeout-minutes: 45
     steps:
@@ -248,7 +247,7 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.93.0
         with:
           components: clippy
 
@@ -277,6 +276,13 @@ jobs:
       - name: Unit tests
         working-directory: ./backend
         run: cargo test --lib
+
+      # Debug clippy and unit tests do not run the release optimizer. This is
+      # the production image command, including the SLP workaround in
+      # backend/.cargo/config.toml.
+      - name: Release build
+        working-directory: ./backend
+        run: cargo build --release --locked
 
   # FRONTEND PIPELINE (lint, build, unit tests)
   frontend-verify:
@@ -308,7 +314,7 @@ jobs:
           fi
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
