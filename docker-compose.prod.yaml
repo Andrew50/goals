@@ -83,7 +83,7 @@ services:
 
     goals_cloudflared:
         container_name: goals_cloudflared
-        image: cloudflare/cloudflared:2025.7.0
+        image: cloudflare/cloudflared:2026.10.5
         command: tunnel run --token ${GOALS_CLOUDFLARED_TOKEN}
         restart: unless-stopped
         networks:
